@@ -1,0 +1,23 @@
+{
+  "name": "rd-conversas-etl",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ETL para extrair dados da API do RD Station Conversas e carregar no Supabase",
+  "type": "commonjs",
+  "scripts": {
+    "explore": "ts-node src/explore.ts",
+    "build": "tsc",
+    "start": "node dist/etl.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "node-jose": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/node-jose": "^1.1.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
