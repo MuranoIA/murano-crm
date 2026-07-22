@@ -141,8 +141,11 @@ export default function Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cliente_id: clienteId }),
       });
-      const j = await r.json();
-      if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? r.status));
+      // lê como texto e tenta JSON — evita "Unexpected end of JSON input" em corpo vazio
+      const txt = await r.text();
+      let j: any = {};
+      try { j = txt ? JSON.parse(txt) : {}; } catch { j = { error: txt || `HTTP ${r.status} (resposta vazia)` }; }
+      if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`));
       else await load();
     } catch (e: any) {
       alert("Erro: " + (e?.message ?? e));
