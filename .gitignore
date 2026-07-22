@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 data/
+.next/
+.claude/
+# scripts de exploração/debug (não versionar)
+src/_tmp_*.ts

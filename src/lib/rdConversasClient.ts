@@ -37,4 +37,22 @@ export class RdConversasClient {
     }
     return text ? (JSON.parse(text) as T) : (undefined as T);
   }
+
+  async post<T = unknown>(path: string, body: unknown): Promise<T> {
+    const url = new URL(path, this.options.baseUrl);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.options.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new RdConversasApiError(response.status, url.toString(), text);
+    }
+    return text ? (JSON.parse(text) as T) : (undefined as T);
+  }
 }
