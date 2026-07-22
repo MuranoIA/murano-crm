@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
 
 // carteira (dono do card) -> employee_id (para atribuir o disparo ao vendedor)
 const OPERADORES: Record<string, string> = {
