@@ -15,10 +15,18 @@ function limpaMsg(s: string | null): string {
   return String(s ?? "").replace(/^\*[^*]+\*\s*/, "").replace(/\s+/g, " ").trim();
 }
 
-const MIN_ALERTA = 10; // cliente respondeu e vendedor está há >10 min sem responder
-function ehAlerta(c: Card): boolean {
+const MIN_ALERTA = 10;  // cliente respondeu e vendedor está há >10 min sem responder
+const SNOOZE_MIN = 20;  // clicar no card "reconhece" e silencia o alerta por ~1 ciclo de ETL
+// ackMs = quando o vendedor abriu a conversa deste card (reconhecimento otimista).
+function ehAlerta(c: Card, ackMs?: number): boolean {
   if (c.ultima_enviada_por !== "customer") return false;
-  return Date.now() - new Date(c.ultima_atividade).getTime() > MIN_ALERTA * 60 * 1000;
+  const atividade = new Date(c.ultima_atividade).getTime();
+  if (Date.now() - atividade <= MIN_ALERTA * 60 * 1000) return false;
+  // Se o vendedor abriu a conversa DEPOIS da última msg do cliente e ainda está na
+  // janela de carência, silencia. Volta se: o cliente mandar msg nova (ack < atividade)
+  // OU a carência expirar e a ETL ainda ver o cliente esperando (auto-cura).
+  if (ackMs && ackMs > atividade && Date.now() - ackMs < SNOOZE_MIN * 60 * 1000) return false;
+  return true;
 }
 
 const URL_CHAT = "https://app.tallos.com.br/app/chat"; // deep link do RD Conversas (por cliente_id)
@@ -103,6 +111,8 @@ export default function Page() {
   const [busca, setBusca] = useState("");
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null } | null>(null);
   const [checando, setChecando] = useState(true);
+  // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
+  const [acks, setAcks] = useState<Record<string, number>>({});
 
   async function load() {
     try {
@@ -146,8 +156,28 @@ export default function Page() {
     setSessao(null);
   }
 
-  // checa a sessão ao montar
+  const ACKS_KEY = "crm_acks";
+  // Abre a conversa no RD Conversas E "reconhece" o card (silencia o alerta na hora).
+  function abrirConversa(clienteId: string) {
+    const agora = Date.now();
+    setAcks((prev) => {
+      const prox = { ...prev, [clienteId]: agora };
+      try { localStorage.setItem(ACKS_KEY, JSON.stringify(prox)); } catch {}
+      return prox;
+    });
+    window.open(`${URL_CHAT}/${clienteId}`, "rdconversas");
+  }
+
+  // checa a sessão ao montar + carrega acks salvos (limpa os antigos)
   useEffect(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ACKS_KEY) || "{}");
+      const corte = Date.now() - 24 * 3600 * 1000; // descarta acks com +24h
+      const limpos: Record<string, number> = {};
+      for (const [k, v] of Object.entries(raw)) if (typeof v === "number" && v > corte) limpos[k] = v;
+      setAcks(limpos);
+      localStorage.setItem(ACKS_KEY, JSON.stringify(limpos));
+    } catch {}
     fetch("/api/session")
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => setSessao(s))
@@ -277,8 +307,9 @@ export default function Page() {
                 (a, b) => new Date(a.ultima_atividade).getTime() - new Date(b.ultima_atividade).getTime()
               );
             }
-            // cards com alerta (cliente esperando >10 min) vão pro TOPO da coluna
-            doGrupo = [...doGrupo.filter(ehAlerta), ...doGrupo.filter((c) => !ehAlerta(c))];
+            // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
+            const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
+            doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
             const nHoje = doGrupo.filter((c) => ehHoje(c.ultima_atividade)).length;
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
@@ -311,12 +342,12 @@ export default function Page() {
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
-                      const alerta = ehAlerta(c);
+                      const alerta = ehAlerta(c, acks[c.cliente_id]);
                       return (
                         <article
                           key={c.cliente_id}
-                          onClick={() => window.open(`${URL_CHAT}/${c.cliente_id}`, "rdconversas")}
-                          title="Abrir conversa no RD Conversas"
+                          onClick={() => abrirConversa(c.cliente_id)}
+                          title="Abrir conversa no RD Conversas (reconhece e silencia o alerta)"
                           style={{
                             cursor: "pointer",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
