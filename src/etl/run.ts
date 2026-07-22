@@ -82,6 +82,34 @@ async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string
   return out;
 }
 
+// Conversas que precisam ser recarregadas todo incremental, descobertas pelo NOSSO
+// banco (não pelo /v4/reports, que só devolve atendimentos novos):
+//   (a) "aguardando" — cliente foi o último a falar (qualquer idade): é onde a
+//       resposta do vendedor precisa ser detectada p/ limpar o alerta;
+//   (b) ativas nos últimos `dias` dias — conversas em andamento.
+// Conjunto pequeno e certeiro (~150-200), mantendo o run em ~2 min.
+async function clientesParaRefrescar(dias: number): Promise<{ id: string; carteira: string }[]> {
+  const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
+  const out: { id: string; carteira: string }[] = [];
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("vw_funil").select("cliente_id,vendedor")
+      .or(`ultima_enviada_por.eq.customer,ultima_atividade.gte.${cutoff}`)
+      .range(from, from + page - 1);
+    if (error) throw new Error(`select vw_funil refrescar: ${error.message}`);
+    const rows = data ?? [];
+    for (const r of rows) {
+      const cart = String(r.vendedor ?? "");
+      if (r.cliente_id && TARGET_WALLETS.has(cart)) out.push({ id: r.cliente_id, carteira: cart });
+    }
+    if (rows.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
 // Ids de clientes que JÁ têm ao menos uma mensagem (p/ backfill resumível).
 async function idsComMensagens(): Promise<Set<string>> {
   const set = new Set<string>();
@@ -317,8 +345,18 @@ async function main() {
     await backfillMensagens();
   } else {
     const vendIds = await loadVendedores();
-    const clientes = await loadReports(vendIds);
-    await loadMensagens(clientes);
+    const ativos = await loadReports(vendIds);
+    const alvos = new Map(ativos.map((c) => [c.id, c] as const));
+    if (!FULL) {
+      // além das conversas com atendimento novo (reports), recarrega as
+      // recentemente ativas no banco — pega respostas dentro de atendimentos antigos.
+      const dias = Number(process.env.ETL_REFRESH_DAYS || 1);
+      const recentes = await clientesParaRefrescar(dias);
+      let add = 0;
+      for (const r of recentes) if (!alvos.has(r.id)) { alvos.set(r.id, r); add++; }
+      console.error(`[incremental] +${add} conversas (aguardando + ativas ${dias}d) → total a atualizar: ${alvos.size}`);
+    }
+    await loadMensagens([...alvos.values()]);
   }
   await validar();
   console.error(`\n✅ ETL [${MODE}] concluído em ${((Date.now() - t0) / 1000).toFixed(0)}s.`);
