@@ -7,7 +7,7 @@ on:
         description: "Modo do ETL"
         type: choice
         default: incremental
-        options: [incremental, full]
+        options: [incremental, full, mensagens]
   schedule:
     # A cada 20 min em horário comercial (dias úteis) — sempre modo incremental (rápido).
     # Cron do GitHub roda em UTC. Brasília = UTC-3, então 11-23 UTC ≈ 08h-20h BRT.

@@ -63,6 +63,41 @@ async function limpar() {
   console.error("[limpar] tabelas zeradas");
 }
 
+// Lê todos os clientes em escopo (carteiras-alvo) já presentes na base.
+async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string }[]> {
+  const out: { id: string; carteira: string }[] = [];
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("clientes").select("id,carteira")
+      .in("carteira", [...TARGET_WALLETS])
+      .range(from, from + page - 1);
+    if (error) throw new Error(`select clientes: ${error.message}`);
+    const rows = data ?? [];
+    for (const r of rows) if (r.carteira) out.push({ id: r.id, carteira: r.carteira });
+    if (rows.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
+// Ids de clientes que JÁ têm ao menos uma mensagem (p/ backfill resumível).
+async function idsComMensagens(): Promise<Set<string>> {
+  const set = new Set<string>();
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await sb.from("mensagens").select("cliente_id").range(from, from + page - 1);
+    if (error) throw new Error(`select mensagens: ${error.message}`);
+    const rows = data ?? [];
+    for (const r of rows) if (r.cliente_id) set.add(r.cliente_id);
+    if (rows.length < page) break;
+    from += page;
+  }
+  return set;
+}
+
 // Busca as carteiras já conhecidas (clientes na base) para um conjunto de ids.
 // Permite pular /exists de quem já está atribuído — o grande ganho do incremental.
 async function carteirasConhecidas(ids: string[]): Promise<Map<string, string>> {
@@ -261,13 +296,30 @@ async function validar() {
   console.log(problemas.length ? `⚠️ ${problemas.join("; ")}` : `✅ sem inconsistências detectadas`);
 }
 
+// Modo "mensagens": backfill resumível do histórico. Não chama reports/exists —
+// lê os clientes em escopo já no banco e baixa só o que falta (pula quem já tem
+// mensagem). Serve para completar a carga histórica em execuções sucessivas.
+async function backfillMensagens() {
+  const todos = await clientesEmEscopoDoBanco();
+  const jaTem = process.env.ETL_REFAZER === "1" ? new Set<string>() : await idsComMensagens();
+  const faltantes = todos.filter((c) => !jaTem.has(c.id));
+  const limite = Number(process.env.ETL_BATCH || 0); // 0 = sem limite
+  const lote = limite > 0 ? faltantes.slice(0, limite) : faltantes;
+  console.error(`[backfill] ${todos.length} clientes em escopo | ${jaTem.size} já com msg | ${faltantes.length} faltando | processando ${lote.length}`);
+  await loadMensagens(lote);
+}
+
 async function main() {
   const t0 = Date.now();
   console.error(`ETL [${MODE}] — carteiras [${[...TARGET_WALLETS].join(", ")}] | janela ${START}..${END}\n`);
   if (process.env.ETL_LIMPAR === "1") await limpar();
-  const vendIds = await loadVendedores();
-  const clientes = await loadReports(vendIds);
-  await loadMensagens(clientes);
+  if (MODE === "mensagens") {
+    await backfillMensagens();
+  } else {
+    const vendIds = await loadVendedores();
+    const clientes = await loadReports(vendIds);
+    await loadMensagens(clientes);
+  }
   await validar();
   console.error(`\n✅ ETL [${MODE}] concluído em ${((Date.now() - t0) / 1000).toFixed(0)}s.`);
 }
