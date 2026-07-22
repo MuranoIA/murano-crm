@@ -60,10 +60,14 @@ export async function POST(req: Request) {
     };
     if (operator_id) payload.operator_id = operator_id;
 
+    // remove qualquer caractere inválido para header (ex: "•" colado por engano);
+    // JWT só tem ASCII imprimível [0x21-0x7E], então isto é seguro.
+    const tokenLimpo = rdToken!.replace(/[^\x21-\x7E]/g, "");
+
     // dispara na RD
     const rd = await fetch(new URL("/v3/messages/template/send", rdUrl!), {
       method: "POST",
-      headers: { Authorization: `Bearer ${rdToken}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${tokenLimpo}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const body: any = await rd.json().catch(() => ({}));

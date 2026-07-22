@@ -16,7 +16,11 @@ export class RdConversasApiError extends Error {
 }
 
 export class RdConversasClient {
-  constructor(private readonly options: RdConversasClientOptions) {}
+  private readonly token: string;
+  constructor(private readonly options: RdConversasClientOptions) {
+    // remove caracteres inválidos para header (ex: "•" colado por engano no .env/secret)
+    this.token = String(options.token ?? "").replace(/[^\x21-\x7E]/g, "");
+  }
 
   async get<T = unknown>(path: string, params: QueryParams = {}): Promise<T> {
     const url = new URL(path, this.options.baseUrl);
@@ -26,7 +30,7 @@ export class RdConversasClient {
 
     const response = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${this.options.token}`,
+        Authorization: `Bearer ${this.token}`,
         Accept: "application/json",
       },
     });
@@ -43,7 +47,7 @@ export class RdConversasClient {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.options.token}`,
+        Authorization: `Bearer ${this.token}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
