@@ -89,15 +89,19 @@ async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string
 //   (b) ativas nos últimos `dias` dias — conversas em andamento.
 // Conjunto pequeno e certeiro (~150-200), mantendo o run em ~2 min.
 async function clientesParaRefrescar(dias: number): Promise<{ id: string; carteira: string }[]> {
-  const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
   const out: { id: string; carteira: string }[] = [];
   let from = 0;
   const page = 1000;
   while (true) {
-    const { data, error } = await sb
-      .from("vw_funil").select("cliente_id,vendedor")
-      .or(`ultima_enviada_por.eq.customer,ultima_atividade.gte.${cutoff}`)
-      .range(from, from + page - 1);
+    let q = sb.from("vw_funil").select("cliente_id,vendedor");
+    if (dias > 0) {
+      const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
+      q = q.or(`ultima_enviada_por.eq.customer,ultima_atividade.gte.${cutoff}`);
+    } else {
+      // grátis: só as "aguardando" (cliente por último) — o essencial p/ limpar alerta
+      q = q.eq("ultima_enviada_por", "customer");
+    }
+    const { data, error } = await q.range(from, from + page - 1);
     if (error) throw new Error(`select vw_funil refrescar: ${error.message}`);
     const rows = data ?? [];
     for (const r of rows) {
@@ -350,11 +354,13 @@ async function main() {
     if (!FULL) {
       // além das conversas com atendimento novo (reports), recarrega as
       // recentemente ativas no banco — pega respostas dentro de atendimentos antigos.
-      const dias = Number(process.env.ETL_REFRESH_DAYS || 1);
+      // ETL_REFRESH_DAYS: 0 (padrão, grátis) = só "aguardando"; >0 = também ativas nesses dias
+      const dias = Number(process.env.ETL_REFRESH_DAYS ?? 0);
       const recentes = await clientesParaRefrescar(dias);
       let add = 0;
       for (const r of recentes) if (!alvos.has(r.id)) { alvos.set(r.id, r); add++; }
-      console.error(`[incremental] +${add} conversas (aguardando + ativas ${dias}d) → total a atualizar: ${alvos.size}`);
+      const escopo = dias > 0 ? `aguardando + ativas ${dias}d` : "aguardando";
+      console.error(`[incremental] +${add} conversas (${escopo}) → total a atualizar: ${alvos.size}`);
     }
     await loadMensagens([...alvos.values()]);
   }
