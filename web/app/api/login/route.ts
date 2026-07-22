@@ -2,13 +2,21 @@ import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
-// LOGIN INTERINO admin/admin — TEMPORÁRIO e inseguro (a pedido, "por hora").
-// Depois vira Supabase Auth + Google (vendedores) + admin proper.
+// Login do admin. Credenciais vêm de variáveis de ambiente:
+//   ADMIN_USER      (default "admin")
+//   ADMIN_PASSWORD  (OBRIGATÓRIA em produção; sem ela, ninguém entra — fail-closed)
+// Em desenvolvimento local, se ADMIN_PASSWORD não estiver setada, cai em "admin".
+// (Vendedores via Google/Supabase Auth entram numa etapa futura.)
+const ADMIN_USER = process.env.ADMIN_USER || "admin";
+const ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD || (process.env.NODE_ENV !== "production" ? "admin" : "");
+
 export async function POST(req: Request) {
   const { user, pass } = await req.json().catch(() => ({}));
-  if (user === "admin" && pass === "admin") {
+  if (ADMIN_PASSWORD && user === ADMIN_USER && pass === ADMIN_PASSWORD) {
     cookies().set("crm_sessao", "admin", {
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 8, // 8h
