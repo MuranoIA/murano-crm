@@ -133,7 +133,7 @@ export default function Page() {
   }
 
   async function recontatar(clienteId: string, clienteNome: string) {
-    if (!confirm(`Enviar template de recontato para ${clienteNome}?\n\n⚠️ Envia uma mensagem REAL no WhatsApp (com custo).`)) return;
+    // dispara direto ao clicar (sem confirmação); o botão já desativa após enviar
     setEnviando(clienteId);
     try {
       const r = await fetch("/api/send-template", {
