@@ -18,11 +18,24 @@ const TARGETS = [
   { wallet: "luana", empId: "6a3a99836da6dc52edf34c5a" },
 ];
 const TARGET_WALLETS = new Set(TARGETS.map((t) => t.wallet)); // comparado com current_wallet (lowercase)
-// Janela dinâmica: últimos ~89 dias até hoje (respeita o limite de 90 dias do /v4/reports).
-// Pode ser sobrescrita por ETL_START / ETL_END (YYYY-MM-DD) para recargas pontuais.
+
+// ---------------------------------------------------------------------------
+// MODOS
+//   incremental (padrão): janela curta (ETL_INCREMENTAL_DAYS, default 2 dias),
+//     NÃO chama /exists para clientes já conhecidos, carrega mensagens só das
+//     conversas ativas na janela. Rápido -> serve para rodar de X em X min.
+//   full: janela de ~89 dias, /exists em todos os contatos, enriquece vendedores.
+//     Pesado -> recarga manual/ocasional (ETL_MODE=full).
+// Overrides: ETL_START / ETL_END (YYYY-MM-DD). ETL_LIMPAR=1 zera as tabelas antes
+//   (use com cuidado; por padrão o upsert idempotente dispensa isso).
+// ---------------------------------------------------------------------------
+const MODE = (process.env.ETL_MODE || "incremental").toLowerCase();
+const FULL = MODE === "full";
+const INCREMENTAL_DAYS = Number(process.env.ETL_INCREMENTAL_DAYS || 2);
 const hojeISO = new Date().toISOString().slice(0, 10);
-const start89 = new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
-const START = process.env.ETL_START || start89;
+const janelaDias = FULL ? 89 : INCREMENTAL_DAYS; // full respeita o limite de 90 dias do /v4/reports
+const startAuto = new Date(Date.now() - janelaDias * 86400000).toISOString().slice(0, 10);
+const START = process.env.ETL_START || startAuto;
 const END = process.env.ETL_END || hojeISO;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -50,8 +63,20 @@ async function limpar() {
   console.error("[limpar] tabelas zeradas");
 }
 
+// Busca as carteiras já conhecidas (clientes na base) para um conjunto de ids.
+// Permite pular /exists de quem já está atribuído — o grande ganho do incremental.
+async function carteirasConhecidas(ids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const c of chunks(ids, 300)) {
+    const { data, error } = await sb.from("clientes").select("id,carteira").in("id", c);
+    if (error) throw new Error(`select clientes: ${error.message}`);
+    for (const r of data ?? []) if (r.carteira) map.set(r.id, r.carteira);
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
-// 1) VENDEDORES  (/v2/employees + enriquecimento /v1/employees/{id})
+// 1) VENDEDORES  (/v2/employees + enriquecimento /v1/employees/{id} só no full)
 // ---------------------------------------------------------------------------
 async function loadVendedores(): Promise<Set<string>> {
   const list: any = await withRetry(() => rd.get("/v2/employees"));
@@ -60,26 +85,30 @@ async function loadVendedores(): Promise<Set<string>> {
   for (const e of arr) {
     const id = e._id ?? e.id;
     let role: string | null = null, dept: string | null = null;
-    try {
-      await sleep(120);
-      const d: any = await withRetry(() => rd.get(`/v1/employees/${id}`));
-      role = d?.role ?? null;
-      dept = d?.departments?.[0]?.name ?? null;
-    } catch { /* opcional */ }
+    if (FULL) {
+      try {
+        await sleep(120);
+        const d: any = await withRetry(() => rd.get(`/v1/employees/${id}`));
+        role = d?.role ?? null;
+        dept = d?.departments?.[0]?.name ?? null;
+      } catch { /* opcional */ }
+    }
     rows.push({ id, nome: e.name ?? null, email: e.email ?? null, role, departamento: dept });
   }
-  await upsert("vendedores", rows);
-  console.error(`[vendedores] ${rows.length} carregados`);
+  // no incremental não sobrescreve role/departamento já preenchidos (upsert só do básico)
+  await upsert("vendedores", FULL ? rows : rows.map((r) => ({ id: r.id, nome: r.nome, email: r.email })));
+  console.error(`[vendedores] ${rows.length} carregados${FULL ? " (com enriquecimento)" : ""}`);
   return new Set(rows.map((r) => r.id));
 }
 
 // ---------------------------------------------------------------------------
 // 2) CLIENTES + ATENDIMENTOS
-//    Enumera todos os contatos atendidos pelo Romulo, enriquece via /exists
-//    e FILTRA por current_wallet == 'romulo' (atribuição estruturada, confiável).
+//    Enumera contatos atendidos pelos vendedores-alvo na janela; atribui por
+//    current_wallet. No incremental, só chama /exists para contatos NOVOS.
+//    Retorna os clientes EM ESCOPO ativos na janela (p/ carregar mensagens).
 // ---------------------------------------------------------------------------
 async function loadReports(vendIds: Set<string>) {
-  // 2a) union dos contatos atendidos pelos vendedores-alvo (sem filtro de tag)
+  // 2a) union dos contatos atendidos pelos vendedores-alvo na janela
   const custDocs = new Map<string, { cust: any; docs: any[] }>();
   for (const t of TARGETS) {
     let page = 1;
@@ -97,17 +126,29 @@ async function loadReports(vendIds: Set<string>) {
       page++;
       await sleep(250);
     }
-    console.error(`[reports] ${t.wallet}: acumulado ${custDocs.size} contatos`);
+    console.error(`[reports] ${t.wallet}: acumulado ${custDocs.size} contatos (janela ${START}..${END})`);
   }
-  console.error(`[reports] ${custDocs.size} contatos (union dos 3); enriquecendo via /exists...`);
 
-  // 2b) enriquece via /exists e mantém só current_wallet == 'romulo'
-  const clientes = new Map<string, any>();
+  // carteiras já conhecidas -> pula /exists de quem já está na base
+  const conhecidas = await carteirasConhecidas([...custDocs.keys()]);
+  const novos = [...custDocs.keys()].filter((id) => !conhecidas.has(id));
+  console.error(`[reports] ${custDocs.size} ativos | ${conhecidas.size} já conhecidos | ${novos.length} novos p/ /exists`);
+
+  const clientes = new Map<string, any>();       // novos/atualizados a inserir
+  const emEscopo = new Map<string, string>();     // id -> carteira (todos em escopo, p/ mensagens)
   const atends = new Map<string, any>();
+
+  // já conhecidos: entram em escopo direto (sem /exists)
+  for (const [id, cart] of conhecidas) {
+    if (custDocs.has(id)) emEscopo.set(id, cart);
+  }
+
+  // novos: enriquece via /exists e mantém só current_wallet ∈ alvos
   let checked = 0;
-  for (const [id, { cust, docs }] of custDocs) {
+  for (const id of novos) {
     checked++;
-    if (checked % 50 === 0) console.error(`  /exists ${checked}/${custDocs.size} (na carteira: ${clientes.size})`);
+    if (checked % 50 === 0) console.error(`  /exists ${checked}/${novos.length} (em escopo: ${clientes.size})`);
+    const { cust } = custDocs.get(id)!;
     const phone = cust.cel_phone;
     if (!phone) continue;
     let data: any = {};
@@ -131,6 +172,12 @@ async function loadReports(vendIds: Set<string>) {
       canal: cust.channel ?? null,
       tags: data.tags ?? cust.tags ?? [],
     });
+    emEscopo.set(id, wallet);
+  }
+
+  // atendimentos: só das conversas cujo cliente está em escopo
+  for (const [id, { docs }] of custDocs) {
+    if (!emEscopo.has(id)) continue;
     for (const d of docs) {
       const vend = d.employee?.id && vendIds.has(d.employee.id) ? d.employee.id : null;
       atends.set(d.id, {
@@ -153,16 +200,17 @@ async function loadReports(vendIds: Set<string>) {
       });
     }
   }
-  await upsert("clientes", [...clientes.values()]);
-  await upsert("atendimentos", [...atends.values()]);
-  console.error(`[clientes] ${clientes.size} | [atendimentos] ${atends.size}`);
-  return [...clientes.values()];
+
+  if (clientes.size) await upsert("clientes", [...clientes.values()]);
+  if (atends.size) await upsert("atendimentos", [...atends.values()]);
+  console.error(`[clientes] +${clientes.size} novos | [atendimentos] ${atends.size} | em escopo (ativos): ${emEscopo.size}`);
+  return [...emEscopo.entries()].map(([id, carteira]) => ({ id, carteira }));
 }
 
 // ---------------------------------------------------------------------------
-// 3) MENSAGENS  (/v2/messages/history, decriptado)
+// 3) MENSAGENS  (/v2/messages/history, decriptado) — só dos clientes ativos
 // ---------------------------------------------------------------------------
-async function loadMensagens(clientes: any[]) {
+async function loadMensagens(clientes: { id: string; carteira: string }[]) {
   let done = 0, vazios = 0, erros = 0, total = 0;
   for (const cli of clientes) {
     done++;
@@ -214,12 +262,13 @@ async function validar() {
 }
 
 async function main() {
-  console.error(`ETL — carteiras [${[...TARGET_WALLETS].join(", ")}] (por current_wallet) | janela ${START}..${END}\n`);
-  await limpar();
+  const t0 = Date.now();
+  console.error(`ETL [${MODE}] — carteiras [${[...TARGET_WALLETS].join(", ")}] | janela ${START}..${END}\n`);
+  if (process.env.ETL_LIMPAR === "1") await limpar();
   const vendIds = await loadVendedores();
   const clientes = await loadReports(vendIds);
   await loadMensagens(clientes);
   await validar();
-  console.error(`\n✅ ETL concluído.`);
+  console.error(`\n✅ ETL [${MODE}] concluído em ${((Date.now() - t0) / 1000).toFixed(0)}s.`);
 }
 main().catch((e) => { console.error("ERRO FATAL:", e); process.exit(1); });
