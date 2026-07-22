@@ -18,8 +18,12 @@ const TARGETS = [
   { wallet: "luana", empId: "6a3a99836da6dc52edf34c5a" },
 ];
 const TARGET_WALLETS = new Set(TARGETS.map((t) => t.wallet)); // comparado com current_wallet (lowercase)
-const START = "2026-04-24"; // dentro do limite de 90 dias do /v4/reports
-const END = "2026-07-22";
+// Janela dinâmica: últimos ~89 dias até hoje (respeita o limite de 90 dias do /v4/reports).
+// Pode ser sobrescrita por ETL_START / ETL_END (YYYY-MM-DD) para recargas pontuais.
+const hojeISO = new Date().toISOString().slice(0, 10);
+const start89 = new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
+const START = process.env.ETL_START || start89;
+const END = process.env.ETL_END || hojeISO;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function withRetry<T>(fn: () => Promise<T>, a = 0): Promise<T> {

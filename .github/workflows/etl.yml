@@ -1,0 +1,38 @@
+name: ETL RD Conversas -> Supabase
+
+on:
+  workflow_dispatch: {} # permite disparo manual pela aba Actions
+  schedule:
+    # A cada 15 min em horário comercial (dias úteis).
+    # Cron do GitHub roda em UTC. Brasília = UTC-3, então 11-23 UTC ≈ 08h-20h BRT.
+    - cron: "*/15 11-23 * * 1-5"
+
+# Se uma execução ainda estiver rodando quando a próxima começar, cancela a nova
+# (evita empilhar cargas — o ETL é um refresh completo e pode demorar minutos).
+concurrency:
+  group: etl
+  cancel-in-progress: false
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Rodar ETL
+        env:
+          RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
+          RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
+          RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run etl

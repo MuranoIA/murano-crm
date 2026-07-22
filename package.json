@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "explore": "ts-node src/explore.ts",
+    "etl": "ts-node src/etl/run.ts",
     "build": "tsc",
     "start": "node dist/etl.js"
   },
