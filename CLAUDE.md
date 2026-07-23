@@ -69,6 +69,14 @@ que recebe.
   → **Não existe endpoint para listar contatos por tag/carteira.**
 - `/v1/analytics/attendances/reviews-average` — path da doc está incorreto; o
   `explore.ts` chama mas não gera arquivo (falha silenciosa). Não confirmado.
+- **Webhooks: API não oferece (confirmado jul/2026).** Testado ao vivo contra a
+  conta real: `/v1|v2|v4/webhooks`, `/webhook`, `/integrations/webhooks`,
+  `/hooks`, `/callbacks`, `/events/subscriptions`, `/notifications/webhooks` —
+  todos 404. O índice de docs do RD Station Developers (`developers.rdstation.com/llms.txt`)
+  também confirma: webhooks só existem para RD Station Marketing/CRM (produto
+  diferente, API em `api.rd.services`), não para Conversas. **Decisão de
+  arquitetura:** o ETL tem que continuar pull agendado — não existe caminho
+  para push em tempo real com esta API.
 
 **Consequência estrutural:** a API só tem duas âncoras — `customer_id` (para puxar
 histórico) e `employee` (só dentro de `/v4/reports`). Não há "buscar mensagens por
@@ -201,8 +209,6 @@ negócio afirmada pelo usuário: uma venda fechada envolve informar **produtos +
 valores + valor total** e combinar entrega/pagamento.
 
 **Pendências / TODOs:**
-- **Webhooks: NÃO verificado se o RD Conversas os oferece.** Se tiver, muda a
-  arquitetura de "pull agendado" para "push em tempo real". Investigar.
 - Escrever o schema e o job de UPSERT (a Fase 2 em si).
 - Confirmar formato de `is_template_message=true` num exemplo salvo (todos os
   exemplos gravados até agora eram `false`).

@@ -113,6 +113,9 @@ export default function Page() {
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
+  const [syncRodando, setSyncRodando] = useState(false);
+  const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
+  const [disparandoSync, setDisparandoSync] = useState(false);
 
   async function load() {
     try {
@@ -159,6 +162,32 @@ export default function Page() {
     setSessao(null);
   }
 
+  async function checarSync() {
+    try {
+      const r = await fetch("/api/sync-etl", { cache: "no-store" });
+      if (!r.ok) return; // 401/403 (não-admin) — ignora silenciosamente, botão nem aparece
+      const j = await r.json();
+      setSyncRodando(!!j.running);
+      setSyncUltimo(j.lastRun?.createdAt ?? null);
+    } catch {}
+  }
+
+  async function dispararSync() {
+    setDisparandoSync(true);
+    try {
+      const r = await fetch("/api/sync-etl", { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) { alert("Falha ao disparar sincronização: " + (j.error ?? `HTTP ${r.status}`)); return; }
+      setSyncRodando(true);
+      // o run leva ~2-3min pra aparecer como concluído; recarrega o board depois
+      setTimeout(load, 60_000);
+    } catch (e: any) {
+      alert("Erro: " + (e?.message ?? e));
+    } finally {
+      setDisparandoSync(false);
+    }
+  }
+
   const ACKS_KEY = "crm_acks";
   // Abre a conversa no RD Conversas E "reconhece" o card (silencia o alerta na hora).
   function abrirConversa(clienteId: string) {
@@ -193,6 +222,15 @@ export default function Page() {
     if (!sessao) return;
     load();
     const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [sessao]);
+
+  // status do ETL (só admin) — dá polling pra saber se já tem um run em andamento
+  // (inclusive disparado por outra pessoa/via gh CLI), pra não deixar clicar à toa.
+  useEffect(() => {
+    if (sessao?.role !== "admin") return;
+    checarSync();
+    const t = setInterval(checarSync, 15000);
     return () => clearInterval(t);
   }, [sessao]);
 
@@ -253,6 +291,28 @@ export default function Page() {
             </span>
             <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : cap(sessao.carteira ?? "")}</b>
           </span>
+          {sessao.role === "admin" && (
+            <button
+              onClick={dispararSync}
+              disabled={disparandoSync || syncRodando}
+              title={syncUltimo ? `Última sincronização: ${dataHora(syncUltimo)}` : "Dispara o ETL manualmente (RD Conversas → Supabase), sem esperar o cron"}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                cursor: disparandoSync || syncRodando ? "wait" : "pointer",
+                background: syncRodando ? "#eaf6fd" : RD.surface,
+                color: syncRodando ? "#0b7fb0" : RD.gray,
+                border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
+                borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
+              }}
+            >
+              <span style={{
+                width: 7, height: 7, borderRadius: 7,
+                background: syncRodando ? "#0ea3dc" : RD.grayLight,
+                animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
+              }} />
+              {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
+            </button>
+          )}
           <button
             onClick={sair}
             style={{ background: "transparent", border: `1px solid ${RD.border}`, color: RD.gray, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
