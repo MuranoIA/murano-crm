@@ -354,8 +354,9 @@ async function main() {
     if (!FULL) {
       // além das conversas com atendimento novo (reports), recarrega as
       // recentemente ativas no banco — pega respostas dentro de atendimentos antigos.
-      // ETL_REFRESH_DAYS: 0 (padrão, grátis) = só "aguardando"; >0 = também ativas nesses dias
-      const dias = Number(process.env.ETL_REFRESH_DAYS ?? 0);
+      // ETL_REFRESH_DAYS: 1 (padrão) = "aguardando" + ativas nas últimas 24h (pega os
+      // dois sentidos, inclusive conversas onde o operador foi o último a falar). 0 = só "aguardando".
+      const dias = Number(process.env.ETL_REFRESH_DAYS ?? 1);
       const recentes = await clientesParaRefrescar(dias);
       let add = 0;
       for (const r of recentes) if (!alvos.has(r.id)) { alvos.set(r.id, r); add++; }
