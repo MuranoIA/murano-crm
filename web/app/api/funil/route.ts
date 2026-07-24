@@ -72,16 +72,26 @@ export async function GET() {
     if (d.cliente_id && !disparos[d.cliente_id]) disparos[d.cliente_id] = d.criada_em;
   }
 
-  // totais R$ de venda por período (nota fiscal), por vendedor — coluna Pedido Emitido.
-  // resiliente: se a view (0007) ainda não existe, devolve {} e o front não mostra o total.
-  let totQ = sb.from("vw_pedido_emitido_totais").select("*");
+  // totais de venda REAL (nota fiscal WinThor, por RCA) por período — coluna Pedido Emitido.
+  // R$ + qtd de notas. resiliente: se a view (0008) não existir, tenta a antiga (0007), senão {}.
+  type VT = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
+              qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
+  const vendasTotais: Record<string, VT> = {};
+  let totQ = sb.from("vw_vendas_totais").select("*");
   if (carteira) totQ = totQ.eq("carteira", carteira);
-  const { data: tot } = await totQ;
-  const vendasTotais: Record<string, { hoje: number; semana: number; quinzena: number; mes: number }> = {};
-  for (const t of tot ?? []) {
-    vendasTotais[t.carteira] = {
-      hoje: Number(t.total_hoje ?? 0), semana: Number(t.total_semana ?? 0),
-      quinzena: Number(t.total_quinzena ?? 0), mes: Number(t.total_mes ?? 0),
+  let { data: tot, error: totErr } = await totQ;
+  if (totErr) { // fallback 0007 (contato-matched, sem ontem/qtd)
+    let old = sb.from("vw_pedido_emitido_totais").select("*");
+    if (carteira) old = old.eq("carteira", carteira);
+    const r = await old; tot = r.data as any;
+    for (const t of tot ?? []) vendasTotais[t.carteira] = {
+      hoje: +(t.total_hoje ?? 0), ontem: 0, semana: +(t.total_semana ?? 0), quinzena: +(t.total_quinzena ?? 0), mes: +(t.total_mes ?? 0),
+      qHoje: +(t.qtd_hoje ?? 0), qOntem: 0, qSemana: +(t.qtd_semana ?? 0), qQuinzena: +(t.qtd_quinzena ?? 0), qMes: +(t.qtd_mes ?? 0),
+    };
+  } else {
+    for (const t of tot ?? []) vendasTotais[t.carteira] = {
+      hoje: +(t.total_hoje ?? 0), ontem: +(t.total_ontem ?? 0), semana: +(t.total_semana ?? 0), quinzena: +(t.total_quinzena ?? 0), mes: +(t.total_mes ?? 0),
+      qHoje: +(t.qtd_hoje ?? 0), qOntem: +(t.qtd_ontem ?? 0), qSemana: +(t.qtd_semana ?? 0), qQuinzena: +(t.qtd_quinzena ?? 0), qMes: +(t.qtd_mes ?? 0),
     };
   }
 

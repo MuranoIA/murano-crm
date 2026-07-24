@@ -26,6 +26,14 @@ function moedaBR(v: number | null): string {
 function ehProspeccao(c: Card): boolean {
   return c.cliente_id.startsWith("winthor:");
 }
+// venda WinThor de cliente que nunca conversou (card sintético na coluna Pedido Emitido)
+function ehVendaSemConversa(c: Card): boolean {
+  return c.cliente_id.startsWith("venda:");
+}
+// qualquer card sintético (sem conversa no RD) — clique abre WhatsApp pelo telefone
+function ehSintetico(c: Card): boolean {
+  return ehProspeccao(c) || ehVendaSemConversa(c);
+}
 
 function limpaMsg(s: string | null): string {
   return String(s ?? "").replace(/^\*[^*]+\*\s*/, "").replace(/\s+/g, " ").trim();
@@ -156,7 +164,9 @@ export default function Page() {
   const [templatesHoje, setTemplatesHoje] = useState<Record<string, number>>({});
   const [templatesAutoHoje, setTemplatesAutoHoje] = useState<Record<string, number>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
-  const [vendasTotais, setVendasTotais] = useState<Record<string, { hoje: number; semana: number; quinzena: number; mes: number }>>({});
+  type VendaTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
+                    qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
+  const [vendasTotais, setVendasTotais] = useState<Record<string, VendaTot>>({});
   const [enviando, setEnviando] = useState<string | null>(null);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
@@ -262,7 +272,7 @@ export default function Page() {
   // pra abrir — abre o WhatsApp direto pelo telefone. Cliente normal: abre o RD
   // Conversas E "reconhece" o card (silencia o alerta na hora).
   function abrirConversa(c: Card) {
-    if (ehProspeccao(c)) {
+    if (ehSintetico(c)) {
       if (c.telefone) window.open(`https://wa.me/${c.telefone.replace(/\D/g, "")}`, "whatsapp");
       return;
     }
@@ -540,14 +550,14 @@ export default function Page() {
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                     {col.key === "pedido_emitido" && (() => {
-                      // total R$ faturado no período ativo (todos -> mês), escopo pelo vendedor filtrado
-                      // "ontem" ainda não tem bucket próprio de venda -> usa o do mês (TODO: bucket ontem)
-                      const perTotal: "hoje" | "semana" | "quinzena" | "mes" =
-                        (periodoAtivo === "todos" || periodoAtivo === "ontem") ? "mes" : periodoAtivo;
-                      const total = filtro === "todos"
-                        ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
-                        : (vendasTotais[filtro]?.[perTotal] ?? 0);
-                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(total)}</span>;
+                      // total R$ + qtd de NOTAS (venda real WinThor) no período ativo; todos -> mês.
+                      // escopo pelo vendedor filtrado (Todos = soma das carteiras).
+                      const per = (periodoAtivo === "todos" ? "mes" : periodoAtivo) as "hoje" | "ontem" | "semana" | "quinzena" | "mes";
+                      const qKey = ({ hoje: "qHoje", ontem: "qOntem", semana: "qSemana", quinzena: "qQuinzena", mes: "qMes" } as const)[per];
+                      const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
+                      const totalR = vt.reduce((a, v) => a + (v[per] ?? 0), 0);
+                      const totalQ = vt.reduce((a, v) => a + (v[qKey] ?? 0), 0);
+                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(totalR)} · {totalQ} vendas</span>;
                     })()}
                   </div>
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -592,6 +602,7 @@ export default function Page() {
                     <>
                     {doGrupo.slice(0, visiveisPorColuna[col.key] ?? LOTE_INICIAL).map((c) => {
                       const prospeccao = ehProspeccao(c);
+                      const vendaSemConversa = ehVendaSemConversa(c);
                       // ociosos: por definição já passou da janela de 24h, precisa de template — igual
                       // a tentativa_contato "parada", exceto pra prospecção (nunca teve cliente_id do RD,
                       // não dá pra disparar template automático, só abrir WhatsApp manual).
@@ -710,6 +721,10 @@ export default function Page() {
                                   </div>
                                 );
                               })
+                            ) : vendaSemConversa ? (
+                              <div style={{ fontSize: 11, color: RD.grayLight }}>
+                                venda faturada · sem conversa · {c.telefone ?? "s/ tel"}
+                              </div>
                             ) : prospeccao ? (
                               <div style={{ fontSize: 11, color: RD.grayLight }}>
                                 nunca contatado · {c.telefone ?? "sem telefone"}
