@@ -12,8 +12,11 @@ type Card = {
   ultima_enviada_por: string | null;
   telefone: string | null;
   ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
-  venda_valor: number | null;      // total faturado no mês (R$), nota fiscal WinThor
-  venda_data: string | null;       // data da nota mais recente do mês
+  venda_valor: number | null;      // valor faturado no período (R$), nota fiscal WinThor
+  venda_data: string | null;       // data da última compra
+  periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
+  pedidos?: number;                // (pedido_emitido) qtd de pedidos no período
+  cliente_de_outra_carteira?: boolean; // vendeu p/ cliente de outro consultor
 };
 
 function moedaBR(v: number | null): string {
@@ -172,12 +175,10 @@ export default function Page() {
   const [templatesTotais, setTemplatesTotais] = useState<Record<string, TplTot>>({});
   const [templatesAutoTotais, setTemplatesAutoTotais] = useState<Record<string, TplTot>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
-  type VendaTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
-                    qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
-  const [vendasTotais, setVendasTotais] = useState<Record<string, VendaTot>>({});
-  // venda por cliente por período (chave = cliente_id do card) — card acompanha o período
-  type VendaCli = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
-  const [vendaPorCliente, setVendaPorCliente] = useState<Record<string, VendaCli>>({});
+  // totais do cabeçalho de Pedido Emitido: por carteira -> por período -> {total, vendas}
+  const [vendasTotais, setVendasTotais] = useState<Record<string, Record<string, { total: number; vendas: number }>>>({});
+  // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
+  const [pedidoCards, setPedidoCards] = useState<Card[]>([]);
   const [enviando, setEnviando] = useState<string | null>(null);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
@@ -209,7 +210,7 @@ export default function Page() {
       setTemplatesAutoTotais(j.templatesAutoTotais ?? {});
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
-      setVendaPorCliente(j.vendaPorCliente ?? {});
+      setPedidoCards(j.pedidoCards ?? []);
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -342,20 +343,20 @@ export default function Page() {
     () => [...new Set(cards.map((c) => c.vendedor).filter(Boolean))].sort(),
     [cards]
   );
-  // valor de venda do card (pedido_emitido) no período: soma das compras do cliente
-  // naquele período. "todos" -> mês. Sem venda no período -> 0 (card some do período).
-  const vendaCard = (c: Card, periodo: Periodo): number => {
-    const m = vendaPorCliente[c.cliente_id];
-    if (!m) return periodo === "todos" ? (c.venda_valor ?? 0) : 0;
-    const p = (periodo === "todos" ? "mes" : periodo) as keyof VendaCli;
-    return m[p] ?? 0;
-  };
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     return r;
   }, [cards, filtro, busca]);
+  // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
+  // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
+  const pedidoVisiveis = useMemo(() => {
+    let r = filtro === "todos" ? pedidoCards : pedidoCards.filter((c) => c.vendedor === filtro);
+    const q = busca.trim().toLowerCase();
+    if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
+    return r;
+  }, [pedidoCards, filtro, busca]);
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
   useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna]);
@@ -527,14 +528,16 @@ export default function Page() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
           {COLUNAS.map((col) => {
-            const todosDaEtapa = visiveis.filter((c) => c.etapa === col.key);
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
-            // pedido_emitido filtra por VENDA no período (data da nota); demais por atividade
-            let doGrupo = todosDaEtapa.filter((c) =>
-              col.key === "pedido_emitido"
-                ? (periodoAtivo === "todos" ? true : vendaCard(c, periodoAtivo) > 0)
-                : dentroPeriodo(c.ultima_atividade, periodoAtivo)
-            );
+            const ehPedido = col.key === "pedido_emitido";
+            // pedido_emitido: cards vêm das views de faturamento (1 linha por período);
+            // demais colunas: da vw_funil filtrada por atividade.
+            const todosDaEtapa = ehPedido
+              ? pedidoVisiveis.filter((c) => c.periodo === "todos")
+              : visiveis.filter((c) => c.etapa === col.key);
+            let doGrupo = ehPedido
+              ? pedidoVisiveis.filter((c) => c.periodo === periodoAtivo)
+              : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, periodoAtivo));
             if (busca.trim()) {
               // na busca: ordena por data da última mensagem (mais recente primeiro) p/ separar homônimos
               doGrupo = [...doGrupo].sort(
@@ -564,10 +567,11 @@ export default function Page() {
             // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
             const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
             doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
-            // contagem por período (sempre sobre a etapa inteira, não sobre o filtrado)
-            const contaPeriodo = (p: Periodo) => todosDaEtapa.filter((c) =>
-              col.key === "pedido_emitido" ? vendaCard(c, p) > 0 : dentroPeriodo(c.ultima_atividade, p)
-            ).length;
+            // contagem por período. pedido_emitido: nº de clientes com venda no período
+            // (linhas daquele período na view); demais: por atividade.
+            const contaPeriodo = (p: Periodo) => ehPedido
+              ? pedidoVisiveis.filter((c) => c.periodo === p).length
+              : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 14px" }}>
@@ -578,13 +582,12 @@ export default function Page() {
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                     {col.key === "pedido_emitido" && (() => {
-                      // total R$ + qtd de NOTAS (venda real WinThor) no período ativo; todos -> mês.
+                      // total R$ + qtd de vendas (bruto, "quem lançou") no período ativo.
                       // escopo pelo vendedor filtrado (Todos = soma das carteiras).
-                      const per = (periodoAtivo === "todos" ? "mes" : periodoAtivo) as "hoje" | "ontem" | "semana" | "quinzena" | "mes";
-                      const qKey = ({ hoje: "qHoje", ontem: "qOntem", semana: "qSemana", quinzena: "qQuinzena", mes: "qMes" } as const)[per];
+                      const per = periodoAtivo; // hoje/ontem/semana/quinzena/mes/todos
                       const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
-                      const totalR = vt.reduce((a, v) => a + (v[per] ?? 0), 0);
-                      const totalQ = vt.reduce((a, v) => a + (v[qKey] ?? 0), 0);
+                      const totalR = vt.reduce((a, v) => a + (v[per]?.total ?? 0), 0);
+                      const totalQ = vt.reduce((a, v) => a + (v[per]?.vendas ?? 0), 0);
                       return (
                         <span style={{ marginLeft: "auto", display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
                           <span style={{ fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(totalR)}</span>
@@ -711,7 +714,7 @@ export default function Page() {
                                   borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, letterSpacing: 0.2,
                                 }}
                               >
-                                {moedaBR(vendaCard(c, periodoAtivo))}
+                                {moedaBR(c.venda_valor ?? 0)}
                               </span>
                             ) : null}
                           </div>

@@ -87,51 +87,105 @@ export async function GET() {
     if (d.cliente_id && !disparos[d.cliente_id]) disparos[d.cliente_id] = d.criada_em;
   }
 
-  // totais de venda REAL (nota fiscal WinThor, por RCA) por período — coluna Pedido Emitido.
-  // R$ + qtd de notas. resiliente: se a view (0008) não existir, tenta a antiga (0007), senão {}.
-  type VT = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
-              qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
-  const vendasTotais: Record<string, VT> = {};
-  let totQ = sb.from("vw_vendas_totais").select("*");
-  if (carteira) totQ = totQ.eq("carteira", carteira);
-  let { data: tot, error: totErr } = await totQ;
-  if (totErr) { // fallback 0007 (contato-matched, sem ontem/qtd)
-    let old = sb.from("vw_pedido_emitido_totais").select("*");
-    if (carteira) old = old.eq("carteira", carteira);
-    const r = await old; tot = r.data as any;
-    for (const t of tot ?? []) vendasTotais[t.carteira] = {
-      hoje: +(t.total_hoje ?? 0), ontem: 0, semana: +(t.total_semana ?? 0), quinzena: +(t.total_quinzena ?? 0), mes: +(t.total_mes ?? 0),
-      qHoje: +(t.qtd_hoje ?? 0), qOntem: 0, qSemana: +(t.qtd_semana ?? 0), qQuinzena: +(t.qtd_quinzena ?? 0), qMes: +(t.qtd_mes ?? 0),
+  // ===== PEDIDO EMITIDO: vem das views oficiais de faturamento (bruto, "quem lançou") =====
+  // vw_pedido_emitido_card: 1 linha por cliente por período. vw_pedido_emitido_total: cabeçalho.
+  const pcRows: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let pcQ = sb.from("vw_pedido_emitido_card")
+      .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,cliente_de_outra_carteira,pedidos,valor,ultima_compra,ultima_mensagem,ultima_mensagem_em")
+      .range(from, from + PAGE - 1);
+    // funil só cobre as 3 carteiras ISR; as views têm a empresa inteira ("quem lançou")
+    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", ["romulo", "luana", "kamilly"]);
+    const { data, error } = await pcQ;
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    pcRows.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+
+  // mapas por cliente_id e por TELEFONE (últimos 8) da vw_funil — pra religar a venda ao
+  // contato quando o vínculo por CPF falha (contato sem CPF), e enriquecer o card.
+  const funilByCliente: Record<string, any> = {};
+  const funilByTel: Record<string, any> = {};
+  const tel8 = (t: any) => String(t ?? "").replace(/\D/g, "").slice(-8);
+  const ehReal = (id: any) => typeof id === "string" && !id.startsWith("winthor:") && !id.startsWith("venda:");
+  for (const c of cards) {
+    if (c.cliente_id) funilByCliente[c.cliente_id] = c;
+    const t = tel8(c.telefone);
+    if (t.length === 8 && ehReal(c.cliente_id)) funilByTel[t] = c; // só contato real de conversa
+  }
+
+  // telefone do WinThor por codcli das vendas (o card view vem sem telefone p/ não-vinculado)
+  const saleCodclis = [...new Set(pcRows.map((r: any) => Number(r.codcli)).filter((x) => !isNaN(x)))];
+  const telByCodcli: Record<number, string> = {};
+  for (let i = 0; i < saleCodclis.length; i += 300) {
+    const { data: wc } = await sb.from("wth_carteira").select("codcli,telefone").in("codcli", saleCodclis.slice(i, i + 300));
+    for (const w of wc ?? []) telByCodcli[Number(w.codcli)] = w.telefone;
+  }
+  // cliente_id efetivo de uma linha de venda: vínculo CPF, senão contato com mesmo telefone
+  const effCliId = (r: any): string | null =>
+    r.cliente_id ?? (funilByTel[tel8(telByCodcli[Number(r.codcli)])]?.cliente_id ?? null);
+
+  // quem comprou no mês (periodo 'todos') — pra tirar das OUTRAS colunas
+  const buyerCliIds = new Set<string>();
+  const buyerCodclis = new Set<number>();
+  for (const r of pcRows ?? []) if (r.periodo === "todos") {
+    const cid = effCliId(r);
+    if (cid) buyerCliIds.add(cid);
+    if (r.codcli != null) buyerCodclis.add(Number(r.codcli));
+  }
+
+  // cards das outras colunas = vw_funil, SEM pedido_emitido e SEM quem comprou
+  const cardsOutros = cards.filter((c: any) => {
+    if (c.etapa === "pedido_emitido") return false; // pedido vem das views novas
+    if (c.cliente_id && buyerCliIds.has(c.cliente_id)) return false; // comprador sai das outras colunas
+    if (typeof c.cliente_id === "string" && c.cliente_id.startsWith("winthor:")) {
+      const cc = Number(c.cliente_id.slice(8));
+      if (buyerCodclis.has(cc)) return false; // prospecção que já comprou
+    }
+    return true;
+  });
+
+  // cards de pedido_emitido (um por cliente por período), formato Card + periodo/pedidos
+  const pedidoCards = (pcRows ?? []).map((r: any) => {
+    const cid = effCliId(r);
+    const key = cid ?? `venda:${r.codcli}`;
+    const f = cid ? funilByCliente[cid] : null;
+    return {
+      cliente_id: key,
+      cliente: r.cliente,
+      vendedor: r.vendedor_slug,
+      etapa: "pedido_emitido",
+      periodo: r.periodo,
+      pedidos: r.pedidos,
+      cliente_de_outra_carteira: r.cliente_de_outra_carteira,
+      venda_valor: r.valor,
+      venda_data: r.ultima_compra,
+      telefone: r.telefone ?? f?.telefone ?? null,
+      ultima_atividade: f?.ultima_atividade ?? r.ultima_mensagem_em ?? null,
+      ultima_mensagem: f?.ultima_mensagem ?? r.ultima_mensagem ?? null,
+      ultima_enviada_por: f?.ultima_enviada_por ?? null,
+      ultimas_mensagens: f?.ultimas_mensagens ?? null,
     };
-  } else {
-    for (const t of tot ?? []) vendasTotais[t.carteira] = {
-      hoje: +(t.total_hoje ?? 0), ontem: +(t.total_ontem ?? 0), semana: +(t.total_semana ?? 0), quinzena: +(t.total_quinzena ?? 0), mes: +(t.total_mes ?? 0),
-      qHoje: +(t.qtd_hoje ?? 0), qOntem: +(t.qtd_ontem ?? 0), qSemana: +(t.qtd_semana ?? 0), qQuinzena: +(t.qtd_quinzena ?? 0), qMes: +(t.qtd_mes ?? 0),
+  });
+
+  // totais do cabeçalho por carteira e período (bruto, "quem lançou")
+  const vendasTotais: Record<string, Record<string, { total: number; vendas: number }>> = {};
+  let totQ = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
+  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", ["romulo", "luana", "kamilly"]);
+  const { data: tot } = await totQ;
+  for (const t of tot ?? []) {
+    (vendasTotais[t.vendedor_slug] = vendasTotais[t.vendedor_slug] ?? {})[t.periodo] = {
+      total: +(t.total ?? 0), vendas: +(t.vendas ?? 0),
     };
   }
 
-  // venda por cliente por período (para o card acompanhar o período). Chave = o mesmo
-  // cliente_id que o card usa: contato vinculado, senão "venda:<codcli>". Resiliente.
-  const vendaPorCliente: Record<string, { hoje: number; ontem: number; semana: number; quinzena: number; mes: number }> = {};
-  try {
-    const vmc = await sb.from("vw_vendas_mes_cliente").select("codcli,cliente_id_vinculo,carteira,v_hoje,v_ontem,v_semana,v_quinzena,v_mes");
-    if (!vmc.error) for (const r of vmc.data ?? []) {
-      if (carteira && r.carteira !== carteira) continue;
-      const key = r.cliente_id_vinculo ?? `venda:${r.codcli}`;
-      vendaPorCliente[key] = {
-        hoje: +(r.v_hoje ?? 0), ontem: +(r.v_ontem ?? 0), semana: +(r.v_semana ?? 0),
-        quinzena: +(r.v_quinzena ?? 0), mes: +(r.v_mes ?? 0),
-      };
-    }
-  } catch {}
-
   return Response.json({
-    cards: cards ?? [],
+    cards: cardsOutros,
+    pedidoCards,
     templatesTotais,
     templatesAutoTotais,
     disparos,
     vendasTotais,
-    vendaPorCliente,
     dia: hojeBRT,
     atualizado_em: new Date().toISOString(),
   });
