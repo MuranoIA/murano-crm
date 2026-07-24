@@ -248,6 +248,9 @@ export default function Page() {
 
   // resposta livre inline no card (só coluna Negociação — dentro da janela de 24h)
   const [respostaTexto, setRespostaTexto] = useState<Record<string, string>>({});
+  // mensagens enviadas otimisticamente (aparecem na hora, antes do próximo sync do ETL
+  // confirmar); somem sozinhas quando o mesmo texto chega pela sincronização real.
+  const [pendentes, setPendentes] = useState<Record<string, Msg[]>>({});
   const [enviandoResposta, setEnviandoResposta] = useState<string | null>(null);
   async function enviarResposta(clienteId: string) {
     const texto = (respostaTexto[clienteId] ?? "").trim();
@@ -264,6 +267,11 @@ export default function Page() {
       try { j = txt ? JSON.parse(txt) : {}; } catch { j = { error: txt || `HTTP ${r.status} (resposta vazia)` }; }
       if (!r.ok || j.error) { alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`)); return; }
       setRespostaTexto((prev) => ({ ...prev, [clienteId]: "" }));
+      // mostra na hora, como última mensagem do chat, sem esperar o ETL confirmar
+      setPendentes((prev) => ({
+        ...prev,
+        [clienteId]: [...(prev[clienteId] ?? []), { c: texto, e: "operator", t: new Date().toISOString() }],
+      }));
       await load();
     } catch (e: any) {
       alert("Erro: " + (e?.message ?? e));
@@ -681,7 +689,12 @@ export default function Page() {
                       const msgsRaw: Msg[] = (c.ultimas_mensagens && c.ultimas_mensagens.length)
                         ? c.ultimas_mensagens
                         : (c.ultima_mensagem ? [{ c: c.ultima_mensagem, e: c.ultima_enviada_por, t: c.ultima_atividade }] : []);
-                      const msgsChrono = [...msgsRaw].reverse().slice(-2); // 2 mais recentes, ordem cronológica
+                      // pendentes (enviadas agora, aguardando o ETL confirmar) somem sozinhas
+                      // quando o mesmo texto já chegou pela sincronização real (evita duplicar)
+                      const pend = (pendentes[c.cliente_id] ?? []).filter(
+                        (p) => !msgsRaw.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim())
+                      );
+                      const msgsChrono = [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
                       return (
                         <article
                           key={c.cliente_id}
@@ -747,9 +760,14 @@ export default function Page() {
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3 }}>
                             {c.cliente}
                           </div>
-                          {/* área de mensagens: cresce e cola no rodapé; se as msgs forem grandes,
-                              as mais antigas (topo) são cortadas, sempre mantendo a mais recente visível */}
-                          <div style={{ flex: 1, minHeight: 0, marginTop: 6, display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 4, overflow: "hidden" }}>
+                          {/* área de mensagens: rola tipo chat, sempre com a mais recente embaixo
+                              à vista (auto-scroll pro fim a cada render — ref inline dispara sempre) */}
+                          <div
+                            ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
+                            onClick={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                            style={{ flex: 1, minHeight: 0, marginTop: 6, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}
+                          >
                             {msgsChrono.length > 0 ? (
                               msgsChrono.map((m, i) => {
                                 const doCliente = m.e === "customer";
