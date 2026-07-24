@@ -6,10 +6,17 @@ type Card = {
   cliente: string;
   vendedor: string;
   etapa: string;
-  ultima_atividade: string;
+  ultima_atividade: string | null;
   ultima_mensagem: string | null;
   ultima_enviada_por: string | null;
+  telefone: string | null;
 };
+
+// cards sintéticos da fila de prospecção (WinThor) — nunca tiveram conversa no RD
+// Conversas, não têm cliente_id real de lá, só telefone pra abrir WhatsApp direto.
+function ehProspeccao(c: Card): boolean {
+  return c.cliente_id.startsWith("winthor:");
+}
 
 function limpaMsg(s: string | null): string {
   return String(s ?? "").replace(/^\*[^*]+\*\s*/, "").replace(/\s+/g, " ").trim();
@@ -19,7 +26,7 @@ const MIN_ALERTA = 10;  // cliente respondeu e vendedor está há >10 min sem re
 const SNOOZE_MIN = 20;  // clicar no card "reconhece" e silencia o alerta por ~1 ciclo de ETL
 // ackMs = quando o vendedor abriu a conversa deste card (reconhecimento otimista).
 function ehAlerta(c: Card, ackMs?: number): boolean {
-  if (c.ultima_enviada_por !== "customer") return false;
+  if (c.ultima_enviada_por !== "customer" || !c.ultima_atividade) return false;
   const atividade = new Date(c.ultima_atividade).getTime();
   if (Date.now() - atividade <= MIN_ALERTA * 60 * 1000) return false;
   // Se o vendedor abriu a conversa DEPOIS da última msg do cliente e ainda está na
@@ -58,6 +65,7 @@ function Logo({ size = 28 }: { size?: number }) {
 }
 
 const COLUNAS = [
+  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8" },
   { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee" },
   { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6" },
   { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a" },
@@ -69,7 +77,8 @@ const CoresVendedor: Record<string, string> = {
   luana: "#0d9488",
 };
 
-function tempoRelativo(iso: string): string {
+function tempoRelativo(iso: string | null): string {
+  if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
   if (min < 1) return "agora";
@@ -78,19 +87,23 @@ function tempoRelativo(iso: string): string {
   if (h < 24) return `${h} h`;
   return `${Math.floor(h / 24)} d`;
 }
-function diasInativo(iso: string): number {
+function diasInativo(iso: string | null): number {
+  if (!iso) return Infinity; // nunca contatado — "mais parado que qualquer outro"
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
-function ehHoje(iso: string): boolean {
+function ehHoje(iso: string | null): boolean {
+  if (!iso) return false;
   const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
   return new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) === hoje;
 }
-function dataHora(iso: string): string {
+function dataHora(iso: string | null): string {
+  if (!iso) return "—";
   const d = new Date(new Date(iso).getTime() - 3 * 3600 * 1000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
-function dataCurta(iso: string): string {
+function dataCurta(iso: string | null): string {
+  if (!iso) return "—";
   const d = new Date(new Date(iso).getTime() - 3 * 3600 * 1000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}`;
@@ -100,6 +113,23 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
+
+// Períodos de atividade (janelas móveis, cumulativas: hoje ⊂ semana ⊂ quinzena ⊂ mês).
+// "todos" = sem filtro. Cards de prospecção (ultima_atividade null) só aparecem em "todos".
+type Periodo = "todos" | "hoje" | "semana" | "quinzena" | "mes";
+const PERIODOS: { key: Exclude<Periodo, "todos">; label: string; dias: number }[] = [
+  { key: "hoje", label: "hoje", dias: 0 },       // 0 = dia-calendário (via ehHoje), não 24h móveis
+  { key: "semana", label: "semana", dias: 7 },
+  { key: "quinzena", label: "quinzena", dias: 15 },
+  { key: "mes", label: "mês", dias: 30 },
+];
+function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
+  if (periodo === "todos") return true;
+  if (!iso) return false; // prospecção sem data não entra em nenhuma janela
+  if (periodo === "hoje") return ehHoje(iso);
+  const dias = periodo === "semana" ? 7 : periodo === "quinzena" ? 15 : 30;
+  return Date.now() - new Date(iso).getTime() <= dias * 86400000;
+}
 
 export default function Page() {
   const [cards, setCards] = useState<Card[]>([]);
@@ -118,9 +148,13 @@ export default function Page() {
   const [acks, setAcks] = useState<Record<string, number>>({});
   // scroll infinito: quantos cards renderizar por coluna (col.key -> quantidade)
   const [visiveisPorColuna, setVisiveisPorColuna] = useState<Record<string, number>>({});
+  // filtro de período por coluna (col.key -> período). Ausente = "todos".
+  const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>({});
   const [syncRodando, setSyncRodando] = useState(false);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
+  const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
+  const [agora, setAgora] = useState(Date.now());
 
   async function load() {
     try {
@@ -174,7 +208,15 @@ export default function Page() {
       const j = await r.json();
       setSyncRodando(!!j.running);
       setSyncUltimo(j.lastRun?.createdAt ?? null);
+      setSyncConclusao(j.lastRun?.conclusion ?? null);
     } catch {}
+  }
+
+  // "1:05" enquanto roda; usa o tempoRelativo (definido acima) pra quando já terminou
+  function duracao(desdeIso: string): string {
+    const s = Math.max(0, Math.floor((agora - new Date(desdeIso).getTime()) / 1000));
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, "0")}`;
   }
 
   async function dispararSync() {
@@ -194,15 +236,21 @@ export default function Page() {
   }
 
   const ACKS_KEY = "crm_acks";
-  // Abre a conversa no RD Conversas E "reconhece" o card (silencia o alerta na hora).
-  function abrirConversa(clienteId: string) {
-    const agora = Date.now();
+  // Cliente da fila de prospecção (nunca conversou) não tem conversa no RD Conversas
+  // pra abrir — abre o WhatsApp direto pelo telefone. Cliente normal: abre o RD
+  // Conversas E "reconhece" o card (silencia o alerta na hora).
+  function abrirConversa(c: Card) {
+    if (ehProspeccao(c)) {
+      if (c.telefone) window.open(`https://wa.me/${c.telefone.replace(/\D/g, "")}`, "whatsapp");
+      return;
+    }
+    const agoraMs = Date.now();
     setAcks((prev) => {
-      const prox = { ...prev, [clienteId]: agora };
+      const prox = { ...prev, [c.cliente_id]: agoraMs };
       try { localStorage.setItem(ACKS_KEY, JSON.stringify(prox)); } catch {}
       return prox;
     });
-    window.open(`${URL_CHAT}/${clienteId}`, "rdconversas");
+    window.open(`${URL_CHAT}/${c.cliente_id}`, "rdconversas");
   }
 
   // checa a sessão ao montar + carrega acks salvos (limpa os antigos)
@@ -239,6 +287,13 @@ export default function Page() {
     return () => clearInterval(t);
   }, [sessao]);
 
+  // relógio vivo só enquanto um run está rodando, pra mostrar "rodando há 0:47"
+  useEffect(() => {
+    if (!syncRodando) return;
+    const t = setInterval(() => setAgora(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [syncRodando]);
+
   const vendedores = useMemo(
     () => [...new Set(cards.map((c) => c.vendedor).filter(Boolean))].sort(),
     [cards]
@@ -250,8 +305,24 @@ export default function Page() {
     return r;
   }, [cards, filtro, busca]);
 
-  // troca de filtro/busca muda o conjunto de cards -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca]);
+  // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna]);
+
+  // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
+  function toggleColuna(colKey: string, p: Periodo) {
+    setPeriodoPorColuna((prev) => ({ ...prev, [colKey]: (prev[colKey] ?? "todos") === p ? "todos" : p }));
+  }
+  // dropdown global: aplica o mesmo período a TODAS as colunas de uma vez
+  function setPeriodoGlobal(p: Periodo) {
+    const next: Record<string, Periodo> = {};
+    for (const col of COLUNAS) next[col.key] = p;
+    setPeriodoPorColuna(next);
+  }
+  // valor exibido no dropdown: o período comum a todas as colunas, ou "misto" se divergem
+  const periodoGlobal: Periodo | "misto" = useMemo(() => {
+    const vals = COLUNAS.map((c) => periodoPorColuna[c.key] ?? "todos");
+    return vals.every((v) => v === vals[0]) ? vals[0] : "misto";
+  }, [periodoPorColuna]);
 
   // scroll infinito: perto do fim da coluna, libera mais um lote
   function aoRolarColuna(e: React.UIEvent<HTMLDivElement>, colKey: string, total: number) {
@@ -300,7 +371,7 @@ export default function Page() {
       <div style={{ height: 3, background: RD.wine }} />
       {/* Top bar */}
       <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px" }}>
-        <div style={{ maxWidth: 1440, margin: "0 auto", height: 56, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: 12 }}>
           <Logo size={26} />
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
           <span style={{ marginLeft: 8, color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, paddingBottom: 18, marginTop: 20 }}>Negociações</span>
@@ -311,26 +382,34 @@ export default function Page() {
             <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : cap(sessao.carteira ?? "")}</b>
           </span>
           {sessao.role === "admin" && (
-            <button
-              onClick={dispararSync}
-              disabled={disparandoSync || syncRodando}
-              title={syncUltimo ? `Última sincronização: ${dataHora(syncUltimo)}` : "Dispara o ETL manualmente (RD Conversas → Supabase), sem esperar o cron"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                cursor: disparandoSync || syncRodando ? "wait" : "pointer",
-                background: syncRodando ? "#eaf6fd" : RD.surface,
-                color: syncRodando ? "#0b7fb0" : RD.gray,
-                border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
-                borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
-              }}
-            >
-              <span style={{
-                width: 7, height: 7, borderRadius: 7,
-                background: syncRodando ? "#0ea3dc" : RD.grayLight,
-                animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
-              }} />
-              {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <button
+                onClick={dispararSync}
+                disabled={disparandoSync || syncRodando}
+                title="Dispara o ETL manualmente (RD Conversas → clientes/mensagens), sem esperar o cron de 20min"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  cursor: disparandoSync || syncRodando ? "wait" : "pointer",
+                  background: syncRodando ? "#eaf6fd" : RD.surface,
+                  color: syncRodando ? "#0b7fb0" : RD.gray,
+                  border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
+                  borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
+                }}
+              >
+                <span style={{
+                  width: 7, height: 7, borderRadius: 7,
+                  background: syncRodando ? "#0ea3dc" : RD.grayLight,
+                  animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
+                }} />
+                {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
+              </button>
+              <span style={{ fontSize: 10, color: syncConclusao === "failure" ? "#dc2626" : RD.grayLight, paddingLeft: 2, whiteSpace: "nowrap" }}>
+                RD Conversas → clientes e mensagens
+                {syncRodando && syncUltimo ? ` · rodando há ${duracao(syncUltimo)}` : null}
+                {!syncRodando && syncUltimo ? ` · última: ${tempoRelativo(syncUltimo)}` : null}
+                {!syncRodando && syncConclusao === "failure" ? " · falhou" : null}
+              </span>
+            </div>
           )}
           <button
             onClick={sair}
@@ -356,6 +435,22 @@ export default function Page() {
             {chip("Todos", "todos")}
             {vendedores.map((v) => chip(cap(v), v, CoresVendedor[v] ?? RD.grayLight))}
           </div>
+          <select
+            value={periodoGlobal}
+            onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
+            title="Aplica o período a todas as etapas de uma vez"
+            style={{
+              padding: "7px 10px", fontSize: 12.5, fontWeight: 600, color: RD.gray,
+              background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
+            }}
+          >
+            <option value="todos">Período: todos</option>
+            <option value="hoje">Período: hoje</option>
+            <option value="semana">Período: semana</option>
+            <option value="quinzena">Período: quinzena</option>
+            <option value="mes">Período: mês</option>
+            {periodoGlobal === "misto" && <option value="misto" disabled>Período: misto</option>}
+          </select>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -375,24 +470,27 @@ export default function Page() {
           </div>
         </header>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
           {COLUNAS.map((col) => {
-            let doGrupo = visiveis.filter((c) => c.etapa === col.key);
+            const todosDaEtapa = visiveis.filter((c) => c.etapa === col.key);
+            const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
+            let doGrupo = todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, periodoAtivo));
             if (busca.trim()) {
               // na busca: ordena por data da última mensagem (mais recente primeiro) p/ separar homônimos
               doGrupo = [...doGrupo].sort(
-                (a, b) => new Date(b.ultima_atividade).getTime() - new Date(a.ultima_atividade).getTime()
+                (a, b) => (new Date(b.ultima_atividade ?? 0).getTime()) - (new Date(a.ultima_atividade ?? 0).getTime())
               );
-            } else if (col.key === "tentativa_contato") {
-              // ordem decrescente de inatividade: mais dias parados no topo
+            } else if (col.key === "tentativa_contato" || col.key === "ociosos") {
+              // ordem decrescente de inatividade: mais dias parados (ou nunca contatado) no topo
               doGrupo = [...doGrupo].sort(
-                (a, b) => new Date(a.ultima_atividade).getTime() - new Date(b.ultima_atividade).getTime()
+                (a, b) => (new Date(a.ultima_atividade ?? 0).getTime()) - (new Date(b.ultima_atividade ?? 0).getTime())
               );
             }
             // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
             const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
             doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
-            const nHoje = doGrupo.filter((c) => ehHoje(c.ultima_atividade)).length;
+            // contagem por período (sempre sobre a etapa inteira, não sobre o filtrado)
+            const contaPeriodo = (p: Periodo) => todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 14px" }}>
@@ -401,13 +499,28 @@ export default function Page() {
                     <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: 0.4, color: RD.wine, textTransform: "uppercase", textShadow: "0 1px 0 rgba(255,255,255,0.6)" }}>
                       {col.titulo}
                     </span>
-                    <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({doGrupo.length})</span>
                   </div>
-                  <div style={{ marginTop: 6 }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 20, padding: "2px 10px", fontSize: 10.5, fontWeight: 700, color: RD.gray, boxShadow: "0 1px 1px rgba(16,32,64,0.04)" }}>
-                      <span style={{ width: 6, height: 6, borderRadius: 6, background: col.cor }} />
-                      hoje · <b style={{ color: RD.navy, fontSize: 11.5 }}>{nHoje}</b>
-                    </span>
+                  <div style={{ marginTop: 7, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {PERIODOS.map((per) => {
+                      const ativo = periodoAtivo === per.key;
+                      return (
+                        <button
+                          key={per.key}
+                          onClick={() => toggleColuna(col.key, per.key)}
+                          title={ativo ? `Mostrando só ${per.label} — clique pra ver todos` : `Filtrar ${col.titulo} por ${per.label}`}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer",
+                            background: ativo ? col.cor : RD.surface,
+                            color: ativo ? "#fff" : RD.gray,
+                            border: `1px solid ${ativo ? col.cor : RD.border}`,
+                            borderRadius: 20, padding: "2px 9px", fontSize: 10.5, fontWeight: 700,
+                            boxShadow: "0 1px 1px rgba(16,32,64,0.04)",
+                          }}
+                        >
+                          {per.label} · <b style={{ color: ativo ? "#fff" : RD.navy, fontSize: 11.5 }}>{contaPeriodo(per.key)}</b>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -422,8 +535,14 @@ export default function Page() {
                   ) : (
                     <>
                     {doGrupo.slice(0, visiveisPorColuna[col.key] ?? LOTE_INICIAL).map((c) => {
-                      const recontactar = col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO;
-                      const ultimoDisparo = col.key === "tentativa_contato" ? disparos[c.cliente_id] : undefined;
+                      const prospeccao = ehProspeccao(c);
+                      // ociosos: por definição já passou da janela de 24h, precisa de template — igual
+                      // a tentativa_contato "parada", exceto pra prospecção (nunca teve cliente_id do RD,
+                      // não dá pra disparar template automático, só abrir WhatsApp manual).
+                      const recontactar = !prospeccao
+                        && ((col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO)
+                          || col.key === "ociosos");
+                      const ultimoDisparo = (col.key === "tentativa_contato" || col.key === "ociosos") ? disparos[c.cliente_id] : undefined;
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
@@ -431,8 +550,8 @@ export default function Page() {
                       return (
                         <article
                           key={c.cliente_id}
-                          onClick={() => abrirConversa(c.cliente_id)}
-                          title="Abrir conversa no RD Conversas (reconhece e silencia o alerta)"
+                          onClick={() => abrirConversa(c)}
+                          title={prospeccao ? "Abrir WhatsApp com este número (cliente nunca contatado)" : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
                             cursor: "pointer",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
@@ -512,6 +631,10 @@ export default function Page() {
                                 </div>
                               </div>
                             </div>
+                          ) : prospeccao ? (
+                            <div style={{ marginTop: 3, fontSize: 11, color: RD.grayLight }}>
+                              nunca contatado · {c.telefone ?? "sem telefone"}
+                            </div>
                           ) : (
                             <div style={{ marginTop: 3, fontSize: 11, color: RD.grayLight }}>
                               última msg · {dataHora(c.ultima_atividade)}
@@ -522,9 +645,11 @@ export default function Page() {
                               <span style={{ width: 7, height: 7, borderRadius: 7, background: CoresVendedor[c.vendedor] ?? RD.grayLight }} />
                               {cap(c.vendedor)}
                             </span>
-                            <span style={{ color: recontactar ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar ? 700 : 400 }}>
-                              · {tempoRelativo(c.ultima_atividade)}{recontactar ? " parado" : ""}
-                            </span>
+                            {!prospeccao && (
+                              <span style={{ color: recontactar ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar ? 700 : 400 }}>
+                                · {tempoRelativo(c.ultima_atividade)}{recontactar ? " parado" : ""}
+                              </span>
+                            )}
                           </div>
                         </article>
                       );

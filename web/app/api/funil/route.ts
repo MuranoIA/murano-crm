@@ -16,15 +16,24 @@ export async function GET() {
   }
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  // cards do funil (escopo por carteira quando não-admin)
-  let funilQ = sb
-    .from("vw_funil")
-    .select("cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por")
-    .order("ultima_atividade", { ascending: false })
-    .limit(5000);
-  if (carteira) funilQ = funilQ.eq("vendedor", carteira);
-  const { data: cards, error } = await funilQ;
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  // cards do funil (escopo por carteira quando não-admin).
+  // Pagina de mil em mil: o PostgREST/Supabase corta a resposta em 1000 linhas
+  // por padrão, e a vw_funil hoje tem ~2.5k (incluindo a fila de prospecção sem
+  // atividade, que ficaria de fora se pegássemos só a 1a página).
+  const PAGE = 1000;
+  const cards: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = sb
+      .from("vw_funil")
+      .select("cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone")
+      .order("ultima_atividade", { ascending: false, nullsFirst: false })
+      .range(from, from + PAGE - 1);
+    if (carteira) q = q.eq("vendedor", carteira);
+    const { data, error } = await q;
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    cards.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
 
   // templates disparados HOJE (fuso Brasília), por vendedor
   const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
