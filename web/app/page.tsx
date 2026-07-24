@@ -246,6 +246,32 @@ export default function Page() {
     setSessao(null);
   }
 
+  // resposta livre inline no card (só coluna Negociação — dentro da janela de 24h)
+  const [respostaTexto, setRespostaTexto] = useState<Record<string, string>>({});
+  const [enviandoResposta, setEnviandoResposta] = useState<string | null>(null);
+  async function enviarResposta(clienteId: string) {
+    const texto = (respostaTexto[clienteId] ?? "").trim();
+    if (!texto) return;
+    setEnviandoResposta(clienteId);
+    try {
+      const r = await fetch("/api/send-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: clienteId, texto }),
+      });
+      const txt = await r.text();
+      let j: any = {};
+      try { j = txt ? JSON.parse(txt) : {}; } catch { j = { error: txt || `HTTP ${r.status} (resposta vazia)` }; }
+      if (!r.ok || j.error) { alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`)); return; }
+      setRespostaTexto((prev) => ({ ...prev, [clienteId]: "" }));
+      await load();
+    } catch (e: any) {
+      alert("Erro: " + (e?.message ?? e));
+    } finally {
+      setEnviandoResposta(null);
+    }
+  }
+
   async function checarSync() {
     try {
       const r = await fetch("/api/sync-etl", { cache: "no-store" });
@@ -662,7 +688,7 @@ export default function Page() {
                           onClick={() => abrirConversa(c)}
                           title={prospeccao ? "Abrir WhatsApp com este número (cliente nunca contatado)" : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
-                            cursor: "pointer", height: CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+                            cursor: "pointer", height: col.key === "negociacao" ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
                             border: `1px solid ${disparoRecente ? "#f3ddad" : recontactar ? "#ecdae4" : RD.border}`,
                             borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? "#57163f" : RD.border}`,
@@ -779,6 +805,36 @@ export default function Page() {
                               </span>
                             )}
                           </div>
+                          {col.key === "negociacao" && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ marginTop: 5, display: "flex", gap: 4 }}
+                            >
+                              <input
+                                value={respostaTexto[c.cliente_id] ?? ""}
+                                onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [c.cliente_id]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(c.cliente_id); } }}
+                                placeholder="Responder (msg livre, 24h)…"
+                                disabled={enviandoResposta === c.cliente_id}
+                                style={{
+                                  flex: 1, minWidth: 0, fontSize: 11, padding: "5px 8px",
+                                  border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy,
+                                }}
+                              />
+                              <button
+                                onClick={() => enviarResposta(c.cliente_id)}
+                                disabled={enviandoResposta === c.cliente_id || !(respostaTexto[c.cliente_id] ?? "").trim()}
+                                title="Enviar mensagem livre (só funciona dentro da janela de 24h do WhatsApp)"
+                                style={{
+                                  cursor: enviandoResposta === c.cliente_id ? "wait" : "pointer",
+                                  background: RD.cyan, color: "#fff", border: "none",
+                                  borderRadius: 6, padding: "0 10px", fontSize: 11, fontWeight: 700,
+                                }}
+                              >
+                                {enviandoResposta === c.cliente_id ? "…" : "➤"}
+                              </button>
+                            </div>
+                          )}
                         </article>
                       );
                     })}
