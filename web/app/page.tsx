@@ -480,7 +480,22 @@ export default function Page() {
               doGrupo = [...doGrupo].sort(
                 (a, b) => (new Date(b.ultima_atividade ?? 0).getTime()) - (new Date(a.ultima_atividade ?? 0).getTime())
               );
-            } else if (col.key === "tentativa_contato" || col.key === "ociosos") {
+            } else if (col.key === "tentativa_contato") {
+              // botão TEMPLATE disponível = parado >= DIAS_RECONTATO e sem disparo recente.
+              // Cards com template já enviado ("aguardando resposta") afundam pra BAIXO dos
+              // que ainda dá pra disparar -> o topo é sempre um card pronto pra enviar template.
+              const podeTemplate = (c: Card) => {
+                const ud = disparos[c.cliente_id];
+                const disparoRecente = !!ud && diasInativo(ud) < DIAS_RECONTATO;
+                return diasInativo(c.ultima_atividade) >= DIAS_RECONTATO && !disparoRecente;
+              };
+              doGrupo = [...doGrupo].sort((a, b) => {
+                const pa = podeTemplate(a), pb = podeTemplate(b);
+                if (pa !== pb) return pa ? -1 : 1; // disponível no topo
+                // dentro de cada grupo: mais dias parados no topo
+                return (new Date(a.ultima_atividade ?? 0).getTime()) - (new Date(b.ultima_atividade ?? 0).getTime());
+              });
+            } else if (col.key === "ociosos") {
               // ordem decrescente de inatividade: mais dias parados (ou nunca contatado) no topo
               doGrupo = [...doGrupo].sort(
                 (a, b) => (new Date(a.ultima_atividade ?? 0).getTime()) - (new Date(b.ultima_atividade ?? 0).getTime())
@@ -499,6 +514,7 @@ export default function Page() {
                     <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: 0.4, color: RD.wine, textTransform: "uppercase", textShadow: "0 1px 0 rgba(255,255,255,0.6)" }}>
                       {col.titulo}
                     </span>
+                    <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                   </div>
                   <div style={{ marginTop: 7, display: "flex", flexWrap: "wrap", gap: 5 }}>
                     {PERIODOS.map((per) => {
