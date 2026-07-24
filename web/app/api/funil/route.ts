@@ -21,11 +21,13 @@ export async function GET() {
   // por padrão, e a vw_funil hoje tem ~2.5k (incluindo a fila de prospecção sem
   // atividade, que ficaria de fora se pegássemos só a 1a página).
   const PAGE = 1000;
-  const COLS_COM_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
+  // Degraus de colunas: tenta o mais completo; se uma coluna nova ainda não existe
+  // (migration pendente), cai pro degrau anterior sem quebrar o board (o front tem
+  // fallback). FULL = com nota fiscal (0006); MSGS = com 3 mensagens (0005); BASE = mínimo.
+  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data";
+  const COLS_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
   const COLS_BASE = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone";
-  // usa a coluna nova ultimas_mensagens (migration 0005); se ela ainda não existe,
-  // cai pro conjunto base sem quebrar o board (o front tem fallback pra 1 mensagem).
-  let cols = COLS_COM_MSGS;
+  let cols = COLS_FULL;
   const cards: any[] = [];
   for (let from = 0; ; from += PAGE) {
     let q = sb.from("vw_funil").select(cols)
@@ -34,8 +36,11 @@ export async function GET() {
     if (carteira) q = q.eq("vendedor", carteira);
     const { data, error } = await q;
     if (error) {
-      if (cols === COLS_COM_MSGS && /ultimas_mensagens/.test(error.message)) {
-        cols = COLS_BASE; from -= PAGE; continue; // 0005 pendente -> refaz esta página sem a coluna
+      if (cols === COLS_FULL && /venda_valor|venda_data/.test(error.message)) {
+        cols = COLS_MSGS; from -= PAGE; continue; // 0006 pendente
+      }
+      if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) {
+        cols = COLS_BASE; from -= PAGE; continue; // 0005 pendente
       }
       return Response.json({ error: error.message }, { status: 500 });
     }

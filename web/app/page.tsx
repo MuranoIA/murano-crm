@@ -12,7 +12,14 @@ type Card = {
   ultima_enviada_por: string | null;
   telefone: string | null;
   ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
+  venda_valor: number | null;      // total faturado no mês (R$), nota fiscal WinThor
+  venda_data: string | null;       // data da nota mais recente do mês
 };
+
+function moedaBR(v: number | null): string {
+  if (v == null) return "";
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 });
+}
 
 // cards sintéticos da fila de prospecção (WinThor) — nunca tiveram conversa no RD
 // Conversas, não têm cliente_id real de lá, só telefone pra abrir WhatsApp direto.
@@ -115,7 +122,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
-const CARD_ALTURA = 172;    // altura fixa do card (simétrico) — comporta até 3 bolhas de msg
+const CARD_ALTURA = 138;    // altura fixa do card (simétrico) — comporta até 2 bolhas compactas
 
 // Períodos de atividade (janelas móveis, cumulativas: hoje ⊂ semana ⊂ quinzena ⊂ mês).
 // "todos" = sem filtro. Cards de prospecção (ultima_atividade null) só aparecem em "todos".
@@ -576,7 +583,7 @@ export default function Page() {
                       const msgsRaw: Msg[] = (c.ultimas_mensagens && c.ultimas_mensagens.length)
                         ? c.ultimas_mensagens
                         : (c.ultima_mensagem ? [{ c: c.ultima_mensagem, e: c.ultima_enviada_por, t: c.ultima_atividade }] : []);
-                      const msgsChrono = [...msgsRaw].reverse();
+                      const msgsChrono = [...msgsRaw].reverse().slice(-2); // 2 mais recentes, ordem cronológica
                       return (
                         <article
                           key={c.cliente_id}
@@ -626,6 +633,17 @@ export default function Page() {
                                 <span style={{ width: 6, height: 6, borderRadius: 6, background: "#b02350" }} />
                                 {enviando === c.cliente_id ? "ENVIANDO…" : "TEMPLATE"}
                               </button>
+                            ) : col.key === "pedido_emitido" && c.venda_valor != null ? (
+                              <span
+                                title={c.venda_data ? `Faturado no mês (nota fiscal) — última nota ${dataCurta(c.venda_data)}` : "Faturado no mês (nota fiscal)"}
+                                style={{
+                                  marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                                  background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd",
+                                  borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, letterSpacing: 0.2,
+                                }}
+                              >
+                                {moedaBR(c.venda_valor)}
+                              </span>
                             ) : null}
                           </div>
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3 }}>
@@ -649,13 +667,13 @@ export default function Page() {
                                         background: doCliente ? "#f2f4f7" : "#eaf6fd",
                                         border: `1px solid ${doCliente ? "#e4e8ee" : "#cfeafb"}`,
                                         borderRadius: 12,
-                                        borderTopLeftRadius: doCliente ? 3 : 12,
-                                        borderTopRightRadius: doCliente ? 12 : 3,
-                                        padding: "5px 9px 3px",
+                                        borderTopLeftRadius: doCliente ? 3 : 10,
+                                        borderTopRightRadius: doCliente ? 10 : 3,
+                                        padding: "3px 8px 2px",
                                         boxShadow: "0 1px 1.5px rgba(16,32,64,0.05)",
                                       }}
                                     >
-                                      <div style={{ fontSize: 11.5, lineHeight: 1.3, color: RD.navy, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                      <div style={{ fontSize: 10.5, lineHeight: 1.25, color: RD.navy, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                                         {limpaMsg(m.c)}
                                       </div>
                                       {ultima && (m.t ?? c.ultima_atividade) && (
