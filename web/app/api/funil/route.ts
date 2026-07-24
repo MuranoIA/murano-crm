@@ -48,20 +48,35 @@ export async function GET() {
     if (!data || data.length < PAGE) break;
   }
 
-  // templates disparados HOJE (fuso Brasília), por vendedor
-  const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-  let tplQ = sb.from("vw_templates_diario").select("vendedor,templates_enviados").eq("dia", hojeBRT);
+  // templates por PERÍODO (fuso Brasília), por vendedor. Busca os últimos ~31 dias das
+  // views diárias e agrega em buckets hoje/ontem/semana/quinzena/mês.
+  const diaBRT = (offset = 0) => new Date(Date.now() - 3 * 3600 * 1000 - offset * 86400000).toISOString().slice(0, 10);
+  const hojeBRT = diaBRT(0), ontemBRT = diaBRT(1);
+  const d7 = diaBRT(6), d15 = diaBRT(14);
+  const mesIni = hojeBRT.slice(0, 8) + "01";
+  const desde = diaBRT(31);
+  type TplTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
+  const zero = (): TplTot => ({ hoje: 0, ontem: 0, semana: 0, quinzena: 0, mes: 0 });
+  const bucket = (acc: Record<string, TplTot>, vend: string, dia: string, n: number) => {
+    const a = (acc[vend] = acc[vend] ?? zero());
+    if (dia === hojeBRT) a.hoje += n;
+    if (dia === ontemBRT) a.ontem += n;
+    if (dia >= d7) a.semana += n;
+    if (dia >= d15) a.quinzena += n;
+    if (dia >= mesIni) a.mes += n;
+  };
+
+  let tplQ = sb.from("vw_templates_diario").select("vendedor,dia,templates_enviados").gte("dia", desde);
   if (carteira) tplQ = tplQ.eq("vendedor", carteira);
   const { data: tpls } = await tplQ;
-  const templatesHoje: Record<string, number> = {};
-  for (const t of tpls ?? []) templatesHoje[t.vendedor] = t.templates_enviados ?? 0;
+  const templatesTotais: Record<string, TplTot> = {};
+  for (const t of tpls ?? []) bucket(templatesTotais, t.vendedor, t.dia, t.templates_enviados ?? 0);
 
-  // templates automáticos (disparados pelo botão) hoje — resiliente se a view ainda não existir
-  let autoQ = sb.from("vw_templates_auto_diario").select("vendedor,templates_automaticos").eq("dia", hojeBRT);
+  let autoQ = sb.from("vw_templates_auto_diario").select("vendedor,dia,templates_automaticos").gte("dia", desde);
   if (carteira) autoQ = autoQ.eq("vendedor", carteira);
   const { data: autos } = await autoQ;
-  const templatesAutoHoje: Record<string, number> = {};
-  for (const t of autos ?? []) templatesAutoHoje[t.vendedor] = t.templates_automaticos ?? 0;
+  const templatesAutoTotais: Record<string, TplTot> = {};
+  for (const t of autos ?? []) bucket(templatesAutoTotais, t.vendedor, t.dia, t.templates_automaticos ?? 0);
 
   // clientes que já receberam disparo de template (último por cliente) — p/ marcar "aguardando resposta"
   let dispQ = sb.from("disparos_template").select("cliente_id,criada_em").order("criada_em", { ascending: false });
@@ -97,8 +112,8 @@ export async function GET() {
 
   return Response.json({
     cards: cards ?? [],
-    templatesHoje,
-    templatesAutoHoje,
+    templatesTotais,
+    templatesAutoTotais,
     disparos,
     vendasTotais,
     dia: hojeBRT,

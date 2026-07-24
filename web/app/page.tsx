@@ -161,8 +161,9 @@ function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
 
 export default function Page() {
   const [cards, setCards] = useState<Card[]>([]);
-  const [templatesHoje, setTemplatesHoje] = useState<Record<string, number>>({});
-  const [templatesAutoHoje, setTemplatesAutoHoje] = useState<Record<string, number>>({});
+  type TplTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
+  const [templatesTotais, setTemplatesTotais] = useState<Record<string, TplTot>>({});
+  const [templatesAutoTotais, setTemplatesAutoTotais] = useState<Record<string, TplTot>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
   type VendaTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
                     qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
@@ -194,8 +195,8 @@ export default function Page() {
       if (j.error) { setErro(j.error); return; }
       setErro("");
       setCards(j.cards ?? []);
-      setTemplatesHoje(j.templatesHoje ?? {});
-      setTemplatesAutoHoje(j.templatesAutoHoje ?? {});
+      setTemplatesTotais(j.templatesTotais ?? {});
+      setTemplatesAutoTotais(j.templatesAutoTotais ?? {});
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
@@ -366,14 +367,15 @@ export default function Page() {
       return { ...prev, [colKey]: Math.min(atual + LOTE_INCREMENTO, total) };
     });
   }
-  const tplHoje =
+  // período dos contadores de template = o do dropdown global; "misto"/"todos" -> mês
+  const perTpl: keyof TplTot = (periodoGlobal === "misto" || periodoGlobal === "todos") ? "mes" : periodoGlobal;
+  const rotuloTpl = perTpl === "mes" ? "mês" : perTpl;
+  const somaTpl = (m: Record<string, TplTot>) =>
     filtro === "todos"
-      ? Object.values(templatesHoje).reduce((a, b) => a + b, 0)
-      : templatesHoje[filtro] ?? 0;
-  const tplAutoHoje =
-    filtro === "todos"
-      ? Object.values(templatesAutoHoje).reduce((a, b) => a + b, 0)
-      : templatesAutoHoje[filtro] ?? 0;
+      ? Object.values(m).reduce((a, v) => a + (v[perTpl] ?? 0), 0)
+      : (m[filtro]?.[perTpl] ?? 0);
+  const tplHoje = somaTpl(templatesTotais);
+  const tplAutoHoje = somaTpl(templatesAutoTotais);
 
   const chip = (label: string, val: string, cor?: string) => {
     const ativo = filtro === val;
@@ -488,13 +490,13 @@ export default function Page() {
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Templates hoje
+                Templates {rotuloTpl}
               </span>
               <b style={{ fontSize: 18, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#9c1f47", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Automáticos hoje
+                Automáticos {rotuloTpl}
               </span>
               <b style={{ fontSize: 18, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
