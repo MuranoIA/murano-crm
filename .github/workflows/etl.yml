@@ -40,6 +40,10 @@ jobs:
         # schedule dispara sem inputs -> mode vazio -> default "incremental" no run.ts
         env:
           ETL_MODE: ${{ github.event.inputs.mode }}
+          # janela da varredura barata (/exists). Rate limit da API ~1,2s/checagem ->
+          # ~400 conversas cabem em ~8 min. 4 dias pega a maioria das reativações recentes.
+          # (o full manual + fechar conversas cobre reativações mais antigas.)
+          ETL_SCAN_DAYS: 4
           RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
           RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
           RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
