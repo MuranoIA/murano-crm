@@ -146,6 +146,7 @@ export default function Page() {
   const [templatesHoje, setTemplatesHoje] = useState<Record<string, number>>({});
   const [templatesAutoHoje, setTemplatesAutoHoje] = useState<Record<string, number>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
+  const [vendasTotais, setVendasTotais] = useState<Record<string, { hoje: number; semana: number; quinzena: number; mes: number }>>({});
   const [enviando, setEnviando] = useState<string | null>(null);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
@@ -176,6 +177,7 @@ export default function Page() {
       setTemplatesHoje(j.templatesHoje ?? {});
       setTemplatesAutoHoje(j.templatesAutoHoje ?? {});
       setDisparos(j.disparos ?? {});
+      setVendasTotais(j.vendasTotais ?? {});
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -553,6 +555,21 @@ export default function Page() {
                       );
                     })}
                   </div>
+                  {col.key === "pedido_emitido" && (() => {
+                    // total R$ faturado (nota fiscal) no período ativo; "todos" -> mês.
+                    // escopo pelo vendedor filtrado (Todos = soma das carteiras).
+                    const perTotal: Exclude<Periodo, "todos"> = periodoAtivo === "todos" ? "mes" : periodoAtivo;
+                    const rotulo = perTotal === "mes" ? "mês" : perTotal;
+                    const total = filtro === "todos"
+                      ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
+                      : (vendasTotais[filtro]?.[perTotal] ?? 0);
+                    return (
+                      <div style={{ marginTop: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, padding: "4px 10px" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.3 }}>Vendas {rotulo}</span>
+                        <b style={{ fontSize: 14, color: "#15803d", lineHeight: 1 }}>{moedaBR(total)}</b>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div

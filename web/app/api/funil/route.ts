@@ -72,11 +72,25 @@ export async function GET() {
     if (d.cliente_id && !disparos[d.cliente_id]) disparos[d.cliente_id] = d.criada_em;
   }
 
+  // totais R$ de venda por período (nota fiscal), por vendedor — coluna Pedido Emitido.
+  // resiliente: se a view (0007) ainda não existe, devolve {} e o front não mostra o total.
+  let totQ = sb.from("vw_pedido_emitido_totais").select("*");
+  if (carteira) totQ = totQ.eq("carteira", carteira);
+  const { data: tot } = await totQ;
+  const vendasTotais: Record<string, { hoje: number; semana: number; quinzena: number; mes: number }> = {};
+  for (const t of tot ?? []) {
+    vendasTotais[t.carteira] = {
+      hoje: Number(t.total_hoje ?? 0), semana: Number(t.total_semana ?? 0),
+      quinzena: Number(t.total_quinzena ?? 0), mes: Number(t.total_mes ?? 0),
+    };
+  }
+
   return Response.json({
     cards: cards ?? [],
     templatesHoje,
     templatesAutoHoje,
     disparos,
+    vendasTotais,
     dia: hojeBRT,
     atualizado_em: new Date().toISOString(),
   });
