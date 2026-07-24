@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 
+type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
   cliente_id: string;
   cliente: string;
@@ -10,6 +11,7 @@ type Card = {
   ultima_mensagem: string | null;
   ultima_enviada_por: string | null;
   telefone: string | null;
+  ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
 };
 
 // cards sintéticos da fila de prospecção (WinThor) — nunca tiveram conversa no RD
@@ -65,10 +67,10 @@ function Logo({ size = 28 }: { size?: number }) {
 }
 
 const COLUNAS = [
-  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8" },
-  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee" },
-  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6" },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a" },
+  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "cliente falou por último (+24h) ou nunca contatado — reative com template" },
+  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "você mandou template, aguardando a 1ª resposta" },
+  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (troca dentro das 24h)" },
+  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês corrente — zera no dia 1º" },
 ] as const;
 
 const CoresVendedor: Record<string, string> = {
@@ -113,6 +115,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
+const CARD_ALTURA = 172;    // altura fixa do card (simétrico) — comporta até 3 bolhas de msg
 
 // Períodos de atividade (janelas móveis, cumulativas: hoje ⊂ semana ⊂ quinzena ⊂ mês).
 // "todos" = sem filtro. Cards de prospecção (ultima_atividade null) só aparecem em "todos".
@@ -516,7 +519,10 @@ export default function Page() {
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                   </div>
-                  <div style={{ marginTop: 7, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  <div style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500 }}>
+                    {col.sub}
+                  </div>
+                  <div style={{ marginTop: 7, display: "flex", gap: 4 }}>
                     {PERIODOS.map((per) => {
                       const ativo = periodoAtivo === per.key;
                       return (
@@ -525,15 +531,17 @@ export default function Page() {
                           onClick={() => toggleColuna(col.key, per.key)}
                           title={ativo ? `Mostrando só ${per.label} — clique pra ver todos` : `Filtrar ${col.titulo} por ${per.label}`}
                           style={{
-                            display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer",
+                            flex: 1, minWidth: 0, cursor: "pointer",
+                            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
                             background: ativo ? col.cor : RD.surface,
                             color: ativo ? "#fff" : RD.gray,
                             border: `1px solid ${ativo ? col.cor : RD.border}`,
-                            borderRadius: 20, padding: "2px 9px", fontSize: 10.5, fontWeight: 700,
+                            borderRadius: 8, padding: "5px 2px", fontWeight: 700,
                             boxShadow: "0 1px 1px rgba(16,32,64,0.04)",
                           }}
                         >
-                          {per.label} · <b style={{ color: ativo ? "#fff" : RD.navy, fontSize: 11.5 }}>{contaPeriodo(per.key)}</b>
+                          <span style={{ fontSize: 9.5, whiteSpace: "nowrap" }}>{per.label}</span>
+                          <b style={{ fontSize: 13, lineHeight: 1, color: ativo ? "#fff" : RD.navy }}>{contaPeriodo(per.key)}</b>
                         </button>
                       );
                     })}
@@ -563,13 +571,19 @@ export default function Page() {
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
                       const alerta = ehAlerta(c, acks[c.cliente_id]);
+                      // até 3 últimas mensagens (mais antiga em cima, recente embaixo). Fallback:
+                      // se a coluna nova (migration 0005) ainda não veio, usa só a última.
+                      const msgsRaw: Msg[] = (c.ultimas_mensagens && c.ultimas_mensagens.length)
+                        ? c.ultimas_mensagens
+                        : (c.ultima_mensagem ? [{ c: c.ultima_mensagem, e: c.ultima_enviada_por, t: c.ultima_atividade }] : []);
+                      const msgsChrono = [...msgsRaw].reverse();
                       return (
                         <article
                           key={c.cliente_id}
                           onClick={() => abrirConversa(c)}
                           title={prospeccao ? "Abrir WhatsApp com este número (cliente nunca contatado)" : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
-                            cursor: "pointer",
+                            cursor: "pointer", height: CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
                             border: `1px solid ${disparoRecente ? "#f3ddad" : recontactar ? "#ecdae4" : RD.border}`,
                             borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? "#57163f" : RD.border}`,
@@ -620,42 +634,49 @@ export default function Page() {
                               {dataCurta(c.ultima_atividade)}
                             </span>
                           </div>
-                          {c.ultima_mensagem ? (
-                            <div style={{ marginTop: 7, display: "flex", justifyContent: c.ultima_enviada_por === "customer" ? "flex-start" : "flex-end" }}>
-                              <div
-                                style={{
-                                  maxWidth: "94%",
-                                  background: c.ultima_enviada_por === "customer" ? "#f2f4f7" : "#eaf6fd",
-                                  border: `1px solid ${c.ultima_enviada_por === "customer" ? "#e4e8ee" : "#cfeafb"}`,
-                                  borderRadius: 12,
-                                  borderTopLeftRadius: c.ultima_enviada_por === "customer" ? 3 : 12,
-                                  borderTopRightRadius: c.ultima_enviada_por === "customer" ? 12 : 3,
-                                  padding: "6px 9px 4px",
-                                  boxShadow: "0 1px 1.5px rgba(16,32,64,0.05)",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: 11.5, lineHeight: 1.35, color: RD.navy,
-                                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                                  }}
-                                >
-                                  {limpaMsg(c.ultima_mensagem)}
-                                </div>
-                                <div style={{ marginTop: 2, textAlign: "right", fontSize: 9, color: RD.grayLight, letterSpacing: 0.2 }}>
-                                  {dataHora(c.ultima_atividade)}
-                                </div>
+                          {/* área de mensagens: cresce e cola no rodapé; se as msgs forem grandes,
+                              as mais antigas (topo) são cortadas, sempre mantendo a mais recente visível */}
+                          <div style={{ flex: 1, minHeight: 0, marginTop: 6, display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 4, overflow: "hidden" }}>
+                            {msgsChrono.length > 0 ? (
+                              msgsChrono.map((m, i) => {
+                                const doCliente = m.e === "customer";
+                                const ultima = i === msgsChrono.length - 1;
+                                return (
+                                  <div key={i} style={{ display: "flex", justifyContent: doCliente ? "flex-start" : "flex-end" }}>
+                                    <div
+                                      style={{
+                                        maxWidth: "94%",
+                                        background: doCliente ? "#f2f4f7" : "#eaf6fd",
+                                        border: `1px solid ${doCliente ? "#e4e8ee" : "#cfeafb"}`,
+                                        borderRadius: 12,
+                                        borderTopLeftRadius: doCliente ? 3 : 12,
+                                        borderTopRightRadius: doCliente ? 12 : 3,
+                                        padding: "5px 9px 3px",
+                                        boxShadow: "0 1px 1.5px rgba(16,32,64,0.05)",
+                                      }}
+                                    >
+                                      <div style={{ fontSize: 11.5, lineHeight: 1.3, color: RD.navy, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                        {limpaMsg(m.c)}
+                                      </div>
+                                      {ultima && (m.t ?? c.ultima_atividade) && (
+                                        <div style={{ marginTop: 1, textAlign: "right", fontSize: 9, color: RD.grayLight, letterSpacing: 0.2 }}>
+                                          {dataHora(m.t ?? c.ultima_atividade)}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            ) : prospeccao ? (
+                              <div style={{ fontSize: 11, color: RD.grayLight }}>
+                                nunca contatado · {c.telefone ?? "sem telefone"}
                               </div>
-                            </div>
-                          ) : prospeccao ? (
-                            <div style={{ marginTop: 3, fontSize: 11, color: RD.grayLight }}>
-                              nunca contatado · {c.telefone ?? "sem telefone"}
-                            </div>
-                          ) : (
-                            <div style={{ marginTop: 3, fontSize: 11, color: RD.grayLight }}>
-                              última msg · {dataHora(c.ultima_atividade)}
-                            </div>
-                          )}
+                            ) : (
+                              <div style={{ fontSize: 11, color: RD.grayLight }}>
+                                última msg · {dataHora(c.ultima_atividade)}
+                              </div>
+                            )}
+                          </div>
                           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: RD.gray, fontWeight: 600 }}>
                               <span style={{ width: 7, height: 7, borderRadius: 7, background: CoresVendedor[c.vendedor] ?? RD.grayLight }} />
