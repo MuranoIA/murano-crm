@@ -67,10 +67,10 @@ function Logo({ size = 28 }: { size?: number }) {
 }
 
 const COLUNAS = [
-  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "cliente falou por último (+24h) ou nunca contatado — reative com template" },
-  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "você mandou template, aguardando a 1ª resposta" },
-  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (troca dentro das 24h)" },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês corrente — zera no dia 1º" },
+  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h ou nunca contatado", subLong: "cliente falou por último há +24h (só template reabre) ou nunca contatado" },
+  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "template enviado, sem resposta", subLong: "você mandou template, aguardando a 1ª resposta do cliente" },
+  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h" },
+  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês — zera dia 1º", subLong: "venda no mês corrente; zera no dia 1º de cada mês" },
 ] as const;
 
 const CoresVendedor: Record<string, string> = {
@@ -519,7 +519,7 @@ export default function Page() {
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                   </div>
-                  <div style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500 }}>
+                  <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
                   </div>
                   <div style={{ marginTop: 7, display: "flex", gap: 4 }}>
