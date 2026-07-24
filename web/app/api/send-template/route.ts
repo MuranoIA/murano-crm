@@ -3,13 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
 
-// carteira (dono do card) -> employee_id (para atribuir o disparo ao vendedor)
-const OPERADORES: Record<string, string> = {
-  romulo: "6a3a97bbb94e6ad472ee9d02",
-  kamilly: "6a3a9851e785f9118ec9141d",
-  luana: "6a3a99836da6dc52edf34c5a",
-  milene: "69e2d5bc7a1da8f60a3d1883",
-};
+// carteira (dono do card) -> employee_id vem da tabela carteira_config (fonte única)
 
 export async function POST(req: Request) {
   try {
@@ -48,7 +42,8 @@ export async function POST(req: Request) {
     if (cliErr || !cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
     if (!cli.telefone) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
 
-    const operator_id = OPERADORES[cli.carteira as string];
+    const { data: cfg } = await sb.from("carteira_config").select("employee_id").eq("slug", cli.carteira as string).maybeSingle();
+    const operator_id = cfg?.employee_id ?? null;
     const primeiroNome = String(cli.nome_completo ?? "").trim().split(/\s+/)[0] || "";
     const recipient = cli.telefone.startsWith("+") ? cli.telefone : `+${cli.telefone}`;
 

@@ -11,14 +11,20 @@ const rd = new RdConversasClient({
 const sb = getSupabase();
 const JWK = process.env.RD_CONVERSAS_PRIVATE_JWK!;
 
-// --- escopo desta carga: 3 carteiras (atribuição por current_wallet) ---
-const TARGETS = [
-  { wallet: "romulo", empId: "6a3a97bbb94e6ad472ee9d02" },
-  { wallet: "kamilly", empId: "6a3a9851e785f9118ec9141d" },
-  { wallet: "luana", empId: "6a3a99836da6dc52edf34c5a" },
-  { wallet: "milene", empId: "69e2d5bc7a1da8f60a3d1883" },
-];
-const TARGET_WALLETS = new Set(TARGETS.map((t) => t.wallet)); // comparado com current_wallet (lowercase)
+// --- escopo: carteiras do funil. Fonte única = tabela carteira_config (murano-conversas).
+// Adicionar vendedor = 1 linha lá + a tag "carteira <nome>" no painel; zero código aqui. ---
+let TARGETS: { wallet: string; empId: string }[] = [];
+let TARGET_WALLETS = new Set<string>(); // comparado com current_wallet (1ª palavra, lowercase)
+async function loadCarteiraConfig() {
+  const { data, error } = await sb.from("carteira_config").select("slug,employee_id").eq("ativo", true);
+  if (error) throw new Error(`carteira_config: ${error.message}`);
+  TARGETS = (data ?? [])
+    .filter((r: any) => r.slug && r.employee_id)
+    .map((r: any) => ({ wallet: String(r.slug), empId: String(r.employee_id) }));
+  TARGET_WALLETS = new Set(TARGETS.map((t) => t.wallet));
+  if (!TARGETS.length) throw new Error("carteira_config sem vendedores ativos");
+  console.error(`[config] ${TARGETS.length} carteiras: ${[...TARGET_WALLETS].join(", ")}`);
+}
 
 // ---------------------------------------------------------------------------
 // MODOS
@@ -405,6 +411,7 @@ async function backfillMensagens() {
 
 async function main() {
   const t0 = Date.now();
+  await loadCarteiraConfig();
   console.error(`ETL [${MODE}] — carteiras [${[...TARGET_WALLETS].join(", ")}] | janela ${START}..${END}\n`);
   if (process.env.ETL_LIMPAR === "1") await limpar();
   if (MODE === "mensagens") {

@@ -176,6 +176,8 @@ export default function Page() {
   const [templatesTotais, setTemplatesTotais] = useState<Record<string, TplTot>>({});
   const [templatesAutoTotais, setTemplatesAutoTotais] = useState<Record<string, TplTot>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
+  // cores dos vendedores vindas da carteira_config (via API) — pra vendedor novo não exigir código
+  const [vendCores, setVendCores] = useState<Record<string, string>>({});
   // totais do cabeçalho de Pedido Emitido: por carteira -> por período -> {total, vendas}
   const [vendasTotais, setVendasTotais] = useState<Record<string, Record<string, { total: number; vendas: number }>>>({});
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
@@ -212,6 +214,7 @@ export default function Page() {
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
+      setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -523,7 +526,7 @@ export default function Page() {
           />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {chip("Todos", "todos")}
-            {vendedores.map((v) => chip(cap(v), v, CoresVendedor[v] ?? RD.grayLight))}
+            {vendedores.map((v) => chip(cap(v), v, vendCores[v] ?? CoresVendedor[v] ?? RD.grayLight))}
           </div>
           <select
             value={periodoGlobal}
@@ -815,7 +818,7 @@ export default function Page() {
                           </div>
                           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: RD.gray, fontWeight: 600 }}>
-                              <span style={{ width: 7, height: 7, borderRadius: 7, background: CoresVendedor[c.vendedor] ?? RD.grayLight }} />
+                              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[c.vendedor] ?? CoresVendedor[c.vendedor] ?? RD.grayLight }} />
                               {cap(c.vendedor)}
                             </span>
                             {!prospeccao && (

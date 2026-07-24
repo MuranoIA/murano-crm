@@ -3,13 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-// carteira (dono do card) -> employee_id (quem aparece como remetente no RD Conversas)
-const OPERADORES: Record<string, string> = {
-  romulo: "6a3a97bbb94e6ad472ee9d02",
-  kamilly: "6a3a9851e785f9118ec9141d",
-  luana: "6a3a99836da6dc52edf34c5a",
-  milene: "69e2d5bc7a1da8f60a3d1883",
-};
+// carteira (dono do card) -> employee_id vem da tabela carteira_config (fonte única)
 
 // mensagem livre (não-template) — só funciona dentro da janela de 24h do WhatsApp
 // (o cliente falou recentemente). Endpoint: POST /v2/messages/{contact_id}/send.
@@ -50,7 +44,8 @@ export async function POST(req: Request) {
       .single();
     if (cliErr || !cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
 
-    const operator_id = OPERADORES[cli.carteira as string];
+    const { data: cfg } = await sb.from("carteira_config").select("employee_id").eq("slug", cli.carteira as string).maybeSingle();
+    const operator_id = cfg?.employee_id ?? null;
     const tokenLimpo = rdToken!.replace(/[^\x21-\x7E]/g, "");
 
     const form = new FormData();

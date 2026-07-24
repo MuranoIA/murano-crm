@@ -16,6 +16,11 @@ export async function GET() {
   }
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
+  // vendedores do funil (fonte única: carteira_config) — slugs p/ filtrar vendas + cores p/ o board
+  const { data: vendCfg } = await sb.from("carteira_config").select("slug,cor").eq("ativo", true);
+  const slugs = (vendCfg ?? []).map((v: any) => v.slug);
+  const vendedores = vendCfg ?? [];
+
   // cards do funil (escopo por carteira quando não-admin).
   // Pagina de mil em mil: o PostgREST/Supabase corta a resposta em 1000 linhas
   // por padrão, e a vw_funil hoje tem ~2.5k (incluindo a fila de prospecção sem
@@ -95,7 +100,7 @@ export async function GET() {
       .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,cliente_de_outra_carteira,pedidos,valor,ultima_compra,ultima_mensagem,ultima_mensagem_em")
       .range(from, from + PAGE - 1);
     // funil só cobre as 3 carteiras ISR; as views têm a empresa inteira ("quem lançou")
-    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", ["romulo", "luana", "kamilly", "milene"]);
+    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
     const { data, error } = await pcQ;
     if (error) return Response.json({ error: error.message }, { status: 500 });
     pcRows.push(...(data ?? []));
@@ -171,7 +176,7 @@ export async function GET() {
   // totais do cabeçalho por carteira e período (bruto, "quem lançou")
   const vendasTotais: Record<string, Record<string, { total: number; vendas: number }>> = {};
   let totQ = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
-  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", ["romulo", "luana", "kamilly", "milene"]);
+  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", slugs);
   const { data: tot } = await totQ;
   for (const t of tot ?? []) {
     (vendasTotais[t.vendedor_slug] = vendasTotais[t.vendedor_slug] ?? {})[t.periodo] = {
@@ -186,6 +191,7 @@ export async function GET() {
     templatesAutoTotais,
     disparos,
     vendasTotais,
+    vendedores,
     dia: hojeBRT,
     atualizado_em: new Date().toISOString(),
   });
