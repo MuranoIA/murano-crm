@@ -110,12 +110,28 @@ export async function GET() {
     };
   }
 
+  // venda por cliente por período (para o card acompanhar o período). Chave = o mesmo
+  // cliente_id que o card usa: contato vinculado, senão "venda:<codcli>". Resiliente.
+  const vendaPorCliente: Record<string, { hoje: number; ontem: number; semana: number; quinzena: number; mes: number }> = {};
+  try {
+    const vmc = await sb.from("vw_vendas_mes_cliente").select("codcli,cliente_id_vinculo,carteira,v_hoje,v_ontem,v_semana,v_quinzena,v_mes");
+    if (!vmc.error) for (const r of vmc.data ?? []) {
+      if (carteira && r.carteira !== carteira) continue;
+      const key = r.cliente_id_vinculo ?? `venda:${r.codcli}`;
+      vendaPorCliente[key] = {
+        hoje: +(r.v_hoje ?? 0), ontem: +(r.v_ontem ?? 0), semana: +(r.v_semana ?? 0),
+        quinzena: +(r.v_quinzena ?? 0), mes: +(r.v_mes ?? 0),
+      };
+    }
+  } catch {}
+
   return Response.json({
     cards: cards ?? [],
     templatesTotais,
     templatesAutoTotais,
     disparos,
     vendasTotais,
+    vendaPorCliente,
     dia: hojeBRT,
     atualizado_em: new Date().toISOString(),
   });

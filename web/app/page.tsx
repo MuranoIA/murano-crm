@@ -175,6 +175,9 @@ export default function Page() {
   type VendaTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number;
                     qHoje: number; qOntem: number; qSemana: number; qQuinzena: number; qMes: number };
   const [vendasTotais, setVendasTotais] = useState<Record<string, VendaTot>>({});
+  // venda por cliente por período (chave = cliente_id do card) — card acompanha o período
+  type VendaCli = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
+  const [vendaPorCliente, setVendaPorCliente] = useState<Record<string, VendaCli>>({});
   const [enviando, setEnviando] = useState<string | null>(null);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
@@ -206,6 +209,7 @@ export default function Page() {
       setTemplatesAutoTotais(j.templatesAutoTotais ?? {});
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
+      setVendaPorCliente(j.vendaPorCliente ?? {});
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -338,6 +342,14 @@ export default function Page() {
     () => [...new Set(cards.map((c) => c.vendedor).filter(Boolean))].sort(),
     [cards]
   );
+  // valor de venda do card (pedido_emitido) no período: soma das compras do cliente
+  // naquele período. "todos" -> mês. Sem venda no período -> 0 (card some do período).
+  const vendaCard = (c: Card, periodo: Periodo): number => {
+    const m = vendaPorCliente[c.cliente_id];
+    if (!m) return periodo === "todos" ? (c.venda_valor ?? 0) : 0;
+    const p = (periodo === "todos" ? "mes" : periodo) as keyof VendaCli;
+    return m[p] ?? 0;
+  };
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
@@ -517,7 +529,12 @@ export default function Page() {
           {COLUNAS.map((col) => {
             const todosDaEtapa = visiveis.filter((c) => c.etapa === col.key);
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
-            let doGrupo = todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, periodoAtivo));
+            // pedido_emitido filtra por VENDA no período (data da nota); demais por atividade
+            let doGrupo = todosDaEtapa.filter((c) =>
+              col.key === "pedido_emitido"
+                ? (periodoAtivo === "todos" ? true : vendaCard(c, periodoAtivo) > 0)
+                : dentroPeriodo(c.ultima_atividade, periodoAtivo)
+            );
             if (busca.trim()) {
               // na busca: ordena por data da última mensagem (mais recente primeiro) p/ separar homônimos
               doGrupo = [...doGrupo].sort(
@@ -548,7 +565,9 @@ export default function Page() {
             const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
             doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
             // contagem por período (sempre sobre a etapa inteira, não sobre o filtrado)
-            const contaPeriodo = (p: Periodo) => todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
+            const contaPeriodo = (p: Periodo) => todosDaEtapa.filter((c) =>
+              col.key === "pedido_emitido" ? vendaCard(c, p) > 0 : dentroPeriodo(c.ultima_atividade, p)
+            ).length;
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 14px" }}>
@@ -683,16 +702,16 @@ export default function Page() {
                                 <span style={{ width: 6, height: 6, borderRadius: 6, background: "#b02350" }} />
                                 {enviando === c.cliente_id ? "ENVIANDO…" : "TEMPLATE"}
                               </button>
-                            ) : col.key === "pedido_emitido" && c.venda_valor != null ? (
+                            ) : col.key === "pedido_emitido" ? (
                               <span
-                                title={c.venda_data ? `Faturado no mês (nota fiscal) — última nota ${dataCurta(c.venda_data)}` : "Faturado no mês (nota fiscal)"}
+                                title={`Faturado no período (nota fiscal, líquido)`}
                                 style={{
                                   marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
                                   background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd",
                                   borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, letterSpacing: 0.2,
                                 }}
                               >
-                                {moedaBR(c.venda_valor)}
+                                {moedaBR(vendaCard(c, periodoAtivo))}
                               </span>
                             ) : null}
                           </div>
