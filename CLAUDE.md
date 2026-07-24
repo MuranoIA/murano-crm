@@ -597,3 +597,72 @@ Não há mais o número total ao lado do nome da etapa (removido a pedido do usu
   `workflow_dispatch` (`/api/sync-etl`, PAT `GITHUB_ETL_TOKEN` com Actions:write). Legenda mostra o
   que sincroniza + cronômetro ao vivo. **Não** dispara o sync do WinThor (`wth_`, pg_cron separado).
 - **Botão TEMPLATE / disparos** (`/api/send-template`, `disparos_template`) — ver migration `0002`.
+
+## 12. Faturamento / vendas reais (nota fiscal WinThor)
+
+> Handoff de outra sessão Claude (conta oficial Murano). **Verificado ao vivo em 24/07/2026**:
+> `vw_pedido_emitido` = 5.889 linhas, `wth_faturamento` = 46.368; contadores do mês bateram
+> exatamente com o doc (romulo 43 · kamilly 45 · luana 56). **Nota:** ao conferir, cuidado com
+> o teto de 1000 linhas do PostgREST — contar com `select('*',{count:'exact',head:true})` filtrado,
+> não somando linhas de um SELECT (isso me deu um falso "só 21 no mês" antes de paginar).
+
+### 12.1 O que foi criado
+
+| Objeto | Tipo | O que é |
+|---|---|---|
+| `wth_faturamento` | tabela | 46.368 notas do WinThor (43.506 vendas + 2.862 devoluções) |
+| `wth_sync_faturamento_http(p_dias)` | função | Carga via REST. `NULL` = histórico completo |
+| `wth_sync_tudo()` | função | Roda carteira + faturamento. É o que o cron chama agora |
+| `vw_pedido_emitido` | view | **Fonte da coluna PEDIDO EMITIDO do CRM** (1 linha por nota) |
+| `vw_cliente_compras` | view | Histórico de compra por contato (`total_liquido` já subtrai devolução) |
+| `vw_conversa_e_compra` | view | Atendimento × primeira compra posterior (conversão ~7,1%) |
+
+**Cron mudou:** `wth-sync-carteira` foi removido e substituído por **`wth-sync-tudo`** (a cada 30min),
+que atualiza carteira **e** faturamento juntos (janela móvel de 45 dias). Ver seção 10.10, trocando
+o jobname por `wth-sync-tudo`.
+
+### 12.2 RLS — o app usa service_role, então lê tudo
+
+As tabelas `wth_*` têm **RLS ligado sem policy** → a chave **anon não lê nenhuma linha delas**
+(views funcionam porque rodam como dono). **Mas o nosso app usa `SUPABASE_SERVICE_ROLE_KEY`
+server-side** (nas rotas `/api/*`), que **ignora RLS** — então lê `wth_*` e as views normalmente,
+e o browser nunca recebe chave nenhuma. Para view nova que precise ser lida por anon:
+`grant select on nome_da_view to anon, authenticated;` (não é o nosso caso).
+
+### 12.3 `vw_pedido_emitido` — colunas úteis
+
+1 linha por **nota fiscal** (cliente que comprou 3x aparece 3x → o CRM agrupa por `cliente_id`).
+Chaves: `cliente_id` (liga ao RD Conversas), `codcli`, `carteira`, `rca_num`. Dados: `valor`,
+`data_fat`, `num_nota`, `pedido`, `filial`/`codfilial` (Venus=1, MK Cosméticos=3), `lancado_por`
+(quem digitou — **não** é o dono da carteira). Buckets prontos: `hoje`/`semana`/`quinzena`/`mes`
+(bool, `mes` = desde o dia 1º). Enriquecimento: `ultimo_contato_antes`, `dias_do_contato_ate_compra`.
+
+### 12.4 Consumido pelo CRM (feito nesta sessão — migration 0006)
+
+A `vw_funil` passou a marcar **pedido_emitido pela nota fiscal** (`vw_pedido_emitido.mes`), não mais
+só palavra-chave/tabulação — saltou de **5 → 86 clientes**. Palavra-chave `*pedido faturado/finalizado*`
+fica como **sinal secundário** (fechou no chat, nota ainda não faturou). Cliente que fala **depois** de
+comprar volta pra negociação/tentativa. O card mostra o **valor R$** faturado no mês (`venda_valor`).
+Isso resolve o TODO "ajustar o app para ler `vw_pedido_emitido`" do handoff.
+
+### 12.5 Achado de segurança (NÃO resolvido) — anon com escrita
+
+As tabelas do ETL (`clientes`, `atendimentos`, `mensagens`, `vendedores`, `disparos_template`) estão
+com **RLS desligado e a chave anon com INSERT/UPDATE/DELETE/TRUNCATE**. Como o **nosso app não expõe
+a chave anon** (tudo via service_role server-side), não somos o vetor — mas é um buraco real a nível de
+banco (qualquer um com a anon key apaga a base). Conserto sugerido, **não aplicado** p/ não quebrar nada:
+```sql
+revoke insert, update, delete, truncate on clientes, atendimentos, mensagens,
+  vendedores, disparos_template from anon, authenticated;
+```
+Conferir antes se algum processo escreve com anon (o ETL escreve com **service_role**, então não quebra).
+
+### 12.6 Pendências desta fase
+
+- View de conversão com **janela fechada** (7/15 dias) + exigência de inatividade prévia (a atual mede
+  correlação, não causa — liga o atendimento à 1ª compra posterior sem limite de prazo).
+- Decidir se `vw_vendas_diario` (baseada em `tabulacao`, quase vazia) é aposentada.
+- Decidir se as duas filiais (Venus/MK) contam juntas ou separadas nos relatórios.
+- Revogar escrita da anon (12.5).
+- **Performance:** o join de `vw_pedido_emitido` na `vw_funil` deixou `/api/funil` em ~3,4s local (com
+  paginação 3×1000). Ok pra 1 admin hoje; se pesar, materializar o agregado de nota por cliente.
