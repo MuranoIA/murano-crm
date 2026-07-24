@@ -88,30 +88,60 @@ async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string
 //       resposta do vendedor precisa ser detectada p/ limpar o alerta;
 //   (b) ativas nos últimos `dias` dias — conversas em andamento.
 // Conjunto pequeno e certeiro (~150-200), mantendo o run em ~2 min.
-async function clientesParaRefrescar(dias: number): Promise<{ id: string; carteira: string }[]> {
-  const out: { id: string; carteira: string }[] = [];
+type Candidato = { id: string; carteira: string; telefone: string | null; ultima_atividade: string | null };
+
+// Candidatos a re-checar: conversas ativas nos últimos `dias` (ou "aguardando").
+// Traz telefone + ultima_atividade p/ a checagem barata (Opção 2).
+async function clientesParaChecar(dias: number): Promise<Candidato[]> {
+  const out: Candidato[] = [];
   let from = 0;
   const page = 1000;
   while (true) {
-    let q = sb.from("vw_funil").select("cliente_id,vendedor");
+    let q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade");
     if (dias > 0) {
       const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
       q = q.or(`ultima_enviada_por.eq.customer,ultima_atividade.gte.${cutoff}`);
     } else {
-      // grátis: só as "aguardando" (cliente por último) — o essencial p/ limpar alerta
       q = q.eq("ultima_enviada_por", "customer");
     }
     const { data, error } = await q.range(from, from + page - 1);
-    if (error) throw new Error(`select vw_funil refrescar: ${error.message}`);
+    if (error) throw new Error(`select vw_funil checar: ${error.message}`);
     const rows = data ?? [];
     for (const r of rows) {
       const cart = String(r.vendedor ?? "");
-      if (r.cliente_id && TARGET_WALLETS.has(cart)) out.push({ id: r.cliente_id, carteira: cart });
+      // ignora cards sintéticos (venda:/winthor:) — só conversas reais têm histórico
+      if (r.cliente_id && !String(r.cliente_id).includes(":") && TARGET_WALLETS.has(cart)) {
+        out.push({ id: r.cliente_id, carteira: cart, telefone: r.telefone ?? null, ultima_atividade: r.ultima_atividade ?? null });
+      }
     }
     if (rows.length < page) break;
     from += page;
   }
   return out;
+}
+
+// OPÇÃO 2 — checagem BARATA: /v2/contacts/{phone}/exists devolve a última mensagem em
+// texto puro (last_message_data), sem decriptar. Compara com o que o banco tem; só quem
+// tem mensagem NOVA entra no fetch caro (/messages/history + decrypt). Permite varrer
+// uma janela larga por pouco custo.
+async function checarMudaram(candidatos: Candidato[]): Promise<{ id: string; carteira: string }[]> {
+  const mudaram: { id: string; carteira: string }[] = [];
+  let checked = 0, semTel = 0;
+  for (const c of candidatos) {
+    checked++;
+    if (checked % 150 === 0) console.error(`[checar] ${checked}/${candidatos.length} (${mudaram.length} c/ msg nova)`);
+    if (!c.telefone) { semTel++; mudaram.push({ id: c.id, carteira: c.carteira }); continue; } // sem tel -> fetch p/ garantir
+    await sleep(150);
+    try {
+      const ex: any = await withRetry(() => rd.get(`/v2/contacts/${c.telefone}/exists`));
+      const lastRd = ex?.data?.last_message_data?.created_at;
+      const dbLast = c.ultima_atividade ? new Date(c.ultima_atividade).getTime() : 0;
+      // +2s de folga p/ diferença de precisão entre RD e o que gravamos
+      if (lastRd && new Date(lastRd).getTime() > dbLast + 2000) mudaram.push({ id: c.id, carteira: c.carteira });
+    } catch { mudaram.push({ id: c.id, carteira: c.carteira }); } // erro -> fetch p/ garantir
+  }
+  console.error(`[checar] ${candidatos.length} checados via /exists | ${mudaram.length} c/ msg nova | ${semTel} sem telefone`);
+  return mudaram;
 }
 
 // Clientes com atendimento ABERTO (fechado=false), independente de quando o
@@ -381,16 +411,16 @@ async function main() {
     const ativos = await loadReports(vendIds);
     const alvos = new Map(ativos.map((c) => [c.id, c] as const));
     if (!FULL) {
-      // além das conversas com atendimento novo (reports), recarrega as
-      // recentemente ativas no banco — pega respostas dentro de atendimentos antigos.
-      // ETL_REFRESH_DAYS: 1 (padrão) = "aguardando" + ativas nas últimas 24h (pega os
-      // dois sentidos, inclusive conversas onde o operador foi o último a falar). 0 = só "aguardando".
-      const dias = Number(process.env.ETL_REFRESH_DAYS ?? 1);
-      const recentes = await clientesParaRefrescar(dias);
+      // OPÇÃO 2: varre uma janela LARGA (ETL_SCAN_DAYS, padrão 30d) com a checagem
+      // BARATA (/exists, sem decriptar) e só faz o fetch caro das que têm msg nova.
+      // Assim pega mensagem nova em qualquer conversa recente sem pagar o custo de
+      // baixar+decriptar todas — viável com o repo público (Actions grátis).
+      const scanDias = Number(process.env.ETL_SCAN_DAYS ?? 30);
+      const candidatos = (await clientesParaChecar(scanDias)).filter((c) => !alvos.has(c.id));
+      const mudaram = await checarMudaram(candidatos);
       let add = 0;
-      for (const r of recentes) if (!alvos.has(r.id)) { alvos.set(r.id, r); add++; }
-      const escopo = dias > 0 ? `aguardando + ativas ${dias}d` : "aguardando";
-      console.error(`[incremental] +${add} conversas (${escopo}) → total a atualizar: ${alvos.size}`);
+      for (const m of mudaram) if (!alvos.has(m.id)) { alvos.set(m.id, m); add++; }
+      console.error(`[incremental] varridas ${candidatos.length} (janela ${scanDias}d) → +${add} c/ msg nova → total: ${alvos.size}`);
     }
     if (FULL) {
       // só no full (manual/raro): reprocessa TODO atendimento aberto, sem limite de

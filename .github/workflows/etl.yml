@@ -9,10 +9,11 @@ on:
         default: incremental
         options: [incremental, full, mensagens]
   schedule:
-    # A cada 20 min em horário comercial (dias úteis) — sempre modo incremental (rápido).
+    # A cada 10 min em horário comercial (dias úteis) — sempre modo incremental.
     # Cron do GitHub roda em UTC. Brasília = UTC-3, então 11-23 UTC ≈ 08h-20h BRT.
-    # 20 min mantém o uso dentro do plano grátis do GitHub Actions (~860 runs/mês).
-    - cron: "*/20 11-23 * * 1-5"
+    # Repo público -> Actions grátis/ilimitado, então 10 min é viável. O incremental
+    # usa a checagem barata (/exists) numa janela larga (ETL_SCAN_DAYS), então cabe.
+    - cron: "*/10 11-23 * * 1-5"
 
 # Evita empilhar cargas: se uma execução ainda roda quando outra começa, a nova espera.
 concurrency:
