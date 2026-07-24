@@ -125,6 +125,13 @@ function dataCurta(iso: string | null): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}`;
 }
+// data pura "YYYY-MM-DD" (ex: data_fat da nota) — formata direto, SEM shift de fuso
+// (senão meia-noite UTC vira o dia anterior em BRT). Ex: 2026-07-23 -> "23/07".
+function dataDiaISO(s: string | null): string {
+  if (!s) return "—";
+  const [, m, d] = s.slice(0, 10).split("-");
+  return `${d}/${m}`;
+}
 const DIAS_RECONTATO = 4; // tentativa de contato parada há >= 4 dias -> recontactar
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -687,7 +694,7 @@ export default function Page() {
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3 }}>
                             {c.cliente}
                             <span style={{ marginLeft: 7, fontSize: 12, fontWeight: 600, color: RD.grayLight, whiteSpace: "nowrap" }}>
-                              {dataCurta(c.ultima_atividade)}
+                              {vendaSemConversa ? dataDiaISO(c.venda_data) : dataCurta(c.ultima_atividade)}
                             </span>
                           </div>
                           {/* área de mensagens: cresce e cola no rodapé; se as msgs forem grandes,
