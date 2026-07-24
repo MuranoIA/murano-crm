@@ -124,19 +124,29 @@ const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
 const CARD_ALTURA = 138;    // altura fixa do card (simétrico) — comporta até 2 bolhas compactas
 
-// Períodos de atividade (janelas móveis, cumulativas: hoje ⊂ semana ⊂ quinzena ⊂ mês).
-// "todos" = sem filtro. Cards de prospecção (ultima_atividade null) só aparecem em "todos".
-type Periodo = "todos" | "hoje" | "semana" | "quinzena" | "mes";
-const PERIODOS: { key: Exclude<Periodo, "todos">; label: string; dias: number }[] = [
+// Períodos de atividade. "hoje/semana/quinzena/mês" são janelas cumulativas; "ontem"
+// é o dia-calendário anterior (só no dropdown, não nos chips). "todos" = sem filtro.
+// Cards de prospecção (ultima_atividade null) só aparecem em "todos".
+type Periodo = "todos" | "hoje" | "ontem" | "semana" | "quinzena" | "mes";
+const PERIODOS: { key: Exclude<Periodo, "todos" | "ontem">; label: string; dias: number }[] = [
   { key: "hoje", label: "hoje", dias: 0 },       // 0 = dia-calendário (via ehHoje), não 24h móveis
   { key: "semana", label: "semana", dias: 7 },
   { key: "quinzena", label: "quinzena", dias: 15 },
   { key: "mes", label: "mês", dias: 30 },
 ];
+// data-calendário BRT de um ISO (YYYY-MM-DD)
+function diaBRT(iso: string): string {
+  return new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function ehOntem(iso: string): boolean {
+  const ontem = new Date(Date.now() - 3 * 3600 * 1000 - 86400000).toISOString().slice(0, 10);
+  return diaBRT(iso) === ontem;
+}
 function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
   if (periodo === "todos") return true;
   if (!iso) return false; // prospecção sem data não entra em nenhuma janela
   if (periodo === "hoje") return ehHoje(iso);
+  if (periodo === "ontem") return ehOntem(iso);
   const dias = periodo === "semana" ? 7 : periodo === "quinzena" ? 15 : 30;
   return Date.now() - new Date(iso).getTime() <= dias * 86400000;
 }
@@ -394,7 +404,7 @@ export default function Page() {
             <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : cap(sessao.carteira ?? "")}</b>
           </span>
           {sessao.role === "admin" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
               <button
                 onClick={dispararSync}
                 disabled={disparandoSync || syncRodando}
@@ -415,7 +425,8 @@ export default function Page() {
                 }} />
                 {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
               </button>
-              <span style={{ fontSize: 10, color: syncConclusao === "failure" ? "#dc2626" : RD.grayLight, paddingLeft: 2, whiteSpace: "nowrap" }}>
+              {/* legenda pendurada abaixo do botão (absoluta, não empurra o botão do alinhamento) */}
+              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncConclusao === "failure" ? "#dc2626" : RD.grayLight, whiteSpace: "nowrap" }}>
                 RD Conversas → clientes e mensagens
                 {syncRodando && syncUltimo ? ` · rodando há ${duracao(syncUltimo)}` : null}
                 {!syncRodando && syncUltimo ? ` · última: ${tempoRelativo(syncUltimo)}` : null}
@@ -458,6 +469,7 @@ export default function Page() {
           >
             <option value="todos">Período: todos</option>
             <option value="hoje">Período: hoje</option>
+            <option value="ontem">Período: ontem</option>
             <option value="semana">Período: semana</option>
             <option value="quinzena">Período: quinzena</option>
             <option value="mes">Período: mês</option>
@@ -477,7 +489,7 @@ export default function Page() {
               <b style={{ fontSize: 18, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
             <span style={{ color: RD.gray, fontSize: 12.5 }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} negociações · ${atualizado}`}
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} conversas/clientes · ${atualizado}`}
             </span>
           </div>
         </header>
@@ -529,7 +541,9 @@ export default function Page() {
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
                     {col.key === "pedido_emitido" && (() => {
                       // total R$ faturado no período ativo (todos -> mês), escopo pelo vendedor filtrado
-                      const perTotal: Exclude<Periodo, "todos"> = periodoAtivo === "todos" ? "mes" : periodoAtivo;
+                      // "ontem" ainda não tem bucket próprio de venda -> usa o do mês (TODO: bucket ontem)
+                      const perTotal: "hoje" | "semana" | "quinzena" | "mes" =
+                        (periodoAtivo === "todos" || periodoAtivo === "ontem") ? "mes" : periodoAtivo;
                       const total = filtro === "todos"
                         ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
                         : (vendasTotais[filtro]?.[perTotal] ?? 0);
