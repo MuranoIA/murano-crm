@@ -533,13 +533,13 @@ export default function Page() {
                       const total = filtro === "todos"
                         ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
                         : (vendasTotais[filtro]?.[perTotal] ?? 0);
-                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Valor: {moedaBR(total)}</span>;
+                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(total)}</span>;
                     })()}
                   </div>
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
                   </div>
-                  <div style={{ marginTop: 7, display: "flex", gap: 4 }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 3 }}>
                     {PERIODOS.map((per) => {
                       const ativo = periodoAtivo === per.key;
                       return (
@@ -549,16 +549,17 @@ export default function Page() {
                           title={ativo ? `Mostrando só ${per.label} — clique pra ver todos` : `Filtrar ${col.titulo} por ${per.label}`}
                           style={{
                             flex: 1, minWidth: 0, cursor: "pointer",
-                            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
                             background: ativo ? col.cor : RD.surface,
                             color: ativo ? "#fff" : RD.gray,
                             border: `1px solid ${ativo ? col.cor : RD.border}`,
-                            borderRadius: 8, padding: "5px 2px", fontWeight: 700,
+                            borderRadius: 6, padding: "3px 2px", fontWeight: 700,
+                            whiteSpace: "nowrap", overflow: "hidden",
                             boxShadow: "0 1px 1px rgba(16,32,64,0.04)",
                           }}
                         >
-                          <span style={{ fontSize: 9.5, whiteSpace: "nowrap" }}>{per.label}</span>
-                          <b style={{ fontSize: 13, lineHeight: 1, color: ativo ? "#fff" : RD.navy }}>{contaPeriodo(per.key)}</b>
+                          <span style={{ fontSize: 8.5 }}>{cap(per.label)}</span>
+                          <b style={{ fontSize: 10.5, lineHeight: 1, color: ativo ? "#fff" : RD.navy }}>{contaPeriodo(per.key)}</b>
                         </button>
                       );
                     })}
