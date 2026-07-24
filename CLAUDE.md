@@ -20,9 +20,12 @@ que recebe.
 - **Fase 1 — 4 métricas por vendedor (viável, validada ao vivo p/ o Romulo).**
   Ver seção 5. Hoje respondidas por scripts descartáveis `src/_tmp_*.ts` que batem
   na API ao vivo (lento: minutos por pergunta por causa de rate limit + decrypt).
-- **Fase 2 — ETL Supabase (FALTA FAZER).** Desenhar tabelas, escrever o job de
-  UPSERT idempotente, agendar. É a parte mais mecânica — o trabalho difícil
-  (auth, paginação, decrypt, retry) já está pronto e testado.
+- **Fase 2 — ETL Supabase (CONCLUÍDA e em produção).** Tabelas, job de UPSERT
+  idempotente (`src/etl/run.ts`) e agendamento (GitHub Actions, cron 20min)
+  rodando. Dashboard web (`web/`) publicado.
+- **Fase 3 — Cruzamento com WinThor via `murano-clientes-v2` (CONCLUÍDA e em
+  produção).** Ver seção 10 — módulo `wth_`, carteira oficial por CPF,
+  `codcli` como chave pra faturamento real.
 
 ## 2. API RD Station Conversas (ex-Tallos)
 
@@ -230,3 +233,308 @@ valores + valor total** e combinar entrega/pagamento.
   puro de `/v2/contacts/{phone}/exists`) para decidir se vale decriptar o histórico
   completo (caro, e pode falhar por chave antiga). Não usar como única fonte de
   verdade — auditar com a checagem completa de tempos em tempos.
+
+## 10. Módulo WinThor (`wth_`) — cruzamento com murano-clientes-v2
+
+> Handoff de outra sessão Claude (conta oficial Murano, com acesso direto ao
+> `murano-clientes-v2`). Verificado ao vivo contra o `murano-conversas` em
+> 23/07/2026 antes de entrar aqui — todos os objetos e números abaixo foram
+> confirmados por consulta direta (`wth_carteira`, `wth_vinculo`, `wth_sync_log`,
+> `vw_fila_prospeccao`, `vw_divergencia_carteira` existem e o `pg_cron` está
+> rodando de fato, não é plano).
+
+### 10.1 Regra permanente
+
+O banco **`murano-clientes-v2` (`jjvbmqycgjgkwidgcmif`) é SOMENTE LEITURA.**
+Nunca aplicar migration, DDL, insert, update ou delete nele. Nenhuma exceção.
+Objetos novos vão sempre no **`murano-conversas` (`wtunzezigncwjpcqsfzk`)** —
+o mesmo projeto Supabase que este repositório já usa (`SUPABASE_URL`/
+`SUPABASE_SERVICE_ROLE_KEY` no `.env`).
+
+Nada foi alterado na v2 em nenhum momento — apenas `SELECT` e `EXPLAIN`.
+
+### 10.2 Os dois bancos
+
+| Projeto | Ref | Papel | Permissão |
+|---|---|---|---|
+| `murano-conversas` | `wtunzezigncwjpcqsfzk` | Destino do ETL do RD Conversas | leitura e escrita |
+| `murano-clientes-v2` | `jjvbmqycgjgkwidgcmif` | ERP WinThor | **somente leitura** |
+
+São projetos Supabase separados — não existe JOIN direto entre eles. A ponte é o módulo `wth_`.
+
+### 10.3 Como identificar o vendedor de um contato
+
+Campo canônico: **`clientes.carteira`** — slug minúsculo. Hoje: `kamilly`, `luana`, `romulo`.
+
+Mesmo conceito, nome diferente por tabela:
+
+| tabela | campo | formato |
+|---|---|---|
+| `clientes` | `carteira` | slug |
+| `mensagens` | `vendedor_carteira` | slug |
+| `disparos_template` | `vendedor` | slug |
+| `atendimentos` | `vendedor_id` | ID → FK `vendedores.id` |
+
+#### Armadilha 1 — `clientes.employee_id`
+
+Parece a FK certa (1.626 de 1.627 casam com `vendedores.id`), **mas não é o dono da carteira.**
+É o operador atribuído ou o último que mexeu no contato no painel. Concorda com a `carteira`
+em apenas **58,9%** dos casos. Confirma e generaliza o que já tínhamos visto isolado no caso
+do cliente Cleuson Madson (seção anterior desta sessão): `employee`/`employee_id` não é
+confiável pra atribuição, `carteira` é.
+
+Sintoma: Henry (departamento "Clientes Inativos") aparece como `employee_id` de 416 clientes
+espalhados pelas três carteiras — cara de triagem ou automação. Agrupar por `employee_id` faz
+a produtividade do ISR vazar para dentro dele.
+
+O campo não está quebrado — significa outra coisa. **Não sobrescrever.**
+
+#### Armadilha 2 — join por nome
+
+`LEFT JOIN vendedores ON lower(v.nome) = c.carteira` **não escala.** Os nomes em `vendedores`
+estão inconsistentes: `Atendente: Thamires Farias`, `Atendente -  Milene Pamplona` (espaço duplo),
+`Atendente  Lais`. E primeiro nome colide — já existe um `Thiago`, e o RCA 29 é Thiago Melo,
+cuja string no WinThor tem espaço sobrando no fim (`'29 - THIAGO MELO '`).
+
+**Usar sempre `rca_num` (inteiro) como chave de vendedor.**
+
+#### Armadilha 3 — atribuição de venda
+
+`atendimentos.vendedor_id` e `clientes.carteira` divergem em **10,6%** dos atendimentos.
+São conceitos diferentes: quem atendeu o ticket vs. de quem é a carteira. A `vw_vendas_diario`
+atribui pela carteira. Se a régua de comissão for "quem fechou", precisa mudar para `a.vendedor_id`.
+
+#### Armadilha 4 — `sincronizado_em` não é heartbeat
+
+O ETL é incremental: só grava linha nova ou alterada. `max(sincronizado_em)` indica a última vez
+que **algum registro mudou**, não a última vez que o job rodou. Intervalo grande ≠ ETL parado.
+
+### 10.4 Escopo da tabela `clientes`
+
+Contém **apenas contatos que tiveram atendimento**. Verificado: 1.627 de 1.627 têm ao menos um
+atendimento vinculado, zero atendimentos órfãos.
+
+Não é espelho da carteira. Cliente que nunca foi abordado não aparece — e isso está correto.
+As RCAs 45/46/51 somam 2.611 clientes no WinThor contra ~1.630 contatos aqui. A diferença é
+**fila de prospecção**, não buraco de dados. **Isso explica o caso da cliente Emanuelle de
+Almeida** investigado nesta sessão: ela pode simplesmente nunca ter tido um atendimento com
+protocolo gerado ainda — vale checar `vw_fila_prospeccao` antes de assumir bug do ETL.
+
+### 10.5 Módulo `wth_` — aplicado e rodando
+
+Objetos criados no `murano-conversas`:
+
+| Objeto | Tipo | RLS |
+|---|---|---|
+| `wth_carteira` | tabela | ✅ |
+| `wth_vinculo` | tabela | ✅ |
+| `wth_sync_log` | tabela | ✅ |
+| `wth_config` | tabela | ✅ |
+| `wth_reconciliar_vinculos()` | função | — |
+| `wth_sync_carteira_http()` | função | — |
+| `vw_cliente_rca` | view | — |
+| `vw_fila_prospeccao` | view | — |
+| `vw_divergencia_carteira` | view | — |
+
+Extensões: `postgres_fdw`, `http`, `pg_cron`.
+
+#### Como a carga funciona
+
+`wth_sync_carteira_http()` chama a **API REST da v2** com a service_role key guardada em
+`wth_config`, pagina de mil em mil, e faz upsert em `wth_carteira`. Depois roda
+`wth_reconciliar_vinculos()`, que casa CPF e preenche `wth_vinculo`.
+
+Agendado no `pg_cron` a cada 30 minutos (`wth-sync-carteira`).
+
+Primeira execução manual: **8.487 linhas, 1.433 vínculos, 959 ms.**
+Primeira execução automática (23/07 22:30 Belém): **succeeded, 1,49 s.**
+
+#### O job agendado — o que é e o que não é
+
+`pg_cron` é um agendador que roda dentro do próprio Postgres. Não depende de máquina ligada
+nem de servidor externo. A cada 30 minutos ele executa uma linha: `select wth_sync_carteira_http();`
+
+Efeito prático: CPF cadastrado no painel vira vínculo com `codcli` e RCA oficial em até 30 min,
+sem intervenção.
+
+**Este job NÃO é o ETL do RD Conversas.** São coisas distintas e é fácil confundir:
+
+| | o que traz | onde mora |
+|---|---|---|
+| `wth-sync-carteira` | carteira do WinThor → `wth_carteira` | dentro do banco (pg_cron) |
+| ETL rd-conversas | contatos e conversas → `clientes` | repositório local |
+
+Contato novo aparecer depende do **ETL**, não deste job. Este só enriquece quem já está no espelho.
+
+#### Riscos conhecidos deste job
+
+1. **Falha silenciosa.** Se a service_role key for rotacionada ou revogada, o job passa a falhar
+   e ninguém é avisado — grava `status='erro'` em `wth_sync_log` e segue tentando. Os números
+   param de atualizar sem aviso. Conferir `cron.job_run_details` periodicamente, ou montar alerta.
+2. **Cliente apagado na v2 não some daqui.** A carga é upsert: atualiza e insere, nunca remove.
+   Cliente excluído no WinThor fica parado em `wth_carteira` com `sincronizado_em` antigo.
+3. **Logs crescem.** 48 execuções/dia, ~17 mil linhas/ano em `wth_sync_log` e em
+   `cron.job_run_details`. Pouco, mas em algum momento vale limpar.
+
+Trinta minutos é generoso para este job — a carteira do WinThor muda devagar. Uma vez por dia
+resolveria. Para mudar:
+
+```sql
+select cron.unschedule('wth-sync-carteira');
+select cron.schedule('wth-sync-carteira','0 6 * * *', $$ select wth_sync_carteira_http(); $$);
+```
+
+#### Caminho alternativo (FDW) — montado mas inativo
+
+`postgres_fdw`, server `v2_winthor`, schema `v2`, foreign table `v2.clientes` e a função
+`wth_sync_carteira()` existem e estão intactos. Falta só o **user mapping**, que precisa da
+senha do banco da v2 (não a senha da conta Supabase — a senha do Postgres, que só aparece
+em connection string e não é visível no dashboard).
+
+Quando a senha aparecer num `.env`, basta:
+
+```sql
+drop user mapping if exists for postgres server v2_winthor;
+create user mapping for postgres server v2_winthor
+  options (user 'postgres', password 'SENHA');
+select cron.unschedule('wth-sync-carteira');
+select cron.schedule('wth-sync-carteira','*/30 * * * *', $$ select wth_sync_carteira(); $$);
+```
+
+Os dois escrevem na mesma `wth_carteira` por upsert. **Usar um OU outro no cron, nunca os dois.**
+
+#### Chave de cruzamento: CPF
+
+Testado em amostra de 300: **100% de match** por CPF entre os dois bancos.
+
+Não usar telefone como chave primária de match — no `murano-conversas` ele vem com 12 dígitos,
+sem o nono (`559181959789`). Telefone só serve como fallback (ver abaixo).
+
+#### Concordância carteira × RCA oficial
+
+Na amostra de 300, a `carteira` bate com o `rca_vendedor` do WinThor em **99%** dos casos.
+A `carteira` já estava certa desde o início. Quem estava errado era o `employee_id`.
+
+### 10.6 Estado dos dados (23/07/2026)
+
+| | |
+|---|---|
+| carteira WinThor carregada | 8.487 |
+| contatos no RD Conversas | 1.633 |
+| com RCA oficial vinculado | 1.433 |
+| sem CPF (não vinculam) | 199 |
+| fila de prospecção | 1.197 |
+| divergências de carteira | 23 |
+
+Fila por RCA: Romulo 592 · Luana 364 · Kamilly 241.
+
+### 10.7 Pendências
+
+**1. Divergências de carteira (23 casos).** Planilha `divergencias_carteira.xlsx` gerada
+para tratar com o time (abas: Divergencias, Como ler). **10 dos 23 são do RCA 53 (Jorge),
+quase todos em Castanhal** — tem cara de mudança de território, não de transferências
+avulsas. Confirmar com a supervisão resolve 10 de uma vez. Os outros 13 são pulverizados:
+Henry (4), Luana (3), e um caso cada de Francisco, Jennifer, Anne, Maiara, Alexandre e
+Administrativo Venus. Lista sempre atual: `select * from vw_divergencia_carteira;`
+
+**2. Contatos sem CPF (199).** Planilha `contatos_sem_cpf.xlsx` (abas: Sem CPF, Resumo e
+instrucoes). **186 tiveram o CPF recuperado automaticamente** cruzando os 8 últimos dígitos
+do telefone contra o WinThor:
+
+| classificação | qtd | ação |
+|---|---|---|
+| ALTA — telefone e nome batem | 184 | aplicar direto |
+| REVISAR — telefone bate, nome difere | 2 | conferir antes |
+| AMBÍGUO — telefone bate com mais de um | 1 | confirmar com o cliente |
+| SEM MATCH — telefone não existe no WinThor | 12 | pedir CPF na conversa |
+
+Usamos 8 dígitos porque o telefone no painel vem sem o nono em boa parte dos casos.
+Depois de aplicar no painel, o vínculo se cria sozinho no próximo sync.
+
+**3. Cadência do job de `clientes` no ETL.** Meta: 30 minutos. Precisa olhar o repositório
+para saber se o passo de `clientes` roda em toda execução ou tem agendamento próprio mais
+lento. Os timestamps não respondem isso porque são deltas (ver Armadilha 4). **Resposta já
+disponível nesta sessão:** roda dentro do incremental normal do `src/etl/run.ts`, cadência
+real é a do cron do GitHub Actions (hoje ~20min, sujeito a atraso — ver seção sobre o
+disparo manual/scheduling desta sessão).
+
+**4. Token do RD Conversas em texto puro.** Está guardado como memória de conversa, não em
+cofre. Mover para os secrets do Supabase ou para um gerenciador de senhas.
+
+**5. Service_role key da v2 em `wth_config`.** Irrestrita — dá leitura e escrita na v2
+inteira, embora a função só faça `GET`. Considerar um role read-only na v2 com
+`GRANT SELECT ON clientes` e uma chave só para ele. (Isso seria alteração na v2 — decisão
+explícita do usuário, não fazer sem intenção clara.)
+
+**6. Senha do banco da v2.** Não localizada. Procurar em `.env` de qualquer projeto que
+conecte na v2 por connection string. Resetar derruba tudo que usa a senha antiga, incluindo
+possivelmente o sync do WinThor.
+
+### 10.8 Regras de leitura do murano-clientes-v2
+
+```sql
+-- vendas
+tipo = 'VENDA' AND posicao = 'F - Faturado'
+-- devoluções
+tipo = 'DEV'   AND posicao = 'DEV - Devolucao'
+```
+
+- Período sempre por `data_fat`
+- Faturamento sempre **líquido** (vendas − devoluções)
+- `itens` liga por `itens.cod_pedido = faturamento.pedido`
+- Carteira do cliente é `clientes.rca_vendedor`, não `faturamento.nome_usuario`
+- WinThor é fonte da verdade quando houver divergência de sync
+
+### 10.9 Times de venda
+
+| Sigla | Time | RCAs |
+|---|---|---|
+| **IS** | Vendas internas | Thamires 10, Anne 27, Milene 28, Thiago 29 |
+| **GC** | Grandes contas | Maiara 9, Henry 30, Jennifer 31, Natália 47, Jorge 53 |
+| **ISR** | Reativação | Romulo 45, Luana 46, Kamilly 51 |
+
+Só o ISR está sincronizado no `murano-conversas`.
+
+Ao acrescentar IS ou GC, atualizar **dois lugares**:
+1. Lista de RCAs em `vw_fila_prospeccao`
+2. Mapa carteira→RCA em `vw_divergencia_carteira`
+
+### 10.10 Consultas úteis
+
+```sql
+-- Últimas execuções do sync
+select * from wth_sync_log order by id desc limit 5;
+
+-- Histórico do cron (a coluna jobname NÃO existe em job_run_details — precisa do JOIN)
+select d.status,
+       d.start_time at time zone 'America/Belem' as inicio_belem,
+       d.end_time - d.start_time as duracao,
+       d.return_message
+from cron.job_run_details d
+join cron.job j on j.jobid = d.jobid
+where j.jobname = 'wth-sync-carteira'
+order by d.start_time desc limit 10;
+
+-- Fila de prospecção por RCA
+select rca_nome, count(*) from vw_fila_prospeccao group by 1 order by 2 desc;
+
+-- Divergências
+select * from vw_divergencia_carteira;
+
+-- Cobertura de vínculo
+select count(*) as contatos,
+       count(*) filter (where rca_num is not null) as com_rca
+from vw_cliente_rca;
+
+-- Forçar sync manual
+select wth_sync_carteira_http();
+```
+
+### 10.11 Por que a tabela `clientes` não foi alterada
+
+Ela é espelho do RD Conversas, escrita pelo ETL. Colunas extras ali correriam risco de serem
+apagadas no próximo upsert. O enriquecimento mora em `wth_vinculo`, com FK para `clientes(id)`
+e `on delete cascade` — o espelho continua idêntico à origem e o vínculo se limpa sozinho.
+
+Isso também respeita a regra do `murano-system-os`: novo módulo, novo prefixo, tabelas core
+intocadas.
