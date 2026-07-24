@@ -720,9 +720,6 @@ export default function Page() {
                           </div>
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3 }}>
                             {c.cliente}
-                            <span style={{ marginLeft: 7, fontSize: 12, fontWeight: 600, color: RD.grayLight, whiteSpace: "nowrap" }}>
-                              {vendaSemConversa ? dataDiaISO(c.venda_data) : dataCurta(c.ultima_atividade)}
-                            </span>
                           </div>
                           {/* área de mensagens: cresce e cola no rodapé; se as msgs forem grandes,
                               as mais antigas (topo) são cortadas, sempre mantendo a mais recente visível */}
