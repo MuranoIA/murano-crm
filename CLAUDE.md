@@ -538,3 +538,62 @@ e `on delete cascade` — o espelho continua idêntico à origem e o vínculo se
 
 Isso também respeita a regra do `murano-system-os`: novo módulo, novo prefixo, tabelas core
 intocadas.
+
+## 11. Dashboard / funil (`web/`) — etapas e regras de negócio
+
+App **Next.js** em `web/`, publicado na **Vercel** como `funil-murano` (`funil-murano.vercel.app`).
+Kanban de negociações lido da view **`vw_funil`** (Supabase `murano-conversas`), por carteira.
+Login admin (cookie `crm_sessao`); vendedor por Google Auth ainda é TODO.
+
+### 11.1 As 4 etapas (colunas), da esquerda p/ direita
+
+A etapa é **derivada em tempo real** na `vw_funil` (não é estado mutável gravado). Cada cliente
+tem **exatamente 1 linha** (join lateral por `cliente_id`) — o card **se move** entre colunas,
+nunca duplica. Migrations que definem: `0001` (original), `0003` (recência), `0004` (ociosos).
+
+| Etapa | Quando |
+|---|---|
+| **ociosos** | (a) cliente falou por último e passou de **24h** sem template novo (janela do WhatsApp fechou, só template reabre); (b) venda de mês anterior (expirou) sem nada depois; (c) cliente da carteira que **nunca teve atendimento** no RD Conversas (fila de prospecção) |
+| **tentativa_contato** | última mensagem real é do operador **e é template** (aguardando a 1ª resposta a esse disparo) |
+| **negociacao** | catch-all: troca ativa dentro da janela (cliente falou por último há <24h, ou operador falou fora de template) |
+| **pedido_emitido** | venda no **mês corrente** (fuso BRT): texto `*pedido faturado*`/`*pedido finalizado*` OU tabulação `venda_realizada`. **Expira sozinho no dia 1º** (a view compara com o mês corrente) → cai pra ociosos/negociação |
+
+**Regra de recência (fix da migration 0003):** a etapa olha a **última mensagem real** (ignora
+`tipo='evento_sistema'`), **não** "o cliente já respondeu alguma vez" — senão um card ficava preso
+em `negociacao` pra sempre depois da 1ª resposta, mesmo após reengajamento por template semanas
+depois (caso Maria Bernadete).
+
+**Venda — duas frases (fix 0003):** a equipe usa **`*pedido faturado*` E `*pedido finalizado*`**
+(as duas convivem no banco). Reconhecer só a 1ª deixava vendas presas na etapa errada (caso Samara
+Soares Brito). **Futuro ideal:** puxar a venda **de verdade** do `murano-clientes-v2` (via
+`wth_vinculo.codcli` → faturamento), porque a equipe **não tem o hábito de fechar o atendimento**
+depois da venda — então tabulação sozinha é insuficiente, por isso o texto continua sendo sinal.
+
+### 11.2 Cards de prospecção (nunca contatados)
+
+Vêm de **`vw_fila_prospeccao`** (clientes da carteira RCA oficial 45/46/51 sem atendimento no RD).
+Não têm `cliente_id` do RD Conversas → id sintético **`winthor:<codcli>`**, `ultima_atividade` NULL,
+só `nome`/`telefone`/`cidade`. No front, o clique **abre WhatsApp direto** (`wa.me/<telefone>`), não
+o RD Conversas. Dedup por telefone (últimos 8 dígitos) evita duplicar quem já está em `clientes`.
+
+- **~1.003 desses cards hoje.** Como têm data NULL, **só aparecem no filtro de período "todos"**
+  (o padrão) — some ao filtrar por hoje/semana/quinzena/mês (não têm atividade pra cair na janela).
+- **~67 estão sem telefone** no WinThor → aparecem como "sem telefone", clique não faz nada.
+
+### 11.3 Filtro por período no cabeçalho de cada coluna
+
+Cada coluna tem chips **hoje / semana / quinzena / mês** (janelas móveis cumulativas sobre
+`ultima_atividade`, BRT) com a contagem de cada período. Clicar filtra **aquela** coluna; clicar no
+ativo desliga (volta pra "todos"). Um **dropdown global** aplica um período a **todas** de uma vez.
+Não há mais o número total ao lado do nome da etapa (removido a pedido do usuário).
+
+### 11.4 Detalhes de implementação do front
+
+- **Paginação obrigatória em `/api/funil`:** o PostgREST/Supabase corta resposta em **1000 linhas**;
+  a `vw_funil` tem ~2.5k (com prospecção). A rota **pagina de 1000 em 1000** — sem isso, os cards de
+  prospecção (ordenados por último, data NULL) sumiam.
+- **Scroll infinito por coluna** (100 cards/lote, +100 ao chegar perto do fim) — sem lib.
+- **Botão "Sincronizar agora"** (só admin): dispara o **mesmo** ETL incremental do cron via
+  `workflow_dispatch` (`/api/sync-etl`, PAT `GITHUB_ETL_TOKEN` com Actions:write). Legenda mostra o
+  que sincroniza + cronômetro ao vivo. **Não** dispara o sync do WinThor (`wth_`, pg_cron separado).
+- **Botão TEMPLATE / disparos** (`/api/send-template`, `disparos_template`) — ver migration `0002`.
