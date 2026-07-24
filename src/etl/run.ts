@@ -97,13 +97,12 @@ async function clientesParaChecar(dias: number): Promise<Candidato[]> {
   let from = 0;
   const page = 1000;
   while (true) {
-    let q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade");
-    if (dias > 0) {
-      const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
-      q = q.or(`ultima_enviada_por.eq.customer,ultima_atividade.gte.${cutoff}`);
-    } else {
-      q = q.eq("ultima_enviada_por", "customer");
-    }
+    // só conversas ativas na janela (data-limitada) — inclui as "aguardando" recentes
+    // (a última msg do cliente entra em ultima_atividade). NÃO pega aguardando antigo,
+    // senão o scan explode com todo cliente-por-último de qualquer idade.
+    const cutoff = new Date(Date.now() - Math.max(1, dias) * 86400000).toISOString();
+    const q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade")
+      .gte("ultima_atividade", cutoff);
     const { data, error } = await q.range(from, from + page - 1);
     if (error) throw new Error(`select vw_funil checar: ${error.message}`);
     const rows = data ?? [];
