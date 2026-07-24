@@ -566,7 +566,12 @@ export default function Page() {
                       const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
                       const totalR = vt.reduce((a, v) => a + (v[per] ?? 0), 0);
                       const totalQ = vt.reduce((a, v) => a + (v[qKey] ?? 0), 0);
-                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(totalR)} · {totalQ} vendas</span>;
+                      return (
+                        <span style={{ marginLeft: "auto", display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(totalR)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#15803d", whiteSpace: "nowrap" }}>{totalQ} vendas</span>
+                        </span>
+                      );
                     })()}
                   </div>
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
