@@ -98,6 +98,9 @@ function dataCurta(iso: string): string {
 const DIAS_RECONTATO = 4; // tentativa de contato parada há >= 4 dias -> recontactar
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
+const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
+
 export default function Page() {
   const [cards, setCards] = useState<Card[]>([]);
   const [templatesHoje, setTemplatesHoje] = useState<Record<string, number>>({});
@@ -113,6 +116,8 @@ export default function Page() {
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
+  // scroll infinito: quantos cards renderizar por coluna (col.key -> quantidade)
+  const [visiveisPorColuna, setVisiveisPorColuna] = useState<Record<string, number>>({});
   const [syncRodando, setSyncRodando] = useState(false);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -244,6 +249,20 @@ export default function Page() {
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     return r;
   }, [cards, filtro, busca]);
+
+  // troca de filtro/busca muda o conjunto de cards -> volta cada coluna pro lote inicial
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca]);
+
+  // scroll infinito: perto do fim da coluna, libera mais um lote
+  function aoRolarColuna(e: React.UIEvent<HTMLDivElement>, colKey: string, total: number) {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - 300) return;
+    setVisiveisPorColuna((prev) => {
+      const atual = prev[colKey] ?? LOTE_INICIAL;
+      if (atual >= total) return prev;
+      return { ...prev, [colKey]: Math.min(atual + LOTE_INCREMENTO, total) };
+    });
+  }
   const tplHoje =
     filtro === "todos"
       ? Object.values(templatesHoje).reduce((a, b) => a + b, 0)
@@ -392,14 +411,17 @@ export default function Page() {
                   </div>
                 </div>
 
-                <div style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}>
+                <div
+                  onScroll={(e) => aoRolarColuna(e, col.key, doGrupo.length)}
+                  style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
+                >
                   {carregando && doGrupo.length === 0 ? (
                     <p style={{ color: RD.grayLight, fontSize: 13, padding: 8 }}>carregando…</p>
                   ) : doGrupo.length === 0 ? (
                     <p style={{ color: RD.grayLight, fontSize: 13, padding: 8 }}>Nenhuma negociação</p>
                   ) : (
                     <>
-                    {doGrupo.slice(0, 60).map((c) => {
+                    {doGrupo.slice(0, visiveisPorColuna[col.key] ?? LOTE_INICIAL).map((c) => {
                       const recontactar = col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO;
                       const ultimoDisparo = col.key === "tentativa_contato" ? disparos[c.cliente_id] : undefined;
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
@@ -507,9 +529,9 @@ export default function Page() {
                         </article>
                       );
                     })}
-                    {doGrupo.length > 60 && (
-                      <div style={{ textAlign: "center", color: RD.grayLight, fontSize: 11.5, fontWeight: 600, padding: "6px 0 2px" }}>
-                        + {doGrupo.length - 60} mais
+                    {(visiveisPorColuna[col.key] ?? LOTE_INICIAL) < doGrupo.length && (
+                      <div style={{ textAlign: "center", color: RD.grayLight, fontSize: 11, fontWeight: 600, padding: "6px 0 2px" }}>
+                        role pra ver mais ({doGrupo.length - (visiveisPorColuna[col.key] ?? LOTE_INICIAL)})
                       </div>
                     )}
                     </>
