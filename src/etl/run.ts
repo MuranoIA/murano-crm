@@ -114,6 +114,35 @@ async function clientesParaRefrescar(dias: number): Promise<{ id: string; cartei
   return out;
 }
 
+// Clientes com atendimento ABERTO (fechado=false), independente de quando o
+// protocolo foi criado. Existe pra cobrir a lacuna do /v4/reports: ele filtra
+// por created_at (abertura), então um protocolo aberto há meses e nunca
+// fechado NUNCA mais reaparece na janela do incremental, mesmo com mensagens
+// novas todo dia — só re-checando "abertos" diretamente pega esse caso
+// (achado real: Samara Soares Brito, atendimento aberto desde 14/05, venda
+// fechada hoje ficou invisível pro incremental até esse fix).
+async function clientesComAtendimentoAberto(): Promise<{ id: string; carteira: string }[]> {
+  const out: { id: string; carteira: string }[] = [];
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("atendimentos")
+      .select("cliente_id, clientes!inner(carteira)")
+      .eq("fechado", false)
+      .range(from, from + page - 1);
+    if (error) throw new Error(`select atendimentos abertos: ${error.message}`);
+    const rows = data ?? [];
+    for (const r of rows as any[]) {
+      const cart = String(r.clientes?.carteira ?? "");
+      if (r.cliente_id && TARGET_WALLETS.has(cart)) out.push({ id: r.cliente_id, carteira: cart });
+    }
+    if (rows.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
 // Ids de clientes que JÁ têm ao menos uma mensagem (p/ backfill resumível).
 async function idsComMensagens(): Promise<Set<string>> {
   const set = new Set<string>();
@@ -362,6 +391,18 @@ async function main() {
       for (const r of recentes) if (!alvos.has(r.id)) { alvos.set(r.id, r); add++; }
       const escopo = dias > 0 ? `aguardando + ativas ${dias}d` : "aguardando";
       console.error(`[incremental] +${add} conversas (${escopo}) → total a atualizar: ${alvos.size}`);
+    }
+    if (FULL) {
+      // só no full (manual/raro): reprocessa TODO atendimento aberto, sem limite de
+      // dias. É caro (~1.000 clientes hoje, 61% da base) — por isso NÃO roda no
+      // incremental de 20min, senão o custo por ciclo ia de ~150-250 pra 1.000+.
+      // Cobre o caso "conversa parada X dias, protocolo nunca fechado, reabriu hoje"
+      // (achado real: Samara Soares Brito) que o /v4/reports não pega de jeito
+      // nenhum, nem com janela maior, porque ele filtra por created_at do protocolo.
+      const abertos = await clientesComAtendimentoAberto();
+      let addAbertos = 0;
+      for (const a of abertos) if (!alvos.has(a.id)) { alvos.set(a.id, a); addAbertos++; }
+      console.error(`[atendimentos abertos] +${addAbertos} conversas → total a atualizar: ${alvos.size}`);
     }
     await loadMensagens([...alvos.values()]);
   }
