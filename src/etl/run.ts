@@ -16,6 +16,7 @@ const TARGETS = [
   { wallet: "romulo", empId: "6a3a97bbb94e6ad472ee9d02" },
   { wallet: "kamilly", empId: "6a3a9851e785f9118ec9141d" },
   { wallet: "luana", empId: "6a3a99836da6dc52edf34c5a" },
+  { wallet: "milene", empId: "69e2d5bc7a1da8f60a3d1883" },
 ];
 const TARGET_WALLETS = new Set(TARGETS.map((t) => t.wallet)); // comparado com current_wallet (lowercase)
 
@@ -283,7 +284,10 @@ async function loadReports(vendIds: Set<string>) {
       data = ex?.data ?? {};
     } catch { continue; }
 
-    const wallet = String(data.current_wallet ?? "").trim().toLowerCase();
+    // slug = 1ª palavra do current_wallet, minúscula. Os ISR já são 1 palavra
+    // ("Romulo"→"romulo"); a Milene vem "Milene Pamplona"→"milene". Mantém o slug
+    // consistente com o lado de vendas (vendedor_slug), que também usa o 1º nome.
+    const wallet = String(data.current_wallet ?? "").trim().toLowerCase().split(/\s+/)[0];
     if (!TARGET_WALLETS.has(wallet)) continue; // atribuição por current_wallet
 
     clientes.set(id, {

@@ -95,7 +95,7 @@ export async function GET() {
       .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,cliente_de_outra_carteira,pedidos,valor,ultima_compra,ultima_mensagem,ultima_mensagem_em")
       .range(from, from + PAGE - 1);
     // funil só cobre as 3 carteiras ISR; as views têm a empresa inteira ("quem lançou")
-    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", ["romulo", "luana", "kamilly"]);
+    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", ["romulo", "luana", "kamilly", "milene"]);
     const { data, error } = await pcQ;
     if (error) return Response.json({ error: error.message }, { status: 500 });
     pcRows.push(...(data ?? []));
@@ -171,7 +171,7 @@ export async function GET() {
   // totais do cabeçalho por carteira e período (bruto, "quem lançou")
   const vendasTotais: Record<string, Record<string, { total: number; vendas: number }>> = {};
   let totQ = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
-  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", ["romulo", "luana", "kamilly"]);
+  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", ["romulo", "luana", "kamilly", "milene"]);
   const { data: tot } = await totQ;
   for (const t of tot ?? []) {
     (vendasTotais[t.vendedor_slug] = vendasTotais[t.vendedor_slug] ?? {})[t.periodo] = {

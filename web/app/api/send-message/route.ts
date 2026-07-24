@@ -8,6 +8,7 @@ const OPERADORES: Record<string, string> = {
   romulo: "6a3a97bbb94e6ad472ee9d02",
   kamilly: "6a3a9851e785f9118ec9141d",
   luana: "6a3a99836da6dc52edf34c5a",
+  milene: "69e2d5bc7a1da8f60a3d1883",
 };
 
 // mensagem livre (não-template) — só funciona dentro da janela de 24h do WhatsApp

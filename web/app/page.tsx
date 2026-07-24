@@ -95,6 +95,7 @@ const CoresVendedor: Record<string, string> = {
   romulo: "#ea6a08",
   kamilly: "#9333ea",
   luana: "#0d9488",
+  milene: "#2563eb",
 };
 
 function tempoRelativo(iso: string | null): string {
