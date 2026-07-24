@@ -666,3 +666,30 @@ Conferir antes se algum processo escreve com anon (o ETL escreve com **service_r
 - Revogar escrita da anon (12.5).
 - **Performance:** o join de `vw_pedido_emitido` na `vw_funil` deixou `/api/funil` em ~3,4s local (com
   paginação 3×1000). Ok pra 1 admin hoje; se pesar, materializar o agregado de nota por cliente.
+
+## 13. Sincronização — escala e cadência (jul/2026)
+
+**Três sincronizadores distintos (não confundir):**
+
+| Sync | O quê | Onde | Cadência | Escala com nº de vendedores? |
+|---|---|---|---|---|
+| ETL RD Conversas | conversas, mensagens, etapas | GitHub Actions (repo público → grátis) | **10 min** | **SIM** (1 chamada/conversa, rate-limited) |
+| `wth-sync-tudo` | carteira + faturamento WinThor → Pedido Emitido | pg_cron (Supabase) | 10 min | **NÃO** (já puxa a empresa inteira; ~1-4s constante) |
+| views (`vw_funil` etc.) | etapa/valor calculados ao vivo | — | instantâneo na consulta | — |
+
+**ETL RD Conversas (Opção 2, implementada):** varre só conversas ATIVAS na janela (`ETL_SCAN_DAYS=3`,
+no `.github/workflows/etl.yml`) via checagem barata `/v2/contacts/{phone}/exists` (última msg em texto
+puro, sem decrypt) e só baixa+decripta o histórico das que mudaram. Medido: 318 conversas em ~6,6 min.
+
+**A trava real é o RATE LIMIT da API (~1,2s/chamada, sequencial)** — não os minutos do Actions. Por
+isso a janela é 3 dias, não 30 (30d = 1.560 conversas = 33 min). Com 3x o volume (7 mil clientes,
+7 vendedores) a mesma janela vira ~19 min → estoura os 10.
+
+**Caminho de escala (a solução certa, não "mais frequência"):** **fechar conversas.** Reativação de
+conversa fechada vira **protocolo novo**, pego pelo `/v4/reports` — que é consulta PAGINADA, não 1
+chamada/conversa → escala barato. **Confirmado (jul/2026): o RD Conversas TEM fechamento automático,
+mas só pelo PAINEL, não via API.** Então é config operacional (fechar após ~5 dias ociosos), não código.
+
+**wth-sync-tudo:** cadência é 1 linha no SQL Editor (não dá via REST):
+`select cron.unschedule('wth-sync-tudo'); select cron.schedule('wth-sync-tudo','*/10 * * * *', $$ select wth_sync_tudo(); $$);`
+Custo constante (~1-4s), não escala com vendedores → 10 min ok pra sempre.
