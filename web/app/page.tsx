@@ -527,6 +527,14 @@ export default function Page() {
                       {col.titulo}
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
+                    {col.key === "pedido_emitido" && (() => {
+                      // total R$ faturado no período ativo (todos -> mês), escopo pelo vendedor filtrado
+                      const perTotal: Exclude<Periodo, "todos"> = periodoAtivo === "todos" ? "mes" : periodoAtivo;
+                      const total = filtro === "todos"
+                        ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
+                        : (vendasTotais[filtro]?.[perTotal] ?? 0);
+                      return <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Valor: {moedaBR(total)}</span>;
+                    })()}
                   </div>
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
@@ -555,21 +563,6 @@ export default function Page() {
                       );
                     })}
                   </div>
-                  {col.key === "pedido_emitido" && (() => {
-                    // total R$ faturado (nota fiscal) no período ativo; "todos" -> mês.
-                    // escopo pelo vendedor filtrado (Todos = soma das carteiras).
-                    const perTotal: Exclude<Periodo, "todos"> = periodoAtivo === "todos" ? "mes" : periodoAtivo;
-                    const rotulo = perTotal === "mes" ? "mês" : perTotal;
-                    const total = filtro === "todos"
-                      ? Object.values(vendasTotais).reduce((a, v) => a + (v[perTotal] ?? 0), 0)
-                      : (vendasTotais[filtro]?.[perTotal] ?? 0);
-                    return (
-                      <div style={{ marginTop: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, padding: "4px 10px" }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.3 }}>Vendas {rotulo}</span>
-                        <b style={{ fontSize: 14, color: "#15803d", lineHeight: 1 }}>{moedaBR(total)}</b>
-                      </div>
-                    );
-                  })()}
                 </div>
 
                 <div
