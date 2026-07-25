@@ -882,6 +882,29 @@ function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | nu
   const [pass, setPass] = useState("");
   const [erro, setErro] = useState("");
   const [entrando, setEntrando] = useState(false);
+  const [gCarregando, setGCarregando] = useState(false);
+
+  // mensagem de erro vinda do callback do Google (?erro=...)
+  useEffect(() => {
+    const e = new URLSearchParams(window.location.search).get("erro");
+    if (e === "nao_autorizado") setErro("E-mail não autorizado a acessar o funil.");
+    else if (e === "oauth") setErro("Falha no login Google. Tente novamente.");
+    else if (e === "config") setErro("Login Google ainda não configurado.");
+    else if (e === "sem_carteira") setErro("Seu acesso está sem carteira definida.");
+  }, []);
+
+  async function entrarGoogle() {
+    setErro("");
+    setGCarregando(true);
+    try {
+      const { createBrowserClient } = await import("@supabase/ssr");
+      const supa = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+      await supa.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/auth/callback` } });
+    } catch (err: any) {
+      setErro("Erro ao iniciar login Google: " + String(err?.message ?? err));
+      setGCarregando(false);
+    }
+  }
 
   async function entrar(e: any) {
     e.preventDefault();
@@ -915,11 +938,11 @@ function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | nu
         </div>
 
         <button
-          disabled
-          title="Disponível após configurar o Google no Supabase Auth"
-          style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${RD.border}`, background: "#f7f9fb", color: RD.grayLight, fontWeight: 600, fontSize: 13, cursor: "not-allowed", marginBottom: 6 }}
+          onClick={entrarGoogle}
+          disabled={gCarregando}
+          style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.navy, fontWeight: 600, fontSize: 13, cursor: gCarregando ? "wait" : "pointer", marginBottom: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
         >
-          Entrar com Google (em breve)
+          {gCarregando ? "Redirecionando…" : "Entrar com Google"}
         </button>
         <div style={{ textAlign: "center", color: RD.grayLight, fontSize: 11, margin: "12px 0" }}>— ou admin —</div>
 
