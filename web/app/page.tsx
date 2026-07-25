@@ -464,6 +464,19 @@ export default function Page() {
     return { outros, pedido, board: outros + pedido, total: prodFiltro.total };
   }, [prodFiltro, visiveis, pedidoVisiveis]);
 
+  // total faturado (bruto, "quem lançou") no período da coluna Pedido emitido e no
+  // vendedor filtrado. Fica FORA da coluna (mostrado acima dela) — é o KPI do mês,
+  // independente de quantos compradores estão em Pedido emitido vs reengajados.
+  const vendaMes = useMemo(() => {
+    const per = periodoPorColuna["pedido_emitido"] ?? "todos";
+    const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
+    return {
+      per,
+      total: vt.reduce((a, v) => a + (v[per]?.total ?? 0), 0),
+      vendas: vt.reduce((a, v) => a + (v[per]?.vendas ?? 0), 0),
+    };
+  }, [periodoPorColuna, filtro, vendasTotais]);
+
   function toggleProd(codprod: number) {
     setProdSel((prev) => (prev.includes(codprod) ? prev.filter((x) => x !== codprod) : [...prev, codprod]));
   }
@@ -785,6 +798,19 @@ export default function Page() {
           </div>
         )}
 
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <div
+            title="Faturado no período (bruto, quem lançou). Fica aqui, fora da coluna: é o total do mês, mesmo que alguns compradores estejam noutras etapas."
+            style={{ display: "inline-flex", alignItems: "baseline", gap: 9, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "7px 16px" }}
+          >
+            <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+              Vendas {({ todos: "no mês", mes: "no mês", hoje: "hoje", ontem: "ontem", semana: "na semana", quinzena: "na quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
+            </span>
+            <b style={{ fontSize: 17, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+            <span style={{ fontSize: 11, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+          </div>
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
           {COLUNAS.map((col) => {
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
@@ -853,20 +879,6 @@ export default function Page() {
                     >
                       <span title="Regras e automações desta etapa" style={{ width: 15, height: 15, borderRadius: 15, border: `1.3px solid ${RD.grayLight}`, color: RD.grayLight, fontSize: 11, fontWeight: 700, fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "help", userSelect: "none" }}>i</span>
                     </span>
-                    {col.key === "pedido_emitido" && (() => {
-                      // total R$ + qtd de vendas (bruto, "quem lançou") no período ativo.
-                      // escopo pelo vendedor filtrado (Todos = soma das carteiras).
-                      const per = periodoAtivo; // hoje/ontem/semana/quinzena/mes/todos
-                      const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
-                      const totalR = vt.reduce((a, v) => a + (v[per]?.total ?? 0), 0);
-                      const totalQ = vt.reduce((a, v) => a + (v[per]?.vendas ?? 0), 0);
-                      return (
-                        <span style={{ marginLeft: "auto", display: "inline-flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
-                          <span style={{ fontSize: 12, fontWeight: 800, color: "#15803d", whiteSpace: "nowrap" }}>Total: {moedaBR(totalR)}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#15803d", whiteSpace: "nowrap" }}>{totalQ} vendas</span>
-                        </span>
-                      );
-                    })()}
                   </div>
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
