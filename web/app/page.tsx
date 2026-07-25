@@ -17,6 +17,15 @@ type Card = {
   periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
   pedidos?: number;                // (pedido_emitido) qtd de pedidos no período
   cliente_de_outra_carteira?: boolean; // vendeu p/ cliente de outro consultor
+  ciclo?: {                            // motor preditivo (análise de ciclo de compra)
+    tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
+    pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
+    score: number | null;             // urgência 0-100
+    ciclo_medio: number | null;        // dias médios entre compras
+    dias_ausente: number | null;
+    tendencia: string | null;
+    acao: string | null;              // LIGAR HOJE / WHATSAPP
+  } | null;
 };
 
 function moedaBR(v: number | null): string {
@@ -94,6 +103,17 @@ const COLUNAS = [
   { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês — zera dia 1º", subLong: "venda no mês corrente; zera no dia 1º de cada mês",
     regras: "Um card cai aqui quando há venda no mês corrente (fuso de Brasília):\n• nota fiscal faturada no WinThor (fonte principal), OU\n• texto '*pedido faturado*' / '*pedido finalizado*' na conversa, OU\n• tabulação 'venda_realizada'.\n\nAutomações:\n• expira sozinho no dia 1º de cada mês → volta pra Ociosos/Negociação;\n• o cabeçalho mostra o total R$ faturado no período." },
 ] as const;
+
+// categorias do motor de ciclo de compra (análise preditiva, tipo_oportunidade)
+const CICLO_CATS: { key: string; label: string; cor: string; bg: string; desc: string }[] = [
+  { key: "RECOMPRA",    label: "Na hora",      cor: "#b91c1c", bg: "#fdecec", desc: "no ponto de comprar de novo (ciclo ~ cumprido)" },
+  { key: "ATRASO",      label: "Atrasado",     cor: "#b45309", bg: "#fdf0dc", desc: "passou do ciclo de compra" },
+  { key: "EXPANSAO",    label: "Expansão",     cor: "#0e7490", bg: "#dcf3f7", desc: "comprando mais — hora de ofertar" },
+  { key: "RECUPERACAO", label: "Recuperação",  cor: "#7c3aed", bg: "#efe8fd", desc: "caindo — resgatar antes de perder" },
+  { key: "REATIVACAO",  label: "Reativação",   cor: "#475569", bg: "#eef2f6", desc: "parou de comprar — reativar" },
+];
+const CICLO_LABEL: Record<string, { label: string; cor: string; bg: string }> =
+  Object.fromEntries(CICLO_CATS.map((c) => [c.key, { label: c.label, cor: c.cor, bg: c.bg }]));
 
 const PROD_PER_LABEL: Record<string, string> = {
   hoje: "hoje", ontem: "ontem", semana: "última semana", quinzena: "última quinzena",
@@ -222,6 +242,9 @@ export default function Page() {
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     produtos: number[]; periodo: string; total: number;
   } | null>(null);
+  // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
+  const [cicloSel, setCicloSel] = useState<string[]>([]);
+  const [cicloPainel, setCicloPainel] = useState(false);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -431,14 +454,26 @@ export default function Page() {
     if (t.length === 8 && prodFiltro.tel8.has(t)) return true;
     return false;
   };
+  // filtro por ciclo: casa se a categoria (tipo_oportunidade) do card está selecionada.
+  // "URGENTE" casa quem tem ação recomendada LIGAR HOJE.
+  const matchCiclo = (c: Card): boolean => {
+    if (!cicloSel.length) return true;
+    const tipo = c.ciclo?.tipo ?? null;
+    for (const sel of cicloSel) {
+      if (sel === "URGENTE") { if (c.ciclo?.acao === "LIGAR HOJE") return true; }
+      else if (tipo === sel) return true;
+    }
+    return false;
+  };
 
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (cicloSel.length) r = r.filter(matchCiclo);
     return r;
-  }, [cards, filtro, busca, prodFiltro]);
+  }, [cards, filtro, busca, prodFiltro, cicloSel]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -446,8 +481,9 @@ export default function Page() {
     const q = busca.trim().toLowerCase();
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (cicloSel.length) r = r.filter(matchCiclo);
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro]);
+  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel]);
 
   // produtos filtrados pela busca do painel
   const produtosFiltrados = useMemo(() => {
@@ -500,7 +536,7 @@ export default function Page() {
   }
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -751,22 +787,58 @@ export default function Page() {
               </div>
             )}
           </div>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setCicloPainel((v) => !v)}
+              title="Filtrar por ciclo de compra / oportunidade (análise preditiva)"
+              style={{
+                padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+                color: cicloSel.length ? "#fff" : RD.gray,
+                background: cicloSel.length ? "#0e7490" : RD.surface,
+                border: `1px solid ${cicloSel.length ? "#0e7490" : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              {cicloSel.length ? `Ciclo: ${cicloSel.length}` : "Ciclo de compra"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {cicloSel.length > 0 && (
+              <span
+                onClick={() => { setCicloSel([]); setCicloPainel(false); }}
+                title="Limpar filtro de ciclo"
+                style={{ position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17, background: "#fff", border: "1px solid #0e7490", color: "#0e7490", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1 }}
+              >×</span>
+            )}
+            {cicloPainel && (
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 100, width: 320, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 10 }}>
+                <div style={{ fontSize: 11, color: RD.grayLight, fontWeight: 600, margin: "2px 4px 8px" }}>Mostrar só clientes no ciclo:</div>
+                {[{ key: "URGENTE", label: "Urgentes (ligar hoje)", cor: "#b91c1c", bg: "#fdecec", desc: "ação recomendada: ligar hoje" }, ...CICLO_CATS].map((cat) => (
+                  <label key={cat.key} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 6px", fontSize: 12.5, cursor: "pointer", borderRadius: 7 }}>
+                    <input
+                      type="checkbox"
+                      checked={cicloSel.includes(cat.key)}
+                      onChange={() => setCicloSel((prev) => prev.includes(cat.key) ? prev.filter((x) => x !== cat.key) : [...prev, cat.key])}
+                    />
+                    <span style={{ flexShrink: 0, background: cat.bg, color: cat.cor, border: `1px solid ${cat.cor}33`, borderRadius: 6, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}>{cat.label}</span>
+                    <span style={{ color: RD.grayLight, fontSize: 10.5, lineHeight: 1.2 }}>{cat.desc}</span>
+                  </label>
+                ))}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                  <button onClick={() => setCicloPainel(false)} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: "#0e7490", border: "1px solid #0e7490", borderRadius: 7, cursor: "pointer" }}>Fechar</button>
+                </div>
+              </div>
+            )}
+          </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} conversas/clientes · ${atualizado}`}
+            </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                 Templates {rotuloTpl}
               </span>
               <b style={{ fontSize: 18, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
-            </div>
-            <div
-              title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px" }}
-            >
-              <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
-              </span>
-              <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-              <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#9c1f47", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -774,9 +846,16 @@ export default function Page() {
               </span>
               <b style={{ fontSize: 18, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
-            <span style={{ color: RD.gray, fontSize: 12.5 }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} conversas/clientes · ${atualizado}`}
-            </span>
+            <div
+              title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px", marginLeft: 12 }}
+            >
+              <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
+              </span>
+              <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+              <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+            </div>
           </div>
         </header>
 
@@ -1012,6 +1091,18 @@ export default function Page() {
                                 style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}
                               >
                                 {moedaBR(c.venda_valor)}
+                              </span>
+                            )}
+                            {c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo] && (
+                              <span
+                                title={`Ciclo de compra: ${CICLO_LABEL[c.ciclo.tipo].label}`
+                                  + (c.ciclo.ciclo_medio ? ` · compra a cada ~${Math.round(c.ciclo.ciclo_medio)} dias` : "")
+                                  + (c.ciclo.pct_ciclo != null ? ` · ${Math.round(c.ciclo.pct_ciclo)}% do ciclo` : "")
+                                  + (c.ciclo.dias_ausente != null ? ` · ${c.ciclo.dias_ausente}d sem comprar` : "")
+                                  + (c.ciclo.acao ? ` · ${c.ciclo.acao}` : "")}
+                                style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, background: CICLO_LABEL[c.ciclo.tipo].bg, color: CICLO_LABEL[c.ciclo.tipo].cor, border: `1px solid ${CICLO_LABEL[c.ciclo.tipo].cor}44`, borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 800, letterSpacing: 0.2, cursor: "help" }}
+                              >
+                                {CICLO_LABEL[c.ciclo.tipo].label}{c.ciclo.acao === "LIGAR HOJE" ? " ·hoje" : ""}
                               </span>
                             )}
                           </div>

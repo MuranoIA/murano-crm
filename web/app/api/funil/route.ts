@@ -118,17 +118,58 @@ export async function GET() {
     q = carteira ? q.eq("vendedor_slug", carteira) : q.in("vendedor_slug", slugs);
     return (await q).data ?? [];
   };
+  // ciclo de compra / oportunidades (motor preditivo espelhado da v2). ~1116 linhas.
+  const carregarCiclo = async (): Promise<any[]> => {
+    const out: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb.from("vw_ciclo_card")
+        .select("codcli,cliente_id,telefone,tipo_oportunidade,pct_ciclo,score_urgencia,ciclo_medio,dias_ausente,tendencia,acao_recomendada")
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      out.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    return out;
+  };
 
-  // dispara os 6 blocos independentes de uma vez
-  let cards: any[], pcRows: any[], tpls: any[], autos: any[], disp: any[], tot: any[];
+  // dispara os blocos independentes de uma vez
+  let cards: any[], pcRows: any[], tpls: any[], autos: any[], disp: any[], tot: any[], ciclos: any[];
   try {
-    [cards, pcRows, tpls, autos, disp, tot] = await Promise.all([
+    [cards, pcRows, tpls, autos, disp, tot, ciclos] = await Promise.all([
       carregarCards(), carregarPedidoCards(), carregarTemplates(),
-      carregarAuto(), carregarDisparos(), carregarTotais(),
+      carregarAuto(), carregarDisparos(), carregarTotais(), carregarCiclo(),
     ]);
   } catch (e: any) {
     return Response.json({ error: e?.message ?? String(e) }, { status: 500 });
   }
+
+  // mapas de ciclo por identificador (cliente_id / codcli / telefone8)
+  const cicloByCli = new Map<string, any>();
+  const cicloByCod = new Map<number, any>();
+  const cicloByTel = new Map<string, any>();
+  const tel8c = (t: any) => String(t ?? "").replace(/\D/g, "").slice(-8);
+  for (const r of ciclos) {
+    const info = {
+      tipo: r.tipo_oportunidade, pct_ciclo: r.pct_ciclo, score: r.score_urgencia,
+      ciclo_medio: r.ciclo_medio, dias_ausente: r.dias_ausente, tendencia: r.tendencia, acao: r.acao_recomendada,
+    };
+    if (r.codcli != null) cicloByCod.set(Number(r.codcli), info);
+    if (r.cliente_id) cicloByCli.set(r.cliente_id, info);
+    const t = tel8c(r.telefone);
+    if (t.length === 8) cicloByTel.set(t, info);
+  }
+  const cicloDe = (c: any): any => {
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        const cc = Number(id.slice(id.indexOf(":") + 1));
+        if (cicloByCod.has(cc)) return cicloByCod.get(cc);
+      } else if (cicloByCli.has(id)) return cicloByCli.get(id);
+    }
+    const t = tel8c(c.telefone);
+    if (t.length === 8 && cicloByTel.has(t)) return cicloByTel.get(t);
+    return null;
+  };
 
   const templatesTotais: Record<string, TplTot> = {};
   for (const t of tpls) bucket(templatesTotais, t.vendedor, t.dia, t.templates_enviados ?? 0);
@@ -175,14 +216,24 @@ export async function GET() {
   const buyerCompra = new Map<string, string>(); // cliente_id -> data última compra (YYYY-MM-DD)
   const buyerValor = new Map<string, number>();   // cliente_id -> valor faturado no mês
   const buyerTel8 = new Map<string, { compra: string; valor: number }>(); // fallback por telefone
-  for (const r of pcRows ?? []) if (r.periodo === "todos") {
+  // "comprou no mês" = período 'mes' (mês corrente). O valor do selo é o ACUMULADO
+  // DO MÊS (soma das vendas do cliente no mês, independente de quem faturou), não o
+  // histórico. Quem não comprou no mês não é reengajado e não ganha selo de valor.
+  for (const r of pcRows ?? []) if (r.periodo === "mes") {
     if (r.codcli != null) buyerCodclis.add(Number(r.codcli));
     const compra = String(r.ultima_compra ?? "").slice(0, 10); // já é data (sem hora)
     const valor = +(r.valor ?? 0);
     const cid = effCliId(r);
-    if (cid) { buyerCliIds.add(cid); buyerCompra.set(cid, compra); buyerValor.set(cid, valor); }
+    if (cid) {
+      buyerCliIds.add(cid);
+      const pc = buyerCompra.get(cid); if (!pc || compra > pc) buyerCompra.set(cid, compra);
+      buyerValor.set(cid, (buyerValor.get(cid) ?? 0) + valor); // soma (pode ter +1 lançador)
+    }
     const t = tel8(r.telefone ?? telByCodcli[Number(r.codcli)]);
-    if (t.length === 8) buyerTel8.set(t, { compra, valor });
+    if (t.length === 8) {
+      const prev = buyerTel8.get(t);
+      buyerTel8.set(t, { compra: prev && prev.compra > compra ? prev.compra : compra, valor: (prev?.valor ?? 0) + valor });
+    }
   }
 
   // dados da compra de um card (por cliente_id, senão por telefone) — null se não comprou
@@ -214,9 +265,10 @@ export async function GET() {
     if (infoCompra(c) && !ehReeng(c)) return false; // comprou e não reengajou → só em Pedido emitido
     return true;
   });
-  for (const c of cardsOutros) { // reengajado carrega o valor do mês (mesmo sem vínculo CPF)
+  for (const c of cardsOutros) { // reengajado carrega o valor do mês (mesmo sem vínculo CPF) + ciclo de compra
     const info = infoCompra(c);
     if (info) c.venda_valor = info.valor;
+    c.ciclo = cicloDe(c);
   }
 
   // reengajados saem da coluna Pedido emitido pra não duplicar (o valor foi pro card do funil)
@@ -255,6 +307,7 @@ export async function GET() {
       ultima_mensagem: f?.ultima_mensagem ?? r.ultima_mensagem ?? null,
       ultima_enviada_por: f?.ultima_enviada_por ?? null,
       ultimas_mensagens: f?.ultimas_mensagens ?? null,
+      ciclo: cicloDe({ cliente_id: key, telefone: r.telefone ?? f?.telefone ?? null }),
     };
   });
 
