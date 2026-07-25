@@ -32,29 +32,7 @@ export async function GET() {
   const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data";
   const COLS_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
   const COLS_BASE = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone";
-  let cols = COLS_FULL;
-  const cards: any[] = [];
-  for (let from = 0; ; from += PAGE) {
-    let q = sb.from("vw_funil").select(cols)
-      .order("ultima_atividade", { ascending: false, nullsFirst: false })
-      .range(from, from + PAGE - 1);
-    if (carteira) q = q.eq("vendedor", carteira);
-    const { data, error } = await q;
-    if (error) {
-      if (cols === COLS_FULL && /venda_valor|venda_data/.test(error.message)) {
-        cols = COLS_MSGS; from -= PAGE; continue; // 0006 pendente
-      }
-      if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) {
-        cols = COLS_BASE; from -= PAGE; continue; // 0005 pendente
-      }
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-    cards.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
-  }
 
-  // templates por PERÍODO (fuso Brasília), por vendedor. Busca os últimos ~31 dias das
-  // views diárias e agrega em buckets hoje/ontem/semana/quinzena/mês.
   const diaBRT = (offset = 0) => new Date(Date.now() - 3 * 3600 * 1000 - offset * 86400000).toISOString().slice(0, 10);
   const hojeBRT = diaBRT(0), ontemBRT = diaBRT(1);
   const d7 = diaBRT(6), d15 = diaBRT(14);
@@ -71,40 +49,97 @@ export async function GET() {
     if (dia >= mesIni) a.mes += n;
   };
 
-  let tplQ = sb.from("vw_templates_diario").select("vendedor,dia,templates_enviados").gte("dia", desde);
-  if (carteira) tplQ = tplQ.eq("vendedor", carteira);
-  const { data: tpls } = await tplQ;
-  const templatesTotais: Record<string, TplTot> = {};
-  for (const t of tpls ?? []) bucket(templatesTotais, t.vendedor, t.dia, t.templates_enviados ?? 0);
+  // -- helpers: cada bloco é independente dos demais, então rodam em PARALELO.
+  // Localmente (notebook → Supabase na nuvem) cada round-trip custa caro; em série
+  // isso somava ~15-20s. Em paralelo o wall-clock cai pro maior bloco. Em produção
+  // (Vercel colado no Supabase) também reduz a chance de estourar o timeout.
 
-  let autoQ = sb.from("vw_templates_auto_diario").select("vendedor,dia,templates_automaticos").gte("dia", desde);
-  if (carteira) autoQ = autoQ.eq("vendedor", carteira);
-  const { data: autos } = await autoQ;
-  const templatesAutoTotais: Record<string, TplTot> = {};
-  for (const t of autos ?? []) bucket(templatesAutoTotais, t.vendedor, t.dia, t.templates_automaticos ?? 0);
+  // Paginação SEQUENCIAL dentro de cada bloco. O Supabase capa cada resposta em
+  // 1000 linhas (max-rows), então precisa paginar. NÃO disparar as páginas em
+  // paralelo: cada página re-executa a agregação inteira e a instância satura com
+  // scans concorrentes (medido: 8 scans simultâneos -> 38s vs 10s sequencial).
+  // O paralelismo fica no nível de BLOCO (Promise.all lá embaixo): no máximo ~2
+  // queries pesadas concorrentes (card + funil), que a instância aguenta bem.
 
-  // clientes que já receberam disparo de template (último por cliente) — p/ marcar "aguardando resposta"
-  let dispQ = sb.from("disparos_template").select("cliente_id,criada_em").order("criada_em", { ascending: false });
-  if (carteira) dispQ = dispQ.eq("vendedor", carteira);
-  const { data: disp } = await dispQ;
-  const disparos: Record<string, string> = {};
-  for (const d of disp ?? []) {
-    if (d.cliente_id && !disparos[d.cliente_id]) disparos[d.cliente_id] = d.criada_em;
+  // cards do funil (paginado, com fallback de colunas se migration pendente).
+  const carregarCards = async (): Promise<any[]> => {
+    let cols = COLS_FULL;
+    const out: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      let q = sb.from("vw_funil").select(cols)
+        .order("ultima_atividade", { ascending: false, nullsFirst: false })
+        .range(from, from + PAGE - 1);
+      if (carteira) q = q.eq("vendedor", carteira);
+      const { data, error } = await q;
+      if (error) {
+        if (cols === COLS_FULL && /venda_valor|venda_data/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
+        if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) { cols = COLS_BASE; from -= PAGE; continue; }
+        throw new Error(error.message);
+      }
+      out.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    return out;
+  };
+
+  // pedido emitido (paginado): 1 linha por cliente por período
+  const carregarPedidoCards = async (): Promise<any[]> => {
+    const out: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      let pcQ = sb.from("vw_pedido_emitido_card")
+        .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,cliente_de_outra_carteira,pedidos,valor,ultima_compra,ultima_mensagem,ultima_mensagem_em")
+        .range(from, from + PAGE - 1);
+      pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
+      const { data, error } = await pcQ;
+      if (error) throw new Error(error.message);
+      out.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    return out;
+  };
+
+  const carregarTemplates = async () => {
+    let q = sb.from("vw_templates_diario").select("vendedor,dia,templates_enviados").gte("dia", desde);
+    if (carteira) q = q.eq("vendedor", carteira);
+    return (await q).data ?? [];
+  };
+  const carregarAuto = async () => {
+    let q = sb.from("vw_templates_auto_diario").select("vendedor,dia,templates_automaticos").gte("dia", desde);
+    if (carteira) q = q.eq("vendedor", carteira);
+    return (await q).data ?? [];
+  };
+  const carregarDisparos = async () => {
+    let q = sb.from("disparos_template").select("cliente_id,criada_em").order("criada_em", { ascending: false });
+    if (carteira) q = q.eq("vendedor", carteira);
+    return (await q).data ?? [];
+  };
+  const carregarTotais = async () => {
+    let q = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
+    q = carteira ? q.eq("vendedor_slug", carteira) : q.in("vendedor_slug", slugs);
+    return (await q).data ?? [];
+  };
+
+  // dispara os 6 blocos independentes de uma vez
+  let cards: any[], pcRows: any[], tpls: any[], autos: any[], disp: any[], tot: any[];
+  try {
+    [cards, pcRows, tpls, autos, disp, tot] = await Promise.all([
+      carregarCards(), carregarPedidoCards(), carregarTemplates(),
+      carregarAuto(), carregarDisparos(), carregarTotais(),
+    ]);
+  } catch (e: any) {
+    return Response.json({ error: e?.message ?? String(e) }, { status: 500 });
   }
 
-  // ===== PEDIDO EMITIDO: vem das views oficiais de faturamento (bruto, "quem lançou") =====
-  // vw_pedido_emitido_card: 1 linha por cliente por período. vw_pedido_emitido_total: cabeçalho.
-  const pcRows: any[] = [];
-  for (let from = 0; ; from += PAGE) {
-    let pcQ = sb.from("vw_pedido_emitido_card")
-      .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,cliente_de_outra_carteira,pedidos,valor,ultima_compra,ultima_mensagem,ultima_mensagem_em")
-      .range(from, from + PAGE - 1);
-    // funil só cobre as 3 carteiras ISR; as views têm a empresa inteira ("quem lançou")
-    pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
-    const { data, error } = await pcQ;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-    pcRows.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
+  const templatesTotais: Record<string, TplTot> = {};
+  for (const t of tpls) bucket(templatesTotais, t.vendedor, t.dia, t.templates_enviados ?? 0);
+
+  const templatesAutoTotais: Record<string, TplTot> = {};
+  for (const t of autos) bucket(templatesAutoTotais, t.vendedor, t.dia, t.templates_automaticos ?? 0);
+
+  // clientes que já receberam disparo de template (último por cliente) — p/ marcar "aguardando resposta"
+  const disparos: Record<string, string> = {};
+  for (const d of disp) {
+    if (d.cliente_id && !disparos[d.cliente_id]) disparos[d.cliente_id] = d.criada_em;
   }
 
   // mapas por cliente_id e por TELEFONE (últimos 8) da vw_funil — pra religar a venda ao
@@ -122,10 +157,12 @@ export async function GET() {
   // telefone do WinThor por codcli das vendas (o card view vem sem telefone p/ não-vinculado)
   const saleCodclis = [...new Set(pcRows.map((r: any) => Number(r.codcli)).filter((x) => !isNaN(x)))];
   const telByCodcli: Record<number, string> = {};
-  for (let i = 0; i < saleCodclis.length; i += 300) {
-    const { data: wc } = await sb.from("wth_carteira").select("codcli,telefone").in("codcli", saleCodclis.slice(i, i + 300));
-    for (const w of wc ?? []) telByCodcli[Number(w.codcli)] = w.telefone;
-  }
+  const lotes: number[][] = [];
+  for (let i = 0; i < saleCodclis.length; i += 300) lotes.push(saleCodclis.slice(i, i + 300));
+  const wcResults = await Promise.all(
+    lotes.map((lote) => sb.from("wth_carteira").select("codcli,telefone").in("codcli", lote).then((r) => r.data ?? []))
+  );
+  for (const wc of wcResults) for (const w of wc) telByCodcli[Number(w.codcli)] = w.telefone;
   // cliente_id efetivo de uma linha de venda: vínculo CPF, senão contato com mesmo telefone
   const effCliId = (r: any): string | null =>
     r.cliente_id ?? (funilByTel[tel8(telByCodcli[Number(r.codcli)])]?.cliente_id ?? null);
@@ -173,12 +210,9 @@ export async function GET() {
     };
   });
 
-  // totais do cabeçalho por carteira e período (bruto, "quem lançou")
+  // totais do cabeçalho por carteira e período (bruto, "quem lançou") — já carregado acima
   const vendasTotais: Record<string, Record<string, { total: number; vendas: number }>> = {};
-  let totQ = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
-  totQ = carteira ? totQ.eq("vendedor_slug", carteira) : totQ.in("vendedor_slug", slugs);
-  const { data: tot } = await totQ;
-  for (const t of tot ?? []) {
+  for (const t of tot) {
     (vendasTotais[t.vendedor_slug] = vendasTotais[t.vendedor_slug] ?? {})[t.periodo] = {
       total: +(t.total ?? 0), vendas: +(t.vendas ?? 0),
     };
