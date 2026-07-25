@@ -85,10 +85,14 @@ function Logo({ size = 28 }: { size?: number }) {
 }
 
 const COLUNAS = [
-  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h ou nunca contatado", subLong: "cliente falou por último há +24h (só template reabre) ou nunca contatado" },
-  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "template enviado, sem resposta", subLong: "você mandou template, aguardando a 1ª resposta do cliente" },
-  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h" },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês — zera dia 1º", subLong: "venda no mês corrente; zera no dia 1º de cada mês" },
+  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h ou nunca contatado", subLong: "cliente falou por último há +24h (só template reabre) ou nunca contatado",
+    regras: "Um card cai aqui quando:\n• o cliente falou por último e passou de 24h sem novo template (a janela de 24h do WhatsApp fechou — só um template reabre a conversa);\n• uma venda de mês anterior expirou e não houve nada depois;\n• é cliente da carteira (WinThor) que nunca teve atendimento no RD Conversas (fila de prospecção).\n\nAutomação: sai daqui sozinho quando você dispara um template (→ Tentativa de contato) ou o cliente responde (→ Negociação)." },
+  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "template enviado, sem resposta", subLong: "você mandou template, aguardando a 1ª resposta do cliente",
+    regras: "Um card cai aqui quando:\n• a última mensagem real é do operador E é um template (você disparou e aguarda a 1ª resposta).\n\nAutomações:\n• cliente responde → Negociação;\n• passou +24h sem resposta → Ociosos;\n• parado +4 dias → o botão TEMPLATE reaparece pra reenviar." },
+  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h",
+    regras: "Um card cai aqui quando:\n• há troca ativa nas últimas 24h (o cliente falou por último há menos de 24h, ou você falou fora de template).\n\nAutomações:\n• alerta vermelho 'AGUARDA RESPOSTA' se o cliente falou por último e você está +10 min sem responder (some ao clicar no card, volta se ele mandar msg nova);\n• passou 24h sem novo template → Ociosos;\n• fechou venda no mês → Pedido Emitido." },
+  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês — zera dia 1º", subLong: "venda no mês corrente; zera no dia 1º de cada mês",
+    regras: "Um card cai aqui quando há venda no mês corrente (fuso de Brasília):\n• nota fiscal faturada no WinThor (fonte principal), OU\n• texto '*pedido faturado*' / '*pedido finalizado*' na conversa, OU\n• tabulação 'venda_realizada'.\n\nAutomações:\n• expira sozinho no dia 1º de cada mês → volta pra Ociosos/Negociação;\n• o cabeçalho mostra o total R$ faturado no período." },
 ] as const;
 
 const CoresVendedor: Record<string, string> = {
@@ -626,6 +630,10 @@ export default function Page() {
                       {col.titulo}
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
+                    <span className="et-tip-wrap" style={{ marginLeft: 1 }}>
+                      <span title="Regras e automações desta etapa" style={{ width: 15, height: 15, borderRadius: 15, border: `1.3px solid ${RD.grayLight}`, color: RD.grayLight, fontSize: 11, fontWeight: 700, fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "help", userSelect: "none" }}>i</span>
+                      <span className="et-tip">{col.regras}</span>
+                    </span>
                     {col.key === "pedido_emitido" && (() => {
                       // total R$ + qtd de vendas (bruto, "quem lançou") no período ativo.
                       // escopo pelo vendedor filtrado (Todos = soma das carteiras).
