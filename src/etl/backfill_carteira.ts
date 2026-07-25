@@ -33,6 +33,12 @@ async function upsert(table: string, rows: any[]) {
     if (error) throw new Error(`upsert ${table}: ${error.message}`);
   }
 }
+// WinThor às vezes salva o telefone SEM o DDD (Belém=91) — 8/9 dígitos dão 404 no
+// /exists. Prefixar "91" recupera (confirmado ao vivo). >=10 dígitos ficam como estão.
+function normalizarTelefone(t: string): string {
+  const d = String(t).replace(/\D/g, "");
+  return d.length < 10 ? "91" + d : d;
+}
 
 async function main() {
   if (!SLUG) throw new Error("informe o slug: npx ts-node src/etl/backfill_carteira.ts <slug>");
@@ -71,11 +77,12 @@ async function main() {
   for (const phone of lista) {
     checked++;
     if (checked % 50 === 0) console.error(`[backfill] ${checked}/${lista.length} | na carteira: ${naCarteira} | msgs: ${totalMsgs}`);
-    if (process.env.ETL_SKIP_COM_MSG === "1" && jaTem.has(phone.replace(/\D/g, "").slice(-8))) { naCarteira++; continue; }
+    const tel = normalizarTelefone(phone);
+    if (process.env.ETL_SKIP_COM_MSG === "1" && jaTem.has(tel.slice(-8))) { naCarteira++; continue; }
     await sleep(180);
     let data: any = null;
     try {
-      const ex: any = await withRetry(() => rd.get(`/v2/contacts/${phone}/exists`));
+      const ex: any = await withRetry(() => rd.get(`/v2/contacts/${tel}/exists`));
       data = ex?.data ?? null;
     } catch { erros++; continue; }
     if (!data?._id) { semContato++; continue; } // sem contato no RD Conversas -> fica prospecção
@@ -87,7 +94,7 @@ async function main() {
     await upsert("clientes", [{
       id,
       nome_completo: data.full_name ?? null,
-      telefone: data.cel_phone ?? phone,
+      telefone: data.cel_phone ?? tel,
       cpf: data.cpf ?? null,
       email: data.email ?? null,
       carteira: SLUG,
