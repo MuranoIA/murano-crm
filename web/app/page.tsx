@@ -758,6 +758,16 @@ export default function Page() {
               </span>
               <b style={{ fontSize: 18, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
+            <div
+              title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px" }}
+            >
+              <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
+              </span>
+              <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+              <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#9c1f47", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                 Automáticos {rotuloTpl}
@@ -797,19 +807,6 @@ export default function Page() {
             >Limpar filtro</button>
           </div>
         )}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-          <div
-            title="Faturado no período (bruto, quem lançou). Fica aqui, fora da coluna: é o total do mês, mesmo que alguns compradores estejam noutras etapas."
-            style={{ display: "inline-flex", alignItems: "baseline", gap: 9, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "7px 16px" }}
-          >
-            <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-              Vendas {({ todos: "no mês", mes: "no mês", hoje: "hoje", ontem: "ontem", semana: "na semana", quinzena: "na quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
-            </span>
-            <b style={{ fontSize: 17, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-            <span style={{ fontSize: 11, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
-          </div>
-        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
           {COLUNAS.map((col) => {
