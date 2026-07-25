@@ -29,8 +29,18 @@ async function withRetry<T>(fn: () => Promise<T>, a = 0): Promise<T> {
 }
 async function upsert(table: string, rows: any[]) {
   for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await sb.from(table).upsert(rows.slice(i, i + 500), { onConflict: "id" });
-    if (error) throw new Error(`upsert ${table}: ${error.message}`);
+    const chunk = rows.slice(i, i + 500);
+    // retry: absorve "fetch failed" (soluço de rede pro Supabase) sem derrubar o run
+    for (let a = 0; ; a++) {
+      try {
+        const { error } = await sb.from(table).upsert(chunk, { onConflict: "id" });
+        if (error) throw new Error(error.message);
+        break;
+      } catch (e: any) {
+        if (a >= 5) throw new Error(`upsert ${table}: ${e?.message ?? e}`);
+        await sleep(1500 * (a + 1));
+      }
+    }
   }
 }
 // WinThor às vezes salva o telefone SEM o DDD (Belém=91) — 8/9 dígitos dão 404 no
