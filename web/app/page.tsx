@@ -204,6 +204,18 @@ export default function Page() {
   // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
   // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  // filtro por produto: lista de produtos (busca 1x), painel, seleção/período (rascunho)
+  // e o filtro aplicado (conjuntos de identificadores dos clientes que compraram).
+  const [produtos, setProdutos] = useState<{ codprod: number; produto: string; clientes: number }[]>([]);
+  const [prodPainel, setProdPainel] = useState(false);
+  const [prodSel, setProdSel] = useState<number[]>([]);
+  const [prodPeriodo, setProdPeriodo] = useState<string>("mes");
+  const [prodBusca, setProdBusca] = useState("");
+  const [prodCarregando, setProdCarregando] = useState(false);
+  const [prodFiltro, setProdFiltro] = useState<{
+    clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
+    produtos: number[]; periodo: string; total: number;
+  } | null>(null);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -368,6 +380,15 @@ export default function Page() {
     return () => clearInterval(t);
   }, [sessao]);
 
+  // lista de produtos p/ o filtro (busca uma vez; ~415 itens)
+  useEffect(() => {
+    if (!sessao) return;
+    fetch("/api/produtos")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.produtos) setProdutos(j.produtos); })
+      .catch(() => {});
+  }, [sessao]);
+
   // status do ETL (só admin) — dá polling pra saber se já tem um run em andamento
   // (inclusive disparado por outra pessoa/via gh CLI), pra não deixar clicar à toa.
   useEffect(() => {
@@ -388,23 +409,70 @@ export default function Page() {
     () => [...new Set(cards.map((c) => c.vendedor).filter(Boolean))].sort(),
     [cards]
   );
+  // filtro por produto: um card "casa" se o cliente comprou o(s) produto(s) no período.
+  // Casamos por qualquer identificador — cliente_id do RD (contato real), codcli (cards
+  // winthor:/venda: da prospecção/venda) ou os últimos 8 dígitos do telefone.
+  const matchProduto = (c: Card): boolean => {
+    if (!prodFiltro) return true;
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        const cc = Number(id.slice(id.indexOf(":") + 1));
+        if (prodFiltro.codclis.has(cc)) return true;
+      } else if (prodFiltro.clienteIds.has(id)) return true;
+    }
+    const t = String(c.telefone ?? "").replace(/\D/g, "").slice(-8);
+    if (t.length === 8 && prodFiltro.tel8.has(t)) return true;
+    return false;
+  };
+
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
+    if (prodFiltro) r = r.filter(matchProduto);
     return r;
-  }, [cards, filtro, busca]);
+  }, [cards, filtro, busca, prodFiltro]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
     let r = filtro === "todos" ? pedidoCards : pedidoCards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
+    if (prodFiltro) r = r.filter(matchProduto);
     return r;
-  }, [pedidoCards, filtro, busca]);
+  }, [pedidoCards, filtro, busca, prodFiltro]);
+
+  // produtos filtrados pela busca do painel
+  const produtosFiltrados = useMemo(() => {
+    const q = prodBusca.trim().toLowerCase();
+    return q ? produtos.filter((p) => (p.produto ?? "").toLowerCase().includes(q)) : produtos;
+  }, [produtos, prodBusca]);
+
+  function toggleProd(codprod: number) {
+    setProdSel((prev) => (prev.includes(codprod) ? prev.filter((x) => x !== codprod) : [...prev, codprod]));
+  }
+  async function aplicarProduto() {
+    if (prodSel.length === 0) { setProdFiltro(null); setProdPainel(false); return; }
+    setProdCarregando(true);
+    try {
+      const r = await fetch(`/api/clientes-por-produto?produtos=${prodSel.join(",")}&periodo=${prodPeriodo}`, { cache: "no-store" });
+      const j = await r.json();
+      setProdFiltro({
+        clienteIds: new Set<string>(j.cliente_ids ?? []),
+        codclis: new Set<number>((j.codclis ?? []).map(Number)),
+        tel8: new Set<string>(j.tel8 ?? []),
+        produtos: [...prodSel], periodo: prodPeriodo, total: j.total ?? 0,
+      });
+      setProdPainel(false);
+    } catch { /* mantém o filtro anterior */ } finally { setProdCarregando(false); }
+  }
+  function limparProduto() {
+    setProdFiltro(null); setProdSel([]); setProdBusca(""); setProdPainel(false);
+  }
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -559,6 +627,102 @@ export default function Page() {
             <option value="mes">Período: mês</option>
             {periodoGlobal === "misto" && <option value="misto" disabled>Período: misto</option>}
           </select>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setProdPainel((v) => !v)}
+              title="Filtrar clientes que compraram um produto num período"
+              style={{
+                padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+                color: prodFiltro ? "#fff" : RD.gray,
+                background: prodFiltro ? RD.wine : RD.surface,
+                border: `1px solid ${prodFiltro ? RD.wine : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              {prodFiltro
+                ? `Produto: ${prodFiltro.produtos.length} · ${prodFiltro.total} clientes`
+                : "Filtrar por produto"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {prodFiltro && (
+              <span
+                onClick={limparProduto}
+                title="Limpar filtro de produto"
+                style={{
+                  position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17,
+                  background: "#fff", border: `1px solid ${RD.wine}`, color: RD.wine, fontSize: 11, fontWeight: 800,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1,
+                }}
+              >×</span>
+            )}
+            {prodPainel && (
+              <div
+                style={{
+                  position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 100, width: 344,
+                  background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10,
+                  boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: RD.gray, fontWeight: 700 }}>Período</span>
+                  <select
+                    value={prodPeriodo}
+                    onChange={(e) => setProdPeriodo(e.target.value)}
+                    style={{ flex: 1, padding: "6px 8px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer", outline: "none" }}
+                  >
+                    <option value="hoje">hoje</option>
+                    <option value="ontem">ontem</option>
+                    <option value="semana">última semana</option>
+                    <option value="quinzena">última quinzena</option>
+                    <option value="mes">último mês</option>
+                    <option value="2m">últimos 2 meses</option>
+                    <option value="3m">últimos 3 meses</option>
+                    <option value="4m">últimos 4 meses</option>
+                    <option value="5m">últimos 5 meses</option>
+                    <option value="6m">últimos 6 meses</option>
+                    <option value="ano">último 1 ano</option>
+                  </select>
+                </div>
+                <input
+                  value={prodBusca}
+                  onChange={(e) => setProdBusca(e.target.value)}
+                  placeholder="Buscar produto..."
+                  style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, outline: "none" }}
+                />
+                <div style={{ maxHeight: 232, overflowY: "auto", margin: "8px 0", border: `1px solid ${RD.border}`, borderRadius: 8 }}>
+                  {produtosFiltrados.length === 0 ? (
+                    <div style={{ padding: 10, color: RD.grayLight, fontSize: 12 }}>
+                      {produtos.length === 0 ? "carregando produtos…" : "nenhum produto"}
+                    </div>
+                  ) : produtosFiltrados.map((p) => (
+                    <label
+                      key={p.codprod}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", fontSize: 12.5, color: RD.navy, cursor: "pointer", borderBottom: `1px solid ${RD.bg}` }}
+                    >
+                      <input type="checkbox" checked={prodSel.includes(p.codprod)} onChange={() => toggleProd(p.codprod)} />
+                      <span style={{ flex: 1, lineHeight: 1.25 }}>{p.produto}</span>
+                      <span style={{ color: RD.grayLight, fontSize: 10.5, whiteSpace: "nowrap" }} title="clientes que já compraram">{p.clientes}</span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 11.5, color: RD.grayLight }}>{prodSel.length} selecionado(s)</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={limparProduto}
+                      style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer" }}
+                    >Limpar</button>
+                    <button
+                      onClick={aplicarProduto}
+                      disabled={prodCarregando || prodSel.length === 0}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 7, cursor: prodCarregando || prodSel.length === 0 ? "default" : "pointer", opacity: prodCarregando || prodSel.length === 0 ? 0.6 : 1 }}
+                    >{prodCarregando ? "Aplicando…" : "Aplicar"}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
