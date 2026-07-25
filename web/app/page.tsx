@@ -201,6 +201,9 @@ export default function Page() {
   // filtro de período por coluna (col.key -> período). Ausente = "todos".
   const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>({});
   const [syncRodando, setSyncRodando] = useState(false);
+  // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
+  // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -630,9 +633,18 @@ export default function Page() {
                       {col.titulo}
                     </span>
                     <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
-                    <span className="et-tip-wrap" style={{ marginLeft: 1 }}>
+                    <span
+                      className="et-tip-wrap"
+                      style={{ marginLeft: 1 }}
+                      onMouseEnter={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        const W = 300;
+                        const x = Math.min(r.left - 8, window.innerWidth - W - 12);
+                        setTip({ text: col.regras, x: Math.max(8, x), y: r.bottom + 6 });
+                      }}
+                      onMouseLeave={() => setTip(null)}
+                    >
                       <span title="Regras e automações desta etapa" style={{ width: 15, height: 15, borderRadius: 15, border: `1.3px solid ${RD.grayLight}`, color: RD.grayLight, fontSize: 11, fontWeight: 700, fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "help", userSelect: "none" }}>i</span>
-                      <span className="et-tip">{col.regras}</span>
                     </span>
                     {col.key === "pedido_emitido" && (() => {
                       // total R$ + qtd de vendas (bruto, "quem lançou") no período ativo.
@@ -888,6 +900,18 @@ export default function Page() {
           })}
         </div>
       </main>
+      {tip && (
+        <div
+          style={{
+            position: "fixed", left: tip.x, top: tip.y, zIndex: 200, width: 300,
+            background: "#111d33", color: "#fff", padding: "11px 13px", borderRadius: 9,
+            fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-line",
+            boxShadow: "0 8px 26px rgba(16,32,64,.28)", pointerEvents: "none",
+          }}
+        >
+          {tip.text}
+        </div>
+      )}
     </div>
   );
 }
