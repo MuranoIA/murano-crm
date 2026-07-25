@@ -95,6 +95,12 @@ const COLUNAS = [
     regras: "Um card cai aqui quando há venda no mês corrente (fuso de Brasília):\n• nota fiscal faturada no WinThor (fonte principal), OU\n• texto '*pedido faturado*' / '*pedido finalizado*' na conversa, OU\n• tabulação 'venda_realizada'.\n\nAutomações:\n• expira sozinho no dia 1º de cada mês → volta pra Ociosos/Negociação;\n• o cabeçalho mostra o total R$ faturado no período." },
 ] as const;
 
+const PROD_PER_LABEL: Record<string, string> = {
+  hoje: "hoje", ontem: "ontem", semana: "última semana", quinzena: "última quinzena",
+  mes: "último mês", "2m": "últimos 2 meses", "3m": "últimos 3 meses", "4m": "últimos 4 meses",
+  "5m": "últimos 5 meses", "6m": "últimos 6 meses", ano: "último ano",
+};
+
 const CoresVendedor: Record<string, string> = {
   romulo: "#ea6a08",
   kamilly: "#9333ea",
@@ -449,6 +455,15 @@ export default function Page() {
     return q ? produtos.filter((p) => (p.produto ?? "").toLowerCase().includes(q)) : produtos;
   }, [produtos, prodBusca]);
 
+  // resumo do filtro de produto: quantos clientes casaram e ONDE estão no board
+  // (a maioria cai em Pedido emitido porque quem comprou no mês é movido pra lá).
+  const prodResumo = useMemo(() => {
+    if (!prodFiltro) return null;
+    const outros = visiveis.length; // cards das outras etapas que casaram
+    const pedido = new Set(pedidoVisiveis.map((c) => c.cliente_id)).size; // clientes distintos em Pedido emitido
+    return { outros, pedido, board: outros + pedido, total: prodFiltro.total };
+  }, [prodFiltro, visiveis, pedidoVisiveis]);
+
   function toggleProd(codprod: number) {
     setProdSel((prev) => (prev.includes(codprod) ? prev.filter((x) => x !== codprod) : [...prev, codprod]));
   }
@@ -741,6 +756,34 @@ export default function Page() {
             </span>
           </div>
         </header>
+
+        {prodFiltro && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            background: RD.wineSoft, border: `1px solid ${RD.cream}`, borderRadius: 10,
+            padding: "9px 14px", marginBottom: 14, fontSize: 12.5, color: RD.wine,
+          }}>
+            <span style={{ fontWeight: 700 }}>
+              Compraram {prodFiltro.produtos.length} produto{prodFiltro.produtos.length > 1 ? "s" : ""} · {PROD_PER_LABEL[prodFiltro.periodo] ?? prodFiltro.periodo}
+            </span>
+            <span style={{ color: RD.navy }}>
+              <b>{prodResumo?.board ?? 0}</b> no seu board
+              {" — "}{prodResumo?.pedido ?? 0} em <b>Pedido emitido</b>, {prodResumo?.outros ?? 0} nas outras etapas
+            </span>
+            {prodResumo && prodResumo.total > prodResumo.board && (
+              <span style={{ color: RD.grayLight }}>({prodResumo.total} no total da empresa)</span>
+            )}
+            {prodResumo && prodResumo.pedido > 0 && prodResumo.outros <= 2 && (
+              <span style={{ color: RD.grayLight, fontStyle: "italic" }}>
+                quem comprou no mês corrente aparece só em Pedido emitido →
+              </span>
+            )}
+            <button
+              onClick={limparProduto}
+              style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${RD.wine}`, color: RD.wine, borderRadius: 7, padding: "4px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >Limpar filtro</button>
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
           {COLUNAS.map((col) => {
