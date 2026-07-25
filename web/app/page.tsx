@@ -995,8 +995,16 @@ export default function Page() {
                               </span>
                             ) : null}
                           </div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3 }}>
-                            {c.cliente}
+                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3, display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.cliente}</span>
+                            {col.key !== "pedido_emitido" && c.venda_valor != null && (
+                              <span
+                                title="Comprou no mês — valor faturado (fica no card até virar o mês)"
+                                style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}
+                              >
+                                {moedaBR(c.venda_valor)}
+                              </span>
+                            )}
                           </div>
                           {/* área de mensagens: rola tipo chat, sempre com a mais recente embaixo
                               à vista (auto-scroll pro fim a cada render — ref inline dispara sempre) */}

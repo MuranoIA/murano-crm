@@ -167,28 +167,76 @@ export async function GET() {
   const effCliId = (r: any): string | null =>
     r.cliente_id ?? (funilByTel[tel8(telByCodcli[Number(r.codcli)])]?.cliente_id ?? null);
 
-  // quem comprou no mês (periodo 'todos') — pra tirar das OUTRAS colunas
-  const buyerCliIds = new Set<string>();
+  // === compradores do mês (fonte autoritativa: vw_pedido_emitido_card, periodo 'todos') ===
+  // por identificador (cliente_id e/ou telefone8): data da última compra + valor do mês.
+  const brDateOf = (iso: any) => (iso ? new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10) : null);
   const buyerCodclis = new Set<number>();
+  const buyerCliIds = new Set<string>();
+  const buyerCompra = new Map<string, string>(); // cliente_id -> data última compra (YYYY-MM-DD)
+  const buyerValor = new Map<string, number>();   // cliente_id -> valor faturado no mês
+  const buyerTel8 = new Map<string, { compra: string; valor: number }>(); // fallback por telefone
   for (const r of pcRows ?? []) if (r.periodo === "todos") {
-    const cid = effCliId(r);
-    if (cid) buyerCliIds.add(cid);
     if (r.codcli != null) buyerCodclis.add(Number(r.codcli));
+    const compra = String(r.ultima_compra ?? "").slice(0, 10); // já é data (sem hora)
+    const valor = +(r.valor ?? 0);
+    const cid = effCliId(r);
+    if (cid) { buyerCliIds.add(cid); buyerCompra.set(cid, compra); buyerValor.set(cid, valor); }
+    const t = tel8(r.telefone ?? telByCodcli[Number(r.codcli)]);
+    if (t.length === 8) buyerTel8.set(t, { compra, valor });
   }
 
-  // cards das outras colunas = vw_funil, SEM pedido_emitido e SEM quem comprou
+  // dados da compra de um card (por cliente_id, senão por telefone) — null se não comprou
+  const infoCompra = (c: any): { compra: string; valor: number } | null => {
+    if (ehReal(c.cliente_id) && buyerCliIds.has(c.cliente_id)) {
+      return { compra: buyerCompra.get(c.cliente_id) ?? "", valor: buyerValor.get(c.cliente_id) ?? 0 };
+    }
+    const t = tel8(c.telefone);
+    if (t.length === 8 && buyerTel8.has(t)) return buyerTel8.get(t)!;
+    return null;
+  };
+  // reengajado = comprador cujo card teve última atividade DEPOIS do dia da compra
+  const ehReeng = (c: any): boolean => {
+    const info = infoCompra(c);
+    if (!info || !info.compra) return false;
+    const d = brDateOf(c.ultima_atividade);
+    return !!d && d > info.compra;
+  };
+
+  // cards das outras colunas = vw_funil (etapa da conversa), SEM pedido_emitido, SEM
+  // comprador que NÃO reengajou (esse fica só em Pedido emitido), SEM prospecção já
+  // vendida. Reengajados ficam e carregam o valor faturado do mês.
   const cardsOutros = cards.filter((c: any) => {
-    if (c.etapa === "pedido_emitido") return false; // pedido vem das views novas
-    if (c.cliente_id && buyerCliIds.has(c.cliente_id)) return false; // comprador sai das outras colunas
+    if (c.etapa === "pedido_emitido") return false;
     if (typeof c.cliente_id === "string" && c.cliente_id.startsWith("winthor:")) {
       const cc = Number(c.cliente_id.slice(8));
       if (buyerCodclis.has(cc)) return false; // prospecção que já comprou
     }
+    if (infoCompra(c) && !ehReeng(c)) return false; // comprou e não reengajou → só em Pedido emitido
     return true;
   });
+  for (const c of cardsOutros) { // reengajado carrega o valor do mês (mesmo sem vínculo CPF)
+    const info = infoCompra(c);
+    if (info) c.venda_valor = info.valor;
+  }
 
-  // cards de pedido_emitido (um por cliente por período), formato Card + periodo/pedidos
-  const pedidoCards = (pcRows ?? []).map((r: any) => {
+  // reengajados saem da coluna Pedido emitido pra não duplicar (o valor foi pro card do funil)
+  const reengCli = new Set<string>();
+  const reengTel8 = new Set<string>();
+  for (const c of cardsOutros) {
+    if (!infoCompra(c)) continue; // só compradores (aqui já são reengajados)
+    if (ehReal(c.cliente_id)) reengCli.add(c.cliente_id);
+    const t = tel8(c.telefone);
+    if (t.length === 8) reengTel8.add(t);
+  }
+
+  // cards de pedido_emitido (um por cliente por período), SEM os reengajados
+  const pedidoCards = (pcRows ?? []).filter((r: any) => {
+    const cid = effCliId(r);
+    if (cid && reengCli.has(cid)) return false;
+    const t = tel8(r.telefone ?? telByCodcli[Number(r.codcli)]);
+    if (t.length === 8 && reengTel8.has(t)) return false;
+    return true;
+  }).map((r: any) => {
     const cid = effCliId(r);
     const key = cid ?? `venda:${r.codcli}`;
     const f = cid ? funilByCliente[cid] : null;
