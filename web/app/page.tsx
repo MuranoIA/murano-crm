@@ -19,6 +19,7 @@ type Card = {
   cliente_de_outra_carteira?: boolean; // vendeu p/ cliente de outro consultor
   sem_cadastro?: boolean;          // só existe no RD Conversas, sem cadastro no WinThor (lead de marketing)
   rd_cliente_id?: string | null;   // (prospecção) id do contato no RD, se já existir lá — abre o RD em vez do WhatsApp
+  codcli?: number | null;          // código do cliente no WinThor — abre a Consulta Clientes (botão "C")
   ciclo?: {                            // motor preditivo (análise de ciclo de compra)
     tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
     pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
@@ -68,6 +69,17 @@ function ehAlerta(c: Card, ackMs?: number): boolean {
 }
 
 const URL_CHAT = "https://app.tallos.com.br/app/chat"; // deep link do RD Conversas (por cliente_id)
+const URL_CONSULTA = "https://consultaclientes.muranoprofessional.com.br"; // Consulta Clientes (deep link por ?codcli=)
+// código WinThor do cliente (pro botão "C"): coluna codcli, ou parse do cliente_id sintético
+function codcliDe(c: Card): number | null {
+  if (c.codcli != null && !isNaN(Number(c.codcli))) return Number(c.codcli);
+  const id = c.cliente_id ?? "";
+  if (typeof id === "string" && (id.startsWith("winthor:") || id.startsWith("venda:"))) {
+    const n = Number(id.slice(id.indexOf(":") + 1));
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
 
 // Paleta inspirada no RD Station CRM
 const RD = {
@@ -1061,6 +1073,7 @@ export default function Page() {
                     {doGrupo.slice(0, visiveisPorColuna[col.key] ?? LOTE_INICIAL).map((c) => {
                       const prospeccao = ehProspeccao(c);
                       const vendaSemConversa = ehVendaSemConversa(c);
+                      const codcli = codcliDe(c); // pro botão "C" (Consulta Clientes)
                       // ociosos: por definição já passou da janela de 24h, precisa de template — igual
                       // a tentativa_contato "parada", exceto pra prospecção (nunca teve cliente_id do RD,
                       // não dá pra disparar template automático, só abrir WhatsApp manual).
@@ -1106,6 +1119,15 @@ export default function Page() {
                               >
                                 sem cadastro
                               </span>
+                            )}
+                            {codcli != null && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${codcli}`, "consultaclientes"); }}
+                                title={`Ver cadastro completo na Consulta Clientes (código ${codcli})`}
+                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                              >
+                                C
+                              </button>
                             )}
                             {alerta && (
                               <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, color: "#dc2626", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
