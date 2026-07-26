@@ -556,10 +556,15 @@ export default function Page() {
     () => pedidoVisiveis.filter((c) => c.periodo === "mes").length,
     [pedidoVisiveis]
   );
-  const semCadTotal = useMemo(() => {
-    const base = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
-    return base.filter((c) => c.sem_cadastro).length;
-  }, [cards, filtro]);
+  // base do vendedor (sem os outros filtros) — pra mostrar a contagem de cards que CADA
+  // filtro isoladamente traz, dentro da pill (padrão "Sem cadastro (N)").
+  const baseVend = useMemo(
+    () => (filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro)),
+    [cards, filtro]
+  );
+  const semCadTotal = useMemo(() => baseVend.filter((c) => c.sem_cadastro).length, [baseVend]);
+  const paradoTotal = useMemo(() => baseVend.filter(matchParado).length, [baseVend, paradoSel, disparos]);
+  const cicloTotal = useMemo(() => baseVend.filter(matchCiclo).length, [baseVend, cicloSel]);
 
   // produtos filtrados pela busca do painel
   const produtosFiltrados = useMemo(() => {
@@ -752,7 +757,7 @@ export default function Page() {
             {vendedores.map((v) => chip(cap(v), v, vendCores[v] ?? CoresVendedor[v] ?? RD.grayLight))}
           </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
           <select
             value={periodoGlobal}
             onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
@@ -879,7 +884,7 @@ export default function Page() {
                 display: "inline-flex", alignItems: "center", gap: 6,
               }}
             >
-              {cicloSel.length ? `Ciclo: ${cicloSel.length}` : "Ciclo de compra"}
+              Ciclo de compra{cicloSel.length ? ` (${cicloTotal})` : ""}
               <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
             </button>
             {cicloSel.length > 0 && (
@@ -937,7 +942,7 @@ export default function Page() {
                 display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
               }}
             >
-              {paradoSel.length ? `Parado: ${paradoSel.length}` : "Tempo parado"}
+              Tempo parado{paradoSel.length ? ` (${paradoTotal})` : ""}
               <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
             </button>
             {paradoSel.length > 0 && (
@@ -981,17 +986,13 @@ export default function Page() {
             Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
           </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 9, padding: "4px 9px" }}>
-              <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Templates {rotuloTpl}
-              </span>
-              <b style={{ fontSize: 15, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates {rotuloTpl}</span>
+              <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 9, padding: "4px 9px" }}>
-              <span style={{ fontSize: 10.5, color: "#9c1f47", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Automáticos {rotuloTpl}
-              </span>
-              <b style={{ fontSize: 15, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos {rotuloTpl}</span>
+              <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, marginLeft: 12 }}>
               <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
@@ -999,13 +1000,13 @@ export default function Page() {
               </span>
               <div
                 title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
-                style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 9, padding: "4px 9px" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, whiteSpace: "nowrap" }}
               >
-                <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                <span style={{ fontSize: 11.5, color: "#15803d", fontWeight: 600 }}>
                   Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
                 </span>
-                <b style={{ fontSize: 15, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-                <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+                <b style={{ fontSize: 12.5, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+                <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
               </div>
             </div>
           </div>
@@ -1233,12 +1234,12 @@ export default function Page() {
                               <span
                                 title={`Template enviado ${tempoRelativo(ultimoDisparo!)} atrás — botão liberado após ${DIAS_RECONTATO} dias sem resposta`}
                                 style={{
-                                  marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                                  marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3,
                                   background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad",
-                                  borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.2,
+                                  borderRadius: 5, padding: "1px 5px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1,
                                 }}
                               >
-                                <span style={{ width: 6, height: 6, borderRadius: 6, background: "#e08a00" }} />
+                                <span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />
                                 AGUARDANDO RESPOSTA
                               </span>
                             ) : recontactar ? (
@@ -1248,12 +1249,12 @@ export default function Page() {
                                 title="Enviar template (mensagem real no WhatsApp)"
                                 style={{
                                   marginLeft: "auto", cursor: enviando === c.cliente_id ? "wait" : "pointer",
-                                  display: "inline-flex", alignItems: "center", gap: 5,
+                                  display: "inline-flex", alignItems: "center", gap: 3,
                                   background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
-                                  borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+                                  borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1,
                                 }}
                               >
-                                <span style={{ width: 6, height: 6, borderRadius: 6, background: "#b02350" }} />
+                                <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
                                 {enviando === c.cliente_id ? "ENVIANDO…" : "TEMPLATE"}
                               </button>
                             ) : col.key === "pedido_emitido" ? (
