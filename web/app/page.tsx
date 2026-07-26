@@ -259,6 +259,8 @@ export default function Page() {
   // filtro de período por coluna (col.key -> período). Ausente = "todos".
   const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>({});
   const [syncRodando, setSyncRodando] = useState(false);
+  const [syncPausado, setSyncPausado] = useState(false);
+  const [pausandoSync, setPausandoSync] = useState(false);
   // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
   // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -395,9 +397,22 @@ export default function Page() {
       if (!r.ok) return; // 401/403 (não-admin) — ignora silenciosamente, botão nem aparece
       const j = await r.json();
       setSyncRodando(!!j.running);
+      setSyncPausado(!!j.paused);
       setSyncUltimo(j.lastRun?.createdAt ?? null);
       setSyncConclusao(j.lastRun?.conclusion ?? null);
     } catch {}
+  }
+  async function togglePausaSync(pausar: boolean) {
+    setPausandoSync(true);
+    try {
+      const r = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: pausar ? "pausar" : "retomar" }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) { alert("Falha: " + (j.error ?? `HTTP ${r.status}`)); return; }
+      setSyncPausado(pausar);
+      if (pausar) setSyncRodando(false);
+      checarSync();
+    } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
+    finally { setPausandoSync(false); }
   }
 
   // "1:05" enquanto roda; usa o tempoRelativo (definido acima) pra quando já terminou
@@ -833,33 +848,62 @@ export default function Page() {
             <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : cap(sessao.carteira ?? "")}</b>
           </span>
           {sessao.role === "admin" && (
-            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-              <button
-                onClick={dispararSync}
-                disabled={disparandoSync || syncRodando}
-                title="Dispara o ETL manualmente (RD Conversas → clientes/mensagens), sem esperar o cron de 20min"
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  cursor: disparandoSync || syncRodando ? "wait" : "pointer",
-                  background: syncRodando ? "#eaf6fd" : RD.surface,
-                  color: syncRodando ? "#0b7fb0" : RD.gray,
-                  border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
-                  borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
-                }}
-              >
-                <span style={{
-                  width: 7, height: 7, borderRadius: 7,
-                  background: syncRodando ? "#0ea3dc" : RD.grayLight,
-                  animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
-                }} />
-                {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
-              </button>
-              {/* legenda pendurada abaixo do botão (absoluta, não empurra o botão do alinhamento) */}
-              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncConclusao === "failure" ? "#dc2626" : RD.grayLight, whiteSpace: "nowrap" }}>
-                RD Conversas → clientes e mensagens
-                {syncRodando && syncUltimo ? ` · rodando há ${duracao(syncUltimo)}` : null}
-                {!syncRodando && syncUltimo ? ` · última: ${tempoRelativo(syncUltimo)}` : null}
-                {!syncRodando && syncConclusao === "failure" ? " · falhou" : null}
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {syncPausado ? (
+                <>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700 }}>
+                    ⏸ Sincronização pausada
+                  </span>
+                  <button
+                    onClick={() => togglePausaSync(false)}
+                    disabled={pausandoSync}
+                    title="Reativa a sincronização de fundo (incremental + tempo real). O board volta a atualizar."
+                    style={{ cursor: pausandoSync ? "wait" : "pointer", background: RD.wine, color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700 }}
+                  >
+                    {pausandoSync ? "Retomando…" : "▶ Retomar"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={dispararSync}
+                    disabled={disparandoSync || syncRodando}
+                    title="Dispara o ETL manualmente (RD Conversas → clientes/mensagens)"
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      cursor: disparandoSync || syncRodando ? "wait" : "pointer",
+                      background: syncRodando ? "#eaf6fd" : RD.surface,
+                      color: syncRodando ? "#0b7fb0" : RD.gray,
+                      border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
+                      borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
+                    }}
+                  >
+                    <span style={{
+                      width: 7, height: 7, borderRadius: 7,
+                      background: syncRodando ? "#0ea3dc" : RD.grayLight,
+                      animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
+                    }} />
+                    {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
+                  </button>
+                  <button
+                    onClick={() => togglePausaSync(true)}
+                    disabled={pausandoSync}
+                    title="Pausa a sincronização de fundo (incremental + tempo real) pra liberar a cota do RD pros seus envios de template. Lembre de RETOMAR depois — enquanto pausado, o board não atualiza."
+                    style={{ cursor: pausandoSync ? "wait" : "pointer", background: RD.surface, color: RD.gray, border: `1px solid ${RD.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 12.5, fontWeight: 600 }}
+                  >
+                    {pausandoSync ? "Pausando…" : "⏸ Pausar"}
+                  </button>
+                </>
+              )}
+              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? "#b45309" : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
+                {syncPausado ? "PAUSADA — dados não atualizam até retomar" : (
+                  <>
+                    RD Conversas → clientes e mensagens
+                    {syncRodando && syncUltimo ? ` · rodando há ${duracao(syncUltimo)}` : null}
+                    {!syncRodando && syncUltimo ? ` · última: ${tempoRelativo(syncUltimo)}` : null}
+                    {!syncRodando && syncConclusao === "failure" ? " · falhou" : null}
+                  </>
+                )}
               </span>
             </div>
           )}

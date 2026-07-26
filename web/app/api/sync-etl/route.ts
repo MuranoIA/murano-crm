@@ -6,6 +6,7 @@ export const maxDuration = 30;
 // Repo/workflow do ETL (mesmo padrão de ids hardcoded do OPERADORES em send-template).
 const REPO = "romuloallbuquerque-netizen/rd-conversas-etl";
 const WORKFLOW = "etl.yml";
+const WORKFLOWS = ["etl.yml", "etl-fast.yml"]; // os dois concorrem pela cota do RD
 const REF = "master";
 
 const GH_HEADERS = (token: string) => ({
@@ -31,35 +32,62 @@ export async function GET() {
   const token = process.env.GITHUB_ETL_TOKEN;
   if (!token) return Response.json({ error: "Config ausente na Vercel: GITHUB_ETL_TOKEN" }, { status: 500 });
 
-  const r = await fetch(
-    `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`,
-    { headers: GH_HEADERS(token), cache: "no-store" }
-  );
-  const body: any = await r.json().catch(() => ({}));
-  if (!r.ok) return Response.json({ error: body?.message || `GitHub ${r.status}` }, { status: 502 });
+  // runs do incremental + estado (ativo/pausado) do workflow
+  const [rRuns, rWf] = await Promise.all([
+    fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`, { headers: GH_HEADERS(token), cache: "no-store" }),
+    fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}`, { headers: GH_HEADERS(token), cache: "no-store" }),
+  ]);
+  const body: any = await rRuns.json().catch(() => ({}));
+  if (!rRuns.ok) return Response.json({ error: body?.message || `GitHub ${rRuns.status}` }, { status: 502 });
+  const wf: any = await rWf.json().catch(() => ({}));
+  const paused = wf?.state === "disabled_manually"; // pausado = workflow desabilitado
 
   const run = body?.workflow_runs?.[0];
-  if (!run) return Response.json({ running: false, lastRun: null });
+  if (!run) return Response.json({ running: false, paused, lastRun: null });
 
   return Response.json({
     running: run.status === "in_progress" || run.status === "queued",
+    paused,
     lastRun: {
-      status: run.status,
-      conclusion: run.conclusion,
-      event: run.event,
-      createdAt: run.created_at,
-      updatedAt: run.updated_at,
+      status: run.status, conclusion: run.conclusion, event: run.event,
+      createdAt: run.created_at, updatedAt: run.updated_at,
     },
   });
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const negado = requireAdmin();
   if (negado) return negado;
 
   const token = process.env.GITHUB_ETL_TOKEN;
   if (!token) return Response.json({ error: "Config ausente na Vercel: GITHUB_ETL_TOKEN" }, { status: 500 });
 
+  const acao = await req.json().then((b: any) => b?.acao).catch(() => undefined);
+
+  // PAUSAR: desabilita os DOIS workflows (incremental + fast) e cancela o que está rodando.
+  // Libera 100% da cota do RD pras ações do usuário (envio de template etc.).
+  if (acao === "pausar") {
+    for (const wf of WORKFLOWS) {
+      await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/disable`, { method: "PUT", headers: GH_HEADERS(token) });
+      const rr = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/runs?status=in_progress&per_page=15`, { headers: GH_HEADERS(token), cache: "no-store" });
+      const jj: any = await rr.json().catch(() => ({}));
+      for (const run of jj?.workflow_runs ?? []) {
+        await fetch(`https://api.github.com/repos/${REPO}/actions/runs/${run.id}/cancel`, { method: "POST", headers: GH_HEADERS(token) });
+      }
+    }
+    return Response.json({ ok: true, paused: true });
+  }
+
+  // RETOMAR: reabilita os dois workflows (os crons voltam a rodar).
+  if (acao === "retomar") {
+    for (const wf of WORKFLOWS) {
+      await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/enable`, { method: "PUT", headers: GH_HEADERS(token) });
+    }
+    return Response.json({ ok: true, paused: false });
+  }
+
+  // padrão: dispara um incremental agora (garante que não está pausado antes)
+  await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/enable`, { method: "PUT", headers: GH_HEADERS(token) }).catch(() => {});
   const r = await fetch(
     `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
     {
@@ -68,7 +96,6 @@ export async function POST() {
       body: JSON.stringify({ ref: REF, inputs: { mode: "incremental" } }),
     }
   );
-  // dispatch bem-sucedido devolve 204 sem corpo
   if (r.status !== 204) {
     const body: any = await r.json().catch(() => ({}));
     return Response.json({ error: body?.message || `GitHub ${r.status}` }, { status: 502 });
