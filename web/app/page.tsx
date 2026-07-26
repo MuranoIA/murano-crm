@@ -945,7 +945,7 @@ export default function Page() {
                     <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: 0.4, color: RD.wine, textTransform: "uppercase", textShadow: "0 1px 0 rgba(255,255,255,0.6)" }}>
                       {col.titulo}
                     </span>
-                    <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }}>({todosDaEtapa.length})</span>
+                    <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }} title="clientes nesta etapa no período selecionado">({doGrupo.length})</span>
                     <span
                       className="et-tip-wrap"
                       style={{ marginLeft: 1 }}

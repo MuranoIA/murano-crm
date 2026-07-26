@@ -113,8 +113,10 @@ export async function GET() {
     if (carteira) q = q.eq("vendedor", carteira);
     return (await q).data ?? [];
   };
+  // total de VENDAS = fonte oficial do ranking (vw_vendas_bi_total: data_emissao,
+  // estados ativos, dedup por pedido, menos cancelados). Bate 100% com o ranking.
   const carregarTotais = async () => {
-    let q = sb.from("vw_pedido_emitido_total").select("vendedor_slug,periodo,clientes,vendas,total");
+    let q = sb.from("vw_vendas_bi_total").select("vendedor_slug,periodo,clientes,vendas,total");
     q = carteira ? q.eq("vendedor_slug", carteira) : q.in("vendedor_slug", slugs);
     return (await q).data ?? [];
   };
