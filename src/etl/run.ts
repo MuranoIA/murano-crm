@@ -130,23 +130,32 @@ async function clientesParaChecar(dias: number): Promise<Candidato[]> {
 // texto puro (last_message_data), sem decriptar. Compara com o que o banco tem; só quem
 // tem mensagem NOVA entra no fetch caro (/messages/history + decrypt). Permite varrer
 // uma janela larga por pouco custo.
-async function checarMudaram(candidatos: Candidato[]): Promise<{ id: string; carteira: string }[]> {
+// `conc` = nº de checagens /exists simultâneas. Incremental usa 1 (sequencial, seguro);
+// o modo fast usa mais (ETL_FAST_CONC) p/ o sweep cair de ~3min pra ~1min. O /exists do RD
+// é lento (~2-3s cada), então algumas em paralelo aproveitam a latência sem estourar rate.
+async function checarMudaram(candidatos: Candidato[], conc = 1): Promise<{ id: string; carteira: string }[]> {
   const mudaram: { id: string; carteira: string }[] = [];
-  let checked = 0, semTel = 0;
-  for (const c of candidatos) {
-    checked++;
-    if (checked % 150 === 0) console.error(`[checar] ${checked}/${candidatos.length} (${mudaram.length} c/ msg nova)`);
-    if (!c.telefone) { semTel++; mudaram.push({ id: c.id, carteira: c.carteira }); continue; } // sem tel -> fetch p/ garantir
-    await sleep(150);
-    try {
-      const ex: any = await withRetry(() => rd.get(`/v2/contacts/${c.telefone}/exists`));
-      const lastRd = ex?.data?.last_message_data?.created_at;
-      const dbLast = c.ultima_atividade ? new Date(c.ultima_atividade).getTime() : 0;
-      // +2s de folga p/ diferença de precisão entre RD e o que gravamos
-      if (lastRd && new Date(lastRd).getTime() > dbLast + 2000) mudaram.push({ id: c.id, carteira: c.carteira });
-    } catch { mudaram.push({ id: c.id, carteira: c.carteira }); } // erro -> fetch p/ garantir
-  }
-  console.error(`[checar] ${candidatos.length} checados via /exists | ${mudaram.length} c/ msg nova | ${semTel} sem telefone`);
+  let checked = 0, semTel = 0, idx = 0;
+  const worker = async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= candidatos.length) return;
+      const c = candidatos[i];
+      checked++;
+      if (checked % 150 === 0) console.error(`[checar] ${checked}/${candidatos.length} (${mudaram.length} c/ msg nova)`);
+      if (!c.telefone) { semTel++; mudaram.push({ id: c.id, carteira: c.carteira }); continue; } // sem tel -> fetch p/ garantir
+      await sleep(150);
+      try {
+        const ex: any = await withRetry(() => rd.get(`/v2/contacts/${c.telefone}/exists`));
+        const lastRd = ex?.data?.last_message_data?.created_at;
+        const dbLast = c.ultima_atividade ? new Date(c.ultima_atividade).getTime() : 0;
+        // +2s de folga p/ diferença de precisão entre RD e o que gravamos
+        if (lastRd && new Date(lastRd).getTime() > dbLast + 2000) mudaram.push({ id: c.id, carteira: c.carteira });
+      } catch { mudaram.push({ id: c.id, carteira: c.carteira }); } // erro -> fetch p/ garantir
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, conc) }, () => worker()));
+  console.error(`[checar] ${candidatos.length} checados via /exists (conc=${conc}) | ${mudaram.length} c/ msg nova | ${semTel} sem telefone`);
   return mudaram;
 }
 
@@ -443,7 +452,7 @@ async function backfillMensagens() {
 async function fastSweep(): Promise<void> {
   const horas = Number(process.env.ETL_FAST_HORAS ?? 18);
   const candidatos = await clientesParaChecar(horas / 24);
-  const mudaram = await checarMudaram(candidatos);
+  const mudaram = await checarMudaram(candidatos, Number(process.env.ETL_FAST_CONC ?? 4));
   const alvos = new Map<string, { id: string; carteira: string }>();
   for (const m of mudaram) alvos.set(m.id, m);
   // só disparos MUITO recentes (padrão 5 min): o /exists não detecta template de saída,
