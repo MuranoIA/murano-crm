@@ -131,6 +131,16 @@ const CICLO_CATS: { key: string; label: string; cor: string; bg: string; desc: s
 const CICLO_LABEL: Record<string, { label: string; cor: string; bg: string }> =
   Object.fromEntries(CICLO_CATS.map((c) => [c.key, { label: c.label, cor: c.cor, bg: c.bg }]));
 
+// filtro por TEMPO PARADO (dias de inatividade efetiva do card). Infinity = nunca contatado.
+const PARADO_BUCKETS: { key: string; label: string; min: number; max: number }[] = [
+  { key: "0-3",   label: "Até 3 dias",       min: 0,        max: 3 },
+  { key: "4-7",   label: "4 a 7 dias",       min: 4,        max: 7 },
+  { key: "8-15",  label: "8 a 15 dias",      min: 8,        max: 15 },
+  { key: "16-30", label: "16 a 30 dias",     min: 16,       max: 30 },
+  { key: "30+",   label: "Mais de 30 dias",  min: 31,       max: Infinity },
+  { key: "nunca", label: "Nunca contatado",  min: Infinity, max: Infinity },
+];
+
 const PROD_PER_LABEL: Record<string, string> = {
   hoje: "hoje", ontem: "ontem", semana: "última semana", quinzena: "última quinzena",
   mes: "último mês", "2m": "últimos 2 meses", "3m": "últimos 3 meses", "4m": "últimos 4 meses",
@@ -268,6 +278,8 @@ export default function Page() {
   const [cicloSel, setCicloSel] = useState<string[]>([]);
   const [cicloPainel, setCicloPainel] = useState(false);
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
+  const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
+  const [paradoPainel, setParadoPainel] = useState(false);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -500,6 +512,20 @@ export default function Page() {
     if (cats.length === 0) return true;
     return cats.includes(c.ciclo?.tipo ?? "");
   };
+  // filtro por TEMPO PARADO: dias de inatividade EFETIVA (última msg do RD ou disparo
+  // nosso, o que for mais recente). Nunca contatado = Infinity (só casa "nunca"). OR entre
+  // os buckets marcados.
+  const matchParado = (c: Card): boolean => {
+    if (!paradoSel.length) return true;
+    const d = diasInativo(maisRecenteISO(c.ultima_atividade, disparos[c.cliente_id]));
+    return paradoSel.some((k) => {
+      const b = PARADO_BUCKETS.find((x) => x.key === k);
+      if (!b) return false;
+      if (b.key === "nunca") return d === Infinity;
+      if (d === Infinity) return false; // nunca contatado só casa o bucket "nunca"
+      return d >= b.min && d <= b.max;
+    });
+  };
 
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
@@ -508,8 +534,9 @@ export default function Page() {
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
+    if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [cards, filtro, busca, prodFiltro, cicloSel, semCadFiltro]);
+  }, [cards, filtro, busca, prodFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -519,8 +546,9 @@ export default function Page() {
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
+    if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel, semCadFiltro]);
+  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // total da carteira no cabeçalho = funil (conversa+prospecção, sem comprador do mês) +
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
@@ -584,7 +612,7 @@ export default function Page() {
   }
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel, semCadFiltro]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel, semCadFiltro, paradoSel]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -730,7 +758,7 @@ export default function Page() {
             onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
             title="Aplica o período a todas as etapas de uma vez"
             style={{
-              padding: "7px 10px", fontSize: 12.5, fontWeight: 600, color: RD.gray,
+              padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, color: RD.gray,
               background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
             }}
           >
@@ -747,7 +775,7 @@ export default function Page() {
               onClick={() => setProdPainel((v) => !v)}
               title="Filtrar clientes que compraram um produto num período"
               style={{
-                padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
                 color: prodFiltro ? "#fff" : RD.gray,
                 background: prodFiltro ? RD.wine : RD.surface,
                 border: `1px solid ${prodFiltro ? RD.wine : RD.border}`,
@@ -843,7 +871,7 @@ export default function Page() {
               onClick={() => setCicloPainel((v) => !v)}
               title="Filtrar por ciclo de compra / oportunidade (análise preditiva)"
               style={{
-                padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
                 color: cicloSel.length ? "#fff" : RD.gray,
                 background: cicloSel.length ? "#0e7490" : RD.surface,
                 border: `1px solid ${cicloSel.length ? "#0e7490" : RD.border}`,
@@ -900,7 +928,7 @@ export default function Page() {
             onClick={() => setSemCadFiltro((v) => !v)}
             title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
             style={{
-              padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+              padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
               color: semCadFiltro ? "#fff" : "#b45309",
               background: semCadFiltro ? "#b45309" : "#fff3e0",
               border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
@@ -910,10 +938,49 @@ export default function Page() {
           >
             Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
           </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setParadoPainel((v) => !v)}
+              title="Filtrar por quanto tempo o card está parado (dias sem atividade — conta o último template disparado)."
+              style={{
+                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, lineHeight: 1.2,
+                color: paradoSel.length ? "#fff" : "#475569",
+                background: paradoSel.length ? "#475569" : RD.surface,
+                border: `1px solid ${paradoSel.length ? "#475569" : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              }}
+            >
+              {paradoSel.length ? `Parado: ${paradoSel.length}` : "Tempo parado"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {paradoSel.length > 0 && (
+              <span
+                onClick={() => { setParadoSel([]); setParadoPainel(false); }}
+                title="Limpar filtro de tempo parado"
+                style={{ position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17, background: "#fff", border: "1px solid #475569", color: "#475569", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1 }}
+              >×</span>
+            )}
+            {paradoPainel && (
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 100, width: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 10 }}>
+                <div style={{ fontSize: 11, color: RD.grayLight, fontWeight: 600, margin: "2px 4px 8px" }}>Mostrar só cards parados há:</div>
+                {PARADO_BUCKETS.map((b) => (
+                  <label key={b.key} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 6px", fontSize: 12.5, cursor: "pointer", borderRadius: 7 }}>
+                    <input
+                      type="checkbox"
+                      checked={paradoSel.includes(b.key)}
+                      onChange={() => setParadoSel((prev) => prev.includes(b.key) ? prev.filter((x) => x !== b.key) : [...prev, b.key])}
+                    />
+                    <span style={{ color: RD.navy }}>{b.label}</span>
+                  </label>
+                ))}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                  <button onClick={() => setParadoPainel(false)} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: "#475569", border: "1px solid #475569", borderRadius: 7, cursor: "pointer" }}>Fechar</button>
+                </div>
+              </div>
+            )}
+          </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
-            </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                 Templates {rotuloTpl}
@@ -926,15 +993,20 @@ export default function Page() {
               </span>
               <b style={{ fontSize: 18, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
-            <div
-              title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
-              style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px", marginLeft: 12 }}
-            >
-              <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, marginLeft: 12 }}>
+              <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
+                {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
               </span>
-              <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-              <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+              <div
+                title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px" }}
+              >
+                <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                  Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
+                </span>
+                <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+                <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+              </div>
             </div>
           </div>
           </div>
@@ -1079,7 +1151,7 @@ export default function Page() {
                 </div>
 
                 <div
-                  key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}:${semCadFiltro ? "sc" : ""}`}
+                  key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}:${semCadFiltro ? "sc" : ""}:${paradoSel.join(",")}`}
                   onScroll={(e) => aoRolarColuna(e, col.key, doGrupo.length)}
                   style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
                 >
