@@ -174,7 +174,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
-const CARD_ALTURA = 138;    // altura fixa do card (simétrico) — comporta até 2 bolhas compactas
+const CARD_ALTURA = 168;    // altura fixa do card (simétrico) — nome em até 2 linhas + selos + bolhas
 
 // Períodos de atividade. "hoje/semana/quinzena/mês" são janelas cumulativas; "ontem"
 // é o dia-calendário anterior (só no dropdown, não nos chips). "todos" = sem filtro.
@@ -458,16 +458,18 @@ export default function Page() {
     if (t.length === 8 && prodFiltro.tel8.has(t)) return true;
     return false;
   };
-  // filtro por ciclo: casa se a categoria (tipo_oportunidade) do card está selecionada.
-  // "URGENTE" casa quem tem ação recomendada LIGAR HOJE.
+  // filtro por ciclo: dois EIXOS.
+  // - "URGENTE" (ligar hoje) é PRIORIDADE, não categoria: refina o resto (E/AND).
+  // - as categorias (situação no ciclo) são OR entre si.
+  // Ex: só Urgente -> todos que devem ligar hoje (qualquer situação). Urgente + Recuperação
+  // -> só os de Recuperação que são "ligar hoje". Nenhuma categoria marcada = qualquer situação.
   const matchCiclo = (c: Card): boolean => {
     if (!cicloSel.length) return true;
-    const tipo = c.ciclo?.tipo ?? null;
-    for (const sel of cicloSel) {
-      if (sel === "URGENTE") { if (c.ciclo?.acao === "LIGAR HOJE") return true; }
-      else if (tipo === sel) return true;
-    }
-    return false;
+    const urgente = cicloSel.includes("URGENTE");
+    const cats = cicloSel.filter((s) => s !== "URGENTE");
+    if (urgente && c.ciclo?.acao !== "LIGAR HOJE") return false;
+    if (cats.length === 0) return true;
+    return cats.includes(c.ciclo?.tipo ?? "");
   };
 
   const visiveis = useMemo(() => {
@@ -832,8 +834,23 @@ export default function Page() {
             )}
             {cicloPainel && (
               <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 100, width: 320, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 10 }}>
-                <div style={{ fontSize: 11, color: RD.grayLight, fontWeight: 600, margin: "2px 4px 8px" }}>Mostrar só clientes no ciclo:</div>
-                {[{ key: "URGENTE", label: "Urgentes (ligar hoje)", cor: "#b91c1c", bg: "#fdecec", desc: "ação recomendada: ligar hoje" }, ...CICLO_CATS].map((cat) => (
+                <div style={{ fontSize: 10, color: RD.grayLight, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, margin: "2px 6px 4px" }}>Prioridade</div>
+                {[{ key: "URGENTE", label: "Urgentes (ligar hoje)", cor: "#b91c1c", bg: "#fdecec", desc: "atravessa todas as situações abaixo" }].map((cat) => (
+                  <label key={cat.key} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 6px", fontSize: 12.5, cursor: "pointer", borderRadius: 7 }}>
+                    <input
+                      type="checkbox"
+                      checked={cicloSel.includes(cat.key)}
+                      onChange={() => setCicloSel((prev) => prev.includes(cat.key) ? prev.filter((x) => x !== cat.key) : [...prev, cat.key])}
+                    />
+                    <span style={{ flexShrink: 0, background: cat.bg, color: cat.cor, border: `1px solid ${cat.cor}33`, borderRadius: 6, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}>{cat.label}</span>
+                    <span style={{ color: RD.grayLight, fontSize: 10.5, lineHeight: 1.2 }}>{cat.desc}</span>
+                  </label>
+                ))}
+                <div style={{ height: 1, background: RD.border, margin: "7px 4px 5px" }} />
+                <div style={{ fontSize: 10, color: RD.grayLight, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, margin: "2px 6px 4px" }}>
+                  Situação no ciclo <span style={{ textTransform: "none", fontWeight: 600, letterSpacing: 0 }}>· combina com a prioridade</span>
+                </div>
+                {CICLO_CATS.map((cat) => (
                   <label key={cat.key} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 6px", fontSize: 12.5, cursor: "pointer", borderRadius: 7 }}>
                     <input
                       type="checkbox"
@@ -1133,29 +1150,33 @@ export default function Page() {
                               </span>
                             ) : null}
                           </div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.3, display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.cliente}</span>
-                            {col.key !== "pedido_emitido" && c.venda_valor != null && (
-                              <span
-                                title="Comprou no mês — valor faturado (fica no card até virar o mês)"
-                                style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}
-                              >
-                                {moedaBR(c.venda_valor)}
-                              </span>
-                            )}
-                            {c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo] && (
-                              <span
-                                title={`Ciclo de compra: ${CICLO_LABEL[c.ciclo.tipo].label}`
-                                  + (c.ciclo.ciclo_medio ? ` · compra a cada ~${Math.round(c.ciclo.ciclo_medio)} dias` : "")
-                                  + (c.ciclo.pct_ciclo != null ? ` · ${Math.round(c.ciclo.pct_ciclo)}% do ciclo` : "")
-                                  + (c.ciclo.dias_ausente != null ? ` · ${c.ciclo.dias_ausente}d sem comprar` : "")
-                                  + (c.ciclo.acao ? ` · ${c.ciclo.acao}` : "")}
-                                style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, background: CICLO_LABEL[c.ciclo.tipo].bg, color: CICLO_LABEL[c.ciclo.tipo].cor, border: `1px solid ${CICLO_LABEL[c.ciclo.tipo].cor}44`, borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 800, letterSpacing: 0.2, cursor: "help" }}
-                              >
-                                {CICLO_LABEL[c.ciclo.tipo].label}{c.ciclo.acao === "LIGAR HOJE" ? " ·hoje" : ""}
-                              </span>
-                            )}
+                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={c.cliente}>
+                            {c.cliente}
                           </div>
+                          {((col.key !== "pedido_emitido" && c.venda_valor != null) || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo])) && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+                              {col.key !== "pedido_emitido" && c.venda_valor != null && (
+                                <span
+                                  title="Comprou no mês — valor faturado (fica no card até virar o mês)"
+                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}
+                                >
+                                  {moedaBR(c.venda_valor)}
+                                </span>
+                              )}
+                              {c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo] && (
+                                <span
+                                  title={`Ciclo de compra: ${CICLO_LABEL[c.ciclo.tipo].label}`
+                                    + (c.ciclo.ciclo_medio ? ` · compra a cada ~${Math.round(c.ciclo.ciclo_medio)} dias` : "")
+                                    + (c.ciclo.pct_ciclo != null ? ` · ${Math.round(c.ciclo.pct_ciclo)}% do ciclo` : "")
+                                    + (c.ciclo.dias_ausente != null ? ` · ${c.ciclo.dias_ausente}d sem comprar` : "")
+                                    + (c.ciclo.acao ? ` · ${c.ciclo.acao}` : "")}
+                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, background: CICLO_LABEL[c.ciclo.tipo].bg, color: CICLO_LABEL[c.ciclo.tipo].cor, border: `1px solid ${CICLO_LABEL[c.ciclo.tipo].cor}44`, borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 800, letterSpacing: 0.2, cursor: "help" }}
+                                >
+                                  {CICLO_LABEL[c.ciclo.tipo].label}{c.ciclo.acao === "LIGAR HOJE" ? " ·hoje" : ""}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {/* área de mensagens: rola tipo chat, sempre com a mais recente embaixo
                               à vista (auto-scroll pro fim a cada render — ref inline dispara sempre) */}
                           <div
