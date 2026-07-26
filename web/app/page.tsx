@@ -18,6 +18,7 @@ type Card = {
   pedidos?: number;                // (pedido_emitido) qtd de pedidos no período
   cliente_de_outra_carteira?: boolean; // vendeu p/ cliente de outro consultor
   sem_cadastro?: boolean;          // só existe no RD Conversas, sem cadastro no WinThor (lead de marketing)
+  rd_cliente_id?: string | null;   // (prospecção) id do contato no RD, se já existir lá — abre o RD em vez do WhatsApp
   ciclo?: {                            // motor preditivo (análise de ciclo de compra)
     tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
     pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
@@ -376,6 +377,8 @@ export default function Page() {
   // Conversas E "reconhece" o card (silencia o alerta na hora).
   function abrirConversa(c: Card) {
     if (ehSintetico(c)) {
+      // prospecção: se o cliente JÁ tem contato no RD Conversas, abre o RD; senão, WhatsApp cru.
+      if (c.rd_cliente_id) { window.open(`${URL_CHAT}/${c.rd_cliente_id}`, "rdconversas"); return; }
       if (c.telefone) window.open(`https://wa.me/${c.telefone.replace(/\D/g, "")}`, "whatsapp");
       return;
     }
@@ -1084,7 +1087,7 @@ export default function Page() {
                         <article
                           key={c.cliente_id}
                           onClick={() => abrirConversa(c)}
-                          title={prospeccao ? "Abrir WhatsApp com este número (cliente nunca contatado)" : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
+                          title={prospeccao ? (c.rd_cliente_id ? "Abrir conversa no RD Conversas (já tem contato lá, mesmo sem atendimento)" : "Abrir WhatsApp com este número (ainda sem contato no RD Conversas)") : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
                             cursor: "pointer", height: col.key === "negociacao" ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
