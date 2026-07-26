@@ -693,3 +693,62 @@ mas só pelo PAINEL, não via API.** Então é config operacional (fechar após 
 **wth-sync-tudo:** cadência é 1 linha no SQL Editor (não dá via REST):
 `select cron.unschedule('wth-sync-tudo'); select cron.schedule('wth-sync-tudo','*/10 * * * *', $$ select wth_sync_tudo(); $$);`
 Custo constante (~1-4s), não escala com vendedores → 10 min ok pra sempre.
+
+## 14. Estado em 26/07/2026 — o que mudou depois da seção 13
+
+> A seção 13 ficou defasada (falava de 3 carteiras, `ETL_SCAN_DAYS=3`, um único workflow).
+> Esta seção reflete o estado real. Migrations foram de 0014 → 0041.
+
+### 14.1 Vendedores agora são CONFIGURAÇÃO, não código (`carteira_config`)
+
+Tabela **`carteira_config`** (migration 0016) é a fonte única: `slug`, `rca_num`, `employee_id`,
+`cor`, `ativo`, `time`. O ETL a carrega no início (`loadCarteiraConfig`) e as rotas do app
+(`send-template`, `send-message`) leem o `employee_id` de lá. **Adicionar vendedor = 1 linha no
+banco**, sem deploy. Hoje são **7**: ISR (romulo 45, luana 46, kamilly 51) e IS (milene 28,
+anne 27, thiago 29, thamires 10).
+
+### 14.2 Dois workflows de ETL
+
+| Workflow | Cadência | O que faz |
+|---|---|---|
+| `etl.yml` | `*/10` + full às 06:05 | incremental: reports → scan barato (`ETL_SCAN_DAYS=5`) → disparos → fetch |
+| `etl-fast.yml` | `*/15`, loop de ~13 min | sweep do "conjunto quente" (`ETL_FAST_HORAS=12`), quase tempo real |
+
+`ETL_FAST_CONC=2`: **conc=4 no fast satura o RD e gera 429 no envio de template do board.**
+A cota é compartilhada entre ETL e ações do usuário — por isso existem os botões Pausar/Retomar.
+
+### 14.3 Performance do incremental — diagnóstico e fix (26/07)
+
+**Sintoma:** runs de 13 a 62 min com cron de 10 min → o `concurrency: group: etl` cancelava os
+seguintes, e o sync efetivo caía pra ~1x/hora.
+
+**Diagnóstico (run 30199589716, 36 min):** o scan barato varria 957 conversas (~19 min, conc=1) e
+achava só 15 com msg nova — mas o bloco `[disparos]` mandava **761 clientes** pro fetch caro
+(histórico + decrypt). Medido: **544 clientes distintos com template ≤5d, todos re-baixados a cada
+run**, ~27 min só nisso. A causa foi o disparo em massa: centenas de templates → centenas de
+re-fetches cegos por 5 dias.
+
+**Premissa que destravou o fix (verificada ao vivo):** template enviado pela API **não aparece no
+`last_message_data` do `/exists`**. Então a checagem barata não dá falso positivo por causa do
+próprio template — ela distingue quem **respondeu** de quem só recebeu.
+
+**Fix:** `clientesComDisparoRecente` passou a separar **frescos** (`ETL_DISPARO_FRESCO_H=6h` →
+fetch direto, garante o template em `mensagens`) de **antigos** (→ checagem barata). Mais dedup
+(não re-checa o que o scan já checou) e `ETL_SCAN_CONC=3` no scan.
+
+**Bench de concorrência do `/exists` (26/07, isolado):** conc=1 →280ms/chamada · conc=4 →79ms ·
+conc=8 →50ms (0 erros) · **conc=12 → 429 em 90%**. Default 3 = ~3x mais rápido com folga pros envios.
+
+### 14.4 Por que NÃO trocamos o gatilho pelo pg_cron do Supabase
+
+Hipótese levantada e **descartada com medição**: os runs duravam mais que o intervalo do cron, então
+o problema era **duração**, não disparo — trocar o gatilho só criaria mais runs pra serem cancelados
+pelo mesmo `concurrency group`.
+
+**E migrar o ETL de mensagens pro Supabase esbarra em 2 bloqueios:** (a) a decriptação usa
+`node-jose` (Node); Edge Function é Deno → exigiria reescrever com `jose`/WebCrypto e reimplementar
+as 3 armadilhas da seção 3 (Latin-1, JSON aninhado, bytes de controle); (b) Edge Function tem
+timeout de 150s (400s background no Pro) contra os 55 min do Actions.
+
+**O que faria sentido no futuro:** mover **só o sweep** (`/exists`, que **não** precisa de decrypt)
+pro Supabase, deixando o fetch+decrypt no Actions. Separação por natureza do trabalho, não por sync.
