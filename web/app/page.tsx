@@ -604,7 +604,8 @@ export default function Page() {
     return out.sort((a, b) => b.score - a.score);
   }, [visiveis, disparos]);
   const massaSel = useMemo(() => massaElegiveis.slice(0, massaQtd), [massaElegiveis, massaQtd]);
-  const massaCusto = massaSel.length * 0.43;
+  const CUSTO_TEMPLATE = 4.30; // R$ por template disparado
+  const massaCusto = massaSel.length * CUSTO_TEMPLATE;
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
@@ -1590,7 +1591,7 @@ export default function Page() {
                     ))}
                   </div>
                   <div style={{ fontSize: 13.5, color: RD.navy }}>
-                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · custo <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>
+                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · <b style={{ color: "#15803d" }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>
                   </div>
                   <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8, lineHeight: 1.5 }}>
                     Havendo mais elegíveis que a quantidade, escolhemos os <b>mais prioritários</b> (ciclo urgente + tempo parado + ticket).
