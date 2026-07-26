@@ -193,25 +193,65 @@ async function clientesComAtendimentoAberto(): Promise<{ id: string; carteira: s
 // template disparado no board; o disparo é registrado na hora, mas a MENSAGEM só entra
 // em `mensagens` quando o ETL re-busca aquele cliente. Como ele está "parado" fora da
 // varredura, nunca seria re-buscado. Forçando por disparo, o template aparece rápido.
-async function clientesComDisparoRecente(dias: number): Promise<{ id: string; carteira: string }[]> {
+// Devolve os disparos separados em dois grupos, porque o custo de cada um é diferente:
+//   `frescos`  — disparo há < `frescoH` horas: fetch DIRETO (caro), pra garantir que o
+//                template entre em `mensagens` mesmo se o sync instantâneo do envio falhar
+//                (ex: 429). São poucos.
+//   `antigos`  — disparo mais velho: só interessa saber se o cliente RESPONDEU, e isso a
+//                checagem BARATA (/exists) resolve. Antes todos iam pro fetch caro, o que
+//                inflava o run (medido: 443 fetches inúteis por run, ~20 min).
+// Medido em 26/07: template enviado pela API NÃO aparece em `last_message_data`, então o
+// /exists não dá falso positivo por causa do próprio template — só acusa resposta real.
+async function clientesComDisparoRecente(
+  dias: number,
+  frescoH = 6,
+): Promise<{ frescos: { id: string; carteira: string }[]; antigos: Candidato[] }> {
   const cutoff = new Date(Date.now() - Math.max(0.002, dias) * 86400000).toISOString(); // aceita janela em minutos (modo fast)
-  const out: { id: string; carteira: string }[] = [];
+  const cutFresco = Date.now() - frescoH * 3600000;
+  const maisRecente = new Map<string, { carteira: string; em: number }>();
   let from = 0;
   const page = 1000;
   while (true) {
     const { data, error } = await sb
-      .from("disparos_template").select("cliente_id,vendedor")
+      .from("disparos_template").select("cliente_id,vendedor,criada_em")
       .gte("criada_em", cutoff).range(from, from + page - 1);
     if (error) throw new Error(`select disparos_template: ${error.message}`);
     const rows = data ?? [];
     for (const r of rows) {
       const cart = String(r.vendedor ?? "");
-      if (r.cliente_id && TARGET_WALLETS.has(cart)) out.push({ id: r.cliente_id, carteira: cart });
+      if (!r.cliente_id || !TARGET_WALLETS.has(cart)) continue;
+      const em = new Date(r.criada_em).getTime();
+      const atual = maisRecente.get(r.cliente_id);
+      if (!atual || em > atual.em) maisRecente.set(r.cliente_id, { carteira: cart, em });
     }
     if (rows.length < page) break;
     from += page;
   }
-  return out;
+
+  const frescos: { id: string; carteira: string }[] = [];
+  const idsAntigos: string[] = [];
+  const cartAntigos = new Map<string, string>();
+  for (const [id, v] of maisRecente) {
+    if (v.em >= cutFresco) frescos.push({ id, carteira: v.carteira });
+    else { idsAntigos.push(id); cartAntigos.set(id, v.carteira); }
+  }
+
+  // enriquece os antigos com telefone/ultima_atividade (o que a checagem barata precisa)
+  const antigos: Candidato[] = [];
+  for (const lote of chunks(idsAntigos, 300)) {
+    const { data, error } = await sb
+      .from("vw_funil").select("cliente_id,telefone,ultima_atividade").in("cliente_id", lote);
+    if (error) throw new Error(`select vw_funil disparos: ${error.message}`);
+    for (const r of data ?? []) {
+      antigos.push({
+        id: r.cliente_id,
+        carteira: cartAntigos.get(r.cliente_id) ?? "",
+        telefone: r.telefone ?? null,
+        ultima_atividade: r.ultima_atividade ?? null,
+      });
+    }
+  }
+  return { frescos, antigos };
 }
 
 // Ids de clientes que JÁ têm ao menos uma mensagem (p/ backfill resumível).
@@ -458,7 +498,11 @@ async function fastSweep(): Promise<void> {
   // só disparos MUITO recentes (padrão 5 min): o /exists não detecta template de saída,
   // então busca o recém-disparado p/ ele aparecer. Board já cobre via /api/sync-cliente;
   // isto é backup (e evita re-buscar centenas de disparos antigos todo sweep).
-  const disp = await clientesComDisparoRecente(Number(process.env.ETL_FAST_DISPARO_MIN ?? 5) / 1440);
+  // janela de minutos: tudo cai em "frescos" (frescoH alto) — mantém o comportamento de
+  // buscar direto, sem checagem barata, que aqui não ajudaria (o /exists não vê template).
+  const { frescos: disp } = await clientesComDisparoRecente(
+    Number(process.env.ETL_FAST_DISPARO_MIN ?? 5) / 1440, 24,
+  );
   for (const d of disp) if (!alvos.has(d.id)) alvos.set(d.id, d);
   console.error(`[fast] ${candidatos.length} checados (${horas}h) | ${mudaram.length} c/ msg nova | ${disp.length} disparos recentes | fetch ${alvos.size}`);
   if (alvos.size) await loadMensagens([...alvos.values()]);
@@ -496,20 +540,37 @@ async function main() {
       // BARATA (/exists, sem decriptar) e só faz o fetch caro das que têm msg nova.
       // Assim pega mensagem nova em qualquer conversa recente sem pagar o custo de
       // baixar+decriptar todas — viável com o repo público (Actions grátis).
+      // ETL_SCAN_CONC: checagens /exists simultâneas. Medido em 26/07 (bench isolado):
+      // conc=1 →280ms/ch, conc=4 →79ms, conc=8 →50ms (0 erros), conc=12 → 27/30 deram 429.
+      // Ficamos em 3 por padrão: ~3x mais rápido e ainda longe do teto, deixando cota
+      // pros envios do board (o fast já viu conc=4 competir com envio e gerar 429).
+      const conc = Number(process.env.ETL_SCAN_CONC ?? 3);
       const scanDias = Number(process.env.ETL_SCAN_DAYS ?? 30);
       const candidatos = (await clientesParaChecar(scanDias)).filter((c) => !alvos.has(c.id));
-      const mudaram = await checarMudaram(candidatos);
+      const jaChecados = new Set(candidatos.map((c) => c.id)); // p/ não re-checar nos disparos
+      const mudaram = await checarMudaram(candidatos, conc);
       let add = 0;
       for (const m of mudaram) if (!alvos.has(m.id)) { alvos.set(m.id, m); add++; }
       console.error(`[incremental] varridas ${candidatos.length} (janela ${scanDias}d) → +${add} c/ msg nova → total: ${alvos.size}`);
 
       // clientes com template disparado pelo board nos últimos N dias — força re-sync
       // mesmo que estejam "parados" fora da varredura (senão o template nunca aparece).
+      // Frescos (< ETL_DISPARO_FRESCO_H) vão direto pro fetch; os antigos passam pela
+      // checagem barata primeiro — só quem RESPONDEU custa fetch (antes iam todos).
       const disparoDias = Number(process.env.ETL_DISPARO_DAYS ?? 5);
-      const disparados = await clientesComDisparoRecente(disparoDias);
+      const frescoH = Number(process.env.ETL_DISPARO_FRESCO_H ?? 6);
+      const { frescos, antigos } = await clientesComDisparoRecente(disparoDias, frescoH);
       let addD = 0;
-      for (const d of disparados) if (!alvos.has(d.id)) { alvos.set(d.id, d); addD++; }
-      console.error(`[disparos] ${disparados.length} c/ template ≤${disparoDias}d → +${addD} novos → total: ${alvos.size}`);
+      for (const d of frescos) if (!alvos.has(d.id)) { alvos.set(d.id, d); addD++; }
+      // pula quem já entrou no fetch (alvos) e quem o scan JÁ checou nesta run
+      const pendentes = antigos.filter((c) => !alvos.has(c.id) && !jaChecados.has(c.id));
+      const respAntigos = pendentes.length ? await checarMudaram(pendentes, conc) : [];
+      let addR = 0;
+      for (const m of respAntigos) if (!alvos.has(m.id)) { alvos.set(m.id, m); addR++; }
+      console.error(
+        `[disparos] ≤${disparoDias}d: ${frescos.length} frescos(<${frescoH}h) → +${addD} | ` +
+        `${pendentes.length} antigos checados → +${addR} c/ resposta | total: ${alvos.size}`
+      );
     }
     if (FULL) {
       // só no full (manual/raro): reprocessa TODO atendimento aberto, sem limite de

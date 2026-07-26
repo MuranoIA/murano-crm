@@ -49,10 +49,19 @@ jobs:
           # equilibra cobertura x tempo de execução (~1,2s/checagem). A cauda longa fica
           # com o full diário + os disparos recentes (abaixo).
           ETL_SCAN_DAYS: 5
+          # checagens /exists simultâneas. Bench 26/07: conc=1 →280ms/ch, 4 →79ms,
+          # 8 →50ms (0 erro), 12 → 429 em 90%. 3 = ~3x mais rápido com folga de cota
+          # pros envios do board. Baixe pra 1 se aparecer 429 no envio de template.
+          ETL_SCAN_CONC: 3
           # re-sincroniza clientes que receberam template PELO BOARD nos últimos N dias
           # (tabela disparos_template), mesmo que estejam "parados" fora da varredura —
           # garante que o template disparado apareça em mensagens rapidamente.
           ETL_DISPARO_DAYS: 5
+          # disparo há menos de N horas -> fetch caro direto (garante o template em
+          # `mensagens` mesmo se o sync do envio falhar). Mais antigo que isso passa pela
+          # checagem barata: só quem RESPONDEU custa fetch. Antes TODOS iam pro fetch
+          # (medido 26/07: 544 fetches caros/run, ~27 min só nisso).
+          ETL_DISPARO_FRESCO_H: 6
           RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
           RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
           RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
