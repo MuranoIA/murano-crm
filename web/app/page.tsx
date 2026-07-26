@@ -758,7 +758,7 @@ export default function Page() {
             onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
             title="Aplica o período a todas as etapas de uma vez"
             style={{
-              padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, color: RD.gray,
+              padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, color: RD.gray,
               background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
             }}
           >
@@ -775,7 +775,7 @@ export default function Page() {
               onClick={() => setProdPainel((v) => !v)}
               title="Filtrar clientes que compraram um produto num período"
               style={{
-                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
                 color: prodFiltro ? "#fff" : RD.gray,
                 background: prodFiltro ? RD.wine : RD.surface,
                 border: `1px solid ${prodFiltro ? RD.wine : RD.border}`,
@@ -871,7 +871,7 @@ export default function Page() {
               onClick={() => setCicloPainel((v) => !v)}
               title="Filtrar por ciclo de compra / oportunidade (análise preditiva)"
               style={{
-                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
                 color: cicloSel.length ? "#fff" : RD.gray,
                 background: cicloSel.length ? "#0e7490" : RD.surface,
                 border: `1px solid ${cicloSel.length ? "#0e7490" : RD.border}`,
@@ -928,7 +928,7 @@ export default function Page() {
             onClick={() => setSemCadFiltro((v) => !v)}
             title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
             style={{
-              padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600,
+              padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
               color: semCadFiltro ? "#fff" : "#b45309",
               background: semCadFiltro ? "#b45309" : "#fff3e0",
               border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
@@ -943,7 +943,7 @@ export default function Page() {
               onClick={() => setParadoPainel((v) => !v)}
               title="Filtrar por quanto tempo o card está parado (dias sem atividade — conta o último template disparado)."
               style={{
-                padding: "0 12px", height: 34, boxSizing: "border-box", fontSize: 12.5, fontWeight: 600, lineHeight: 1.2,
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, lineHeight: 1.2,
                 color: paradoSel.length ? "#fff" : "#475569",
                 background: paradoSel.length ? "#475569" : RD.surface,
                 border: `1px solid ${paradoSel.length ? "#475569" : RD.border}`,
@@ -980,18 +980,18 @@ export default function Page() {
               </div>
             )}
           </div>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 9, padding: "4px 9px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                 Templates {rotuloTpl}
               </span>
-              <b style={{ fontSize: 18, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
+              <b style={{ fontSize: 15, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 10, padding: "6px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 9, padding: "4px 9px" }}>
               <span style={{ fontSize: 10.5, color: "#9c1f47", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                 Automáticos {rotuloTpl}
               </span>
-              <b style={{ fontSize: 18, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
+              <b style={{ fontSize: 15, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, marginLeft: 12 }}>
               <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
@@ -999,12 +999,12 @@ export default function Page() {
               </span>
               <div
                 title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
-                style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 10, padding: "6px 14px" }}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 9, padding: "4px 9px" }}
               >
                 <span style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
                   Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
                 </span>
-                <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+                <b style={{ fontSize: 15, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
                 <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
               </div>
             </div>
