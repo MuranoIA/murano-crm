@@ -179,6 +179,32 @@ async function clientesComAtendimentoAberto(): Promise<{ id: string; carteira: s
   return out;
 }
 
+// Clientes que receberam template PELO BOARD nos últimos `dias` (disparos_template).
+// Cobre a lacuna: uma conversa parada há mais que a janela da varredura recebe um
+// template disparado no board; o disparo é registrado na hora, mas a MENSAGEM só entra
+// em `mensagens` quando o ETL re-busca aquele cliente. Como ele está "parado" fora da
+// varredura, nunca seria re-buscado. Forçando por disparo, o template aparece rápido.
+async function clientesComDisparoRecente(dias: number): Promise<{ id: string; carteira: string }[]> {
+  const cutoff = new Date(Date.now() - Math.max(1, dias) * 86400000).toISOString();
+  const out: { id: string; carteira: string }[] = [];
+  let from = 0;
+  const page = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("disparos_template").select("cliente_id,vendedor")
+      .gte("criada_em", cutoff).range(from, from + page - 1);
+    if (error) throw new Error(`select disparos_template: ${error.message}`);
+    const rows = data ?? [];
+    for (const r of rows) {
+      const cart = String(r.vendedor ?? "");
+      if (r.cliente_id && TARGET_WALLETS.has(cart)) out.push({ id: r.cliente_id, carteira: cart });
+    }
+    if (rows.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
 // Ids de clientes que JÁ têm ao menos uma mensagem (p/ backfill resumível).
 async function idsComMensagens(): Promise<Set<string>> {
   const set = new Set<string>();
@@ -431,6 +457,14 @@ async function main() {
       let add = 0;
       for (const m of mudaram) if (!alvos.has(m.id)) { alvos.set(m.id, m); add++; }
       console.error(`[incremental] varridas ${candidatos.length} (janela ${scanDias}d) → +${add} c/ msg nova → total: ${alvos.size}`);
+
+      // clientes com template disparado pelo board nos últimos N dias — força re-sync
+      // mesmo que estejam "parados" fora da varredura (senão o template nunca aparece).
+      const disparoDias = Number(process.env.ETL_DISPARO_DAYS ?? 5);
+      const disparados = await clientesComDisparoRecente(disparoDias);
+      let addD = 0;
+      for (const d of disparados) if (!alvos.has(d.id)) { alvos.set(d.id, d); addD++; }
+      console.error(`[disparos] ${disparados.length} c/ template ≤${disparoDias}d → +${addD} novos → total: ${alvos.size}`);
     }
     if (FULL) {
       // só no full (manual/raro): reprocessa TODO atendimento aberto, sem limite de

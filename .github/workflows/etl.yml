@@ -9,11 +9,16 @@ on:
         default: incremental
         options: [incremental, full, mensagens]
   schedule:
-    # A cada 10 min em horário comercial (dias úteis) — sempre modo incremental.
-    # Cron do GitHub roda em UTC. Brasília = UTC-3, então 11-23 UTC ≈ 08h-20h BRT.
-    # Repo público -> Actions grátis/ilimitado, então 10 min é viável. O incremental
-    # usa a checagem barata (/exists) numa janela larga (ETL_SCAN_DAYS), então cabe.
-    - cron: "*/10 11-23 * * 1-5"
+    # INCREMENTAL a cada 10 min, 24/7 (inclui noite e fim de semana). Antes era só
+    # seg-sex 08h-20h BRT (11-23 UTC, dias 1-5) — por isso os dados ficavam horas/dias
+    # defasados fora do horário comercial e no fim de semana. Repo público => Actions
+    # grátis/ilimitado, então 24/7 é viável. Cron do GitHub roda em UTC.
+    - cron: "*/10 * * * *"
+    # FULL uma vez por dia, de madrugada (06:05 UTC ≈ 03:05 BRT). O full re-checa TODO
+    # atendimento aberto (janela 89d), cobrindo a "cauda longa": conversa parada há mais
+    # dias que a janela do incremental e que recebeu msg nova (ex.: template manual no RD
+    # numa conversa ociosa). Roda antes do horário comercial, sem atrapalhar os incrementais.
+    - cron: "5 6 * * *"
 
 # Evita empilhar cargas: se uma execução ainda roda quando outra começa, a nova espera.
 concurrency:
@@ -23,7 +28,7 @@ concurrency:
 jobs:
   etl:
     runs-on: ubuntu-latest
-    # incremental termina em poucos minutos; full (manual) pode levar mais.
+    # incremental termina em ~15 min; full (diário/manual) pode levar mais.
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
@@ -37,13 +42,17 @@ jobs:
         run: npm ci
 
       - name: Rodar ETL
-        # schedule dispara sem inputs -> mode vazio -> default "incremental" no run.ts
+        # Modo: manual usa o input; agendado usa full só no cron das 06:05, senão incremental.
         env:
-          ETL_MODE: ${{ github.event.inputs.mode }}
-          # janela da varredura barata (/exists), só conversas ATIVAS na janela. Rate
-          # limit da API ~1,2s/checagem -> ~300 conversas cabem em ~8 min. 3 dias pega as
-          # reativações recentes. (full manual + fechar conversas cobre as mais antigas.)
-          ETL_SCAN_DAYS: 3
+          ETL_MODE: ${{ github.event.inputs.mode || (github.event.schedule == '5 6 * * *' && 'full' || 'incremental') }}
+          # janela da varredura barata (/exists), só conversas ATIVAS na janela. 5 dias
+          # equilibra cobertura x tempo de execução (~1,2s/checagem). A cauda longa fica
+          # com o full diário + os disparos recentes (abaixo).
+          ETL_SCAN_DAYS: 5
+          # re-sincroniza clientes que receberam template PELO BOARD nos últimos N dias
+          # (tabela disparos_template), mesmo que estejam "parados" fora da varredura —
+          # garante que o template disparado apareça em mensagens rapidamente.
+          ETL_DISPARO_DAYS: 5
           RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
           RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
           RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
