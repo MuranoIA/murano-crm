@@ -154,6 +154,12 @@ function tempoRelativo(iso: string | null): string {
   if (h < 24) return `${h} h`;
   return `${Math.floor(h / 24)} d`;
 }
+// a data mais recente entre duas ISO (ex.: última msg do RD vs. disparo de template nosso)
+function maisRecenteISO(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
+}
 function diasInativo(iso: string | null): number {
   if (!iso) return Infinity; // nunca contatado — "mais parado que qualquer outro"
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -967,6 +973,10 @@ export default function Page() {
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
             const ehPedido = col.key === "pedido_emitido";
             const ehProspec = col.key === "prospeccao";
+            // atividade EFETIVA do card = a mais recente entre a última msg (RD) e o
+            // disparo de template nosso (disparos_template). Assim um card que você
+            // acabou de templar não conta como "parado" desde a msg antiga.
+            const efetiva = (c: Card) => maisRecenteISO(c.ultima_atividade, disparos[c.cliente_id]);
             // pedido_emitido: cards vêm das views de faturamento (1 linha por período);
             // prospecção: carteira nunca contatada, sem data -> ignora o período;
             // demais colunas: da vw_funil filtrada por atividade.
@@ -995,13 +1005,14 @@ export default function Page() {
               doGrupo = [...doGrupo].sort((a, b) => {
                 const pa = podeTemplate(a), pb = podeTemplate(b);
                 if (pa !== pb) return pa ? -1 : 1; // disponível no topo
-                // dentro de cada grupo: mais dias parados no topo
-                return (new Date(a.ultima_atividade ?? 0).getTime()) - (new Date(b.ultima_atividade ?? 0).getTime());
+                // dentro de cada grupo: mais tempo sem atividade efetiva no topo
+                return (new Date(efetiva(a) ?? 0).getTime()) - (new Date(efetiva(b) ?? 0).getTime());
               });
             } else if (col.key === "ociosos") {
-              // ordem decrescente de inatividade: mais dias parados (ou nunca contatado) no topo
+              // ordem decrescente de inatividade EFETIVA: mais parados (ou nunca contatado) no topo;
+              // quem recebeu template recente (disparo) desce, não fica falsamente no topo.
               doGrupo = [...doGrupo].sort(
-                (a, b) => (new Date(a.ultima_atividade ?? 0).getTime()) - (new Date(b.ultima_atividade ?? 0).getTime())
+                (a, b) => (new Date(efetiva(a) ?? 0).getTime()) - (new Date(efetiva(b) ?? 0).getTime())
               );
             }
             // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
@@ -1092,6 +1103,9 @@ export default function Page() {
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
+                      // data efetiva do card (msg do RD ou disparo nosso, o que for mais recente)
+                      const ultimaEf = efetiva(c);
+                      const viaDisparo = !!disparos[c.cliente_id] && ultimaEf === disparos[c.cliente_id] && ultimaEf !== c.ultima_atividade;
                       const alerta = ehAlerta(c, acks[c.cliente_id]);
                       // até 3 últimas mensagens (mais antiga em cima, recente embaixo). Fallback:
                       // se a coluna nova (migration 0005) ainda não veio, usa só a última.
@@ -1268,8 +1282,8 @@ export default function Page() {
                               {cap(c.vendedor)}
                             </span>
                             {!prospeccao && (
-                              <span style={{ color: recontactar ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar ? 700 : 400 }}>
-                                · {tempoRelativo(c.ultima_atividade)}{recontactar ? " parado" : ""}
+                              <span style={{ color: recontactar && !viaDisparo ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar && !viaDisparo ? 700 : 400 }}>
+                                · {tempoRelativo(ultimaEf)}{viaDisparo ? " · template enviado" : (recontactar ? " parado" : "")}
                               </span>
                             )}
                           </div>
