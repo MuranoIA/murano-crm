@@ -991,6 +991,7 @@ export default function Page() {
                 </div>
 
                 <div
+                  key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}`}
                   onScroll={(e) => aoRolarColuna(e, col.key, doGrupo.length)}
                   style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
                 >
