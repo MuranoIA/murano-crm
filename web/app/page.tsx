@@ -253,6 +253,11 @@ export default function Page() {
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
+  // meta do dia do Ranking (admin define aqui; o Ranking só lê)
+  const [metaModal, setMetaModal] = useState(false);
+  const [metaAtual, setMetaAtual] = useState<number | null>(null);
+  const [metaValor, setMetaValor] = useState("");
+  const [metaSalvando, setMetaSalvando] = useState(false);
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -378,6 +383,32 @@ export default function Page() {
       alert("Erro ao trocar de papel: " + (e?.message ?? e));
     } finally {
       setTrocandoPapel(false);
+    }
+  }
+
+  // abre o modal da meta do dia carregando o valor atual (bi_config.meta_dia)
+  async function abrirMeta() {
+    setMetaModal(true);
+    try {
+      const j = await fetch("/api/meta").then((r) => r.json());
+      const m = Number(j?.meta ?? 0) || 0;
+      setMetaAtual(m);
+      setMetaValor(m ? String(m) : "");
+    } catch { setMetaAtual(null); }
+  }
+  async function salvarMeta() {
+    const m = Math.max(0, Math.round(Number(metaValor.replace(/[^\d]/g, "")) || 0));
+    setMetaSalvando(true);
+    try {
+      const r = await fetch("/api/meta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ meta: m }) });
+      const j = await r.json();
+      if (!r.ok) { alert("Não foi possível salvar a meta: " + (j?.error ?? r.status)); return; }
+      setMetaAtual(j.meta);
+      setMetaModal(false);
+    } catch (e: any) {
+      alert("Erro ao salvar a meta: " + (e?.message ?? e));
+    } finally {
+      setMetaSalvando(false);
     }
   }
 
@@ -523,6 +554,12 @@ export default function Page() {
     checarSync();
     const t = setInterval(checarSync, 15000);
     return () => clearInterval(t);
+  }, [sessao]);
+
+  // carrega a meta do dia (só admin) p/ mostrar no botão de Meta
+  useEffect(() => {
+    if (sessao?.role !== "admin") return;
+    fetch("/api/meta").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setMetaAtual(Number(j.meta ?? 0) || 0); }).catch(() => {});
   }, [sessao]);
 
   // relógio vivo só enquanto um run está rodando, pra mostrar "rodando há 0:47"
@@ -884,6 +921,9 @@ export default function Page() {
               <>
                 <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
                 <a href="https://romuloallbuquerque-netizen.github.io/murano-bi-ranking-vendas/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                <button onClick={abrirMeta} title="Definir a meta de vendas do dia (aparece no Ranking)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", whiteSpace: "nowrap" }}>
+                  🎯 Meta{metaAtual ? <span style={{ fontSize: 11.5, color: RD.wine, fontWeight: 800 }}>&nbsp;R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
+                </button>
               </>
             )}
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
@@ -1708,6 +1748,35 @@ export default function Page() {
           }}
         >
           {tip.text}
+        </div>
+      )}
+      {metaModal && (
+        <div
+          onClick={() => !metaSalvando && setMetaModal(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 360, background: RD.surface, borderRadius: 14, padding: 22, boxShadow: "0 20px 60px rgba(16,32,64,.3)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: RD.wine, marginBottom: 4 }}>🎯 Meta de vendas do dia</div>
+            <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 16 }}>Valor exibido no Ranking como barra de progresso. Vale para todos os dias.</div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: RD.navy }}>Meta (R$)</label>
+            <input
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              value={metaValor}
+              onChange={(e) => setMetaValor(e.target.value.replace(/[^\d]/g, ""))}
+              onKeyDown={(e) => { if (e.key === "Enter" && !metaSalvando) salvarMeta(); }}
+              placeholder="ex: 50000"
+              style={{ width: "100%", boxSizing: "border-box", marginTop: 6, padding: "10px 12px", fontSize: 15, fontWeight: 700, color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+            />
+            <div style={{ fontSize: 12, color: RD.grayLight, marginTop: 6 }}>
+              {metaValor ? `= R$ ${Number(metaValor).toLocaleString("pt-BR")}` : (metaAtual != null ? (metaAtual ? `Atual: R$ ${metaAtual.toLocaleString("pt-BR")}` : "Sem meta definida (barra oculta no Ranking)") : "carregando…")}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button onClick={() => setMetaModal(false)} disabled={metaSalvando} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={salvarMeta} disabled={metaSalvando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>{metaSalvando ? "Salvando…" : "Salvar meta"}</button>
+            </div>
+          </div>
         </div>
       )}
       {massaAberto && (
