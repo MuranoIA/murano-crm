@@ -1021,7 +1021,7 @@ export default function Page() {
             {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
           </span>
           </div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "nowrap" }}>
           <div style={{ position: "relative", display: "inline-flex" }}>
           <select
             value={periodoGlobal}
@@ -1033,13 +1033,13 @@ export default function Page() {
               appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
             }}
           >
-            <option value="todos">Período: todos</option>
-            <option value="hoje">Período: hoje</option>
-            <option value="ontem">Período: ontem</option>
-            <option value="semana">Período: semana</option>
-            <option value="quinzena">Período: quinzena</option>
-            <option value="mes">Período: mês</option>
-            {periodoGlobal === "misto" && <option value="misto" disabled>Período: misto</option>}
+            <option value="todos">Mensagens a partir de: todos</option>
+            <option value="hoje">Mensagens a partir de: hoje</option>
+            <option value="ontem">Mensagens a partir de: ontem</option>
+            <option value="semana">Mensagens a partir de: semana</option>
+            <option value="quinzena">Mensagens a partir de: quinzena</option>
+            <option value="mes">Mensagens a partir de: mês</option>
+            {periodoGlobal === "misto" && <option value="misto" disabled>Mensagens a partir de: misto</option>}
           </select>
             <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 10, opacity: 0.8, color: RD.gray, pointerEvents: "none" }}>▾</span>
           </div>
@@ -1278,26 +1278,23 @@ export default function Page() {
               display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
             }}
           >
-            {baixando ? "Gerando…" : "⬇ Baixar relatório"}
+            {baixando ? "Gerando…" : "⬇ Relatório"}
           </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
-              <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates {rotuloTpl}</span>
+              <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
               <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap" }}>
-              <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos {rotuloTpl}</span>
+              <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos</span>
               <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
             </div>
             <div
               title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
               style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, whiteSpace: "nowrap", marginLeft: 12 }}
             >
-              <span style={{ fontSize: 11.5, color: "#15803d", fontWeight: 600 }}>
-                Vendas {({ todos: "mês", mes: "mês", hoje: "hoje", ontem: "ontem", semana: "semana", quinzena: "quinzena" } as Record<string, string>)[vendaMes.per] ?? ""}
-              </span>
               <b style={{ fontSize: 12.5, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-              <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
+              <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} VENDAS</span>
             </div>
           </div>
           </div>
