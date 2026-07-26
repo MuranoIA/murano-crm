@@ -287,6 +287,7 @@ export default function Page() {
   const [massaEnviando, setMassaEnviando] = useState(false);
   const [massaConfirmar, setMassaConfirmar] = useState(false);
   const [massaProg, setMassaProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
+  const [massaFalhas, setMassaFalhas] = useState<{ cliente: string; erro: string }[]>([]);
   // lixeira (descartar cliente final arrastando o card)
   const [arrastando, setArrastando] = useState<Card | null>(null);
   const [sobreLixeira, setSobreLixeira] = useState(false);
@@ -606,21 +607,27 @@ export default function Page() {
   const massaCusto = massaSel.length * 0.43;
   async function enviarMassa() {
     setMassaEnviando(true);
+    setMassaFalhas([]);
     let ok = 0, falhas = 0;
+    const detalhe: { cliente: string; erro: string }[] = [];
     const total = massaSel.length;
     setMassaProg({ feitos: 0, ok: 0, falhas: 0, total });
     for (let i = 0; i < total; i++) {
+      let erro = "";
       try {
         const r = await fetch("/api/send-template", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cliente_id: massaSel[i].rd, ...(massaTemplate ? { template_id: massaTemplate } : {}) }),
         });
         const j = await r.json().catch(() => ({}));
-        if (r.ok && !j.error) ok++; else falhas++;
-      } catch { falhas++; }
+        if (r.ok && !j.error) ok++;
+        else { falhas++; erro = j.error || `HTTP ${r.status}`; }
+      } catch (e: any) { falhas++; erro = e?.message || "erro de rede"; }
+      if (erro) detalhe.push({ cliente: massaSel[i].c.cliente, erro });
       setMassaProg({ feitos: i + 1, ok, falhas, total });
-      if (i < total - 1) await new Promise((res) => setTimeout(res, 1300)); // throttle p/ não estourar 429
+      if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
     }
+    setMassaFalhas(detalhe);
     setMassaEnviando(false);
     await load();
   }
@@ -1531,8 +1538,18 @@ export default function Page() {
             <div style={{ padding: 20 }}>
               {massaProg && massaProg.feitos >= massaProg.total && !massaEnviando ? (
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#15803d", marginBottom: 8 }}>✅ Concluído</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: massaProg.falhas ? "#b45309" : "#15803d", marginBottom: 8 }}>{massaProg.falhas ? "⚠️ Concluído com falhas" : "✅ Concluído"}</div>
                   <div style={{ fontSize: 13, color: RD.navy }}>{massaProg.ok} enviados{massaProg.falhas ? `, ${massaProg.falhas} falharam` : ""} de {massaProg.total}.</div>
+                  {massaFalhas.length > 0 && (
+                    <div style={{ marginTop: 10, background: "#fdecec", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 10px", maxHeight: 150, overflow: "auto" }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: "#b91c1c", marginBottom: 6 }}>Motivos das falhas:</div>
+                      {Object.entries(massaFalhas.reduce((acc, f) => { acc[f.erro] = (acc[f.erro] ?? 0) + 1; return acc; }, {} as Record<string, number>))
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([erro, n]) => (
+                          <div key={erro} style={{ fontSize: 11.5, color: RD.navy, lineHeight: 1.5 }}><b>{n}×</b> {erro}</div>
+                        ))}
+                    </div>
+                  )}
                   <button onClick={() => setMassaAberto(false)} style={{ marginTop: 16, padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: "pointer" }}>Fechar</button>
                 </div>
               ) : massaEnviando ? (
