@@ -134,16 +134,38 @@ export async function GET() {
     return out;
   };
 
+  // lixeira: clientes descartados (cliente final) — somem do board por qualquer identificador
+  const carregarDescartados = async (): Promise<any[]> =>
+    (await sb.from("wth_descartados").select("cliente_id,codcli,tel8")).data ?? [];
+
   // dispara os blocos independentes de uma vez
-  let cards: any[], pcRows: any[], tpls: any[], autos: any[], disp: any[], tot: any[], ciclos: any[];
+  let cards: any[], pcRows: any[], tpls: any[], autos: any[], disp: any[], tot: any[], ciclos: any[], descRows: any[];
   try {
-    [cards, pcRows, tpls, autos, disp, tot, ciclos] = await Promise.all([
+    [cards, pcRows, tpls, autos, disp, tot, ciclos, descRows] = await Promise.all([
       carregarCards(), carregarPedidoCards(), carregarTemplates(),
-      carregarAuto(), carregarDisparos(), carregarTotais(), carregarCiclo(),
+      carregarAuto(), carregarDisparos(), carregarTotais(), carregarCiclo(), carregarDescartados(),
     ]);
   } catch (e: any) {
     return Response.json({ error: e?.message ?? String(e) }, { status: 500 });
   }
+  // sets de descartados + teste por qualquer identificador (cliente_id RD, codcli, tel8)
+  const descCli = new Set((descRows ?? []).map((d: any) => d.cliente_id).filter(Boolean));
+  const descCod = new Set((descRows ?? []).map((d: any) => d.codcli).filter((x: any) => x != null).map(Number));
+  const descTel = new Set((descRows ?? []).map((d: any) => d.tel8).filter(Boolean));
+  const codDeId = (id: any): number | null => {
+    if (typeof id === "string" && (id.startsWith("winthor:") || id.startsWith("venda:"))) {
+      const n = Number(id.slice(id.indexOf(":") + 1)); return isNaN(n) ? null : n;
+    }
+    return null;
+  };
+  const ehDescartado = (c: any): boolean => {
+    if (c.cliente_id && descCli.has(c.cliente_id)) return true;
+    if (c.rd_cliente_id && descCli.has(c.rd_cliente_id)) return true;
+    const cod = c.codcli ?? codDeId(c.cliente_id);
+    if (cod != null && descCod.has(Number(cod))) return true;
+    const t = String(c.telefone ?? "").replace(/\D/g, "").slice(-8);
+    return t.length === 8 && descTel.has(t);
+  };
 
   // mapas de ciclo por identificador (cliente_id / codcli / telefone8)
   const cicloByCli = new Map<string, any>();
@@ -264,7 +286,7 @@ export async function GET() {
   // Cards do FUNIL = conversas (vw_funil, dono = RCA atual, etapa pela conversa) + prospecção,
   // SEM a etapa pedido_emitido e SEM quem comprou no mês (esses ficam só em Pedido emitido).
   // Pedido emitido é coluna SEPARADA, das VENDAS (bi/ranking), não das conversas.
-  const cardsOutros = cards.filter((c: any) => c.etapa !== "pedido_emitido" && !ehCompradorMes(c));
+  const cardsOutros = cards.filter((c: any) => c.etapa !== "pedido_emitido" && !ehCompradorMes(c) && !ehDescartado(c));
   for (const c of cardsOutros) {
     const v = valorMesDe(c);
     c.venda_valor = v && v > 0 ? v : null; // aqui não há comprador do mês; selo verde não aparece
@@ -294,7 +316,7 @@ export async function GET() {
       ultimas_mensagens: f?.ultimas_mensagens ?? null,
       ciclo: cicloDe({ cliente_id: key, telefone: r.telefone ?? f?.telefone ?? null }),
     };
-  });
+  }).filter((pc: any) => !ehDescartado(pc));
 
   // totais do cabeçalho por carteira e período (bruto, "quem lançou") — já carregado acima
   const vendasTotais: Record<string, Record<string, { total: number; vendas: number }>> = {};

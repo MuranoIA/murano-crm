@@ -287,6 +287,11 @@ export default function Page() {
   const [massaEnviando, setMassaEnviando] = useState(false);
   const [massaConfirmar, setMassaConfirmar] = useState(false);
   const [massaProg, setMassaProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
+  // lixeira (descartar cliente final arrastando o card)
+  const [arrastando, setArrastando] = useState<Card | null>(null);
+  const [sobreLixeira, setSobreLixeira] = useState(false);
+  const [lixeiraAberta, setLixeiraAberta] = useState(false);
+  const [descartados, setDescartados] = useState<any[]>([]);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -620,6 +625,27 @@ export default function Page() {
     await load();
   }
 
+  // === LIXEIRA: descartar (arrastar pra lixeira), listar, restaurar ===
+  async function descartarCard(c: Card) {
+    setArrastando(null); setSobreLixeira(false);
+    try {
+      await fetch("/api/descartados", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: c.cliente_id, codcli: codcliDe(c), telefone: c.telefone, cliente: c.cliente, vendedor: c.vendedor }),
+      });
+      await load();
+    } catch {}
+  }
+  async function carregarLixeira() {
+    try { const r = await fetch("/api/descartados", { cache: "no-store" }); const j = await r.json(); setDescartados(j.descartados ?? []); } catch {}
+  }
+  async function restaurarDescartado(id: number) {
+    try {
+      await fetch("/api/descartados", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      await carregarLixeira(); await load();
+    } catch {}
+  }
+
   // produtos filtrados pela busca do painel
   const produtosFiltrados = useMemo(() => {
     const q = prodBusca.trim().toLowerCase();
@@ -743,6 +769,7 @@ export default function Page() {
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
+            <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://romuloallbuquerque-netizen.github.io/murano-bi-ranking-vendas/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://murano-catalogo.vercel.app/produtos" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
@@ -1264,6 +1291,9 @@ export default function Page() {
                       return (
                         <article
                           key={c.cliente_id}
+                          draggable
+                          onDragStart={() => setArrastando(c)}
+                          onDragEnd={() => { setArrastando(null); setSobreLixeira(false); }}
                           onClick={() => abrirConversa(c)}
                           title={prospeccao ? (c.rd_cliente_id ? "Abrir conversa no RD Conversas (já tem contato lá, mesmo sem atendimento)" : "Abrir WhatsApp com este número (ainda sem contato no RD Conversas)") : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
@@ -1554,6 +1584,50 @@ export default function Page() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* LIXEIRA — arraste um card do cliente final aqui pra descartar; clique pra ver/restaurar */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); if (arrastando) setSobreLixeira(true); }}
+        onDragLeave={() => setSobreLixeira(false)}
+        onDrop={(e) => { e.preventDefault(); if (arrastando) descartarCard(arrastando); }}
+        onClick={() => { setLixeiraAberta(true); carregarLixeira(); }}
+        title="Lixeira — arraste aqui o card de um cliente final pra descartar; clique pra ver/restaurar"
+        style={{
+          position: "fixed", right: 24, bottom: 24, zIndex: 250,
+          width: arrastando ? 74 : 52, height: arrastando ? 74 : 52, borderRadius: "50%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: arrastando ? 30 : 22, cursor: "pointer", userSelect: "none",
+          background: sobreLixeira ? "#dc2626" : arrastando ? "#fee2e2" : RD.surface,
+          color: sobreLixeira ? "#fff" : "#b91c1c",
+          border: `2px ${arrastando ? "dashed" : "solid"} ${sobreLixeira ? "#dc2626" : "#f0b4b4"}`,
+          boxShadow: "0 8px 24px rgba(16,32,64,.22)", transition: "all .15s",
+        }}
+      >
+        🗑️
+      </div>
+      {lixeiraAberta && (
+        <div onClick={() => setLixeiraAberta(false)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: "100%", maxHeight: "80vh", background: RD.surface, borderRadius: 14, boxShadow: "0 20px 60px rgba(16,32,64,.35)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "15px 20px", borderBottom: `1px solid ${RD.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: "#b91c1c" }}>🗑️ Lixeira — descartados ({descartados.length})</span>
+              <span onClick={() => setLixeiraAberta(false)} title="Fechar" style={{ cursor: "pointer", color: RD.gray, fontSize: 22, lineHeight: 1 }}>×</span>
+            </div>
+            <div style={{ padding: 12, overflow: "auto" }}>
+              <div style={{ fontSize: 12, color: RD.grayLight, margin: "0 8px 10px", lineHeight: 1.5 }}>Clientes finais descartados (a empresa só atende profissionais). Ficam guardados por tempo indeterminado; "Restaurar" devolve ao funil.</div>
+              {descartados.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: RD.grayLight, fontSize: 13 }}>Nenhum cliente descartado.</div>
+              ) : descartados.map((d) => (
+                <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderBottom: `1px solid ${RD.bg}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: RD.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.cliente ?? `cliente ${d.codcli ?? ""}`}</div>
+                    <div style={{ fontSize: 10.5, color: RD.grayLight }}>{d.motivo}{d.vendedor ? ` · ${cap(d.vendedor)}` : ""} · por {d.descartado_por}</div>
+                  </div>
+                  <button onClick={() => restaurarDescartado(d.id)} style={{ padding: "5px 12px", fontSize: 12, fontWeight: 700, color: RD.wine, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer", whiteSpace: "nowrap" }}>Restaurar</button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
