@@ -660,7 +660,8 @@ export default function Page() {
       </div>
 
       <main style={{ padding: "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
-        <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <input
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
@@ -674,6 +675,8 @@ export default function Page() {
             {chip("Todos", "todos")}
             {vendedores.map((v) => chip(cap(v), v, vendCores[v] ?? CoresVendedor[v] ?? RD.grayLight))}
           </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <select
             value={periodoGlobal}
             onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
@@ -856,6 +859,7 @@ export default function Page() {
               <b style={{ fontSize: 18, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
               <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} vendas</span>
             </div>
+          </div>
           </div>
         </header>
 
