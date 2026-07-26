@@ -252,6 +252,7 @@ export default function Page() {
   const [busca, setBusca] = useState("");
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
   const [trocandoPapel, setTrocandoPapel] = useState(false);
+  const [papelMenuAberto, setPapelMenuAberto] = useState(false);
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -889,77 +890,92 @@ export default function Page() {
             <a href="https://murano-catalogo.vercel.app/produtos" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
           </nav>
-          <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8, background: RD.wineSoft, border: "1px solid #e8d8e1", borderRadius: 20, padding: "4px 13px 4px 5px" }}>
-            <span style={{ width: 22, height: 22, borderRadius: 20, background: RD.wine, color: RD.cream, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>
-              {sessao.role === "admin" ? "A" : sessao.role === "home" ? "H" : cap(sessao.carteira ?? "?").charAt(0)}
-            </span>
-            <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : sessao.role === "home" ? "Home" : cap(sessao.carteira ?? "")}</b>
-          </span>
-          {/* Seletor de papel: só p/ quem tem mais de um (Romulo admin|vendedor, Joas admin|home).
-              Troca o cookie no servidor e recarrega a sessão — muda o que o board mostra. */}
-          {(sessao.papeis?.length ?? 0) > 1 && (
-            <select
-              value={sessao.role}
-              disabled={trocandoPapel}
-              onChange={(e) => trocarPapel(e.target.value)}
-              title="Trocar o papel de acesso"
-              style={{ fontSize: 12, fontWeight: 700, color: RD.wine, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, padding: "5px 8px", cursor: trocandoPapel ? "wait" : "pointer", outline: "none" }}
-            >
-              {sessao.papeis!.map((p) => (
-                <option key={p} value={p}>
-                  {p === "admin" ? "Ver como Admin" : p === "home" ? "Ver como Home" : "Ver como Vendedor"}
-                </option>
-              ))}
-            </select>
-          )}
-          {sessao.role === "admin" && (
-            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}>
-              {syncPausado ? (
-                <>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700 }}>
-                    ⏸ Sincronização pausada
+          {/* Identidade + troca de papel num pill só. Clica -> dropdown com os papéis
+              (Romulo: Admin|Romulo; Joas: Admin|Home); escolhe e o pill passa a mostrar o
+              nome escolhido. Quem tem 1 papel só vê o pill estático (sem dropdown). */}
+          {(() => {
+            const multi = (sessao.papeis?.length ?? 0) > 1;
+            const rotulo = (r: string) => r === "admin" ? "Admin" : r === "home" ? "Home" : (cap(sessao.carteira ?? "") || "Vendedor");
+            const inicial = (r: string) => r === "admin" ? "A" : r === "home" ? "H" : cap(sessao.carteira ?? "?").charAt(0);
+            return (
+              <div style={{ position: "relative", marginLeft: "auto" }}>
+                <button
+                  onClick={() => { if (multi) setPapelMenuAberto((v) => !v); }}
+                  disabled={trocandoPapel}
+                  title={multi ? "Trocar o papel de acesso" : undefined}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, background: RD.wineSoft, border: "1px solid #e8d8e1", borderRadius: 20, padding: "4px 12px 4px 5px", cursor: multi ? (trocandoPapel ? "wait" : "pointer") : "default", outline: "none" }}
+                >
+                  <span style={{ width: 22, height: 22, borderRadius: 20, background: RD.wine, color: RD.cream, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>
+                    {inicial(sessao.role)}
                   </span>
-                  <button
-                    onClick={() => togglePausaSync(false)}
-                    disabled={pausandoSync}
-                    title="Reativa a sincronização de fundo (incremental + tempo real). O board volta a atualizar."
-                    style={{ cursor: pausandoSync ? "wait" : "pointer", background: RD.wine, color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 700 }}
-                  >
-                    {pausandoSync ? "Retomando…" : "▶ Retomar"}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={dispararSync}
-                    disabled={disparandoSync || syncRodando}
-                    title="Dispara o ETL manualmente (RD Conversas → clientes/mensagens)"
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      cursor: disparandoSync || syncRodando ? "wait" : "pointer",
-                      background: syncRodando ? "#eaf6fd" : RD.surface,
-                      color: syncRodando ? "#0b7fb0" : RD.gray,
-                      border: `1px solid ${syncRodando ? "#bfe6f8" : RD.border}`,
-                      borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600,
-                    }}
-                  >
-                    <span style={{
-                      width: 7, height: 7, borderRadius: 7,
-                      background: syncRodando ? "#0ea3dc" : RD.grayLight,
-                      animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none",
-                    }} />
-                    {disparandoSync ? "Disparando…" : syncRodando ? "Sincronizando…" : "Sincronizar agora"}
-                  </button>
-                  <button
-                    onClick={() => togglePausaSync(true)}
-                    disabled={pausandoSync}
-                    title="Pausa a sincronização de fundo (incremental + tempo real) pra liberar a cota do RD pros seus envios de template. Lembre de RETOMAR depois — enquanto pausado, o board não atualiza."
-                    style={{ cursor: pausandoSync ? "wait" : "pointer", background: RD.surface, color: RD.gray, border: `1px solid ${RD.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 12.5, fontWeight: 600 }}
-                  >
-                    {pausandoSync ? "Pausando…" : "⏸ Pausar"}
-                  </button>
-                </>
-              )}
+                  <b style={{ fontSize: 12.5, color: RD.wine }}>{rotulo(sessao.role)}</b>
+                  {multi && <span style={{ fontSize: 9, color: RD.wine, opacity: 0.75 }}>{trocandoPapel ? "…" : "▾"}</span>}
+                </button>
+                {papelMenuAberto && multi && (
+                  <>
+                    <div onClick={() => setPapelMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+                    <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, zIndex: 41, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(16,32,64,0.14)", overflow: "hidden", minWidth: 150 }}>
+                      {sessao.papeis!.map((p) => {
+                        const ativo = p === sessao.role;
+                        return (
+                          <button
+                            key={p}
+                            onClick={() => { setPapelMenuAberto(false); trocarPapel(p); }}
+                            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: ativo ? RD.wineSoft : "transparent", border: "none", padding: "8px 12px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: RD.wine, cursor: "pointer" }}
+                          >
+                            <span style={{ width: 18, height: 18, borderRadius: 20, background: RD.wine, color: RD.cream, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800 }}>
+                              {inicial(p)}
+                            </span>
+                            {rotulo(p)}
+                            {ativo && <span style={{ marginLeft: "auto", fontSize: 11, color: RD.cyan }}>✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+          {sessao.role === "admin" && (
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+              {/* Toggle Sinc | Pause: a "chave" desliza pro lado ativo. Junta as 3 ações antigas —
+                  Sinc = retoma (se pausado) e força um sync agora; Pause = pausa (libera cota do RD). */}
+              <div
+                role="switch"
+                aria-checked={!syncPausado}
+                title={syncPausado
+                  ? "Sincronização PAUSADA. Clique em Sinc pra retomar (o board volta a atualizar)."
+                  : "Sincronização ativa (RD → clientes/mensagens). Sinc = forçar agora · Pause = liberar a cota do RD pros envios de template."}
+                style={{
+                  position: "relative", display: "inline-flex", width: 132, height: 30, boxSizing: "border-box",
+                  border: `1px solid ${syncPausado ? "#f0c987" : (syncRodando ? "#bfe6f8" : RD.border)}`,
+                  borderRadius: 20, background: syncPausado ? "#fff7ed" : (syncRodando ? "#eaf6fd" : RD.surface),
+                  userSelect: "none", overflow: "hidden", opacity: pausandoSync ? 0.7 : 1,
+                }}
+              >
+                <span style={{
+                  position: "absolute", top: 2, bottom: 2, width: "calc(50% - 3px)",
+                  left: syncPausado ? "calc(50% + 1px)" : 2,
+                  borderRadius: 16, transition: "left .22s cubic-bezier(.4,0,.2,1)",
+                  background: syncPausado ? "#f59e0b" : "#0ea3dc", boxShadow: "0 1px 3px rgba(0,0,0,.18)",
+                }} />
+                <button
+                  onClick={async () => { if (pausandoSync) return; if (syncPausado) await togglePausaSync(false); if (!syncRodando) dispararSync(); }}
+                  disabled={pausandoSync}
+                  style={{ position: "relative", zIndex: 1, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, background: "transparent", border: "none", padding: 0, cursor: pausandoSync ? "wait" : "pointer", fontSize: 12, fontWeight: 700, color: !syncPausado ? "#fff" : RD.gray }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: 6, background: !syncPausado ? "#fff" : RD.grayLight, animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none" }} />
+                  {disparandoSync ? "…" : "Sinc"}
+                </button>
+                <button
+                  onClick={() => { if (pausandoSync) return; if (!syncPausado) togglePausaSync(true); }}
+                  disabled={pausandoSync}
+                  style={{ position: "relative", zIndex: 1, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, background: "transparent", border: "none", padding: 0, cursor: pausandoSync ? "wait" : "pointer", fontSize: 12, fontWeight: 700, color: syncPausado ? "#fff" : RD.gray }}
+                >
+                  {pausandoSync ? "…" : "⏸ Pause"}
+                </button>
+              </div>
               <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? "#b45309" : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
                 {syncPausado ? "PAUSADA — dados não atualizam até retomar" : (
                   <>
