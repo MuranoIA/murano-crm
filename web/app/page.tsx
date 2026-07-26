@@ -1068,14 +1068,15 @@ export default function Page() {
               doGrupo = [...doGrupo].sort(
                 (a, b) => (new Date(b.ultima_atividade ?? 0).getTime()) - (new Date(a.ultima_atividade ?? 0).getTime())
               );
-            } else if (col.key === "tentativa_contato") {
-              // botão TEMPLATE disponível = parado >= DIAS_RECONTATO e sem disparo recente.
-              // Cards com template já enviado ("aguardando resposta") afundam pra BAIXO dos
-              // que ainda dá pra disparar -> o topo é sempre um card pronto pra enviar template.
+            } else if (col.key === "tentativa_contato" || col.key === "ociosos") {
+              // botão TEMPLATE clicável no TOPO; quem já disparou e aguarda resposta afunda.
+              // Em ociosos o botão está sempre disponível (só o disparo recente segura); em
+              // tentativa precisa ter parado >= DIAS_RECONTATO. Mesma regra nas duas colunas.
               const podeTemplate = (c: Card) => {
                 const ud = disparos[c.cliente_id];
-                const disparoRecente = !!ud && diasInativo(ud) < DIAS_RECONTATO;
-                return diasInativo(c.ultima_atividade) >= DIAS_RECONTATO && !disparoRecente;
+                if (ud && diasInativo(ud) < DIAS_RECONTATO) return false; // aguardando resposta -> baixo
+                if (col.key === "ociosos") return true;
+                return diasInativo(c.ultima_atividade) >= DIAS_RECONTATO;
               };
               doGrupo = [...doGrupo].sort((a, b) => {
                 const pa = podeTemplate(a), pb = podeTemplate(b);
@@ -1083,12 +1084,6 @@ export default function Page() {
                 // dentro de cada grupo: mais tempo sem atividade efetiva no topo
                 return (new Date(efetiva(a) ?? 0).getTime()) - (new Date(efetiva(b) ?? 0).getTime());
               });
-            } else if (col.key === "ociosos") {
-              // ordem decrescente de inatividade EFETIVA: mais parados (ou nunca contatado) no topo;
-              // quem recebeu template recente (disparo) desce, não fica falsamente no topo.
-              doGrupo = [...doGrupo].sort(
-                (a, b) => (new Date(efetiva(a) ?? 0).getTime()) - (new Date(efetiva(b) ?? 0).getTime())
-              );
             }
             // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
             const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
