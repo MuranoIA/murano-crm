@@ -1009,10 +1009,14 @@ export default function Page() {
               background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none",
             }}
           />
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {chip("Todos", "todos")}
-            {vendedores.map((v) => chip(cap(v), v, vendCores[v] ?? CoresVendedor[v] ?? RD.grayLight))}
-          </div>
+          {/* filtro de vendedor: só faz sentido p/ quem vê mais de uma carteira (admin/home).
+              Vendedor tem carteira única -> "Todos" + o próprio nome seria redundante. */}
+          {sessao.role !== "vendedor" && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {chip("Todos", "todos")}
+              {vendedores.map((v) => chip(cap(v), v, vendCores[v] ?? CoresVendedor[v] ?? RD.grayLight))}
+            </div>
+          )}
           <span style={{ marginLeft: "auto", color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
             {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
           </span>
