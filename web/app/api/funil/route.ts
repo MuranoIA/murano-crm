@@ -236,12 +236,38 @@ export async function GET() {
     return null;
   };
 
-  // Cards do FUNIL = conversas (vw_funil, dono = RCA atual, etapa pela conversa), SEM a
-  // etapa pedido_emitido. Cada card carrega o valor do mês do cliente (bi) como selo + o
-  // ciclo. Pedido emitido é coluna SEPARADA, das VENDAS (bi/ranking), não das conversas.
-  const cardsOutros = cards.filter((c: any) => c.etapa !== "pedido_emitido");
+  // Compradores do MÊS (fonte bi/pedido): quem comprou no mês vira UM card só, na coluna
+  // Pedido emitido — some das colunas de conversa/prospecção pra não duplicar. É isto que
+  // "junta" o lead de marketing (conversa solta no RD) ao cadastro oficial do WinThor
+  // quando ele compra: casa por cliente_id, codcli OU telefone (8 dígitos). Mantemos `cards`
+  // inteiro (o enriquecimento do card de pedido depende dele); só filtramos o que é exibido.
+  const compradoresMes = new Set<string>();
+  for (const r of pcRows ?? []) {
+    if (r.periodo !== "mes") continue;
+    const cid = r.cliente_id ?? effCliId(r);
+    if (cid) compradoresMes.add("cli:" + cid);
+    if (r.codcli != null) compradoresMes.add("cod:" + Number(r.codcli));
+    const t = tel8(r.telefone ?? telByCodcli[Number(r.codcli)]);
+    if (t.length === 8) compradoresMes.add("tel:" + t);
+  }
+  const ehCompradorMes = (c: any): boolean => {
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        if (compradoresMes.has("cod:" + Number(id.slice(id.indexOf(":") + 1)))) return true;
+      } else if (compradoresMes.has("cli:" + id)) return true;
+    }
+    const t = tel8(c.telefone);
+    return t.length === 8 && compradoresMes.has("tel:" + t);
+  };
+
+  // Cards do FUNIL = conversas (vw_funil, dono = RCA atual, etapa pela conversa) + prospecção,
+  // SEM a etapa pedido_emitido e SEM quem comprou no mês (esses ficam só em Pedido emitido).
+  // Pedido emitido é coluna SEPARADA, das VENDAS (bi/ranking), não das conversas.
+  const cardsOutros = cards.filter((c: any) => c.etapa !== "pedido_emitido" && !ehCompradorMes(c));
   for (const c of cardsOutros) {
-    c.venda_valor = valorMesDe(c); // total do mês do cliente (bi); null se não comprou no mês
+    const v = valorMesDe(c);
+    c.venda_valor = v && v > 0 ? v : null; // aqui não há comprador do mês; selo verde não aparece
     c.ciclo = cicloDe(c);
   }
 
