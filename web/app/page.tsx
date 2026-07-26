@@ -758,13 +758,15 @@ export default function Page() {
           </div>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", display: "inline-flex" }}>
           <select
             value={periodoGlobal}
             onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
             title="Aplica o período a todas as etapas de uma vez"
             style={{
-              padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, color: RD.gray,
+              padding: "0 24px 0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, color: RD.gray,
               background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
+              appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
             }}
           >
             <option value="todos">Período: todos</option>
@@ -775,6 +777,8 @@ export default function Page() {
             <option value="mes">Período: mês</option>
             {periodoGlobal === "misto" && <option value="misto" disabled>Período: misto</option>}
           </select>
+            <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 10, opacity: 0.8, color: RD.gray, pointerEvents: "none" }}>▾</span>
+          </div>
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setProdPainel((v) => !v)}
@@ -1101,12 +1105,12 @@ export default function Page() {
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
                 <div style={{ padding: "10px 14px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 4, height: 15, borderRadius: 3, background: RD.wine }} />
-                    <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: 0.4, color: RD.wine, textTransform: "uppercase", textShadow: "0 1px 0 rgba(255,255,255,0.6)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 4, height: 15, borderRadius: 3, background: RD.wine, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.2, color: RD.wine, textTransform: "uppercase", textShadow: "0 1px 0 rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
                       {col.titulo}
                     </span>
-                    <span style={{ color: RD.gray, fontSize: 13, fontWeight: 700 }} title="clientes nesta etapa no período selecionado">({doGrupo.length})</span>
+                    <span style={{ color: RD.gray, fontSize: 11, fontWeight: 700, flexShrink: 0 }} title="clientes nesta etapa no período selecionado">({doGrupo.length})</span>
                     <span
                       className="et-tip-wrap"
                       style={{ marginLeft: 1 }}
@@ -1124,6 +1128,8 @@ export default function Page() {
                   <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
                   </div>
+                  {/* chips de período por coluna — guardados por ora; trocar false->true p/ reativar */}
+                  {false && (
                   <div style={{ marginTop: 6, display: "flex", gap: 3 }}>
                     {PERIODOS.map((per) => {
                       const ativo = periodoAtivo === per.key;
@@ -1149,6 +1155,7 @@ export default function Page() {
                       );
                     })}
                   </div>
+                  )}
                 </div>
 
                 <div
