@@ -752,3 +752,39 @@ timeout de 150s (400s background no Pro) contra os 55 min do Actions.
 
 **O que faria sentido no futuro:** mover **só o sweep** (`/exists`, que **não** precisa de decrypt)
 pro Supabase, deixando o fetch+decrypt no Actions. Separação por natureza do trabalho, não por sync.
+
+### 14.5 O TETO REAL: ~48 chamadas/min na API do RD (medido 26/07)
+
+**Esta é a restrição que governa todo o desenho do ETL.** A API sustenta ~48 requisições
+por minuto e **concorrência NÃO fura esse teto**.
+
+Comprovado no run , três fases independentes do mesmo run, com :
+
+| Fase | Chamadas | Tempo | Taxa |
+|---|---|---|---|
+| scan  | 919 | 18,5 min | 1,20 s/chamada |
+| disparos  | 417 | 8,2 min | 1,18 s/chamada |
+| fetch  | 310 | 7,4 min | 1,43 s/chamada |
+
+Antes (run ): 1.718 chamadas / 36 min = **47,7/min**.
+Depois: 1.646 chamadas / 34 min = **48,4/min**. Mesma taxa.
+
+**Armadilha de medição (erro cometido e corrigido):** um bench isolado deu conc=1 →280ms,
+conc=4 →79ms, conc=8 →50ms/chamada, sugerindo 5x de ganho. **Era rajada de 30 chamadas —
+o crédito acumulado do token bucket, não vazão sustentada.** Em produção a taxa volta a
+~1,2s/chamada. **Sempre medir vazão sustentada (centenas de chamadas), nunca rajada curta.**
+
+**Corolário que invalida a intuição óbvia:** trocar fetch caro por checagem barata
+() **quase não acelera** — as duas custam **1 chamada**, e a cota é o gargalo.
+A checagem é barata em CPU (sem decrypt), não em cota. Um fix assim rendeu só 4%.
+
+**O que realmente acelera é reduzir o NÚMERO de chamadas:**
+1. Diff dos contadores do  ( vs )
+   — detecta quem mudou **sem gastar chamada**, porque o dado já veio no reports.
+2.  + rodízio determinístico — bounded work por run.
+3. **Fechar conversas** (painel): reativação vira protocolo novo, pego por 1 chamada
+   paginada em vez de 1 por conversa. Única alavanca que muda a ordem de grandeza.
+
+**Regra de dimensionamento:** run de N minutos ≈ N × 48 chamadas. Para 10 min, ~480 —
+e é preciso descontar o  (~23%) e os envios de template do board, que dividem
+a mesma cota (por isso existem os botões Pausar/Retomar).
