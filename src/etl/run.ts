@@ -97,6 +97,24 @@ async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string
 // Conjunto pequeno e certeiro (~150-200), mantendo o run em ~2 min.
 type Candidato = { id: string; carteira: string; telefone: string | null; ultima_atividade: string | null };
 
+// ESTABILIDADE — orçamento rotativo.
+// A API do RD sustenta ~48 chamadas/min (medido 26/07 em 3 fases independentes do
+// mesmo run: 1,20s, 1,18s e 1,43s por chamada; concorrência NÃO fura esse teto —
+// conc=3 deu a mesma taxa que conc=1). Logo, um run de 10 min cabe ~480 chamadas.
+// Varrer tudo (1.048 conversas em 5d + disparos) dá ~34 min: o run não termina antes
+// do próximo cron, o `concurrency group` cancela o seguinte e o sync efetivo cai pra
+// 1x/hora. A correção é limitar o trabalho POR RUN e rodar sempre no horário.
+//
+// A fatia é escolhida por rodízio determinístico (sem estado): o relógio define o
+// slot, então cada conversa é checada exatamente 1 vez a cada `ceil(total/orcamento)`
+// runs. Previsível e sem acumular atraso.
+function fatiaRotativa<T>(itens: T[], orcamento: number, intervaloMin: number): { fatia: T[]; slot: number; slots: number } {
+  if (orcamento <= 0 || itens.length <= orcamento) return { fatia: itens, slot: 0, slots: 1 };
+  const slots = Math.ceil(itens.length / orcamento);
+  const slot = Math.floor(Date.now() / 60000 / Math.max(1, intervaloMin)) % slots;
+  return { fatia: itens.slice(slot * orcamento, (slot + 1) * orcamento), slot, slots };
+}
+
 // Candidatos a re-checar: conversas ativas nos últimos `dias` (ou "aguardando").
 // Traz telefone + ultima_atividade p/ a checagem barata (Opção 2).
 async function clientesParaChecar(dias: number): Promise<Candidato[]> {
@@ -411,10 +429,44 @@ async function loadReports(vendIds: Set<string>) {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // ECONOMIA DE CHAMADAS (a que realmente conta): o /v4/reports JÁ devolve
+  // total_send_messages/total_receive_messages, e nós já gravamos isso em
+  // `atendimentos`. Comparando com o que está no banco dá pra saber quem teve
+  // mensagem nova SEM gastar nenhuma chamada extra — o dado veio de graça.
+  // Antes: todos os ~234 "ativos" iam pro fetch caro todo run (~6,5 min @48 req/min).
+  // IMPORTANTE: comparar ANTES do upsert, senão sobrescreve o valor antigo.
+  const diffOn = (process.env.ETL_REPORTS_DIFF ?? "1") !== "0";
+  let semMudanca = 0;
+  const precisaFetch = new Set<string>(clientes.keys()); // cliente novo -> sempre busca
+  if (diffOn) {
+    const antes = new Map<string, string>();
+    for (const lote of chunks([...atends.keys()], 300)) {
+      const { data, error } = await sb
+        .from("atendimentos").select("id,total_enviadas,total_recebidas,fechado").in("id", lote);
+      if (error) throw new Error(`select atendimentos diff: ${error.message}`);
+      for (const r of data ?? []) antes.set(r.id, `${r.total_enviadas}|${r.total_recebidas}|${r.fechado}`);
+    }
+    for (const a of atends.values()) {
+      const sig = `${a.total_enviadas}|${a.total_recebidas}|${a.fechado}`;
+      // atendimento novo (sem registro) ou contadores diferentes -> tem coisa nova
+      if (antes.get(a.id) !== sig) precisaFetch.add(a.cliente_id);
+    }
+    for (const id of emEscopo.keys()) if (!precisaFetch.has(id)) semMudanca++;
+  }
+
   if (clientes.size) await upsert("clientes", [...clientes.values()]);
   if (atends.size) await upsert("atendimentos", [...atends.values()]);
-  console.error(`[clientes] +${clientes.size} novos | [atendimentos] ${atends.size} | em escopo (ativos): ${emEscopo.size}`);
-  return [...emEscopo.entries()].map(([id, carteira]) => ({ id, carteira }));
+
+  const saida = [...emEscopo.entries()]
+    .filter(([id]) => !diffOn || precisaFetch.has(id))
+    .map(([id, carteira]) => ({ id, carteira }));
+  console.error(
+    `[clientes] +${clientes.size} novos | [atendimentos] ${atends.size} | ` +
+    `em escopo (ativos): ${emEscopo.size}` +
+    (diffOn ? ` → ${saida.length} c/ contador alterado (${semMudanca} iguais, fetch evitado)` : "")
+  );
+  return saida;
 }
 
 // ---------------------------------------------------------------------------
@@ -540,18 +592,31 @@ async function main() {
       // BARATA (/exists, sem decriptar) e só faz o fetch caro das que têm msg nova.
       // Assim pega mensagem nova em qualquer conversa recente sem pagar o custo de
       // baixar+decriptar todas — viável com o repo público (Actions grátis).
-      // ETL_SCAN_CONC: checagens /exists simultâneas. Medido em 26/07 (bench isolado):
-      // conc=1 →280ms/ch, conc=4 →79ms, conc=8 →50ms (0 erros), conc=12 → 27/30 deram 429.
-      // Ficamos em 3 por padrão: ~3x mais rápido e ainda longe do teto, deixando cota
-      // pros envios do board (o fast já viu conc=4 competir com envio e gerar 429).
-      const conc = Number(process.env.ETL_SCAN_CONC ?? 3);
+      // ETL_SCAN_CONC: checagens /exists simultâneas. NÃO acelera além do teto de ~48
+      // req/min do RD (medido: conc=3 deu a mesma taxa que conc=1) — serve só p/ aproveitar
+      // latência. Mantido baixo p/ não competir com os envios do board (o fast já viu
+      // conc=4 gerar 429 no envio de template).
+      const conc = Number(process.env.ETL_SCAN_CONC ?? 2);
       const scanDias = Number(process.env.ETL_SCAN_DAYS ?? 30);
-      const candidatos = (await clientesParaChecar(scanDias)).filter((c) => !alvos.has(c.id));
+      // orçamento de checagens do run (ver `fatiaRotativa`). 0 = sem limite (comportamento antigo)
+      const orcamento = Number(process.env.ETL_CALL_BUDGET ?? 0);
+      const intervalo = Number(process.env.ETL_CRON_MIN ?? 10);
+      const todos = (await clientesParaChecar(scanDias))
+        .filter((c) => !alvos.has(c.id))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)); // ordem estável p/ o rodízio
+      // reserva ~30% do orçamento pros disparos, senão o scan consome tudo e eles
+      // nunca seriam checados (o rodízio deles nunca avançaria).
+      const orcScan = orcamento > 0 ? Math.max(1, Math.round(orcamento * 0.7)) : 0;
+      const { fatia: candidatos, slot, slots } = fatiaRotativa(todos, orcScan, intervalo);
       const jaChecados = new Set(candidatos.map((c) => c.id)); // p/ não re-checar nos disparos
       const mudaram = await checarMudaram(candidatos, conc);
       let add = 0;
       for (const m of mudaram) if (!alvos.has(m.id)) { alvos.set(m.id, m); add++; }
-      console.error(`[incremental] varridas ${candidatos.length} (janela ${scanDias}d) → +${add} c/ msg nova → total: ${alvos.size}`);
+      console.error(
+        `[incremental] ${todos.length} na janela ${scanDias}d → checadas ${candidatos.length}` +
+        (slots > 1 ? ` (fatia ${slot + 1}/${slots}, cobertura completa a cada ${slots * intervalo} min)` : "") +
+        ` → +${add} c/ msg nova → total: ${alvos.size}`
+      );
 
       // clientes com template disparado pelo board nos últimos N dias — força re-sync
       // mesmo que estejam "parados" fora da varredura (senão o template nunca aparece).
@@ -563,7 +628,13 @@ async function main() {
       let addD = 0;
       for (const d of frescos) if (!alvos.has(d.id)) { alvos.set(d.id, d); addD++; }
       // pula quem já entrou no fetch (alvos) e quem o scan JÁ checou nesta run
-      const pendentes = antigos.filter((c) => !alvos.has(c.id) && !jaChecados.has(c.id));
+      const restantes = antigos
+        .filter((c) => !alvos.has(c.id) && !jaChecados.has(c.id))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      // o que sobrou do orçamento (o scan já pegou ~70%). Sem orçamento configurado,
+      // sobra=0 significa "sem limite" dentro de fatiaRotativa (comportamento antigo).
+      const sobra = orcamento > 0 ? Math.max(1, orcamento - candidatos.length) : 0;
+      const pendentes = fatiaRotativa(restantes, sobra, intervalo).fatia;
       const respAntigos = pendentes.length ? await checarMudaram(pendentes, conc) : [];
       let addR = 0;
       for (const m of respAntigos) if (!alvos.has(m.id)) { alvos.set(m.id, m); addR++; }

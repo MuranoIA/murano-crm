@@ -48,11 +48,18 @@ jobs:
           # janela da varredura barata (/exists), só conversas ATIVAS na janela. 5 dias
           # equilibra cobertura x tempo de execução (~1,2s/checagem). A cauda longa fica
           # com o full diário + os disparos recentes (abaixo).
-          ETL_SCAN_DAYS: 5
-          # checagens /exists simultâneas. Bench 26/07: conc=1 →280ms/ch, 4 →79ms,
-          # 8 →50ms (0 erro), 12 → 429 em 90%. 3 = ~3x mais rápido com folga de cota
-          # pros envios do board. Baixe pra 1 se aparecer 429 no envio de template.
-          ETL_SCAN_CONC: 3
+          ETL_SCAN_DAYS: 3
+          # ESTABILIDADE: teto de checagens /exists por run. A API do RD sustenta
+          # ~48 req/min (medido), então 300 ≈ 6-8 min — o run termina ANTES do próximo
+          # cron, sem empilhar nem ser cancelado. O que não coube entra no próximo run
+          # (rodízio determinístico: cobertura completa da janela a cada ~30 min).
+          # Deixa folga pro etl-fast (~23% da cota) e pros envios de template do board.
+          ETL_CALL_BUDGET: 300
+          ETL_CRON_MIN: 10
+          # concorrência NÃO fura o teto de req/min do RD (conc=3 deu a mesma taxa que
+          # conc=1); serve só p/ aproveitar latência. 2 = conservador, sem roubar cota
+          # dos envios (o fast já viu conc=4 gerar 429 no envio de template).
+          ETL_SCAN_CONC: 2
           # re-sincroniza clientes que receberam template PELO BOARD nos últimos N dias
           # (tabela disparos_template), mesmo que estejam "parados" fora da varredura —
           # garante que o template disparado apareça em mensagens rapidamente.
