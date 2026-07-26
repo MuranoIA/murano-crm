@@ -29,7 +29,7 @@ export async function GET() {
   // Degraus de colunas: tenta o mais completo; se uma coluna nova ainda não existe
   // (migration pendente), cai pro degrau anterior sem quebrar o board (o front tem
   // fallback). FULL = com nota fiscal (0006); MSGS = com 3 mensagens (0005); BASE = mínimo.
-  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data";
+  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data,sem_cadastro";
   const COLS_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
   const COLS_BASE = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone";
 
@@ -72,7 +72,7 @@ export async function GET() {
       if (carteira) q = q.eq("vendedor", carteira);
       const { data, error } = await q;
       if (error) {
-        if (cols === COLS_FULL && /venda_valor|venda_data/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
+        if (cols === COLS_FULL && /venda_valor|venda_data|sem_cadastro/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
         if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) { cols = COLS_BASE; from -= PAGE; continue; }
         throw new Error(error.message);
       }

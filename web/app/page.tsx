@@ -17,6 +17,7 @@ type Card = {
   periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
   pedidos?: number;                // (pedido_emitido) qtd de pedidos no período
   cliente_de_outra_carteira?: boolean; // vendeu p/ cliente de outro consultor
+  sem_cadastro?: boolean;          // só existe no RD Conversas, sem cadastro no WinThor (lead de marketing)
   ciclo?: {                            // motor preditivo (análise de ciclo de compra)
     tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
     pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
@@ -1050,6 +1051,14 @@ export default function Page() {
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
                             <span style={{ width: 11, height: 11, borderRadius: 3, background: col.cor }} />
                             <span style={{ fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>{col.status}</span>
+                            {c.sem_cadastro && (
+                              <span
+                                title="Só existe no RD Conversas — ainda não cadastrado no WinThor. Provável lead de marketing (Instagram, campanha). Ao efetuar a 1ª compra e ser cadastrado, o card se junta automaticamente ao cliente oficial (por telefone/CPF)."
+                                style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, cursor: "help", textTransform: "uppercase" }}
+                              >
+                                sem cadastro
+                              </span>
+                            )}
                             {alerta && (
                               <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, color: "#dc2626", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
                                 <span style={{ width: 8, height: 8, borderRadius: 8, background: "#dc2626", animation: "pulse-alert 1.1s ease-in-out infinite" }} />
