@@ -248,6 +248,7 @@ export default function Page() {
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
   const [cicloSel, setCicloSel] = useState<string[]>([]);
   const [cicloPainel, setCicloPainel] = useState(false);
+  const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -475,8 +476,9 @@ export default function Page() {
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
+    if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
     return r;
-  }, [cards, filtro, busca, prodFiltro, cicloSel]);
+  }, [cards, filtro, busca, prodFiltro, cicloSel, semCadFiltro]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -485,8 +487,20 @@ export default function Page() {
     if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
+    if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel]);
+  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel, semCadFiltro]);
+  // total da carteira no cabeçalho = funil (conversa+prospecção, sem comprador do mês) +
+  // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
+  // dá a carteira inteira sem duplicar.
+  const pedidoMesCount = useMemo(
+    () => pedidoVisiveis.filter((c) => c.periodo === "mes").length,
+    [pedidoVisiveis]
+  );
+  const semCadTotal = useMemo(() => {
+    const base = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
+    return base.filter((c) => c.sem_cadastro).length;
+  }, [cards, filtro]);
 
   // produtos filtrados pela busca do painel
   const produtosFiltrados = useMemo(() => {
@@ -539,7 +553,7 @@ export default function Page() {
   }
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel, semCadFiltro]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -836,9 +850,23 @@ export default function Page() {
               </div>
             )}
           </div>
+          <button
+            onClick={() => setSemCadFiltro((v) => !v)}
+            title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
+            style={{
+              padding: "7px 10px", fontSize: 12.5, fontWeight: 600,
+              color: semCadFiltro ? "#fff" : "#b45309",
+              background: semCadFiltro ? "#b45309" : "#fff3e0",
+              border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
+              borderRadius: 8, cursor: "pointer", outline: "none",
+              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+            }}
+          >
+            Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
+          </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} na carteira (funil) · ${atualizado}`}
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -1000,7 +1028,7 @@ export default function Page() {
                 </div>
 
                 <div
-                  key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}`}
+                  key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}:${semCadFiltro ? "sc" : ""}`}
                   onScroll={(e) => aoRolarColuna(e, col.key, doGrupo.length)}
                   style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
                 >
