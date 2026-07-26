@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { veTudo } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
   let q = sb().from("wth_descartados").select("id,cliente_id,codcli,tel8,cliente,vendedor,motivo,descartado_por,criado_em").order("criado_em", { ascending: false });
-  if (sessao !== "admin") q = q.eq("vendedor", sessao);
+  if (!veTudo(sessao)) q = q.eq("vendedor", sessao);
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ descartados: data ?? [] });
@@ -49,7 +50,7 @@ export async function DELETE(req: Request) {
   try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
   if (!b?.id) return Response.json({ error: "id ausente" }, { status: 400 });
   let q = sb().from("wth_descartados").delete().eq("id", b.id);
-  if (sessao !== "admin") q = q.eq("vendedor", sessao); // vendedor só restaura o próprio
+  if (!veTudo(sessao)) q = q.eq("vendedor", sessao); // vendedor só restaura o próprio
   const { error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true });

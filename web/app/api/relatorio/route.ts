@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import ExcelJS from "exceljs";
+import { veTudo } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,7 +33,8 @@ export async function POST(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const admin = sessao === "admin";
+  // admin e home veem todos os consultores (aba por consultor); vendedor só a própria carteira
+  const admin = veTudo(sessao);
   const { data: rows, error } = await sb.rpc("relatorio_rows", {
     p_codclis: codclis,
     p_codprods: codprods.length ? codprods : null,
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
   const linha = (txt: string, bold = false, size = 10) => { const r = resumo.addRow([txt]); r.font = { ...FONT, bold, size }; };
   linha(titulo, true, 14);
   linha(`Gerado em ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}`);
-  linha(`Visão: ${admin ? "Administrador (todos os consultores)" : "Consultor " + cap(sessao)}`);
+  linha(`Visão: ${admin ? (sessao === "admin" ? "Administrador" : "Home") + " (todos os consultores)" : "Consultor " + cap(sessao)}`);
   linha("");
   linha("Filtros aplicados:", true);
   if (filtros.length) for (const f of filtros) linha("• " + f); else linha("• Nenhum filtro específico (toda a carteira visível)");

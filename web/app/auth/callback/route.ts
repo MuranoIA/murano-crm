@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { tokenDePapel, type Papel } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
@@ -37,19 +38,26 @@ export async function GET(req: Request) {
 
   // e-mail Google -> papel/carteira (service_role ignora RLS)
   const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
-  const { data: ac } = await sb.from("acesso").select("papel,carteira,ativo").eq("email", email).maybeSingle();
+  const { data: ac } = await sb.from("acesso").select("papel,papeis,carteira,ativo").eq("email", email).maybeSingle();
   if (!ac || ac.ativo === false) return NextResponse.redirect(`${origin}/?erro=nao_autorizado`);
 
-  const valor = ac.papel === "admin" ? "admin" : (ac.carteira ?? "");
+  // papel PADRÃO ao logar = `papel` (o "mais alto" p/ quem é multi-papel; ex. Romulo/Joas
+  // entram como admin e podem trocar depois via seletor). token: admin->"admin",
+  // home->"home", vendedor->slug da carteira.
+  const papel = (ac.papel ?? "vendedor") as Papel;
+  const valor = tokenDePapel(papel, ac.carteira ?? null);
   if (!valor) return NextResponse.redirect(`${origin}/?erro=sem_carteira`);
 
   const res = NextResponse.redirect(`${origin}/`);
-  res.cookies.set("crm_sessao", valor, {
+  const opts = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: "lax" as const,
     path: "/",
     maxAge: 60 * 60 * 8, // 8h
-  });
+  };
+  res.cookies.set("crm_sessao", valor, opts);
+  // guarda o e-mail p/ o seletor de papel (quais papéis o usuário pode assumir) e a troca.
+  res.cookies.set("crm_email", email, opts);
   return res;
 }

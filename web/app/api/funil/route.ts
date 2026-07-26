@@ -1,13 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { carteiraDe } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  // autorização: admin vê tudo; vendedor vê só a própria carteira (filtro no SERVIDOR)
+  // autorização: admin e home veem tudo; vendedor vê só a própria carteira (filtro no SERVIDOR)
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = sessao === "admin" ? null : sessao;
+  const carteira = carteiraDe(sessao);
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;

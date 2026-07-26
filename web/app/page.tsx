@@ -250,7 +250,8 @@ export default function Page() {
   const [carregando, setCarregando] = useState(true);
   const [filtro, setFiltro] = useState<string>("todos");
   const [busca, setBusca] = useState("");
-  const [sessao, setSessao] = useState<{ role: string; carteira: string | null } | null>(null);
+  const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
+  const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -355,6 +356,28 @@ export default function Page() {
   async function sair() {
     await fetch("/api/logout", { method: "POST" });
     setSessao(null);
+  }
+
+  // troca o papel ativo (multi-papel: Romulo admin|vendedor, Joas admin|home). O servidor
+  // valida contra os papéis do e-mail logado e reescreve o cookie; recarregamos a sessão.
+  async function trocarPapel(papel: string) {
+    if (papel === sessao?.role) return;
+    setTrocandoPapel(true);
+    try {
+      const r = await fetch("/api/trocar-papel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ papel }),
+      });
+      const j = await r.json();
+      if (!r.ok) { alert("Não foi possível trocar de papel: " + (j?.error ?? r.status)); return; }
+      const s = await fetch("/api/session").then((x) => x.json());
+      setSessao(s);
+    } catch (e: any) {
+      alert("Erro ao trocar de papel: " + (e?.message ?? e));
+    } finally {
+      setTrocandoPapel(false);
+    }
   }
 
   // resposta livre inline no card (só coluna Negociação — dentro da janela de 24h)
@@ -856,18 +879,39 @@ export default function Page() {
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
-            <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
-            <a href="https://romuloallbuquerque-netizen.github.io/murano-bi-ranking-vendas/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+            {sessao.role === "admin" && (
+              <>
+                <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                <a href="https://romuloallbuquerque-netizen.github.io/murano-bi-ranking-vendas/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+              </>
+            )}
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://murano-catalogo.vercel.app/produtos" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
           </nav>
           <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 8, background: RD.wineSoft, border: "1px solid #e8d8e1", borderRadius: 20, padding: "4px 13px 4px 5px" }}>
             <span style={{ width: 22, height: 22, borderRadius: 20, background: RD.wine, color: RD.cream, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>
-              {sessao.role === "admin" ? "A" : cap(sessao.carteira ?? "?").charAt(0)}
+              {sessao.role === "admin" ? "A" : sessao.role === "home" ? "H" : cap(sessao.carteira ?? "?").charAt(0)}
             </span>
-            <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : cap(sessao.carteira ?? "")}</b>
+            <b style={{ fontSize: 12.5, color: RD.wine }}>{sessao.role === "admin" ? "Admin" : sessao.role === "home" ? "Home" : cap(sessao.carteira ?? "")}</b>
           </span>
+          {/* Seletor de papel: só p/ quem tem mais de um (Romulo admin|vendedor, Joas admin|home).
+              Troca o cookie no servidor e recarrega a sessão — muda o que o board mostra. */}
+          {(sessao.papeis?.length ?? 0) > 1 && (
+            <select
+              value={sessao.role}
+              disabled={trocandoPapel}
+              onChange={(e) => trocarPapel(e.target.value)}
+              title="Trocar o papel de acesso"
+              style={{ fontSize: 12, fontWeight: 700, color: RD.wine, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, padding: "5px 8px", cursor: trocandoPapel ? "wait" : "pointer", outline: "none" }}
+            >
+              {sessao.papeis!.map((p) => (
+                <option key={p} value={p}>
+                  {p === "admin" ? "Ver como Admin" : p === "home" ? "Ver como Home" : "Ver como Vendedor"}
+                </option>
+              ))}
+            </select>
+          )}
           {sessao.role === "admin" && (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}>
               {syncPausado ? (
@@ -1189,18 +1233,20 @@ export default function Page() {
           >
             Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
           </button>
-          <button
-            onClick={() => { setMassaAberto(true); setMassaConfirmar(false); setMassaProg(null); }}
-            title="Disparar template em massa para os clientes que casam com os filtros atuais do board"
-            style={{
-              padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
-              color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`,
-              borderRadius: 8, cursor: "pointer", outline: "none",
-              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-            }}
-          >
-            📣 Disparo em massa
-          </button>
+          {sessao.role === "admin" && (
+            <button
+              onClick={() => { setMassaAberto(true); setMassaConfirmar(false); setMassaProg(null); }}
+              title="Disparar template em massa para os clientes que casam com os filtros atuais do board"
+              style={{
+                padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
+                color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              }}
+            >
+              📣 Disparo em massa
+            </button>
+          )}
           <button
             onClick={baixarRelatorio}
             disabled={baixando}
@@ -1783,7 +1829,7 @@ export default function Page() {
   );
 }
 
-function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | null }) => void }) {
+function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | null; papeis?: string[]; email?: string | null }) => void }) {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [erro, setErro] = useState("");
