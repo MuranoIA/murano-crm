@@ -302,7 +302,15 @@ export default function Page() {
       let j: any = {};
       try { j = txt ? JSON.parse(txt) : {}; } catch { j = { error: txt || `HTTP ${r.status} (resposta vazia)` }; }
       if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`));
-      else await load();
+      else {
+        await load(); // mostra o disparo/AGUARDANDO na hora
+        // sync em segundo plano: puxa a mensagem real do RD e atualiza a data do card
+        // (sem esperar o ciclo do ETL). Não trava o botão — atualiza quando terminar.
+        fetch("/api/sync-cliente", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cliente_id: clienteId }),
+        }).then(() => load()).catch(() => {});
+      }
     } catch (e: any) {
       alert("Erro: " + (e?.message ?? e));
     } finally {
