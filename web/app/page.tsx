@@ -644,28 +644,49 @@ export default function Page() {
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
+    // PAUSA o sync de fundo pra liberar a cota do RD durante o envio (best-effort; só admin
+    // consegue — vendedor cai no 403 e segue com o throttle). Retoma no finally, com retry.
+    let pausei = false;
+    try {
+      const rp = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "pausar" }) });
+      pausei = rp.ok;
+      if (pausei) setSyncPausado(true);
+    } catch {}
     let ok = 0, falhas = 0;
     const detalhe: { cliente: string; erro: string }[] = [];
     const total = massaSel.length;
     setMassaProg({ feitos: 0, ok: 0, falhas: 0, total });
-    for (let i = 0; i < total; i++) {
-      let erro = "";
-      try {
-        const r = await fetch("/api/send-template", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cliente_id: massaSel[i].rd, ...(massaTemplate ? { template_id: massaTemplate } : {}) }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (r.ok && !j.error) ok++;
-        else { falhas++; erro = j.error || `HTTP ${r.status}`; }
-      } catch (e: any) { falhas++; erro = e?.message || "erro de rede"; }
-      if (erro) detalhe.push({ cliente: massaSel[i].c.cliente, erro });
-      setMassaProg({ feitos: i + 1, ok, falhas, total });
-      if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
+    try {
+      for (let i = 0; i < total; i++) {
+        let erro = "";
+        try {
+          const r = await fetch("/api/send-template", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cliente_id: massaSel[i].rd, ...(massaTemplate ? { template_id: massaTemplate } : {}) }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && !j.error) ok++;
+          else { falhas++; erro = j.error || `HTTP ${r.status}`; }
+        } catch (e: any) { falhas++; erro = e?.message || "erro de rede"; }
+        if (erro) detalhe.push({ cliente: massaSel[i].c.cliente, erro });
+        setMassaProg({ feitos: i + 1, ok, falhas, total });
+        if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
+      }
+    } finally {
+      // RETOMA o sync (só se fomos nós que pausamos), com retry — pra nunca deixar pausado à toa
+      if (pausei) {
+        for (let t = 0; t < 4; t++) {
+          try {
+            const rr = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "retomar" }) });
+            if (rr.ok) { setSyncPausado(false); break; }
+          } catch {}
+          await new Promise((res) => setTimeout(res, 1500));
+        }
+      }
+      setMassaFalhas(detalhe);
+      setMassaEnviando(false);
+      await load();
     }
-    setMassaFalhas(detalhe);
-    setMassaEnviando(false);
-    await load();
   }
 
   // === LIXEIRA: descartar (arrastar pra lixeira), listar, restaurar ===
@@ -1659,7 +1680,7 @@ export default function Page() {
                   <div style={{ height: 10, background: RD.bg, borderRadius: 6, overflow: "hidden" }}>
                     <div style={{ height: "100%", width: `${massaProg && massaProg.total ? (massaProg.feitos / massaProg.total) * 100 : 0}%`, background: RD.wine, transition: "width .2s" }} />
                   </div>
-                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8 }}>Não feche esta aba até terminar.</div>
+                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8 }}>Não feche esta aba até terminar. A sincronização de fundo é pausada durante o envio (libera a cota do RD) e retomada no fim.</div>
                 </div>
               ) : massaConfirmar ? (
                 <div>
