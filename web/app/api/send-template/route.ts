@@ -60,13 +60,20 @@ export async function POST(req: Request) {
     // JWT só tem ASCII imprimível [0x21-0x7E], então isto é seguro.
     const tokenLimpo = rdToken!.replace(/[^\x21-\x7E]/g, "");
 
-    // dispara na RD
-    const rd = await fetch(new URL("/v3/messages/template/send", rdUrl!), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${tokenLimpo}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body: any = await rd.json().catch(() => ({}));
+    // dispara na RD — com retry em 429/5xx (o rate limit do RD é apertado e o sync de
+    // fundo pode estar consumindo a cota; a ação do usuário não pode falhar por isso).
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let rd: Response, body: any = {};
+    for (let tent = 0; ; tent++) {
+      rd = await fetch(new URL("/v3/messages/template/send", rdUrl!), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokenLimpo}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      body = await rd.json().catch(() => ({}));
+      if (rd.ok || ![429, 500, 502, 503].includes(rd.status) || tent >= 4) break;
+      await sleep(1200 * (tent + 1)); // 1.2s, 2.4s, 3.6s, 4.8s (cabe no maxDuration=30)
+    }
     if (!rd.ok) {
       return Response.json({ error: body?.message || `RD ${rd.status}`, detail: body }, { status: 502 });
     }

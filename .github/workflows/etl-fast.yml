@@ -30,9 +30,9 @@ jobs:
         env:
           ETL_MODE: fast
           ETL_FAST_LOOP_MIN: 13   # loopa por ~13 min; o cron de 15 min encadeia
-          ETL_FAST_SLEEP: 15      # pausa entre sweeps (o sweep em si já leva ~1-2 min)
-          ETL_FAST_HORAS: 18      # janela do "conjunto quente" (conversas ativas)
-          ETL_FAST_CONC: 4        # checagens /exists simultâneas (sweep ~3min -> ~1min)
+          ETL_FAST_SLEEP: 30      # pausa entre sweeps — deixa folga no rate limit do RD
+          ETL_FAST_HORAS: 12      # janela do "conjunto quente" (conversas ativas) — ~40
+          ETL_FAST_CONC: 2        # /exists simultâneas: 2 (conc=4 saturou o RD -> 429 no envio)
           RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
           RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
           RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
