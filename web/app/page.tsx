@@ -280,6 +280,13 @@ export default function Page() {
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
   const [paradoPainel, setParadoPainel] = useState(false);
+  // disparo em massa
+  const [massaAberto, setMassaAberto] = useState(false);
+  const [massaQtd, setMassaQtd] = useState(20);
+  const [massaTemplate, setMassaTemplate] = useState(""); // "" = template de recontato (padrão do server)
+  const [massaEnviando, setMassaEnviando] = useState(false);
+  const [massaConfirmar, setMassaConfirmar] = useState(false);
+  const [massaProg, setMassaProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -565,6 +572,53 @@ export default function Page() {
   const semCadTotal = useMemo(() => baseVend.filter((c) => c.sem_cadastro).length, [baseVend]);
   const paradoTotal = useMemo(() => baseVend.filter(matchParado).length, [baseVend, paradoSel, disparos]);
   const cicloTotal = useMemo(() => baseVend.filter(matchCiclo).length, [baseVend, cicloSel]);
+
+  // === DISPARO EM MASSA: elegíveis vêm dos filtros ATUAIS do board (visiveis), ranqueados
+  // por score (ciclo urgente + tempo parado + ticket), excluindo quem recebeu template nos
+  // últimos DIAS_RECONTATO (anti-spam) e quem não tem contato no RD/telefone.
+  const rdIdEnvio = (c: Card): string | null => {
+    if (c.rd_cliente_id) return c.rd_cliente_id;
+    const id = c.cliente_id;
+    return typeof id === "string" && !id.includes(":") ? id : null;
+  };
+  const scoreMassa = (c: Card): number => {
+    const dias = diasInativo(maisRecenteISO(c.ultima_atividade, disparos[c.cliente_id]));
+    const parado = dias === Infinity ? 40 : Math.min(dias, 60);
+    return (c.ciclo?.score ?? 0) + parado * 0.6 + Math.min((c.venda_valor ?? 0) / 100, 30);
+  };
+  const massaElegiveis = useMemo(() => {
+    const out: { c: Card; rd: string; score: number }[] = [];
+    for (const c of visiveis) {
+      const rd = rdIdEnvio(c);
+      if (!rd || !c.telefone) continue;
+      const ud = disparos[rd] ?? disparos[c.cliente_id];
+      if (ud && diasInativo(ud) < DIAS_RECONTATO) continue; // já disparado há pouco
+      out.push({ c, rd, score: scoreMassa(c) });
+    }
+    return out.sort((a, b) => b.score - a.score);
+  }, [visiveis, disparos]);
+  const massaSel = useMemo(() => massaElegiveis.slice(0, massaQtd), [massaElegiveis, massaQtd]);
+  const massaCusto = massaSel.length * 0.43;
+  async function enviarMassa() {
+    setMassaEnviando(true);
+    let ok = 0, falhas = 0;
+    const total = massaSel.length;
+    setMassaProg({ feitos: 0, ok: 0, falhas: 0, total });
+    for (let i = 0; i < total; i++) {
+      try {
+        const r = await fetch("/api/send-template", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cliente_id: massaSel[i].rd, ...(massaTemplate ? { template_id: massaTemplate } : {}) }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && !j.error) ok++; else falhas++;
+      } catch { falhas++; }
+      setMassaProg({ feitos: i + 1, ok, falhas, total });
+      if (i < total - 1) await new Promise((res) => setTimeout(res, 1300)); // throttle p/ não estourar 429
+    }
+    setMassaEnviando(false);
+    await load();
+  }
 
   // produtos filtrados pela busca do painel
   const produtosFiltrados = useMemo(() => {
@@ -992,6 +1046,18 @@ export default function Page() {
           >
             Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
           </button>
+          <button
+            onClick={() => { setMassaAberto(true); setMassaConfirmar(false); setMassaProg(null); }}
+            title="Disparar template em massa para os clientes que casam com os filtros atuais do board"
+            style={{
+              padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
+              color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`,
+              borderRadius: 8, cursor: "pointer", outline: "none",
+              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+            }}
+          >
+            📣 Disparo em massa
+          </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
               <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates {rotuloTpl}</span>
@@ -1085,9 +1151,13 @@ export default function Page() {
                 return (new Date(efetiva(a) ?? 0).getTime()) - (new Date(efetiva(b) ?? 0).getTime());
               });
             }
-            // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO
+            // cards com alerta (cliente esperando >10 min, e não reconhecido) vão pro TOPO —
+            // EXCETO em tentativa/ociosos, onde a ordem por "apto a disparar template" manda
+            // (senão o alerta puxaria pro topo os que já estão aguardando resposta).
             const emAlerta = (c: Card) => ehAlerta(c, acks[c.cliente_id]);
-            doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
+            if (col.key !== "tentativa_contato" && col.key !== "ociosos") {
+              doGrupo = [...doGrupo.filter(emAlerta), ...doGrupo.filter((c) => !emAlerta(c))];
+            }
             // contagem por período. pedido_emitido: nº de clientes com venda no período
             // (linhas daquele período na view); demais: por atividade.
             const contaPeriodo = (p: Periodo) => ehPedido
@@ -1416,6 +1486,76 @@ export default function Page() {
           }}
         >
           {tip.text}
+        </div>
+      )}
+      {massaAberto && (
+        <div
+          onClick={() => !massaEnviando && setMassaAberto(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 470, maxWidth: "100%", background: RD.surface, borderRadius: 14, boxShadow: "0 20px 60px rgba(16,32,64,.35)", overflow: "hidden" }}>
+            <div style={{ padding: "15px 20px", borderBottom: `1px solid ${RD.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: RD.wine }}>📣 Disparo em massa</span>
+              {!massaEnviando && <span onClick={() => setMassaAberto(false)} title="Fechar" style={{ cursor: "pointer", color: RD.gray, fontSize: 22, lineHeight: 1 }}>×</span>}
+            </div>
+            <div style={{ padding: 20 }}>
+              {massaProg && massaProg.feitos >= massaProg.total && !massaEnviando ? (
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#15803d", marginBottom: 8 }}>✅ Concluído</div>
+                  <div style={{ fontSize: 13, color: RD.navy }}>{massaProg.ok} enviados{massaProg.falhas ? `, ${massaProg.falhas} falharam` : ""} de {massaProg.total}.</div>
+                  <button onClick={() => setMassaAberto(false)} style={{ marginTop: 16, padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: "pointer" }}>Fechar</button>
+                </div>
+              ) : massaEnviando ? (
+                <div>
+                  <div style={{ fontSize: 13, color: RD.navy, marginBottom: 10, fontWeight: 600 }}>Enviando… {massaProg?.feitos ?? 0}/{massaProg?.total ?? 0} &nbsp;(✔ {massaProg?.ok ?? 0} · ✖ {massaProg?.falhas ?? 0})</div>
+                  <div style={{ height: 10, background: RD.bg, borderRadius: 6, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${massaProg && massaProg.total ? (massaProg.feitos / massaProg.total) * 100 : 0}%`, background: RD.wine, transition: "width .2s" }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8 }}>Não feche esta aba até terminar.</div>
+                </div>
+              ) : massaConfirmar ? (
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: RD.navy, marginBottom: 8 }}>Confirmar disparo</div>
+                  <div style={{ fontSize: 13, color: RD.navy, lineHeight: 1.5 }}>
+                    Vai enviar <b>{massaSel.length}</b> templates <b>reais no WhatsApp</b> — custo <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>. Isso é irreversível.
+                  </div>
+                  <div style={{ fontSize: 11.5, color: RD.grayLight, marginTop: 8, maxHeight: 84, overflow: "auto", lineHeight: 1.5 }}>
+                    {massaSel.slice(0, 10).map((s) => s.c.cliente).join(" · ")}{massaSel.length > 10 ? ` +${massaSel.length - 10}` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                    <button onClick={() => setMassaConfirmar(false)} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Voltar</button>
+                    <button onClick={enviarMassa} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: "pointer" }}>Confirmar e enviar {massaSel.length}</button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 14, lineHeight: 1.5 }}>
+                    Baseado nos <b>filtros atuais</b> do board{filtro !== "todos" ? ` · vendedor ${cap(filtro)}` : ""}{paradoSel.length ? " · tempo parado" : ""}{cicloSel.length ? " · ciclo" : ""}{prodFiltro ? " · produto" : ""}: <b>{massaElegiveis.length}</b> clientes elegíveis <span style={{ color: RD.grayLight }}>(com contato no RD, com telefone e sem template nos últimos {DIAS_RECONTATO} dias)</span>.
+                  </div>
+                  <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Template</label>
+                  <select value={massaTemplate} onChange={(e) => setMassaTemplate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", margin: "6px 0 14px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}>
+                    <option value="">Mensagem de recontato (padrão)</option>
+                  </select>
+                  <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Quantidade</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 12px" }}>
+                    {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((n) => (
+                      <button key={n} onClick={() => setMassaQtd(n)} style={{ minWidth: 38, padding: "6px 0", fontSize: 12.5, fontWeight: 700, cursor: "pointer", borderRadius: 7, border: `1px solid ${massaQtd === n ? RD.wine : RD.border}`, background: massaQtd === n ? RD.wine : RD.surface, color: massaQtd === n ? "#fff" : RD.navy }}>{n}</button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 13.5, color: RD.navy }}>
+                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · custo <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>
+                  </div>
+                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8, lineHeight: 1.5 }}>
+                    Havendo mais elegíveis que a quantidade, escolhemos os <b>mais prioritários</b> (ciclo urgente + tempo parado + ticket).
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                    <button onClick={() => setMassaAberto(false)} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
+                    <button disabled={massaSel.length === 0} onClick={() => setMassaConfirmar(true)} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: massaSel.length === 0 ? "default" : "pointer", opacity: massaSel.length === 0 ? 0.5 : 1 }}>Revisar ({massaSel.length})</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

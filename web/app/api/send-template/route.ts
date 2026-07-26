@@ -23,13 +23,14 @@ export async function POST(req: Request) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
     }
 
-    let cliente_id: string;
+    let cliente_id: string, template_id: string | undefined;
     try {
-      ({ cliente_id } = await req.json());
+      ({ cliente_id, template_id } = await req.json());
     } catch {
       return Response.json({ error: "body inválido" }, { status: 400 });
     }
     if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
+    const tplId = template_id || templateId; // usa o escolhido; senão o padrão (recontato)
 
     const sb = createClient(supaUrl!, supaKey!, { auth: { persistSession: false } });
 
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
 
     const payload: Record<string, unknown> = {
       recipient_number: recipient,
-      template_message_id: templateId,
+      template_message_id: tplId,
       country_code: "55",
       sent_by: operator_id ? "operator" : "bot",
       variables: [primeiroNome],
@@ -86,7 +87,7 @@ export async function POST(req: Request) {
       telefone: cli.telefone,
       vendedor: cli.carteira,
       operator_id: operator_id ?? null,
-      template_id: templateId,
+      template_id: tplId,
       status: body?.data?.status ?? "sent",
     });
 
