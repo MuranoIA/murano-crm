@@ -53,12 +53,21 @@ export async function POST(req: Request) {
     form.set("sent_by", "operator");
     if (operator_id) form.set("operator", operator_id);
 
-    const rd = await fetch(new URL(`/v2/messages/${cliente_id}/send`, rdUrl!), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${tokenLimpo}` },
-      body: form,
-    });
-    const body: any = await rd.json().catch(() => ({}));
+    // retry em 429/5xx — mesmo padrão do send-template. O rate limit do RD (~48 req/min)
+    // é compartilhado com o sync de fundo, que pode estar consumindo a cota; a ação do
+    // usuário não pode falhar por isso. (Sem isto, enviar durante um run dava "RD 429".)
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let rd: Response, body: any = {};
+    for (let tent = 0; ; tent++) {
+      rd = await fetch(new URL(`/v2/messages/${cliente_id}/send`, rdUrl!), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokenLimpo}` },
+        body: form,
+      });
+      body = await rd.json().catch(() => ({}));
+      if (rd.ok || ![429, 500, 502, 503].includes(rd.status) || tent >= 4) break;
+      await sleep(1200 * (tent + 1)); // 1.2s, 2.4s, 3.6s, 4.8s (cabe no maxDuration=30)
+    }
     if (!rd.ok) {
       return Response.json({ error: body?.message || `RD ${rd.status}`, detail: body }, { status: 502 });
     }
