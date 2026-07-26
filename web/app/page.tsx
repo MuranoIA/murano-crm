@@ -94,8 +94,10 @@ function Logo({ size = 28 }: { size?: number }) {
 }
 
 const COLUNAS = [
-  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h ou nunca contatado", subLong: "cliente falou por último há +24h (só template reabre) ou nunca contatado",
-    regras: "Um card cai aqui quando:\n• o cliente falou por último e passou de 24h sem novo template (a janela de 24h do WhatsApp fechou — só um template reabre a conversa);\n• uma venda de mês anterior expirou e não houve nada depois;\n• é cliente da carteira (WinThor) que nunca teve atendimento no RD Conversas (fila de prospecção).\n\nAutomação: sai daqui sozinho quando você dispara um template (→ Tentativa de contato) ou o cliente responde (→ Negociação)." },
+  { key: "prospeccao", titulo: "Lista de prospecção", status: "A prospectar", cor: "#8b5cf6", sub: "carteira nunca contatada", subLong: "cliente da carteira (WinThor) que nunca foi atendido por este RCA no RD Conversas",
+    regras: "Um card cai aqui quando é cliente da sua carteira (WinThor, pelo RCA atual) que:\n• NUNCA teve conversa com operador no RD Conversas — nunca foi contatado, ou entrou na sua carteira por troca de RCA e ainda não foi abordado por você;\n• E não comprou no mês corrente.\n\nAqui está o resto da carteira que ainda não virou conversa. O selo de ciclo de compra (Na hora / Atrasado…) ajuda a priorizar quem ligar primeiro.\n\nAutomação: ao disparar o 1º template ele vira conversa e migra pra Tentativa de contato; se o cliente responder → Negociação; se comprar no mês → Pedido emitido." },
+  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h", subLong: "cliente falou por último há +24h — só um template reabre a conversa",
+    regras: "Um card cai aqui quando:\n• o cliente já conversou e falou por último há +24h sem novo template (a janela de 24h do WhatsApp fechou — só um template reabre a conversa);\n• uma venda de mês anterior expirou e não houve nada depois.\n\n(Quem nunca foi contatado agora fica na Lista de prospecção, não aqui.)\n\nAutomação: sai daqui sozinho quando você dispara um template (→ Tentativa de contato) ou o cliente responde (→ Negociação)." },
   { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "template enviado, sem resposta", subLong: "você mandou template, aguardando a 1ª resposta do cliente",
     regras: "Um card cai aqui quando:\n• a última mensagem real é do operador E é um template (você disparou e aguarda a 1ª resposta).\n\nAutomações:\n• cliente responde → Negociação;\n• passou +24h sem resposta → Ociosos;\n• parado +4 dias → o botão TEMPLATE reaparece pra reenviar." },
   { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h",
@@ -835,7 +837,7 @@ export default function Page() {
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <span style={{ color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} conversas/clientes · ${atualizado}`}
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length} na carteira (funil) · ${atualizado}`}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 10, padding: "6px 14px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -891,17 +893,21 @@ export default function Page() {
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12, alignItems: "start" }}>
           {COLUNAS.map((col) => {
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
             const ehPedido = col.key === "pedido_emitido";
+            const ehProspec = col.key === "prospeccao";
             // pedido_emitido: cards vêm das views de faturamento (1 linha por período);
+            // prospecção: carteira nunca contatada, sem data -> ignora o período;
             // demais colunas: da vw_funil filtrada por atividade.
             const todosDaEtapa = ehPedido
               ? pedidoVisiveis.filter((c) => c.periodo === "todos")
               : visiveis.filter((c) => c.etapa === col.key);
             let doGrupo = ehPedido
               ? pedidoVisiveis.filter((c) => c.periodo === periodoAtivo)
+              : ehProspec
+              ? todosDaEtapa
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, periodoAtivo));
             if (busca.trim()) {
               // na busca: ordena por data da última mensagem (mais recente primeiro) p/ separar homônimos
@@ -936,6 +942,8 @@ export default function Page() {
             // (linhas daquele período na view); demais: por atividade.
             const contaPeriodo = (p: Periodo) => ehPedido
               ? pedidoVisiveis.filter((c) => c.periodo === p).length
+              : ehProspec
+              ? todosDaEtapa.length
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
             return (
               <section key={col.key} style={{ background: RD.colHeader, borderRadius: 10, border: `1px solid ${RD.border}`, overflow: "hidden" }}>
