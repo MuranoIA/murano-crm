@@ -293,6 +293,7 @@ export default function Page() {
   const [sobreLixeira, setSobreLixeira] = useState(false);
   const [lixeiraAberta, setLixeiraAberta] = useState(false);
   const [descartados, setDescartados] = useState<any[]>([]);
+  const [baixando, setBaixando] = useState(false); // gerando relatório Excel
   const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
   const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
   const [disparandoSync, setDisparandoSync] = useState(false);
@@ -606,6 +607,25 @@ export default function Page() {
   const massaSel = useMemo(() => massaElegiveis.slice(0, massaQtd), [massaElegiveis, massaQtd]);
   const CUSTO_TEMPLATE = 4.30; // R$ por template disparado
   const massaCusto = massaSel.length * CUSTO_TEMPLATE;
+  // descrição detalhada dos filtros ativos (pro modal explicar exatamente o que está aplicado)
+  const filtrosAtivosTxt = useMemo(() => {
+    const parts: string[] = [];
+    if (filtro !== "todos") parts.push(`Vendedor: ${cap(filtro)}`);
+    if (busca.trim()) parts.push(`Busca: "${busca.trim()}"`);
+    if (cicloSel.length) {
+      const labels = cicloSel.map((k) => (k === "URGENTE" ? "Urgentes (ligar hoje)" : (CICLO_LABEL[k]?.label ?? k)));
+      parts.push(`Ciclo de compra: ${labels.join(", ")}`);
+    }
+    if (paradoSel.length) {
+      const labels = paradoSel.map((k) => PARADO_BUCKETS.find((b) => b.key === k)?.label ?? k);
+      parts.push(`Tempo parado: ${labels.join(", ")}`);
+    }
+    if (prodFiltro) {
+      const nomes = prodFiltro.produtos.map((cp) => produtos.find((p) => p.codprod === cp)?.produto).filter(Boolean) as string[];
+      parts.push(`Produto: ${nomes.length ? nomes.join(", ") : `${prodFiltro.produtos.length} selecionado(s)`} (${PROD_PER_LABEL[prodFiltro.periodo] ?? prodFiltro.periodo})`);
+    }
+    return parts;
+  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos]);
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
@@ -652,6 +672,29 @@ export default function Page() {
       await fetch("/api/descartados", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
       await carregarLixeira(); await load();
     } catch {}
+  }
+  // baixa Excel detalhado dos clientes dos filtros atuais (visiveis + pedido)
+  async function baixarRelatorio() {
+    setBaixando(true);
+    try {
+      const set = new Set<number>();
+      for (const c of visiveis) { const cc = codcliDe(c); if (cc != null) set.add(cc); }
+      for (const c of pedidoVisiveis) { const cc = codcliDe(c); if (cc != null) set.add(cc); }
+      const codclis = [...set];
+      if (!codclis.length) { alert("Nenhum cliente com código WinThor no filtro atual."); return; }
+      const codprods = prodFiltro ? prodFiltro.produtos : [];
+      const r = await fetch("/api/relatorio", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codclis, codprods, filtros: filtrosAtivosTxt, titulo: "Relatório de clientes — funil" }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert("Falha ao gerar relatório: " + (j.error ?? `HTTP ${r.status}`)); return; }
+      const blob = await r.blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u; a.download = `relatorio_${new Date().toISOString().slice(0, 10)}.xlsx`; a.click();
+      URL.revokeObjectURL(u);
+    } catch (e: any) { alert("Erro ao gerar relatório: " + (e?.message ?? e)); }
+    finally { setBaixando(false); }
   }
 
   // produtos filtrados pela busca do painel
@@ -1092,6 +1135,19 @@ export default function Page() {
             }}
           >
             📣 Disparo em massa
+          </button>
+          <button
+            onClick={baixarRelatorio}
+            disabled={baixando}
+            title="Baixar um Excel detalhado dos clientes que casam com os filtros atuais (Base Completa + aba por consultor no admin)"
+            style={{
+              padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
+              color: "#15803d", background: "#e7f6ec", border: "1px solid #bfe6cd",
+              borderRadius: 8, cursor: baixando ? "wait" : "pointer", outline: "none",
+              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+            }}
+          >
+            {baixando ? "Gerando…" : "⬇ Baixar relatório"}
           </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
@@ -1578,7 +1634,15 @@ export default function Page() {
               ) : (
                 <div>
                   <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 14, lineHeight: 1.5 }}>
-                    Baseado nos <b>filtros atuais</b> do board{filtro !== "todos" ? ` · vendedor ${cap(filtro)}` : ""}{paradoSel.length ? " · tempo parado" : ""}{cicloSel.length ? " · ciclo" : ""}{prodFiltro ? " · produto" : ""}: <b>{massaElegiveis.length}</b> clientes elegíveis <span style={{ color: RD.grayLight }}>(com contato no RD, com telefone e sem template nos últimos {DIAS_RECONTATO} dias)</span>.
+                    <b>{massaElegiveis.length}</b> clientes elegíveis, com base nos <b>filtros ativos</b> do board:
+                    {filtrosAtivosTxt.length === 0 ? (
+                      <div style={{ color: RD.grayLight, marginTop: 3 }}>Nenhum filtro específico — toda a carteira visível.</div>
+                    ) : (
+                      <ul style={{ margin: "5px 0 0", paddingLeft: 18 }}>
+                        {filtrosAtivosTxt.map((f, i) => <li key={i} style={{ color: RD.navy, marginBottom: 1 }}>{f}</li>)}
+                      </ul>
+                    )}
+                    <div style={{ color: RD.grayLight, marginTop: 6, fontSize: 11.5 }}>Elegível = com contato no RD, com telefone e sem template nos últimos {DIAS_RECONTATO} dias.</div>
                   </div>
                   <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Template</label>
                   <select value={massaTemplate} onChange={(e) => setMassaTemplate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", margin: "6px 0 14px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}>
