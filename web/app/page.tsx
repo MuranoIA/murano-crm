@@ -924,20 +924,6 @@ export default function Page() {
               </div>
             )}
           </div>
-          <button
-            onClick={() => setSemCadFiltro((v) => !v)}
-            title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
-            style={{
-              padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
-              color: semCadFiltro ? "#fff" : "#b45309",
-              background: semCadFiltro ? "#b45309" : "#fff3e0",
-              border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
-              borderRadius: 8, cursor: "pointer", outline: "none",
-              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-            }}
-          >
-            Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
-          </button>
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setParadoPainel((v) => !v)}
@@ -980,6 +966,20 @@ export default function Page() {
               </div>
             )}
           </div>
+          <button
+            onClick={() => setSemCadFiltro((v) => !v)}
+            title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
+            style={{
+              padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
+              color: semCadFiltro ? "#fff" : "#b45309",
+              background: semCadFiltro ? "#b45309" : "#fff3e0",
+              border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
+              borderRadius: 8, cursor: "pointer", outline: "none",
+              display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+            }}
+          >
+            Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
+          </button>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 9, padding: "4px 9px" }}>
               <span style={{ fontSize: 10.5, color: "#0b7fb0", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
