@@ -1,0 +1,40 @@
+name: ETL fast (quase tempo real)
+
+# Varredura BARATA (/exists) só das conversas QUENTES (ativas ~18h + disparos do dia),
+# em loop interno de ~1-2 min por sweep. Dá frescor de ~1-2 min sem webhook. Grupo de
+# concorrência SEPARADO do etl.yml (incremental/full) — rodam em paralelo sem se bloquear
+# (upsert é idempotente). Cada run agendado faz um loop de ~14 min; o cron de 15 min
+# encadeia -> cobertura ~contínua no horário. Repo público => Actions grátis/ilimitado.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+concurrency:
+  group: etl-fast
+  cancel-in-progress: false
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Instalar dependências
+        run: npm ci
+      - name: Loop rápido (~1-2 min por sweep, ~14 min)
+        env:
+          ETL_MODE: fast
+          ETL_FAST_LOOP_MIN: 13   # loopa por ~13 min; o cron de 15 min encadeia
+          ETL_FAST_SLEEP: 15      # pausa entre sweeps (o sweep em si já leva ~1-2 min)
+          ETL_FAST_HORAS: 18      # janela do "conjunto quente" (conversas ativas)
+          RD_CONVERSAS_TOKEN: ${{ secrets.RD_CONVERSAS_TOKEN }}
+          RD_CONVERSAS_BASE_URL: ${{ secrets.RD_CONVERSAS_BASE_URL }}
+          RD_CONVERSAS_PRIVATE_JWK: ${{ secrets.RD_CONVERSAS_PRIVATE_JWK }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run etl

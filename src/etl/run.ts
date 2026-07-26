@@ -107,7 +107,7 @@ async function clientesParaChecar(dias: number): Promise<Candidato[]> {
     // só conversas ativas na janela (data-limitada) — inclui as "aguardando" recentes
     // (a última msg do cliente entra em ultima_atividade). NÃO pega aguardando antigo,
     // senão o scan explode com todo cliente-por-último de qualquer idade.
-    const cutoff = new Date(Date.now() - Math.max(1, dias) * 86400000).toISOString();
+    const cutoff = new Date(Date.now() - Math.max(0.05, dias) * 86400000).toISOString(); // aceita janela fracionada (horas) p/ o modo fast
     const q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade")
       .gte("ultima_atividade", cutoff);
     const { data, error } = await q.range(from, from + page - 1);
@@ -185,7 +185,7 @@ async function clientesComAtendimentoAberto(): Promise<{ id: string; carteira: s
 // em `mensagens` quando o ETL re-busca aquele cliente. Como ele está "parado" fora da
 // varredura, nunca seria re-buscado. Forçando por disparo, o template aparece rápido.
 async function clientesComDisparoRecente(dias: number): Promise<{ id: string; carteira: string }[]> {
-  const cutoff = new Date(Date.now() - Math.max(1, dias) * 86400000).toISOString();
+  const cutoff = new Date(Date.now() - Math.max(0.002, dias) * 86400000).toISOString(); // aceita janela em minutos (modo fast)
   const out: { id: string; carteira: string }[] = [];
   let from = 0;
   const page = 1000;
@@ -435,11 +435,47 @@ async function backfillMensagens() {
   await loadMensagens(lote);
 }
 
+// MODO FAST (quase tempo real): varredura BARATA (/exists) só das conversas QUENTES —
+// ativas nas últimas ETL_FAST_HORAS (padrão 18h, ~130-150) + disparos do último dia —
+// e fetch só das que mudaram. NÃO chama reports/vendedores (descoberta de contato novo
+// fica pro incremental). Feito pra rodar em loop (ETL_FAST_LOOP_MIN) dando ~1-2 min de
+// frescor sem webhook. Não decripta na varredura; só nas poucas que têm msg nova.
+async function fastSweep(): Promise<void> {
+  const horas = Number(process.env.ETL_FAST_HORAS ?? 18);
+  const candidatos = await clientesParaChecar(horas / 24);
+  const mudaram = await checarMudaram(candidatos);
+  const alvos = new Map<string, { id: string; carteira: string }>();
+  for (const m of mudaram) alvos.set(m.id, m);
+  // só disparos MUITO recentes (padrão 5 min): o /exists não detecta template de saída,
+  // então busca o recém-disparado p/ ele aparecer. Board já cobre via /api/sync-cliente;
+  // isto é backup (e evita re-buscar centenas de disparos antigos todo sweep).
+  const disp = await clientesComDisparoRecente(Number(process.env.ETL_FAST_DISPARO_MIN ?? 5) / 1440);
+  for (const d of disp) if (!alvos.has(d.id)) alvos.set(d.id, d);
+  console.error(`[fast] ${candidatos.length} checados (${horas}h) | ${mudaram.length} c/ msg nova | ${disp.length} disparos recentes | fetch ${alvos.size}`);
+  if (alvos.size) await loadMensagens([...alvos.values()]);
+}
+
 async function main() {
   const t0 = Date.now();
   await loadCarteiraConfig();
   console.error(`ETL [${MODE}] — carteiras [${[...TARGET_WALLETS].join(", ")}] | janela ${START}..${END}\n`);
   if (process.env.ETL_LIMPAR === "1") await limpar();
+  if (MODE === "fast") {
+    // loop interno: um sweep, dorme ETL_FAST_SLEEP s, repete por ETL_FAST_LOOP_MIN min
+    // (0 = sweep único). Assim um run do Actions cobre vários minutos com ~1 sweep/min.
+    const loopMin = Number(process.env.ETL_FAST_LOOP_MIN ?? 0);
+    const sleepS = Number(process.env.ETL_FAST_SLEEP ?? 15);
+    const until = t0 + loopMin * 60000;
+    let n = 0;
+    do {
+      n++;
+      try { await fastSweep(); } catch (e: any) { console.error(`[fast] erro no sweep #${n}:`, e?.message ?? e); }
+      if (loopMin <= 0 || Date.now() >= until) break;
+      await sleep(sleepS * 1000);
+    } while (Date.now() < until);
+    console.error(`\n✅ ETL [fast] — ${n} sweeps em ${((Date.now() - t0) / 1000).toFixed(0)}s.`);
+    return;
+  }
   if (MODE === "mensagens") {
     await backfillMensagens();
   } else {
