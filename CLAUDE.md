@@ -788,3 +788,37 @@ A checagem é barata em CPU (sem decrypt), não em cota. Um fix assim rendeu só
 **Regra de dimensionamento:** run de N minutos ≈ N × 48 chamadas. Para 10 min, ~480 —
 e é preciso descontar o `etl-fast` (~23%) e os envios de template do board, que dividem
 a mesma cota (por isso existem os botões Pausar/Retomar).
+
+### 14.6 Resultado verificado (26/07/2026) — gatilho no pg_cron + orçamento
+
+**Antes:** runs de 34-50 min com cron `*/10` → o `concurrency group` cancelava os seguintes
+e o sync efetivo caía pra ~1x/hora.
+
+**Depois:**
+
+| Horário | Duração | Observação |
+|---|---|---|
+| 12:08 | 49 min | antes das correções |
+| 12:41 | 50 min | antes das correções |
+| **14:40** | **7 min** | orçamento rotativo + diff do reports |
+| **14:50** | disparado no horário | sem fila, sem cancelamento |
+
+**Disparos do `pg_cron` (`etl_trigger_log`):** 14:30:00 · 14:40:00 · 14:50:00 — pontualidade
+exata, contra ~1x/hora do agendador do GitHub.
+
+**Quebra do run de 7 min** (`30203800672`, com todas as correções):
+
+```
+[reports]  234 ativos -> 0 c/ contador alterado (234 fetches evitados)  <- diff
+[scan]     580 na janela 3d -> 210 checadas (fatia 1/3, cobertura em 30 min)
+[disparos] 28 frescos + 90 antigos checados -> 4 c/ resposta
+[fetch]    37 clientes, 224 msgs
+total ~361 chamadas em 6,5 min
+```
+
+**O cron `*/10` do GitHub foi mantido** como redundância (dispara ~1x/hora; o
+`concurrency group` impede sobreposição). Se o `pg_cron` falhar, ainda há um fallback.
+
+**Monitorar:** `select * from etl_trigger_log order by id desc limit 10;` — status **204**
+é sucesso. A função nunca lança exceção: qualquer falha vira linha no log (o risco clássico
+desse tipo de job é falhar em silêncio). Token em `wth_config.gh_etl_token`.
