@@ -2003,6 +2003,9 @@ export default function Page() {
         const zcol = COLUNAS.find((k) => k.key === zc.etapa);
         const zcodcli = codcliDe(zc);
         const zciclo = zc.ciclo?.tipo && CICLO_LABEL[zc.ciclo.tipo] ? CICLO_LABEL[zc.ciclo.tipo] : null;
+        // msg livre só onde a janela de 24h vale (negociação / pedido com conversa). Prospecção,
+        // ociosos e tentativa estão inativos >24h -> só template, sem input.
+        const zMostraInput = zc.etapa === "negociacao" || (zc.etapa === "pedido_emitido" && !String(zc.cliente_id).includes(":"));
         return (
           <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", maxHeight: "74vh" }}>
             <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", padding: "10px 14px 11px", borderBottom: `1px solid ${RD.border}` }}>
@@ -2041,15 +2044,21 @@ export default function Page() {
               {cap(zc.vendedor)}<span style={{ color: RD.grayLight, fontWeight: 400 }}> · {tempoRelativo(maisRecenteISO(zc.ultima_atividade, disparos[zc.cliente_id]))}</span>
             </div>
             <div style={{ padding: "8px 12px 12px", display: "flex", gap: 6, alignItems: "center" }}>
-              <input
-                value={respostaTexto[zc.cliente_id] ?? ""}
-                onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
-                placeholder="Responder (msg livre, 24h)…"
-                disabled={enviandoResposta === zc.cliente_id}
-                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
-              />
-              <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
+              {zMostraInput ? (
+                <>
+                  <input
+                    value={respostaTexto[zc.cliente_id] ?? ""}
+                    onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
+                    placeholder="Responder (msg livre, 24h)…"
+                    disabled={enviandoResposta === zc.cliente_id}
+                    style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
+                  />
+                  <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
+                </>
+              ) : (
+                <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: RD.grayLight }}>Fora da janela de 24h — só template.</span>
+              )}
               {zid && (
                 <>
                   {templates.length > 1 && (
