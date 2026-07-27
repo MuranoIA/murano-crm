@@ -1661,13 +1661,19 @@ export default function Page() {
                       const prospeccao = ehProspeccao(c);
                       const vendaSemConversa = ehVendaSemConversa(c);
                       const codcli = codcliDe(c); // pro botão "C" (Consulta Clientes)
-                      // ociosos: por definição já passou da janela de 24h, precisa de template — igual
-                      // a tentativa_contato "parada", exceto pra prospecção (nunca teve cliente_id do RD,
-                      // não dá pra disparar template automático, só abrir WhatsApp manual).
-                      const recontactar = !prospeccao
-                        && ((col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO)
-                          || col.key === "ociosos");
-                      const ultimoDisparo = (col.key === "tentativa_contato" || col.key === "ociosos") ? disparos[c.cliente_id] : undefined;
+                      // id p/ enviar template: prospecção usa o CONTATO do RD (rd_cliente_id);
+                      // as demais usam o cliente_id do card. Prospecção sem contato no RD não
+                      // dá pra templatar (não existe destinatário lá), só WhatsApp manual.
+                      const idEnvio = prospeccao ? (c.rd_cliente_id ?? null) : c.cliente_id;
+                      // ociosos/tentativa parada precisam de template; prospecção COM contato no RD
+                      // também (nunca contatada por este RCA). Sem contato no RD -> sem template.
+                      const recontactar = prospeccao
+                        ? !!c.rd_cliente_id
+                        : ((col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO) || col.key === "ociosos");
+                      const ultimoDisparo = ((col.key === "tentativa_contato" || col.key === "ociosos" || prospeccao) && idEnvio) ? disparos[idEnvio] : undefined;
+                      // input de msg livre (24h): negociação sempre; pedido emitido só quando tem conversa real
+                      const temConversaReal = !String(c.cliente_id).includes(":");
+                      const mostraInput = col.key === "negociacao" || (col.key === "pedido_emitido" && temConversaReal);
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
@@ -1695,7 +1701,7 @@ export default function Page() {
                           onClick={() => abrirConversa(c)}
                           title={prospeccao ? (c.rd_cliente_id ? "Abrir conversa no RD Conversas (já tem contato lá, mesmo sem atendimento)" : "Abrir WhatsApp com este número (ainda sem contato no RD Conversas)") : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
-                            cursor: "pointer", height: col.key === "negociacao" ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+                            cursor: "pointer", height: mostraInput ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
                             border: `1px solid ${disparoRecente ? "#f3ddad" : recontactar ? "#ecdae4" : RD.border}`,
                             borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? "#57163f" : RD.border}`,
@@ -1742,18 +1748,18 @@ export default function Page() {
                               </span>
                             ) : recontactar ? (
                               <button
-                                onClick={(e) => { e.stopPropagation(); recontatar(c.cliente_id, c.cliente); }}
-                                disabled={enviando === c.cliente_id}
+                                onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente); }}
+                                disabled={enviando === idEnvio}
                                 title="Enviar template (mensagem real no WhatsApp)"
                                 style={{
-                                  marginLeft: "auto", cursor: enviando === c.cliente_id ? "wait" : "pointer",
+                                  marginLeft: "auto", cursor: enviando === idEnvio ? "wait" : "pointer",
                                   display: "inline-flex", alignItems: "center", gap: 3,
                                   background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
                                   borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1,
                                 }}
                               >
                                 <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
-                                {enviando === c.cliente_id ? "ENVIANDO…" : "TEMPLATE"}
+                                {enviando === idEnvio ? "ENVIANDO…" : "TEMPLATE"}
                               </button>
                             ) : col.key === "pedido_emitido" ? (
                               <span
@@ -1858,7 +1864,7 @@ export default function Page() {
                               </span>
                             )}
                           </div>
-                          {col.key === "negociacao" && (
+                          {mostraInput && (
                             <div
                               onClick={(e) => e.stopPropagation()}
                               style={{ marginTop: 5, display: "flex", gap: 4 }}
