@@ -40,9 +40,12 @@ export async function GET() {
     if (cfgErr || !cfg?.valor) return Response.json({ error: "v2_anon_key ausente em bi_config" }, { status: 500 });
     const v2Key = cfg.valor as string;
 
-    const [precos, estoque] = await Promise.all([
+    const [precos, estoque, ofertas, ofertaItens] = await Promise.all([
       v2All("vw_tabela_precos?select=codprod,produto,marca,secao,preco_tabela&order=produto.asc", v2Key),
       v2All("estoque_winthor?select=codigo_produto,qt_estoque_disponivel&codfilial=eq.1", v2Key),
+      // campanhas de desconto ATIVAS (preco_alvo = preço promocional)
+      v2All("ofertas?select=id,titulo,campanha,tipo,preco_alvo&ativo=eq.true", v2Key),
+      v2All("oferta_itens?select=codprod,oferta_id", v2Key),
     ]);
 
     const estPorCod = new Map<number, number>();
@@ -50,6 +53,34 @@ export async function GET() {
       const cod = Number(e.codigo_produto);
       if (!isNaN(cod)) estPorCod.set(cod, Number(e.qt_estoque_disponivel ?? 0));
     }
+
+    // itens por oferta -> só ofertas INDIVIDUAIS de 1 item viram preço de campanha do produto
+    // (combos são pacotes, não desconto de item unitário).
+    const codsPorOferta = new Map<string, number[]>();
+    for (const it of ofertaItens) {
+      const arr = codsPorOferta.get(it.oferta_id) ?? [];
+      arr.push(Number(it.codprod));
+      codsPorOferta.set(it.oferta_id, arr);
+    }
+    const campPorCod = new Map<number, { nome: string; preco: number }[]>();
+    for (const o of ofertas as any[]) {
+      if (o.tipo === "combo") continue;
+      const cods = codsPorOferta.get(o.id) ?? [];
+      if (cods.length !== 1) continue;
+      const preco = Number(o.preco_alvo);
+      if (!isFinite(preco) || preco <= 0) continue;
+      const nome = String(o.campanha || o.titulo || "Campanha").trim();
+      const arr = campPorCod.get(cods[0]) ?? [];
+      arr.push({ nome, preco });
+      campPorCod.set(cods[0], arr);
+    }
+    // dedup por preço (1 nome por preço), ordenado do menor pro maior
+    const campanhasDe = (cod: number) => {
+      const arr = campPorCod.get(cod) ?? [];
+      const byPreco = new Map<number, string>();
+      for (const c of arr) if (!byPreco.has(c.preco)) byPreco.set(c.preco, c.nome);
+      return [...byPreco.entries()].map(([preco, nome]) => ({ preco, nome })).sort((a, b) => a.preco - b.preco);
+    };
 
     const produtos = precos
       .filter((p: any) => p.preco_tabela != null)
@@ -60,6 +91,7 @@ export async function GET() {
         secao: p.secao ?? null,
         preco: Number(p.preco_tabela),
         estoque: estPorCod.has(Number(p.codprod)) ? estPorCod.get(Number(p.codprod))! : null,
+        campanhas: campanhasDe(Number(p.codprod)),
       }));
 
     return Response.json({ produtos });

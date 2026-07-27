@@ -8,8 +8,9 @@ const C = {
   gray: "#6b7280", grayLight: "#9aa1ab", surface: "#ffffff", bg: "#faf7f9",
   green: "#15803d", red: "#dc2626", amber: "#b45309",
 };
-type Prod = { codprod: number; produto: string; marca: string | null; secao: string | null; preco: number; estoque: number | null };
-type Linha = Prod & { qtd: number };
+type Camp = { nome: string; preco: number };
+type Prod = { codprod: number; produto: string; marca: string | null; secao: string | null; preco: number; estoque: number | null; campanhas: Camp[] };
+type Linha = Prod & { qtd: number; precoSel: number; campanhaSel: string | null };
 const moeda = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function OrcamentoFlutuante({ onClose }: { onClose: () => void }) {
@@ -41,19 +42,25 @@ export default function OrcamentoFlutuante({ onClose }: { onClose: () => void })
     if (!q) return [];
     return produtos.filter((p) => p.produto.toLowerCase().includes(q) || String(p.codprod).includes(q)).slice(0, 40);
   }, [busca, produtos]);
-  const total = useMemo(() => linhas.reduce((s, l) => s + l.preco * l.qtd, 0), [linhas]);
+  const total = useMemo(() => linhas.reduce((s, l) => s + l.precoSel * l.qtd, 0), [linhas]);
   const totalItens = useMemo(() => linhas.reduce((s, l) => s + l.qtd, 0), [linhas]);
   const textoOrcamento = useMemo(() => {
     if (!linhas.length) return "";
-    const itens = linhas.map((l, i) => `${i + 1}. ${l.produto}\n   ${l.qtd} x ${moeda(l.preco)} = ${moeda(l.preco * l.qtd)}`).join("\n");
+    const itens = linhas.map((l, i) => `${i + 1}. ${l.produto}\n   ${l.qtd} x ${moeda(l.precoSel)}${l.campanhaSel ? ` (campanha ${l.campanhaSel})` : ""} = ${moeda(l.precoSel * l.qtd)}`).join("\n");
     return `*Orçamento — Murano Professional*\n\n${itens}\n\n*Total: ${moeda(total)}*  (${totalItens} un.)`;
   }, [linhas, total, totalItens]);
 
   const adicionar = (p: Prod) => setLinhas((prev) => {
     const i = prev.findIndex((l) => l.codprod === p.codprod);
     if (i >= 0) { const cp = [...prev]; cp[i] = { ...cp[i], qtd: cp[i].qtd + 1 }; return cp; }
-    return [...prev, { ...p, qtd: 1 }];
+    return [...prev, { ...p, qtd: 1, precoSel: p.preco, campanhaSel: null }];
   });
+  // aplica preço de tabela ou de campanha à linha
+  const aplicarPreco = (codprod: number, preco: number) => setLinhas((prev) => prev.map((l) => {
+    if (l.codprod !== codprod) return l;
+    const camp = (l.campanhas ?? []).find((c) => c.preco === preco);
+    return { ...l, precoSel: preco, campanhaSel: camp ? camp.nome : null };
+  }));
   const setQtd = (codprod: number, qtd: number) => setLinhas((prev) => prev.map((l) => (l.codprod === codprod ? { ...l, qtd: Math.max(1, qtd || 1) } : l)));
   const remover = (codprod: number) => setLinhas((prev) => prev.filter((l) => l.codprod !== codprod));
 
@@ -108,7 +115,7 @@ export default function OrcamentoFlutuante({ onClose }: { onClose: () => void })
                 style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center", textAlign: "left", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer" }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: C.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.produto}</div>
-                  <div style={{ fontSize: 10.5, color: C.grayLight }}>#{p.codprod}{p.marca ? " · " + p.marca : ""} · estoque <b style={{ color: estoqueCor(p.estoque) }}>{estoqueTxt(p.estoque)}</b></div>
+                  <div style={{ fontSize: 10.5, color: C.grayLight }}>#{p.codprod}{p.marca ? " · " + p.marca : ""} · estoque <b style={{ color: estoqueCor(p.estoque) }}>{estoqueTxt(p.estoque)}</b>{(p.campanhas ?? []).length > 0 && <span style={{ color: C.green, fontWeight: 700 }}> · 🏷️ {(p.campanhas ?? []).length === 1 ? "campanha" : (p.campanhas ?? []).length + " campanhas"}</span>}</div>
                 </div>
                 <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                   <div style={{ fontSize: 13, fontWeight: 800, color: C.wine }}>{moeda(p.preco)}</div>
@@ -134,12 +141,24 @@ export default function OrcamentoFlutuante({ onClose }: { onClose: () => void })
                 <div key={l.codprod} style={{ display: "grid", gridTemplateColumns: "1fr 74px 74px 84px 24px", gap: 6, alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: C.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.produto}</div>
-                    <div style={{ fontSize: 10, color: excede ? C.red : C.grayLight }}>estoque <b style={{ color: estoqueCor(l.estoque) }}>{estoqueTxt(l.estoque)}</b>{excede ? " · acima!" : ""}</div>
+                    <div style={{ fontSize: 10, color: excede ? C.red : C.grayLight, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                      <span>estoque <b style={{ color: estoqueCor(l.estoque) }}>{estoqueTxt(l.estoque)}</b>{excede ? " · acima!" : ""}</span>
+                      {(l.campanhas ?? []).length > 0 && (
+                        <select value={l.precoSel} onChange={(e) => aplicarPreco(l.codprod, Number(e.target.value))} title="Preço de tabela ou de campanha"
+                          style={{ fontSize: 10, color: l.campanhaSel ? C.green : C.gray, fontWeight: 700, border: `1px solid ${l.campanhaSel ? C.green : C.border}`, borderRadius: 5, padding: "1px 4px", background: l.campanhaSel ? "#eafaf0" : C.surface, outline: "none", cursor: "pointer", maxWidth: 160 }}>
+                          <option value={l.preco}>Tabela {moeda(l.preco)}</option>
+                          {(l.campanhas ?? []).map((c, i) => <option key={i} value={c.preco}>🏷️ {moeda(c.preco)} · {c.nome}</option>)}
+                        </select>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ textAlign: "right", fontSize: 12, color: C.navy }}>{moeda(l.preco)}</div>
+                  <div style={{ textAlign: "right", fontSize: 12, color: l.campanhaSel ? C.green : C.navy }}>
+                    {moeda(l.precoSel)}
+                    {l.campanhaSel && l.precoSel !== l.preco && <div style={{ fontSize: 9, color: C.grayLight, textDecoration: "line-through" }}>{moeda(l.preco)}</div>}
+                  </div>
                   <input type="number" min={1} value={l.qtd} onChange={(e) => setQtd(l.codprod, parseInt(e.target.value, 10))}
                     style={{ width: "100%", boxSizing: "border-box", textAlign: "center", padding: "5px 2px", fontSize: 12.5, fontWeight: 700, color: C.navy, border: `1px solid ${excede ? C.red : C.border}`, borderRadius: 6, outline: "none" }} />
-                  <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 800, color: C.wine }}>{moeda(l.preco * l.qtd)}</div>
+                  <div style={{ textAlign: "right", fontSize: 12.5, fontWeight: 800, color: C.wine }}>{moeda(l.precoSel * l.qtd)}</div>
                   <button onClick={() => remover(l.codprod)} title="Remover" style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, color: C.gray, cursor: "pointer", fontSize: 12, lineHeight: 1 }}>×</button>
                 </div>
               );
