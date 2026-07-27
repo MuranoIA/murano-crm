@@ -61,6 +61,19 @@ CARINHO = re.compile(r"\bquerida?\b|\bamor\b|\bamiga?\b|\bflor\b|\blinda\b|\bdon
 FECHA = re.compile(r"fechar (o )?pedido|posso separar|vou (montar|separar|mandar)|finalizar (o )?pedido|vamos fechar", re.I)
 INFORMAL = re.compile(r"\bvc\b|\bpra\b|\bta\b|\bt[ôo]\b|\bnum\b|\bmulher\b|kk+|rsrs", re.I)
 
+STOP = set("""a o e é de da do das dos em no na nos nas um uma uns umas que com por para pra pro os as ao aos à às
+se sua seu suas seus meu minha meus minhas isso essa esse este esta isto aquele aquela nao não sim ja já so só
+eu tu ele ela nos nós vos eles elas voce você vc te me lhe mais menos muito pouco bem mal como quando onde qual
+quais quem cujo tambem também mas ou porem porém então entao ate até la lá aqui ali depois antes hoje amanha amanhã
+ontem agora ta tá tô estou esta está estão estao ser ter vai vou foi era sao são tem tinha tudo nada algo cada
+dia dias boa bom boas bons tarde noite obrigada obrigado obg valeu ok oi olá ola tudo pode ver fica sai vem
+ficou seja sendo pois assim ainda vez vezes coisa coisas dela dele nesse nessa desse dessa deste desta""".split())
+URLRE = re.compile(r"https?://\S+", re.I)
+
+def norm_words(t):
+    t = re.sub(r"[^a-zà-ú0-9\s]", " ", t.lower())
+    return [w for w in t.split() if len(w) > 2 and not w.isdigit()]
+
 # agrupar por cliente para capturar pares situacao->resposta
 por_cliente = defaultdict(list)
 for m in msgs:
@@ -79,6 +92,7 @@ stats = defaultdict(lambda: {
     "op_msgs": 0, "carinho": 0, "perguntas": 0, "fecha": 0, "informal": 0, "exclama": 0,
     "len_soma": 0, "gat": Counter(), "gat_ex": defaultdict(list),
     "sit_n": Counter(), "sit_ex": defaultdict(list), "carinho_ex": [], "fecha_ex": [],
+    "words": Counter(), "ngrams": Counter(), "fullmsg": Counter(), "fullmsg_orig": {},
 })
 
 for cid, seq in por_cliente.items():
@@ -97,6 +111,19 @@ for cid, seq in por_cliente.items():
             for g, (pat, _) in GATILHOS.items():
                 if re.search(pat, txt, re.I):
                     s["gat"][g] += 1; add_exemplo(s["gat_ex"][g], txt)
+            # vocabulario: palavras, expressoes (bi/trigramas) e frases prontas (msgs repetidas)
+            ws = norm_words(txt)
+            for w in ws:
+                if w not in STOP: s["words"][w] += 1
+            for n in (2, 3):
+                for i2 in range(len(ws) - n + 1):
+                    gr = ws[i2:i2+n]
+                    if all(w in STOP for w in gr): continue
+                    s["ngrams"][" ".join(gr)] += 1
+            if 15 <= len(txt) <= 130 and not URLRE.search(txt):
+                key = re.sub(r"\s+", " ", txt.lower()).strip()
+                s["fullmsg"][key] += 1
+                s["fullmsg_orig"].setdefault(key, txt)
         elif m["enviada_por"] == "customer" and m["tipo"] == "mensagem":
             if not txt or AUTOREPLY.search(txt): continue
             for sit, pat in SITUACOES.items():
@@ -183,6 +210,16 @@ for c in CARTEIRAS:
     gat_out = {}
     for g,(pat,label) in GATILHOS.items():
         gat_out[g] = {"label": label, "pct": pctg(s,g), "media": round(sum(pctg(stats[k],g) for k in CARTEIRAS)/len(CARTEIRAS),1), "exemplos": s["gat_ex"][g]}
+
+    top_palavras = [{"w": w, "n": n} for w, n in s["words"].most_common(22)]
+    expressoes = []
+    for gr, n in s["ngrams"].most_common(80):
+        if n < 4: break
+        if any(gr in sel["t"] or sel["t"] in gr for sel in expressoes): continue
+        expressoes.append({"t": gr, "n": n})
+        if len(expressoes) >= 8: break
+    frases_prontas = [{"t": s["fullmsg_orig"][k], "n": n}
+                      for k, n in s["fullmsg"].most_common(30) if n >= 3][:6]
     persona = {
         "nome": NOMES[c],
         "operador": None,
@@ -200,6 +237,9 @@ for c in CARTEIRAS:
         },
         "carinho_exemplos": s["carinho_ex"],
         "fechamento_exemplos": s["fecha_ex"],
+        "top_palavras": top_palavras,
+        "expressoes": expressoes,
+        "frases_prontas": frases_prontas,
         "pontos_fortes": [f"{ARQ[e][0].replace('Perfil ','')}: {ARQ[e][1]}" for e in top2],
         "desenvolver": [SUGESTAO[e] for e in bot2],
         "metricas": {"msgs": s["op_msgs"], "resposta_min": resp_min, "conversao_7d": conv,
