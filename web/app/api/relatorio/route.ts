@@ -44,22 +44,14 @@ export async function POST(req: Request) {
   const linhas: any[] = rows ?? [];
 
   const temProduto = codprods.length > 0;
-  // colunas: base + ciclo (+ produto se houver filtro de produto)
+  // colunas: 5 base (cliente, telefone, dias sem compra, ciclo médio, ticket médio)
+  // (+ colunas de produto quando há filtro de produto).
   const cols: { header: string; key: string; width: number; money?: boolean }[] = [
-    { header: "Time", key: "time", width: 7 },
-    { header: "Consultor", key: "consultor", width: 24 },
-    { header: "Cód. Cliente", key: "cod_cliente", width: 11 },
-    { header: "Cliente", key: "cliente", width: 30 },
-    { header: "Telefone", key: "telefone", width: 15 },
-    { header: "Cidade", key: "cidade", width: 16 },
-    { header: "Ciclo", key: "ciclo", width: 13 },
-    { header: "Score Urgência", key: "score", width: 13 },
-    { header: "Dias sem Comprar", key: "dias_sem_comprar", width: 15 },
-    { header: "Ciclo Médio (dias)", key: "ciclo_medio", width: 15 },
-    { header: "Ticket Médio (R$)", key: "ticket_medio", width: 15, money: true },
-    { header: "Total Pedidos", key: "total_pedidos", width: 12 },
-    { header: "Ação Recomendada", key: "acao", width: 18 },
-    { header: "Últ. Compra", key: "ult_compra", width: 12 },
+    { header: "Cliente", key: "cliente", width: 34 },
+    { header: "Telefone", key: "telefone", width: 16 },
+    { header: "Dias sem Comprar", key: "dias_sem_comprar", width: 16 },
+    { header: "Ciclo Médio (dias)", key: "ciclo_medio", width: 16 },
+    { header: "Ticket Médio (R$)", key: "ticket_medio", width: 16, money: true },
     ...(temProduto ? [
       { header: "Produto", key: "produto", width: 34 },
       { header: "Qtd. Produto", key: "qtd", width: 11 },
