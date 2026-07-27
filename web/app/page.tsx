@@ -273,6 +273,7 @@ export default function Page() {
   const [zoomPos, setZoomPos] = useState({ x: 80, y: 74 });
   const zoomDrag = useRef<{ dx: number; dy: number } | null>(null);
   const zoomScrollRef = useRef<HTMLDivElement>(null);
+  const [zoomSyncing, setZoomSyncing] = useState(false);
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -476,6 +477,17 @@ export default function Page() {
       setZoomMsgs(j?.mensagens ?? []);
     } catch { setZoomMsgs([]); }
     finally { setZoomLoading(false); }
+  }
+  // atualiza SÓ esta conversa: puxa do RD as mensagens que faltam (item 3) e recarrega o histórico
+  async function atualizarZoom() {
+    if (!cardZoom || zoomSyncing) return;
+    setZoomSyncing(true);
+    try {
+      await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: cardZoom.cliente_id }) }).catch(() => {});
+      const j = await fetch(`/api/mensagens?cliente_id=${encodeURIComponent(cardZoom.cliente_id)}`).then((r) => (r.ok ? r.json() : null));
+      if (j?.mensagens) setZoomMsgs(j.mensagens);
+    } catch { /* ignora — refetch do banco já cobre */ }
+    finally { setZoomSyncing(false); }
   }
   const zoomOnDown = (e: { clientX: number; clientY: number }) => {
     zoomDrag.current = { dx: e.clientX - zoomPos.x, dy: e.clientY - zoomPos.y };
@@ -2006,16 +2018,31 @@ export default function Page() {
         // msg livre só onde a janela de 24h vale (negociação / pedido com conversa). Prospecção,
         // ociosos e tentativa estão inativos >24h -> só template, sem input.
         const zMostraInput = zc.etapa === "negociacao" || (zc.etapa === "pedido_emitido" && !String(zc.cliente_id).includes(":"));
+        // mesma lógica do card p/ a pill TEMPLATE/AGUARDANDO no topo à direita
+        const zprospec = ehProspeccao(zc);
+        const zRecontactar = zprospec ? !!zc.rd_cliente_id : ((zc.etapa === "tentativa_contato" && diasInativo(zc.ultima_atividade) >= DIAS_RECONTATO) || zc.etapa === "ociosos");
+        const zUltimoDisparo = ((zc.etapa === "tentativa_contato" || zc.etapa === "ociosos" || zprospec) && zid) ? disparos[zid] : undefined;
+        const zDisparoRecente = !!zUltimoDisparo && diasInativo(zUltimoDisparo) < DIAS_RECONTATO;
+        const zUltimaEf = maisRecenteISO(zc.ultima_atividade, disparos[zc.cliente_id]);
         return (
           <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", maxHeight: "74vh" }}>
             <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", padding: "10px 14px 11px", borderBottom: `1px solid ${RD.border}` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ width: 12, height: 12, borderRadius: 3, background: zcol?.cor ?? RD.wine, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, color: RD.gray, fontWeight: 600 }}>{zcol?.status ?? ""}</span>
+                {zc.sem_cadastro && (
+                  <span title="Só existe no RD Conversas — ainda não cadastrado no WinThor." style={{ background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>sem cadastro</span>
+                )}
                 {zcodcli != null && (
                   <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
-                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ marginLeft: "auto", width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+                <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>
+                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+                {zDisparoRecente ? (
+                  <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
+                ) : (zRecontactar && zid) ? (
+                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
+                ) : null}
               </div>
               <div style={{ fontSize: 15, fontWeight: 800, color: RD.navy, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</div>
               {zciclo && (
@@ -2039,37 +2066,26 @@ export default function Page() {
                 );
               })}
             </div>
-            <div style={{ borderTop: `1px solid ${RD.border}`, padding: "8px 14px 0", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
+            <div style={{ borderTop: `1px solid ${RD.border}`, padding: zMostraInput ? "8px 14px 0" : "8px 14px 12px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
               <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor] ?? CoresVendedor[zc.vendedor] ?? RD.grayLight }} />
-              {cap(zc.vendedor)}<span style={{ color: RD.grayLight, fontWeight: 400 }}> · {tempoRelativo(maisRecenteISO(zc.ultima_atividade, disparos[zc.cliente_id]))}</span>
-            </div>
-            <div style={{ padding: "8px 12px 12px", display: "flex", gap: 6, alignItems: "center" }}>
-              {zMostraInput ? (
-                <>
-                  <input
-                    value={respostaTexto[zc.cliente_id] ?? ""}
-                    onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
-                    placeholder="Responder (msg livre, 24h)…"
-                    disabled={enviandoResposta === zc.cliente_id}
-                    style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
-                  />
-                  <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
-                </>
-              ) : (
-                <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: RD.grayLight }}>Fora da janela de 24h — só template.</span>
-              )}
-              {zid && (
-                <>
-                  {templates.length > 1 && (
-                    <select value={templatePadraoId ?? ""} onChange={(e) => escolherTemplate(Number(e.target.value))} title="Escolher o template a enviar" style={{ fontSize: 10.5, fontWeight: 700, color: "#9c1f47", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 7, padding: "0 4px", height: 34, outline: "none", maxWidth: 92, cursor: "pointer" }}>
-                      {templates.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
-                    </select>
-                  )}
-                  <button onClick={() => recontatar(zid!, zc.cliente)} disabled={enviando === zid} title="Enviar template (usa o selecionado; serve fora das 24h)" style={{ cursor: enviando === zid ? "wait" : "pointer", background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 7, padding: "0 9px", height: 34, fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{enviando === zid ? "…" : "Template"}</button>
-                </>
+              {cap(zc.vendedor)}
+              {!zprospec && (
+                <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}{zRecontactar ? " parado" : ""}</span>
               )}
             </div>
+            {zMostraInput && (
+              <div style={{ padding: "8px 12px 12px", display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  value={respostaTexto[zc.cliente_id] ?? ""}
+                  onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
+                  placeholder="Responder (msg livre, 24h)…"
+                  disabled={enviandoResposta === zc.cliente_id}
+                  style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
+                />
+                <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
+              </div>
+            )}
           </div>
         );
       })()}
