@@ -254,6 +254,7 @@ export default function Page() {
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
   const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
+  const [rankingMenuAberto, setRankingMenuAberto] = useState(false);
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -921,10 +922,51 @@ export default function Page() {
             {sessao.role === "admin" && (
               <>
                 <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
-                <a href="https://romuloallbuquerque-netizen.github.io/murano-bi-ranking-vendas/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
-                <button onClick={abrirMeta} title="Definir a meta de vendas do dia (aparece no Ranking)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", whiteSpace: "nowrap" }}>
-                  🎯 Meta{metaAtual ? <span style={{ fontSize: 11.5, color: RD.wine, fontWeight: 800 }}>&nbsp;R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
-                </button>
+                {(() => {
+                  // Dropdown "Ranking": (1) Ver anteriores -> calendário -> abre o ranking naquele dia;
+                  // (2) Meta do dia -> caixinha; (3) Ranking -> abre a aba ao vivo. Sempre reusa a MESMA
+                  // aba (window name "ranking_murano"): se já estiver aberta, só re-renderiza com a nova config.
+                  const RANKING_URL = "https://murano-bi-ranking-vendas.netlify.app/";
+                  const hojeISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+                  const abrirRanking = (dia?: string) => {
+                    window.open(RANKING_URL + (dia ? "?dia=" + encodeURIComponent(dia) : ""), "ranking_murano");
+                    setRankingMenuAberto(false);
+                  };
+                  const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer" };
+                  return (
+                    <div style={{ position: "relative", display: "inline-flex" }}>
+                      <button
+                        onClick={() => setRankingMenuAberto((v) => !v)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", whiteSpace: "nowrap" }}
+                      >
+                        Ranking<span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+                      </button>
+                      {rankingMenuAberto && (
+                        <>
+                          <div onClick={() => setRankingMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 101, minWidth: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
+                            <label style={{ ...itemStyle, cursor: "pointer", borderBottom: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
+                              📅 Ver anteriores
+                              <input
+                                type="date"
+                                max={hojeISO}
+                                onChange={(e) => { if (e.target.value) abrirRanking(e.target.value); }}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 6, padding: "3px 6px", cursor: "pointer", outline: "none" }}
+                              />
+                            </label>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirMeta(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
+                              🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
+                            </button>
+                            <button onClick={() => abrirRanking()} style={itemStyle}>
+                              📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
@@ -1040,10 +1082,10 @@ export default function Page() {
 
       <main style={{ padding: "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          {/* Vendedor: a busca desce pra linha dos filtros (compacta) e esta linha some,
-              deixando só o "na carteira" sozinho no topo. Admin/home mantêm a busca aqui. */}
+          {/* Vendedor: NÃO tem linha de cima — busca + "na carteira" vão pra linha única dos filtros.
+              Admin/home mantêm a busca ampla + chips + "na carteira" aqui em cima. */}
           {sessao.role !== "vendedor" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
@@ -1053,7 +1095,6 @@ export default function Page() {
                 background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none",
               }}
             />
-          )}
           {/* filtro de vendedor: só faz sentido p/ quem vê mais de uma carteira (admin/home).
               Vendedor tem carteira única -> "Todos" + o próprio nome seria redundante. */}
           {sessao.role !== "vendedor" && (
@@ -1066,6 +1107,7 @@ export default function Page() {
             {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
           </span>
           </div>
+          )}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "nowrap" }}>
           {sessao.role === "vendedor" && (
             <input
@@ -1372,6 +1414,12 @@ export default function Page() {
               <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} VENDAS</span>
             </div>
           </div>
+          {/* Vendedor: "na carteira" no fim da linha única (não tem a linha de cima) */}
+          {sessao.role === "vendedor" && (
+            <span style={{ color: RD.gray, fontSize: 11.5, whiteSpace: "nowrap", marginLeft: 12 }}>
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
+            </span>
+          )}
           </div>
         </header>
 
