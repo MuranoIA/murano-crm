@@ -245,6 +245,15 @@ export default function Page() {
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
   const [pedidoCards, setPedidoCards] = useState<Card[]>([]);
   const [enviando, setEnviando] = useState<string | null>(null);
+  // templates do botão do card / disparo em massa (crm_templates). O "padrão do momento" é
+  // escolhido pelo vendedor e guardado no navegador dele (localStorage). Admin cadastra novos.
+  const [templates, setTemplates] = useState<{ id: number; nome: string; rd_template_id: string | null }[]>([]);
+  const [templatePadraoId, setTemplatePadraoId] = useState<number | null>(null);
+  const [tplMenuAberto, setTplMenuAberto] = useState(false);
+  const [addTplAberto, setAddTplAberto] = useState(false);
+  const [novoTplNome, setNovoTplNome] = useState("");
+  const [novoTplRd, setNovoTplRd] = useState("");
+  const [salvandoTpl, setSalvandoTpl] = useState(false);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
@@ -337,10 +346,12 @@ export default function Page() {
     // dispara direto ao clicar (sem confirmação); o botão já desativa após enviar
     setEnviando(clienteId);
     try {
+      // usa o template padrão escolhido (se tiver rd_template_id; senão o server usa o default)
+      const tpl = templates.find((t) => t.id === templatePadraoId);
       const r = await fetch("/api/send-template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: clienteId }),
+        body: JSON.stringify({ cliente_id: clienteId, ...(tpl?.rd_template_id ? { template_id: tpl.rd_template_id } : {}) }),
       });
       // lê como texto e tenta JSON — evita "Unexpected end of JSON input" em corpo vazio
       const txt = await r.text();
@@ -422,6 +433,27 @@ export default function Page() {
   const RANKING_URL = "https://murano-bi-ranking-vendas.netlify.app/";
   function abrirRanking(dia?: string) {
     window.open(RANKING_URL + (dia ? "?dia=" + encodeURIComponent(dia) : ""), "ranking_murano");
+  }
+
+  // escolhe o template padrão do momento (por navegador do vendedor)
+  const escolherTemplate = (id: number) => {
+    setTemplatePadraoId(id);
+    try { localStorage.setItem("crm_template_padrao", String(id)); } catch {}
+  };
+  // admin cadastra um novo template (nome + rd_template_id da API do RD; vazio = padrão do server)
+  async function salvarTemplate() {
+    const nome = novoTplNome.trim();
+    if (!nome) return;
+    setSalvandoTpl(true);
+    try {
+      const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome, rd_template_id: novoTplRd.trim() }) });
+      const j = await r.json();
+      if (!r.ok) { alert("Não foi possível cadastrar o template: " + (j?.error ?? r.status)); return; }
+      setTemplates((prev) => [...prev, j.template]);
+      escolherTemplate(j.template.id);
+      setNovoTplNome(""); setNovoTplRd(""); setAddTplAberto(false);
+    } catch (e: any) { alert("Erro ao cadastrar: " + (e?.message ?? e)); }
+    finally { setSalvandoTpl(false); }
   }
 
   // resposta livre inline no card (só coluna Negociação — dentro da janela de 24h)
@@ -572,6 +604,18 @@ export default function Page() {
   useEffect(() => {
     if (sessao?.role !== "admin") return;
     fetch("/api/meta").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setMetaAtual(Number(j.meta ?? 0) || 0); }).catch(() => {});
+  }, [sessao]);
+
+  // carrega os templates disponíveis e restaura o "padrão do momento" do navegador
+  useEffect(() => {
+    if (!sessao) return;
+    fetch("/api/templates").then((r) => (r.ok ? r.json() : null)).then((j) => {
+      if (!j?.templates) return;
+      setTemplates(j.templates);
+      const saved = Number(localStorage.getItem("crm_template_padrao") || "");
+      const valido = j.templates.some((t: any) => t.id === saved);
+      setTemplatePadraoId(valido ? saved : (j.templates[0]?.id ?? null));
+    }).catch(() => {});
   }, [sessao]);
 
   // relógio vivo só enquanto um run está rodando, pra mostrar "rodando há 0:47"
@@ -1399,9 +1443,51 @@ export default function Page() {
               <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
               <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
             </div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap" }}>
-              <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos</span>
-              <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
+            <div style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                onClick={() => setTplMenuAberto((v) => !v)}
+                title="Escolher o template padrão que o botão dos cards envia"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", outline: "none" }}
+              >
+                <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos</span>
+                <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
+                <span style={{ fontSize: 10, color: "#9c1f47", opacity: 0.7 }}>▾</span>
+              </button>
+              {tplMenuAberto && (
+                <>
+                  <div onClick={() => { setTplMenuAberto(false); setAddTplAberto(false); }} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: 250, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
+                    <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "9px 12px 5px" }}>Template padrão do botão do card</div>
+                    {templates.map((t) => {
+                      const ativo = t.id === templatePadraoId;
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => { escolherTemplate(t.id); setTplMenuAberto(false); }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: ativo ? "#f8e6ec" : "transparent", border: "none", padding: "8px 12px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: "#9c1f47", cursor: "pointer" }}
+                        >
+                          {t.nome}
+                          {!t.rd_template_id && <span style={{ fontSize: 10, color: RD.grayLight, fontWeight: 600 }}>(padrão)</span>}
+                          {ativo && <span style={{ marginLeft: "auto", fontSize: 11 }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                    {templates.length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: RD.grayLight }}>Nenhum template cadastrado.</div>}
+                    {sessao.role === "admin" && (addTplAberto ? (
+                      <div style={{ borderTop: `1px solid ${RD.border}`, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                        <input autoFocus value={novoTplNome} onChange={(e) => setNovoTplNome(e.target.value)} placeholder="Nome do template" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
+                        <input value={novoTplRd} onChange={(e) => setNovoTplRd(e.target.value)} placeholder="ID do template no RD (opcional)" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                          <button onClick={() => { setAddTplAberto(false); setNovoTplNome(""); setNovoTplRd(""); }} style={{ fontSize: 12, padding: "5px 10px", background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 6, color: RD.gray, cursor: "pointer" }}>Cancelar</button>
+                          <button onClick={salvarTemplate} disabled={salvandoTpl || !novoTplNome.trim()} style={{ fontSize: 12, fontWeight: 700, padding: "5px 12px", background: RD.wine, border: "none", borderRadius: 6, color: "#fff", cursor: salvandoTpl ? "wait" : "pointer" }}>{salvandoTpl ? "…" : "Salvar"}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => setAddTplAberto(true)} style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left", background: "transparent", border: "none", borderTop: `1px solid ${RD.border}`, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: RD.wine, cursor: "pointer" }}>+ Adicionar template</button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
             <div
               title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
@@ -1949,7 +2035,10 @@ export default function Page() {
                   </div>
                   <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Template</label>
                   <select value={massaTemplate} onChange={(e) => setMassaTemplate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", margin: "6px 0 14px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}>
-                    <option value="">Mensagem de recontato (padrão)</option>
+                    {templates.length === 0 && <option value="">Mensagem de recontato (padrão)</option>}
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.rd_template_id ?? ""}>{t.nome}{!t.rd_template_id ? " (padrão)" : ""}</option>
+                    ))}
                   </select>
                   <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Quantidade</label>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 12px" }}>
