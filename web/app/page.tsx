@@ -2000,13 +2000,24 @@ export default function Page() {
         const zpend = (pendentes[zc.cliente_id] ?? []).filter((p) => !zmsgs.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim()));
         const zall = [...zmsgs, ...zpend];
         const zid = ehProspeccao(zc) ? (zc.rd_cliente_id ?? null) : zc.cliente_id;
+        const zcol = COLUNAS.find((k) => k.key === zc.etapa);
+        const zcodcli = codcliDe(zc);
+        const zciclo = zc.ciclo?.tipo && CICLO_LABEL[zc.ciclo.tipo] ? CICLO_LABEL[zc.ciclo.tipo] : null;
         return (
           <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", maxHeight: "74vh" }}>
-            <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: `1px solid ${RD.border}` }}>
-              <span style={{ width: 12, height: 12, borderRadius: 3, background: RD.wine, flexShrink: 0 }} />
-              <span style={{ fontSize: 15, fontWeight: 800, color: RD.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</span>
-              <span style={{ fontSize: 11.5, color: RD.grayLight, whiteSpace: "nowrap" }}>· {cap(zc.vendedor)}</span>
-              <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Fechar" style={{ marginLeft: "auto", background: "transparent", border: "none", color: RD.gray, fontSize: 20, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+            <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", padding: "10px 14px 11px", borderBottom: `1px solid ${RD.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, background: zcol?.cor ?? RD.wine, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: RD.gray, fontWeight: 600 }}>{zcol?.status ?? ""}</span>
+                {zcodcli != null && (
+                  <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
+                )}
+                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ marginLeft: "auto", width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: RD.navy, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</div>
+              {zciclo && (
+                <span style={{ display: "inline-flex", alignItems: "center", marginTop: 5, background: zciclo.bg, color: zciclo.cor, border: `1px solid ${zciclo.cor}44`, borderRadius: 6, padding: "1px 8px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}>{zciclo.label}{zc.ciclo?.acao === "LIGAR HOJE" ? " ·hoje" : ""}</span>
+              )}
             </div>
             <div ref={zoomScrollRef} style={{ overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 7, background: "#fbfafb" }}>
               {zoomLoading && zall.length === 0 ? (
@@ -2025,18 +2036,29 @@ export default function Page() {
                 );
               })}
             </div>
-            <div style={{ borderTop: `1px solid ${RD.border}`, padding: 12, display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ borderTop: `1px solid ${RD.border}`, padding: "8px 14px 0", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
+              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor] ?? CoresVendedor[zc.vendedor] ?? RD.grayLight }} />
+              {cap(zc.vendedor)}<span style={{ color: RD.grayLight, fontWeight: 400 }}> · {tempoRelativo(maisRecenteISO(zc.ultima_atividade, disparos[zc.cliente_id]))}</span>
+            </div>
+            <div style={{ padding: "8px 12px 12px", display: "flex", gap: 6, alignItems: "center" }}>
               <input
                 value={respostaTexto[zc.cliente_id] ?? ""}
                 onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
-                placeholder="Responder (mensagem livre — janela de 24h)…"
+                placeholder="Responder (msg livre, 24h)…"
                 disabled={enviandoResposta === zc.cliente_id}
-                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "9px 12px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
+                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
               />
-              <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h do WhatsApp)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 16px", height: 36, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
+              <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
               {zid && (
-                <button onClick={() => recontatar(zid, zc.cliente)} disabled={enviando === zid} title="Enviar template (usa o template padrão; serve fora da janela de 24h)" style={{ cursor: enviando === zid ? "wait" : "pointer", background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 8, padding: "0 12px", height: 36, fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" }}>{enviando === zid ? "…" : "TEMPLATE"}</button>
+                <>
+                  {templates.length > 1 && (
+                    <select value={templatePadraoId ?? ""} onChange={(e) => escolherTemplate(Number(e.target.value))} title="Escolher o template a enviar" style={{ fontSize: 10.5, fontWeight: 700, color: "#9c1f47", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 7, padding: "0 4px", height: 34, outline: "none", maxWidth: 92, cursor: "pointer" }}>
+                      {templates.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                    </select>
+                  )}
+                  <button onClick={() => recontatar(zid!, zc.cliente)} disabled={enviando === zid} title="Enviar template (usa o selecionado; serve fora das 24h)" style={{ cursor: enviando === zid ? "wait" : "pointer", background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 7, padding: "0 9px", height: 34, fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap" }}>{enviando === zid ? "…" : "Template"}</button>
+                </>
               )}
             </div>
           </div>
