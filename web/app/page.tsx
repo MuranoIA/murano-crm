@@ -941,9 +941,9 @@ export default function Page() {
                     <div style={{ position: "relative", display: "inline-flex" }}>
                       <button
                         onClick={() => setRankingMenuAberto((v) => !v)}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", whiteSpace: "nowrap" }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}
                       >
-                        Ranking<span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+                        Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>▾</span>
                       </button>
                       {rankingMenuAberto && (
                         <>
