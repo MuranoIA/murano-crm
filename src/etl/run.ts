@@ -179,7 +179,7 @@ async function checarMudaram(candidatos: Candidato[], conc = 1): Promise<{ id: s
       checked++;
       if (checked % 150 === 0) console.error(`[checar] ${checked}/${candidatos.length} (${mudaram.length} c/ msg nova)`);
       if (!c.telefone) { semTel++; mudaram.push({ id: c.id, carteira: c.carteira }); continue; } // sem tel -> fetch p/ garantir
-      await sleep(150);
+      await sleep(Number(process.env.ETL_SCAN_SLEEP ?? 150)); // throttle configurável (reserva cota do RD p/ o real-time do board)
       try {
         const ex: any = await withRetry(() => rd.get(`/v2/contacts/${c.telefone}/exists`));
         const lastRd = ex?.data?.last_message_data?.created_at;
