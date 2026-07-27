@@ -536,27 +536,39 @@ async function backfillMensagens() {
   await loadMensagens(lote);
 }
 
-// MODO FAST (quase tempo real): varredura BARATA (/exists) só das conversas QUENTES —
-// ativas nas últimas ETL_FAST_HORAS (padrão 18h, ~130-150) + disparos do último dia —
-// e fetch só das que mudaram. NÃO chama reports/vendedores (descoberta de contato novo
-// fica pro incremental). Feito pra rodar em loop (ETL_FAST_LOOP_MIN) dando ~1-2 min de
-// frescor sem webhook. Não decripta na varredura; só nas poucas que têm msg nova.
-async function fastSweep(): Promise<void> {
+// MODO FAST (quase tempo real): varredura BARATA (/exists) das conversas QUENTES, com
+// PRIORIDADE POR ATIVIDADE RECENTE (quão pouco tempo faz desde a última msg = ultima_atividade).
+// A cota do RD é escassa, então concentramos as checagens em quem tem msg provável AGORA:
+//   - tier A (última msg <= ETL_FAST_A_MIN min, padrão 30): checado em TODO sweep -> ~1-2 min de frescor;
+//   - tier B (<= ETL_FAST_B_HORAS h, padrão 3): a cada ETL_FAST_B_EVERY sweeps (padrão 2);
+//   - tier C (o resto da janela, até ETL_FAST_HORAS): a cada ETL_FAST_C_EVERY sweeps (padrão 4).
+// O 1º sweep de cada run é COMPLETO (baseline). Disparos recentes sempre entram (backup do item 3,
+// pois o /exists não vê template de saída). NÃO chama reports/vendedores (contato novo = incremental).
+async function fastSweep(n: number): Promise<void> {
   const horas = Number(process.env.ETL_FAST_HORAS ?? 18);
-  const candidatos = await clientesParaChecar(horas / 24);
+  const aMin = Number(process.env.ETL_FAST_A_MIN ?? 30);
+  const bHoras = Number(process.env.ETL_FAST_B_HORAS ?? 3);
+  const bEvery = Math.max(1, Number(process.env.ETL_FAST_B_EVERY ?? 2));
+  const cEvery = Math.max(1, Number(process.env.ETL_FAST_C_EVERY ?? 4));
+  const todos = await clientesParaChecar(horas / 24);
+  const agora = Date.now();
+  const idadeMin = (c: Candidato) => c.ultima_atividade ? (agora - new Date(c.ultima_atividade).getTime()) / 60000 : Infinity;
+  // 1º sweep = completo; depois, cada tier na sua cadência (por atividade recente)
+  let nA = 0, nB = 0, nC = 0;
+  const candidatos = todos.filter((c) => {
+    const min = idadeMin(c);
+    if (min <= aMin) { nA++; return true; }                                 // tier A: todo sweep
+    if (min <= bHoras * 60) { nB++; return n === 1 || n % bEvery === 0; }    // tier B
+    nC++; return n === 1 || n % cEvery === 0;                                // tier C
+  });
   const mudaram = await checarMudaram(candidatos, Number(process.env.ETL_FAST_CONC ?? 4));
   const alvos = new Map<string, { id: string; carteira: string }>();
   for (const m of mudaram) alvos.set(m.id, m);
-  // só disparos MUITO recentes (padrão 5 min): o /exists não detecta template de saída,
-  // então busca o recém-disparado p/ ele aparecer. Board já cobre via /api/sync-cliente;
-  // isto é backup (e evita re-buscar centenas de disparos antigos todo sweep).
-  // janela de minutos: tudo cai em "frescos" (frescoH alto) — mantém o comportamento de
-  // buscar direto, sem checagem barata, que aqui não ajudaria (o /exists não vê template).
   const { frescos: disp } = await clientesComDisparoRecente(
     Number(process.env.ETL_FAST_DISPARO_MIN ?? 5) / 1440, 24,
   );
   for (const d of disp) if (!alvos.has(d.id)) alvos.set(d.id, d);
-  console.error(`[fast] ${candidatos.length} checados (${horas}h) | ${mudaram.length} c/ msg nova | ${disp.length} disparos recentes | fetch ${alvos.size}`);
+  console.error(`[fast#${n}] quentes ${todos.length} (A${nA}/B${nB}/C${nC}) -> checados ${candidatos.length} | ${mudaram.length} c/ msg nova | ${disp.length} disparos | fetch ${alvos.size}`);
   if (alvos.size) await loadMensagens([...alvos.values()]);
 }
 
@@ -574,7 +586,7 @@ async function main() {
     let n = 0;
     do {
       n++;
-      try { await fastSweep(); } catch (e: any) { console.error(`[fast] erro no sweep #${n}:`, e?.message ?? e); }
+      try { await fastSweep(n); } catch (e: any) { console.error(`[fast] erro no sweep #${n}:`, e?.message ?? e); }
       if (loopMin <= 0 || Date.now() >= until) break;
       await sleep(sleepS * 1000);
     } while (Date.now() < until);
