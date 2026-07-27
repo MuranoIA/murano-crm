@@ -46,8 +46,11 @@ export default function OrcamentoFlutuante({ onClose }: { onClose: () => void })
   const totalItens = useMemo(() => linhas.reduce((s, l) => s + l.qtd, 0), [linhas]);
   const textoOrcamento = useMemo(() => {
     if (!linhas.length) return "";
-    const itens = linhas.map((l, i) => `${i + 1}. ${l.produto}\n   ${l.qtd} x ${moeda(l.precoSel)}${l.campanhaSel ? ` (campanha ${l.campanhaSel})` : ""} = ${moeda(l.precoSel * l.qtd)}`).join("\n");
-    return `*Orçamento — Murano Professional*\n\n${itens}\n\n*Total: ${moeda(total)}*  (${totalItens} un.)`;
+    const itens = linhas.map((l) => {
+      const camp = l.campanhaSel ? ` (campanha ${l.campanhaSel})` : "";
+      return `*->* ${l.produto}\n          ${l.qtd} x ${moeda(l.precoSel)}${camp} = *${moeda(l.precoSel * l.qtd)}*`;
+    }).join("\n\n");
+    return `*Orçamento — Murano Professional*\n\n${itens}\n\n*TOTAL: ${moeda(total)}*  (${totalItens} itens)`;
   }, [linhas, total, totalItens]);
 
   const adicionar = (p: Prod) => setLinhas((prev) => {
