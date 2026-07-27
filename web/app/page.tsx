@@ -260,6 +260,8 @@ export default function Page() {
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
   const [metaValor, setMetaValor] = useState("");
   const [metaSalvando, setMetaSalvando] = useState(false);
+  const [verAntModal, setVerAntModal] = useState(false);
+  const [dataAnterior, setDataAnterior] = useState("");
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -398,8 +400,9 @@ export default function Page() {
       setMetaValor(m ? String(m) : "");
     } catch { setMetaAtual(null); }
   }
-  async function salvarMeta() {
-    const m = Math.max(0, Math.round(Number(metaValor.replace(/[^\d]/g, "")) || 0));
+  async function salvarMeta(valorFixo?: number) {
+    // valorFixo=0 -> "none" (oculta o quadro da meta no Ranking)
+    const m = valorFixo != null ? Math.max(0, Math.round(valorFixo)) : Math.max(0, Math.round(Number(metaValor.replace(/[^\d]/g, "")) || 0));
     setMetaSalvando(true);
     try {
       const r = await fetch("/api/meta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ meta: m }) });
@@ -412,6 +415,13 @@ export default function Page() {
     } finally {
       setMetaSalvando(false);
     }
+  }
+
+  // abre a aba do Ranking (reusa a MESMA aba pelo nome "ranking_murano"; se já aberta, só
+  // re-renderiza com a nova config). dia = 'AAAA-MM-DD' abre um dia passado; sem dia = ao vivo.
+  const RANKING_URL = "https://murano-bi-ranking-vendas.netlify.app/";
+  function abrirRanking(dia?: string) {
+    window.open(RANKING_URL + (dia ? "?dia=" + encodeURIComponent(dia) : ""), "ranking_murano");
   }
 
   // resposta livre inline no card (só coluna Negociação — dentro da janela de 24h)
@@ -926,12 +936,6 @@ export default function Page() {
                   // Dropdown "Ranking": (1) Ver anteriores -> calendário -> abre o ranking naquele dia;
                   // (2) Meta do dia -> caixinha; (3) Ranking -> abre a aba ao vivo. Sempre reusa a MESMA
                   // aba (window name "ranking_murano"): se já estiver aberta, só re-renderiza com a nova config.
-                  const RANKING_URL = "https://murano-bi-ranking-vendas.netlify.app/";
-                  const hojeISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-                  const abrirRanking = (dia?: string) => {
-                    window.open(RANKING_URL + (dia ? "?dia=" + encodeURIComponent(dia) : ""), "ranking_murano");
-                    setRankingMenuAberto(false);
-                  };
                   const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer" };
                   return (
                     <div style={{ position: "relative", display: "inline-flex" }}>
@@ -945,20 +949,13 @@ export default function Page() {
                         <>
                           <div onClick={() => setRankingMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
                           <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 101, minWidth: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
-                            <label style={{ ...itemStyle, cursor: "pointer", borderBottom: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
+                            <button onClick={() => { setRankingMenuAberto(false); setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
                               📅 Ver anteriores
-                              <input
-                                type="date"
-                                max={hojeISO}
-                                onChange={(e) => { if (e.target.value) abrirRanking(e.target.value); }}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600, color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 6, padding: "3px 6px", cursor: "pointer", outline: "none" }}
-                              />
-                            </label>
+                            </button>
                             <button onClick={() => { setRankingMenuAberto(false); abrirMeta(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
                             </button>
-                            <button onClick={() => abrirRanking()} style={itemStyle}>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={itemStyle}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
                             </button>
                           </div>
@@ -1833,6 +1830,31 @@ export default function Page() {
           {tip.text}
         </div>
       )}
+      {verAntModal && (
+        <div
+          onClick={() => setVerAntModal(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 340, background: RD.surface, borderRadius: 14, padding: 22, boxShadow: "0 20px 60px rgba(16,32,64,.3)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: RD.wine, marginBottom: 4 }}>📅 Ranking de um dia passado</div>
+            <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 16 }}>Escolha a data e abra o ranking daquele dia (estado de fim de dia). Histórico a partir de 25/07/2026.</div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: RD.navy }}>Data</label>
+            <input
+              autoFocus
+              type="date"
+              value={dataAnterior}
+              max={new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10)}
+              onChange={(e) => setDataAnterior(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && dataAnterior) { abrirRanking(dataAnterior); setVerAntModal(false); } }}
+              style={{ width: "100%", boxSizing: "border-box", marginTop: 6, padding: "10px 12px", fontSize: 15, fontWeight: 700, color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button onClick={() => setVerAntModal(false)} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => { if (dataAnterior) { abrirRanking(dataAnterior); setVerAntModal(false); } }} disabled={!dataAnterior} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: dataAnterior ? RD.wine : RD.grayLight, border: "none", borderRadius: 8, cursor: dataAnterior ? "pointer" : "not-allowed" }}>Abrir ranking ↗</button>
+            </div>
+          </div>
+        </div>
+      )}
       {metaModal && (
         <div
           onClick={() => !metaSalvando && setMetaModal(false)}
@@ -1855,9 +1877,10 @@ export default function Page() {
             <div style={{ fontSize: 12, color: RD.grayLight, marginTop: 6 }}>
               {metaValor ? `= R$ ${Number(metaValor).toLocaleString("pt-BR")}` : (metaAtual != null ? (metaAtual ? `Atual: R$ ${metaAtual.toLocaleString("pt-BR")}` : "Sem meta definida (barra oculta no Ranking)") : "carregando…")}
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
-              <button onClick={() => setMetaModal(false)} disabled={metaSalvando} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
-              <button onClick={salvarMeta} disabled={metaSalvando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>{metaSalvando ? "Salvando…" : "Salvar meta"}</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <button onClick={() => salvarMeta(0)} disabled={metaSalvando} title="Nenhuma meta — o quadro da meta some do Ranking" style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>Sem meta (none)</button>
+              <button onClick={() => setMetaModal(false)} disabled={metaSalvando} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => salvarMeta()} disabled={metaSalvando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>{metaSalvando ? "Salvando…" : "Salvar meta"}</button>
             </div>
           </div>
         </div>
