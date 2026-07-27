@@ -636,6 +636,32 @@ export default function Page() {
     return () => clearInterval(t);
   }, [sessao]);
 
+  // AUTO-SYNC "quase tempo real" da coluna NEGOCIAÇÃO (~10s): puxa do RD os cards de negociação
+  // (como se alguém clicasse no ↻ a cada 10s). Poucos cards; server-side em lote. Guarda os ids
+  // num ref pra não recriar o timer a cada load (o `cards` muda a cada 5s).
+  const negocIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    negocIdsRef.current = cards
+      .filter((c) => c.etapa === "negociacao" && !String(c.cliente_id).includes(":"))
+      .map((c) => c.cliente_id);
+  }, [cards]);
+  useEffect(() => {
+    if (!sessao) return;
+    let rodando = false;
+    const tick = async () => {
+      if (rodando || !negocIdsRef.current.length) return;
+      rodando = true;
+      try {
+        const r = await fetch("/api/negociacao-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_ids: negocIdsRef.current }) });
+        const j = await r.json().catch(() => ({}));
+        if (j?.atualizados?.length) load(); // mostra na hora o que chegou (o poll de 5s também cobre)
+      } catch { /* rede: tenta no próximo tick */ }
+      finally { rodando = false; }
+    };
+    const t = setInterval(tick, 10000);
+    return () => clearInterval(t);
+  }, [sessao]);
+
   // lista de produtos p/ o filtro (busca uma vez; ~415 itens)
   useEffect(() => {
     if (!sessao) return;
