@@ -1014,7 +1014,7 @@ export default function Page() {
                   disabled={pausandoSync}
                   style={{ position: "relative", zIndex: 1, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, background: "transparent", border: "none", padding: 0, cursor: pausandoSync ? "wait" : "pointer", fontSize: 12, fontWeight: 700, color: syncPausado ? "#fff" : RD.gray }}
                 >
-                  {pausandoSync ? "…" : "⏸ Pause"}
+                  {pausandoSync ? "…" : "Pause"}
                 </button>
               </div>
               <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? "#b45309" : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
