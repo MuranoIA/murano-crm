@@ -253,6 +253,7 @@ export default function Page() {
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
+  const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -1062,27 +1063,49 @@ export default function Page() {
           </span>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "nowrap" }}>
-          <div style={{ position: "relative", display: "inline-flex" }}>
-          <select
-            value={periodoGlobal}
-            onChange={(e) => setPeriodoGlobal(e.target.value as Periodo)}
-            title="Aplica o período a todas as etapas de uma vez"
-            style={{
-              padding: "0 24px 0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, color: RD.gray,
-              background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
-              appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
-            }}
-          >
-            <option value="todos">Mensagens a partir de: todos</option>
-            <option value="hoje">Mensagens a partir de: hoje</option>
-            <option value="ontem">Mensagens a partir de: ontem</option>
-            <option value="semana">Mensagens a partir de: semana</option>
-            <option value="quinzena">Mensagens a partir de: quinzena</option>
-            <option value="mes">Mensagens a partir de: mês</option>
-            {periodoGlobal === "misto" && <option value="misto" disabled>Mensagens a partir de: misto</option>}
-          </select>
-            <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", fontSize: 10, opacity: 0.8, color: RD.gray, pointerEvents: "none" }}>▾</span>
-          </div>
+          {(() => {
+            // Dropdown de período: FECHADO mostra "Período: X" (curto); ABERTO tem o cabeçalho
+            // "Mensagens a partir de:" + as opções. (select nativo não separa fechado x aberto.)
+            const PERS: [string, string][] = [["todos", "todos"], ["hoje", "hoje"], ["ontem", "ontem"], ["semana", "semana"], ["quinzena", "quinzena"], ["mes", "mês"]];
+            const lbl = periodoGlobal === "misto" ? "misto" : (PERS.find(([k]) => k === periodoGlobal)?.[1] ?? periodoGlobal);
+            return (
+              <div style={{ position: "relative", display: "inline-flex" }}>
+                <button
+                  onClick={() => setPeriodoMenuAberto((v) => !v)}
+                  title="Filtra por quão recente é a última mensagem (aplica a todas as etapas)"
+                  style={{
+                    padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600, color: RD.gray,
+                    background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer", outline: "none",
+                    display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                  }}
+                >
+                  Período: {lbl}
+                  <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+                </button>
+                {periodoMenuAberto && (
+                  <>
+                    <div onClick={() => setPeriodoMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                    <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 101, minWidth: 210, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 6 }}>
+                      <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "4px 8px 6px" }}>Mensagens a partir de:</div>
+                      {PERS.map(([k, l]) => {
+                        const ativo = k === periodoGlobal;
+                        return (
+                          <button
+                            key={k}
+                            onClick={() => { setPeriodoGlobal(k as Periodo); setPeriodoMenuAberto(false); }}
+                            style={{ display: "flex", alignItems: "center", width: "100%", textAlign: "left", background: ativo ? RD.cyanSoft : "transparent", border: "none", padding: "7px 10px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: ativo ? "#0b7fb0" : RD.navy, cursor: "pointer", borderRadius: 7 }}
+                          >
+                            {l}
+                            {ativo && <span style={{ marginLeft: "auto", fontSize: 11, color: "#0b7fb0" }}>✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setProdPainel((v) => !v)}
@@ -1098,7 +1121,7 @@ export default function Page() {
             >
               {prodFiltro
                 ? `Produto: ${prodFiltro.produtos.length} · ${prodFiltro.total} clientes`
-                : "Filtrar por produto"}
+                : "Filtro por produto"}
               <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
             </button>
             {prodFiltro && (
@@ -1192,7 +1215,7 @@ export default function Page() {
                 display: "inline-flex", alignItems: "center", gap: 6,
               }}
             >
-              Ciclo de compra{cicloSel.length ? ` (${cicloTotal})` : ""}
+              Ciclo compra{cicloSel.length ? ` (${cicloTotal})` : ""}
               <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
             </button>
             {cicloSel.length > 0 && (
@@ -1304,7 +1327,7 @@ export default function Page() {
                 display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
               }}
             >
-              📣 Disparo em massa
+              📣 Disparo massa
             </button>
           )}
           <button
@@ -1318,9 +1341,9 @@ export default function Page() {
               display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
             }}
           >
-            {baixando ? "Gerando…" : "⬇ Relatório"}
+            {baixando ? "Gerando…" : "⬇ .xls"}
           </button>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "nowrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
               <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
               <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
