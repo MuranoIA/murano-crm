@@ -739,7 +739,7 @@ export default function Page() {
     return out.sort((a, b) => b.score - a.score);
   }, [visiveis, disparos]);
   const massaSel = useMemo(() => massaElegiveis.slice(0, massaQtd), [massaElegiveis, massaQtd]);
-  const CUSTO_TEMPLATE = 4.30; // R$ por template disparado
+  const CUSTO_TEMPLATE = 0.43; // R$ por template disparado
   const massaCusto = massaSel.length * CUSTO_TEMPLATE;
   // descrição detalhada dos filtros ativos (pro modal explicar exatamente o que está aplicado)
   const filtrosAtivosTxt = useMemo(() => {
