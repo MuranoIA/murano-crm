@@ -478,15 +478,18 @@ export default function Page() {
     } catch { setZoomMsgs([]); }
     finally { setZoomLoading(false); }
   }
-  // atualiza SÓ esta conversa: puxa do RD as mensagens que faltam (item 3) e recarrega o histórico
+  // atualiza SÓ esta conversa: puxa do RD as mensagens que faltam (item 3) e recarrega o histórico.
+  // Mostra o resultado na tela (não precisa de DevTools pra diagnosticar).
   async function atualizarZoom() {
     if (!cardZoom || zoomSyncing) return;
     setZoomSyncing(true);
     try {
-      await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: cardZoom.cliente_id }) }).catch(() => {});
-      const j = await fetch(`/api/mensagens?cliente_id=${encodeURIComponent(cardZoom.cliente_id)}`).then((r) => (r.ok ? r.json() : null));
-      if (j?.mensagens) setZoomMsgs(j.mensagens);
-    } catch { /* ignora — refetch do banco já cobre */ }
+      const r = await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: cardZoom.cliente_id }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) alert("Não consegui puxar do RD (item 3): " + (j?.error ?? `HTTP ${r.status}`) + "\n\nEle recarrega o que já está no banco mesmo assim.");
+      const jm = await fetch(`/api/mensagens?cliente_id=${encodeURIComponent(cardZoom.cliente_id)}`).then((x) => (x.ok ? x.json() : null));
+      if (jm?.mensagens) setZoomMsgs(jm.mensagens);
+    } catch (e: any) { alert("Erro ao atualizar: " + (e?.message ?? e)); }
     finally { setZoomSyncing(false); }
   }
   const zoomOnDown = (e: { clientX: number; clientY: number }) => {
