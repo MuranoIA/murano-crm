@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import OrcamentoFlutuante from "./OrcamentoFlutuante";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -264,6 +265,7 @@ export default function Page() {
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
   const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
   const [rankingMenuAberto, setRankingMenuAberto] = useState(false);
+  const [orcamentoAberto, setOrcamentoAberto] = useState(false);
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -973,7 +975,7 @@ export default function Page() {
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
-            <a href="/orcamento" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</a>
+            <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <>
                 <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
@@ -1923,6 +1925,7 @@ export default function Page() {
           {tip.text}
         </div>
       )}
+      {orcamentoAberto && <OrcamentoFlutuante onClose={() => setOrcamentoAberto(false)} />}
       {verAntModal && (
         <div
           onClick={() => setVerAntModal(false)}
