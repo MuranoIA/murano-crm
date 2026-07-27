@@ -721,10 +721,21 @@ export default function Page() {
     });
   };
 
+  // busca por NOME ou TELEFONE (inclusive só os últimos 8 dígitos). Detecta sozinha: se o
+  // texto é só dígitos/símbolos de telefone -> casa por telefone; com letras -> por nome
+  // (e ainda tenta telefone/código, caso digite números no meio).
+  const matchBusca = (c: Card, q: string, qDig: string, soNum: boolean): boolean => {
+    const nome = (c.cliente ?? "").toLowerCase().includes(q);
+    const tel = qDig.length >= 4 && String(c.telefone ?? "").replace(/\D/g, "").includes(qDig);
+    return soNum ? tel : (nome || tel);
+  };
+
   const visiveis = useMemo(() => {
     let r = filtro === "todos" ? cards : cards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
-    if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
+    const qDig = busca.replace(/\D/g, "");
+    const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
+    if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
@@ -736,7 +747,9 @@ export default function Page() {
   const pedidoVisiveis = useMemo(() => {
     let r = filtro === "todos" ? pedidoCards : pedidoCards.filter((c) => c.vendedor === filtro);
     const q = busca.trim().toLowerCase();
-    if (q) r = r.filter((c) => (c.cliente ?? "").toLowerCase().includes(q));
+    const qDig = busca.replace(/\D/g, "");
+    const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
+    if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
@@ -1179,7 +1192,7 @@ export default function Page() {
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="🔍  Buscar negociação..."
+              placeholder="🔍  Buscar por nome ou telefone…"
               style={{
                 width: 240, padding: "8px 12px", fontSize: 13, color: RD.navy,
                 background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none",
@@ -1203,7 +1216,7 @@ export default function Page() {
             <input
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="🔍  Buscar..."
+              placeholder="🔍  Nome ou telefone…"
               style={{ width: 150, height: 30, boxSizing: "border-box", padding: "0 10px", fontSize: 12, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
             />
           )}
@@ -1988,12 +2001,12 @@ export default function Page() {
         const zall = [...zmsgs, ...zpend];
         const zid = ehProspeccao(zc) ? (zc.rd_cliente_id ?? null) : zc.cliente_id;
         return (
-          <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 660, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 14, boxShadow: "0 24px 70px rgba(16,32,64,.34)", display: "flex", flexDirection: "column", maxHeight: "82vh" }}>
-            <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: RD.wine, color: "#fff", borderRadius: "14px 14px 0 0" }}>
-              <span style={{ fontSize: 14, fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</span>
-              <span style={{ fontSize: 11, opacity: 0.75, whiteSpace: "nowrap" }}>· {cap(zc.vendedor)}</span>
-              <span style={{ fontSize: 10.5, opacity: 0.6 }}>arraste para mover</span>
-              <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Fechar" style={{ marginLeft: "auto", background: "transparent", border: "none", color: "#fff", fontSize: 20, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+          <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", maxHeight: "74vh" }}>
+            <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: `1px solid ${RD.border}` }}>
+              <span style={{ width: 12, height: 12, borderRadius: 3, background: RD.wine, flexShrink: 0 }} />
+              <span style={{ fontSize: 15, fontWeight: 800, color: RD.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</span>
+              <span style={{ fontSize: 11.5, color: RD.grayLight, whiteSpace: "nowrap" }}>· {cap(zc.vendedor)}</span>
+              <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Fechar" style={{ marginLeft: "auto", background: "transparent", border: "none", color: RD.gray, fontSize: 20, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
             </div>
             <div ref={zoomScrollRef} style={{ overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 7, background: "#fbfafb" }}>
               {zoomLoading && zall.length === 0 ? (

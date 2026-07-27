@@ -1,11 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { veTudo } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
 // Histórico recente de uma conversa (pro card ampliado). Últimas ~30 mensagens reais
-// (exclui eventos de sistema), em ordem cronológica. Vendedor só lê a própria carteira.
+// (exclui eventos de sistema), em ordem cronológica. NÃO escopa por carteira: mensagens
+// guardam a carteira de QUANDO foram enviadas (RCA anterior), então filtrar por ela corta
+// o histórico de clientes que trocaram de RCA. A lupa só aparece em cards do board do
+// usuário; qualquer sessão autenticada lê o histórico (RLS a tratar à parte).
 export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
@@ -16,13 +18,11 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "config ausente" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  let q = sb.from("mensagens")
-    .select("conteudo,enviada_por,tipo,criada_em,vendedor_carteira")
+  const { data, error } = await sb.from("mensagens")
+    .select("conteudo,enviada_por,tipo,criada_em")
     .eq("cliente_id", cliente_id)
     .order("criada_em", { ascending: false })
     .limit(60);
-  if (!veTudo(sessao)) q = q.eq("vendedor_carteira", sessao); // vendedor só a própria carteira
-  const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const mensagens = (data ?? [])
