@@ -48,7 +48,7 @@ export default function Orcamento() {
   const textoOrcamento = useMemo(() => {
     if (!linhas.length) return "";
     const itens = linhas.map((l) => `*${l.produto}*\n${l.qtd} x ${moeda(l.preco)} = *${moeda(l.preco * l.qtd)}*`).join("\n");
-    return `*Orçamento — Murano Professional*\n\n${itens}\n*TOTAL: ${moeda(total)}* (${totalItens} un.)`;
+    return `*Orçamento — Murano Professional*\n\n${itens}\n\n*TOTAL: ${moeda(total)}* (${totalItens} un.)`;
   }, [linhas, total, totalItens]);
 
   const copiar = async () => {
