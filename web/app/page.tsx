@@ -1041,15 +1041,19 @@ export default function Page() {
       <main style={{ padding: "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="🔍  Buscar negociação..."
-            style={{
-              width: 240, padding: "8px 12px", fontSize: 13, color: RD.navy,
-              background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none",
-            }}
-          />
+          {/* Vendedor: a busca desce pra linha dos filtros (compacta) e esta linha some,
+              deixando só o "na carteira" sozinho no topo. Admin/home mantêm a busca aqui. */}
+          {sessao.role !== "vendedor" && (
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="🔍  Buscar negociação..."
+              style={{
+                width: 240, padding: "8px 12px", fontSize: 13, color: RD.navy,
+                background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none",
+              }}
+            />
+          )}
           {/* filtro de vendedor: só faz sentido p/ quem vê mais de uma carteira (admin/home).
               Vendedor tem carteira única -> "Todos" + o próprio nome seria redundante. */}
           {sessao.role !== "vendedor" && (
@@ -1063,6 +1067,14 @@ export default function Page() {
           </span>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "nowrap" }}>
+          {sessao.role === "vendedor" && (
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="🔍  Buscar..."
+              style={{ width: 150, height: 30, boxSizing: "border-box", padding: "0 10px", fontSize: 12, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+            />
+          )}
           {(() => {
             // Dropdown de período: FECHADO mostra "Período: X" (curto); ABERTO tem o cabeçalho
             // "Mensagens a partir de:" + as opções. (select nativo não separa fechado x aberto.)
