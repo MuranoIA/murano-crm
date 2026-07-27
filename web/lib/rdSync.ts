@@ -78,8 +78,16 @@ async function fetchHistory(baseUrl: string, token: string, clienteId: string): 
   url.searchParams.set("page", "1");
   url.searchParams.set("limit", "50");
   const tokenLimpo = String(token ?? "").replace(/[^\x21-\x7E]/g, "");
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${tokenLimpo}`, Accept: "application/json" } });
-  const text = await r.text();
+  const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+  // retry em 429/5xx: o rate limit do RD é apertado e o ETL pode estar consumindo a cota
+  // no mesmo instante; a ação do usuário (↻ / item 3) não pode falhar por competição transitória.
+  let r: Response, text = "";
+  for (let tent = 0; ; tent++) {
+    r = await fetch(url, { headers: { Authorization: `Bearer ${tokenLimpo}`, Accept: "application/json" } });
+    text = await r.text();
+    if (r.ok || ![429, 500, 502, 503].includes(r.status) || tent >= 3) break;
+    await sleep(1500 * (tent + 1)); // 1.5s, 3s, 4.5s (cabe no maxDuration=30 da rota)
+  }
   if (!r.ok) throw new Error(`RD ${r.status} em /v2/messages/history: ${text.slice(0, 200)}`);
   const h: any = text ? JSON.parse(text) : {};
   if (typeof h?.messages !== "string" || h.messages.length === 0) return [];
