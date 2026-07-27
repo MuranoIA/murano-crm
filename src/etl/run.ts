@@ -95,7 +95,7 @@ async function clientesEmEscopoDoBanco(): Promise<{ id: string; carteira: string
 //       resposta do vendedor precisa ser detectada p/ limpar o alerta;
 //   (b) ativas nos últimos `dias` dias — conversas em andamento.
 // Conjunto pequeno e certeiro (~150-200), mantendo o run em ~2 min.
-type Candidato = { id: string; carteira: string; telefone: string | null; ultima_atividade: string | null };
+type Candidato = { id: string; carteira: string; telefone: string | null; ultima_atividade: string | null; etapa?: string | null };
 
 // ESTABILIDADE — orçamento rotativo.
 // A API do RD sustenta ~48 chamadas/min (medido 26/07 em 3 fases independentes do
@@ -126,7 +126,7 @@ async function clientesParaChecar(dias: number): Promise<Candidato[]> {
     // (a última msg do cliente entra em ultima_atividade). NÃO pega aguardando antigo,
     // senão o scan explode com todo cliente-por-último de qualquer idade.
     const cutoff = new Date(Date.now() - Math.max(0.05, dias) * 86400000).toISOString(); // aceita janela fracionada (horas) p/ o modo fast
-    const q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade")
+    const q = sb.from("vw_funil").select("cliente_id,vendedor,telefone,ultima_atividade,etapa")
       .gte("ultima_atividade", cutoff);
     const { data, error } = await q.range(from, from + page - 1);
     if (error) throw new Error(`select vw_funil checar: ${error.message}`);
@@ -135,11 +135,28 @@ async function clientesParaChecar(dias: number): Promise<Candidato[]> {
       const cart = String(r.vendedor ?? "");
       // ignora cards sintéticos (venda:/winthor:) — só conversas reais têm histórico
       if (r.cliente_id && !String(r.cliente_id).includes(":") && TARGET_WALLETS.has(cart)) {
-        out.push({ id: r.cliente_id, carteira: cart, telefone: r.telefone ?? null, ultima_atividade: r.ultima_atividade ?? null });
+        out.push({ id: r.cliente_id, carteira: cart, telefone: r.telefone ?? null, ultima_atividade: r.ultima_atividade ?? null, etapa: r.etapa ?? null });
       }
     }
     if (rows.length < page) break;
     from += page;
+  }
+  return out;
+}
+
+// Todos os cards da coluna NEGOCIAÇÃO (conversas ativas na janela de 24h). São poucos (~dezenas);
+// no fast eles entram SEMPRE no tier A (checados todo sweep), mesmo que caiam fora da janela do
+// scan rápido — assim mensagem nova do cliente numa negociação aparece em ~1-2 min sem clicar em ↻.
+async function clientesNegociacao(): Promise<Candidato[]> {
+  const { data, error } = await sb.from("vw_funil")
+    .select("cliente_id,vendedor,telefone,ultima_atividade,etapa").eq("etapa", "negociacao").range(0, 999);
+  if (error) throw new Error(`select vw_funil negociacao: ${error.message}`);
+  const out: Candidato[] = [];
+  for (const r of data ?? []) {
+    const cart = String(r.vendedor ?? "");
+    if (r.cliente_id && !String(r.cliente_id).includes(":") && TARGET_WALLETS.has(cart)) {
+      out.push({ id: r.cliente_id, carteira: cart, telefone: r.telefone ?? null, ultima_atividade: r.ultima_atividade ?? null, etapa: "negociacao" });
+    }
   }
   return out;
 }
@@ -551,11 +568,17 @@ async function fastSweep(n: number): Promise<void> {
   const bEvery = Math.max(1, Number(process.env.ETL_FAST_B_EVERY ?? 2));
   const cEvery = Math.max(1, Number(process.env.ETL_FAST_C_EVERY ?? 4));
   const todos = await clientesParaChecar(horas / 24);
+  const negoc = await clientesNegociacao(); // conversas ativas (janela 24h) — sempre no tier A
+  const porId = new Map<string, Candidato>();
+  for (const c of todos) porId.set(c.id, c);
+  for (const c of negoc) porId.set(c.id, c); // garante etapa=negociacao (mesmo fora da janela do scan)
+  const universo = [...porId.values()];
   const agora = Date.now();
   const idadeMin = (c: Candidato) => c.ultima_atividade ? (agora - new Date(c.ultima_atividade).getTime()) / 60000 : Infinity;
-  // 1º sweep = completo; depois, cada tier na sua cadência (por atividade recente)
+  // negociação SEMPRE todo sweep; 1º sweep completo; depois cada tier na sua cadência (por recência)
   let nA = 0, nB = 0, nC = 0;
-  const candidatos = todos.filter((c) => {
+  const candidatos = universo.filter((c) => {
+    if (c.etapa === "negociacao") { nA++; return true; }                    // negociação: todo sweep
     const min = idadeMin(c);
     if (min <= aMin) { nA++; return true; }                                 // tier A: todo sweep
     if (min <= bHoras * 60) { nB++; return n === 1 || n % bEvery === 0; }    // tier B
@@ -568,7 +591,7 @@ async function fastSweep(n: number): Promise<void> {
     Number(process.env.ETL_FAST_DISPARO_MIN ?? 5) / 1440, 24,
   );
   for (const d of disp) if (!alvos.has(d.id)) alvos.set(d.id, d);
-  console.error(`[fast#${n}] quentes ${todos.length} (A${nA}/B${nB}/C${nC}) -> checados ${candidatos.length} | ${mudaram.length} c/ msg nova | ${disp.length} disparos | fetch ${alvos.size}`);
+  console.error(`[fast#${n}] quentes ${universo.length} (A${nA}/B${nB}/C${nC}, negoc ${negoc.length}) -> checados ${candidatos.length} | ${mudaram.length} c/ msg nova | ${disp.length} disparos | fetch ${alvos.size}`);
   if (alvos.size) await loadMensagens([...alvos.values()]);
 }
 
