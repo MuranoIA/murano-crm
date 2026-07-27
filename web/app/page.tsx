@@ -175,6 +175,11 @@ function diasInativo(iso: string | null): number {
   if (!iso) return Infinity; // nunca contatado — "mais parado que qualquer outro"
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
+// janela de 24h do WhatsApp: passou disso sem interação, a conversa "fecha" e só aceita template
+function dentro24h(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  return Date.now() - new Date(iso).getTime() < 24 * 3600 * 1000;
+}
 function ehHoje(iso: string | null): boolean {
   if (!iso) return false;
   const hoje = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1750,7 +1755,7 @@ export default function Page() {
                       const ultimoDisparo = ((col.key === "tentativa_contato" || col.key === "ociosos" || prospeccao) && idEnvio) ? disparos[idEnvio] : undefined;
                       // input de msg livre (24h): negociação sempre; pedido emitido só quando tem conversa real
                       const temConversaReal = !String(c.cliente_id).includes(":");
-                      const mostraInput = col.key === "negociacao" || (col.key === "pedido_emitido" && temConversaReal);
+                      const mostraInput = col.key === "negociacao" || (col.key === "pedido_emitido" && temConversaReal && dentro24h(c.ultima_atividade));
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
                       const disparoRecente = !!ultimoDisparo && diasInativo(ultimoDisparo) < DIAS_RECONTATO;
@@ -2020,7 +2025,7 @@ export default function Page() {
         const zciclo = zc.ciclo?.tipo && CICLO_LABEL[zc.ciclo.tipo] ? CICLO_LABEL[zc.ciclo.tipo] : null;
         // msg livre só onde a janela de 24h vale (negociação / pedido com conversa). Prospecção,
         // ociosos e tentativa estão inativos >24h -> só template, sem input.
-        const zMostraInput = zc.etapa === "negociacao" || (zc.etapa === "pedido_emitido" && !String(zc.cliente_id).includes(":"));
+        const zMostraInput = zc.etapa === "negociacao" || (zc.etapa === "pedido_emitido" && !String(zc.cliente_id).includes(":") && dentro24h(zc.ultima_atividade));
         // mesma lógica do card p/ a pill TEMPLATE/AGUARDANDO no topo à direita
         const zprospec = ehProspeccao(zc);
         const zRecontactar = zprospec ? !!zc.rd_cliente_id : ((zc.etapa === "tentativa_contato" && diasInativo(zc.ultima_atividade) >= DIAS_RECONTATO) || zc.etapa === "ociosos");
