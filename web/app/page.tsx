@@ -646,9 +646,8 @@ export default function Page() {
       .map((c) => c.cliente_id);
   }, [cards]);
   useEffect(() => {
-    // só VENDEDOR (vê poucas negociações). Admin/home veem todas -> pesado na cota do RD;
-    // eles atualizam pelo ↻ do card ampliado.
-    if (sessao?.role !== "vendedor") return;
+    // vendedor E home têm auto-sync; só o ADMIN fica de fora (atualiza pelo ↻ do card ampliado).
+    if (!sessao || sessao.role === "admin") return;
     let rodando = false;
     const tick = async () => {
       if (rodando || !negocIdsRef.current.length) return;
