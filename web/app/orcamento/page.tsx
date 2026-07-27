@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 // Construtor de orçamento: busca produto -> preço de tabela + estoque (v2/WinThor via /api/orcamento),
 // escolhe quantidade, vê subtotal e total. Só leitura; nada é gravado.
@@ -19,6 +19,8 @@ export default function Orcamento() {
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [linhas, setLinhas] = useState<Linha[]>([]);
+  const [copiado, setCopiado] = useState(false);
+  const txtRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     fetch("/api/orcamento")
@@ -41,6 +43,25 @@ export default function Orcamento() {
 
   const total = useMemo(() => linhas.reduce((s, l) => s + l.preco * l.qtd, 0), [linhas]);
   const totalItens = useMemo(() => linhas.reduce((s, l) => s + l.qtd, 0), [linhas]);
+
+  // texto pronto p/ colar no chat do cliente (formatação amigável ao WhatsApp)
+  const textoOrcamento = useMemo(() => {
+    if (!linhas.length) return "";
+    const itens = linhas.map((l, i) => `${i + 1}. ${l.produto}\n   ${l.qtd} x ${moeda(l.preco)} = ${moeda(l.preco * l.qtd)}`).join("\n");
+    return `*Orçamento — Murano Professional*\n\n${itens}\n\n*Total: ${moeda(total)}*  (${totalItens} un.)`;
+  }, [linhas, total, totalItens]);
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(textoOrcamento);
+    } catch {
+      // fallback: seleciona o textarea e copia via execCommand
+      txtRef.current?.select();
+      try { document.execCommand("copy"); } catch { /* sem clipboard: usuário copia manual */ }
+    }
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 1800);
+  };
 
   const adicionar = (p: Prod) => {
     setLinhas((prev) => {
@@ -155,8 +176,27 @@ export default function Orcamento() {
             <b style={{ fontSize: 22, color: C.wine }}>{moeda(total)}</b>
           </div>
           {linhas.length > 0 && (
-            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setLinhas([])} style={{ fontSize: 12, fontWeight: 600, color: C.gray, background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>Limpar orçamento</button>
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>📋 Texto para enviar ao cliente</span>
+                <button
+                  onClick={copiar}
+                  style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: copiado ? C.green : C.cyan, border: "none", borderRadius: 8, padding: "6px 14px", cursor: "pointer" }}
+                >
+                  {copiado ? "Copiado ✓" : "Copiar"}
+                </button>
+              </div>
+              <textarea
+                ref={txtRef}
+                readOnly
+                value={textoOrcamento}
+                onFocus={(e) => e.currentTarget.select()}
+                rows={Math.min(14, linhas.length * 2 + 4)}
+                style={{ width: "100%", boxSizing: "border-box", fontSize: 12.5, lineHeight: 1.5, color: C.navy, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", outline: "none", resize: "vertical", fontFamily: "inherit" }}
+              />
+              <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => setLinhas([])} style={{ fontSize: 12, fontWeight: 600, color: C.gray, background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>Limpar orçamento</button>
+              </div>
             </div>
           )}
         </div>
