@@ -45,7 +45,7 @@ jobs:
         # Modo: manual usa o input; agendado usa full só no cron das 06:05, senão incremental.
         env:
           ETL_MODE: ${{ github.event.inputs.mode || (github.event.schedule == '5 6 * * *' && 'full' || 'incremental') }}
-          # janela da varredura barata (/exists), só conversas ATIVAS na janela. 5 dias
+          # janela da varredura barata (/exists), só conversas ATIVAS na janela. 3 dias
           # equilibra cobertura x tempo de execução (~1,2s/checagem). A cauda longa fica
           # com o full diário + os disparos recentes (abaixo).
           ETL_SCAN_DAYS: 3

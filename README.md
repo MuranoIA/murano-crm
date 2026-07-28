@@ -1,30 +1,54 @@
-# rd-conversas-etl
+# CRM de Conversas — Murano (`rd-conversas-etl`)
 
-ETL para extrair dados da API do RD Station Conversas (ex-Tallos) e, futuramente,
-carregar num banco Supabase para relatórios/BI.
+CRM de vendas em formato de **funil (kanban)** que puxa as conversas de WhatsApp do
+**RD Station Conversas** (ex-Tallos), atribui cada conversa a um vendedor (carteira),
+cruza com os dados de venda/ciclo do ERP **WinThor**, e permite ao time atender os
+clientes (templates + texto livre dentro da janela de 24 h), acompanhar o funil,
+gerar relatórios, montar orçamentos e ver um ranking de vendas ao vivo.
 
-## Fase 0 — Exploração
+> **App em produção:** https://funil-murano.vercel.app
+> **Banco/back-office:** Supabase `murano-conversas`
 
-Objetivo: descobrir o formato real dos dados antes de desenhar qualquer schema.
+---
+
+## Documentação
+
+A documentação oficial fica em [`docs/`](docs/). Comece pelo documento que corresponde ao seu papel:
+
+| Documento | Para quem | O que cobre |
+|---|---|---|
+| [01 — Arquitetura](docs/01-ARQUITETURA.md) | Devs, tech leads | Visão de alto nível: componentes, fluxo de dados, modelo de dados, integrações, decisões e segurança. |
+| [02 — Manual de Uso](docs/02-MANUAL-DE-USO.md) | Vendedores, gestão, admin | Como usar o sistema no dia a dia, por papel: board, colunas, atendimento, orçamento, relatório, ranking. |
+| [03 — Guia do Código](docs/03-GUIA-DO-CODIGO.md) | Dev júnior | Onde está cada coisa, o que cada arquivo/rota faz, como rastrear um fluxo, como rodar localmente. |
+| [04 — Playbook](docs/04-PLAYBOOK.md) | Quem opera/mantém | Deploy, sincronização, crons, rotação de chave, incidentes comuns e como resolver. |
+
+---
+
+## Stack em uma tela
+
+- **Front + back:** Next.js 14 (App Router) na **Vercel** — um board client-side (`web/app/page.tsx`) + ~18 rotas de API serverless (`web/app/api/*`).
+- **Banco + jobs:** **Supabase** `murano-conversas` — Postgres, Edge Functions e `pg_cron`.
+- **ETL:** job TypeScript (`src/etl/run.ts`) rodando em **GitHub Actions** (`etl.yml`, `etl-fast.yml`), disparado por `pg_cron`.
+- **Integração externa:** API do **RD Station Conversas** (`api.tallos.com.br`) — histórico de mensagens criptografado em **JWE** (`node-jose`).
+- **Dados de venda:** espelho do WinThor no projeto **`murano-clientes-v2`** (somente leitura), copiado para tabelas `wth_*` dentro do `murano-conversas`.
+
+## Rodando localmente
 
 ```bash
+# ETL (raiz do repo)
 npm install
-npm run explore
+npm run etl            # usa .env na raiz (nunca commitado)
+
+# Web (pasta web/)
+cd web
+npm install
+npm run dev            # http://localhost:3000
 ```
 
-O script `src/explore.ts`:
-- lê o token em `RD_CONVERSAS_TOKEN` (arquivo `.env`, nunca commitado);
-- consulta os principais endpoints (funcionários, relatórios do dia anterior,
-  analytics de atendimento, origem de contatos, e uma amostra de histórico de
-  mensagens);
-- imprime um resumo no console e salva o JSON bruto de cada resposta em
-  `data/<timestamp>/*.json` (pasta ignorada pelo git) para inspeção manual.
+Variáveis de ambiente e segredos: veja [docs/04-PLAYBOOK.md](docs/04-PLAYBOOK.md#variáveis-de-ambiente-e-segredos).
 
-## Fase 2 — ETL para Supabase (próxima etapa)
+## Regras de ouro (leia antes de mexer)
 
-Depois de mapear os campos reais retornados na Fase 0, o próximo passo é:
-- desenhar as tabelas no Supabase;
-- escrever o job de UPSERT idempotente por dia (`D-1`);
-- agendar via GitHub Actions (`.github/workflows/`).
-
-Ainda não implementado — aguardando resultado da exploração.
+1. **Escrita SOMENTE no `murano-conversas`.** O `murano-clientes-v2` é **read-only**: para usar um dado dele, espelhe para dentro do `murano-conversas` (padrão `wth_*`). Nunca escreva no v2.
+2. **Segredos ficam no servidor.** Token do RD, chave JWE e `service_role` nunca vão para o navegador.
+3. **A cota do RD é o recurso escasso** (~48 req/min). O ETL de fundo é _gentil_ de propósito para reservar cota ao tempo real e aos envios do usuário.
