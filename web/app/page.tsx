@@ -499,6 +499,19 @@ export default function Page() {
     } catch (e: any) { alert("Erro ao atualizar: " + (e?.message ?? e)); }
     finally { setZoomSyncing(false); }
   }
+  // ↻ direto no card (mesma função do card ampliado): puxa do RD as mensagens que faltam
+  // desta conversa e recarrega o board. Manual (1 clique = 1 fetch) e desabilitado enquanto
+  // roda, para não repetir chamada e não pesar na cota do RD.
+  const [syncingCards, setSyncingCards] = useState<Record<string, boolean>>({});
+  async function atualizarCard(clienteId: string) {
+    if (!clienteId || clienteId.includes(":") || syncingCards[clienteId]) return;
+    setSyncingCards((p) => ({ ...p, [clienteId]: true }));
+    try {
+      await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: clienteId }) });
+      await load();
+    } catch { /* silencioso: o load() abaixo já reflete o que houver no banco */ }
+    finally { setSyncingCards((p) => { const n = { ...p }; delete n[clienteId]; return n; }); }
+  }
   const zoomOnDown = (e: { clientX: number; clientY: number }) => {
     zoomDrag.current = { dx: e.clientX - zoomPos.x, dy: e.clientY - zoomPos.y };
     const move = (ev: MouseEvent) => {
@@ -1892,6 +1905,16 @@ export default function Page() {
                                 style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 10, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
                               >
                                 🔍
+                              </button>
+                            )}
+                            {temConversaReal && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); atualizarCard(c.cliente_id); }}
+                                disabled={!!syncingCards[c.cliente_id]}
+                                title="Atualizar esta conversa — puxa do RD as mensagens novas (igual ao ↻ do card ampliado)"
+                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #cfe3d6`, background: "#eef7f0", color: "#2e7d52", fontSize: 11, lineHeight: 1, cursor: syncingCards[c.cliente_id] ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                              >
+                                {syncingCards[c.cliente_id] ? "…" : "↻"}
                               </button>
                             )}
                             {alerta && (
