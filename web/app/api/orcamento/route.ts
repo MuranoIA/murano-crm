@@ -4,25 +4,23 @@ import { cookies } from "next/headers";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-// Produtos p/ o orçamento: nome + preço de tabela + estoque disponível. Fonte = v2 (WinThor),
-// LEITURA ANÔNIMA via PostgREST (nenhuma escrita no v2). Preço: vw_tabela_precos.preco_tabela;
-// estoque: estoque_winthor.qt_estoque_disponivel (filial 1). A chave anon do v2 vem de bi_config.
-const V2_URL = "https://jjvbmqycgjgkwidgcmif.supabase.co";
+// Produtos p/ o orçamento: nome + preço de tabela + estoque disponível + campanhas.
+// Fonte = ESPELHO dentro do murano-conversas (wth_catalogo / wth_estoque / wth_campanhas),
+// alimentado por pg_cron a partir do v2 (funções wth_sync_catalogo_http / _estoque_http /
+// _campanhas_http). A Vercel NÃO lê mais o v2 — só o murano-conversas via service_role.
+// Frescor: estoque a cada 30 min; catálogo/campanhas a cada 6 h.
 
-async function v2All(path: string, key: string): Promise<any[]> {
+async function allRows(sb: any, table: string, select: string): Promise<any[]> {
   const out: any[] = [];
-  let offset = 0;
+  let from = 0;
+  const page = 1000;
   while (true) {
-    const sep = path.includes("?") ? "&" : "?";
-    const r = await fetch(`${V2_URL}/rest/v1/${path}${sep}limit=1000&offset=${offset}`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      cache: "no-store",
-    });
-    if (!r.ok) throw new Error(`v2 ${path}: HTTP ${r.status}`);
-    const chunk = await r.json();
+    const { data, error } = await sb.from(table).select(select).range(from, from + page - 1);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    const chunk = data ?? [];
     out.push(...chunk);
-    if (!Array.isArray(chunk) || chunk.length < 1000) break;
-    offset += 1000;
+    if (chunk.length < page) break;
+    from += page;
   }
   return out;
 }
@@ -36,53 +34,31 @@ export async function GET() {
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
   try {
-    const { data: cfg, error: cfgErr } = await sb.from("bi_config").select("valor").eq("chave", "v2_anon_key").single();
-    if (cfgErr || !cfg?.valor) return Response.json({ error: "v2_anon_key ausente em bi_config" }, { status: 500 });
-    const v2Key = cfg.valor as string;
-
-    const [precos, estoque, ofertas, ofertaItens] = await Promise.all([
-      v2All("vw_tabela_precos?select=codprod,produto,marca,secao,preco_tabela&order=produto.asc", v2Key),
-      v2All("estoque_winthor?select=codigo_produto,qt_estoque_disponivel&codfilial=eq.1", v2Key),
-      // campanhas de desconto ATIVAS (preco_alvo = preço promocional)
-      v2All("ofertas?select=id,titulo,campanha,tipo,preco_alvo&ativo=eq.true", v2Key),
-      v2All("oferta_itens?select=codprod,oferta_id", v2Key),
+    const [catalogo, estoque, campanhas] = await Promise.all([
+      allRows(sb, "wth_catalogo", "codprod,produto,marca,secao,preco_tabela"),
+      allRows(sb, "wth_estoque", "codprod,qt_disponivel"),
+      allRows(sb, "wth_campanhas", "codprod,preco,nome"),
     ]);
 
     const estPorCod = new Map<number, number>();
     for (const e of estoque) {
-      const cod = Number(e.codigo_produto);
-      if (!isNaN(cod)) estPorCod.set(cod, Number(e.qt_estoque_disponivel ?? 0));
+      const cod = Number(e.codprod);
+      if (!isNaN(cod)) estPorCod.set(cod, Number(e.qt_disponivel ?? 0));
     }
 
-    // itens por oferta -> só ofertas INDIVIDUAIS de 1 item viram preço de campanha do produto
-    // (combos são pacotes, não desconto de item unitário).
-    const codsPorOferta = new Map<string, number[]>();
-    for (const it of ofertaItens) {
-      const arr = codsPorOferta.get(it.oferta_id) ?? [];
-      arr.push(Number(it.codprod));
-      codsPorOferta.set(it.oferta_id, arr);
-    }
+    // campanhas já vêm deduplicadas por (codprod, preco) do espelho; só agrupar por produto.
     const campPorCod = new Map<number, { nome: string; preco: number }[]>();
-    for (const o of ofertas as any[]) {
-      if (o.tipo === "combo") continue;
-      const cods = codsPorOferta.get(o.id) ?? [];
-      if (cods.length !== 1) continue;
-      const preco = Number(o.preco_alvo);
-      if (!isFinite(preco) || preco <= 0) continue;
-      const nome = String(o.campanha || o.titulo || "Campanha").trim();
-      const arr = campPorCod.get(cods[0]) ?? [];
-      arr.push({ nome, preco });
-      campPorCod.set(cods[0], arr);
-    }
-    // dedup por preço (1 nome por preço), ordenado do menor pro maior
-    const campanhasDe = (cod: number) => {
+    for (const c of campanhas) {
+      const cod = Number(c.codprod);
+      if (isNaN(cod)) continue;
       const arr = campPorCod.get(cod) ?? [];
-      const byPreco = new Map<number, string>();
-      for (const c of arr) if (!byPreco.has(c.preco)) byPreco.set(c.preco, c.nome);
-      return [...byPreco.entries()].map(([preco, nome]) => ({ preco, nome })).sort((a, b) => a.preco - b.preco);
-    };
+      arr.push({ nome: String(c.nome ?? "Campanha"), preco: Number(c.preco) });
+      campPorCod.set(cod, arr);
+    }
+    const campanhasDe = (cod: number) =>
+      (campPorCod.get(cod) ?? []).slice().sort((a, b) => a.preco - b.preco);
 
-    const produtos = precos
+    const produtos = catalogo
       .filter((p: any) => p.preco_tabela != null)
       .map((p: any) => ({
         codprod: p.codprod,
@@ -92,7 +68,8 @@ export async function GET() {
         preco: Number(p.preco_tabela),
         estoque: estPorCod.has(Number(p.codprod)) ? estPorCod.get(Number(p.codprod))! : null,
         campanhas: campanhasDe(Number(p.codprod)),
-      }));
+      }))
+      .sort((a: any, b: any) => String(a.produto).localeCompare(String(b.produto), "pt-BR"));
 
     return Response.json({ produtos });
   } catch (e: any) {
