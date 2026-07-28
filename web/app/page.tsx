@@ -263,6 +263,7 @@ export default function Page() {
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
+  const [isMobile, setIsMobile] = useState(false); // < 768px -> layout empilhado (colunas viram faixas)
   const [filtro, setFiltro] = useState<string>("todos");
   const [busca, setBusca] = useState("");
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
@@ -635,6 +636,14 @@ export default function Page() {
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [sessao]);
+
+  // detecta celular (largura < 768) -> board empilhado com scroll horizontal por faixa
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // AUTO-SYNC "quase tempo real" da coluna NEGOCIAÇÃO (~10s): puxa do RD os cards de negociação
   // (como se alguém clicasse no ↻ a cada 10s). Poucos cards; server-side em lote. Guarda os ids
@@ -1030,7 +1039,9 @@ export default function Page() {
   // scroll infinito: perto do fim da coluna, libera mais um lote
   function aoRolarColuna(e: React.UIEvent<HTMLDivElement>, colKey: string, total: number) {
     const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight < el.scrollHeight - 300) return;
+    // carrega mais quando chega perto do fim em QUALQUER eixo (vertical no desktop, horizontal no mobile)
+    const perto = (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) || (el.scrollLeft + el.clientWidth >= el.scrollWidth - 300);
+    if (!perto) return;
     setVisiveisPorColuna((prev) => {
       const atual = prev[colKey] ?? LOTE_INICIAL;
       if (atual >= total) return prev;
@@ -1075,7 +1086,7 @@ export default function Page() {
       <div style={{ height: 3, background: RD.wine }} />
       {/* Top bar */}
       <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px" }}>
-        <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
           <Logo size={26} />
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
@@ -1230,7 +1241,7 @@ export default function Page() {
         </div>
       </div>
 
-      <main style={{ padding: "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
+      <main style={{ padding: isMobile ? "12px 12px" : "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
           {/* Vendedor: NÃO tem linha de cima — busca + "na carteira" vão pra linha única dos filtros.
               Admin/home mantêm a busca ampla + chips + "na carteira" aqui em cima. */}
@@ -1258,7 +1269,7 @@ export default function Page() {
           </span>
           </div>
           )}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "nowrap" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: isMobile ? "wrap" : "nowrap" }}>
           {sessao.role === "vendedor" && (
             <input
               value={busca}
@@ -1547,7 +1558,7 @@ export default function Page() {
           >
             {baixando ? "Gerando…" : "⬇ .xls"}
           </button>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "nowrap" }}>
+          <div style={{ marginLeft: isMobile ? 0 : "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: isMobile ? "wrap" : "nowrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
               <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
               <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
@@ -1643,7 +1654,7 @@ export default function Page() {
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: isMobile ? 10 : 12, alignItems: "start" }}>
           {COLUNAS.map((col) => {
             const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
             const ehPedido = col.key === "pedido_emitido";
@@ -1758,7 +1769,9 @@ export default function Page() {
                 <div
                   key={`${col.key}:${filtro}:${periodoAtivo}:${prodFiltro ? "p" : ""}:${cicloSel.join(",")}:${semCadFiltro ? "sc" : ""}:${paradoSel.join(",")}`}
                   onScroll={(e) => aoRolarColuna(e, col.key, doGrupo.length)}
-                  style={{ padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
+                  style={isMobile
+                    ? { padding: "6px 8px 10px", display: "flex", flexDirection: "row", gap: 8, overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }
+                    : { padding: "4px 8px 10px", display: "flex", flexDirection: "column", gap: 8, maxHeight: "76vh", overflowY: "auto" }}
                 >
                   {carregando && doGrupo.length === 0 ? (
                     <p style={{ color: RD.grayLight, fontSize: 13, padding: 8 }}>carregando…</p>
@@ -1811,6 +1824,7 @@ export default function Page() {
                           title={prospeccao ? (c.rd_cliente_id ? "Abrir conversa no RD Conversas (já tem contato lá, mesmo sem atendimento)" : "Abrir WhatsApp com este número (ainda sem contato no RD Conversas)") : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
                             cursor: "pointer", height: mostraInput ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+                            ...(isMobile ? { width: "80vw", maxWidth: 340 } : {}),
                             background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
                             border: `1px solid ${disparoRecente ? "#f3ddad" : recontactar ? "#ecdae4" : RD.border}`,
                             borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? "#57163f" : RD.border}`,
