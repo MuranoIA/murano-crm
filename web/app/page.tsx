@@ -1110,7 +1110,7 @@ export default function Page() {
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <>
-                <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>B.I. Conversas<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
                 {(() => {
                   // Dropdown "Ranking": (1) Ver anteriores -> calendário -> abre o ranking naquele dia;
                   // (2) Meta do dia -> caixinha; (3) Ranking -> abre a aba ao vivo. Sempre reusa a MESMA
@@ -1273,7 +1273,7 @@ export default function Page() {
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
                 <>
-                  <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>B.I. Conversas ↗</a>
+                  <a href="/analises" onClick={fecha} style={row}>Análises</a>
                   <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
                   <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
