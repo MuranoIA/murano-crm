@@ -272,6 +272,7 @@ export default function Page() {
   const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
   const [rankingMenuAberto, setRankingMenuAberto] = useState(false);
   const [orcamentoAberto, setOrcamentoAberto] = useState(false);
+  const [menuMobile, setMenuMobile] = useState(false); // gaveta de navegação no celular
   // card ampliado (lupa): janela arrastável com o histórico rolável + resposta
   const [cardZoom, setCardZoom] = useState<Card | null>(null);
   const [zoomMsgs, setZoomMsgs] = useState<Msg[] | null>(null);
@@ -1089,6 +1090,7 @@ export default function Page() {
         <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
           <Logo size={26} />
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
+          {!isMobile && (
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
@@ -1134,6 +1136,10 @@ export default function Page() {
             <a href="https://murano-catalogo.vercel.app/produtos" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
           </nav>
+          )}
+          {isMobile && (
+            <button onClick={() => setMenuMobile((v) => !v)} title="Menu" style={{ marginLeft: 4, width: 38, height: 34, borderRadius: 8, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.wine, fontSize: 18, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>☰</button>
+          )}
           {/* Identidade + troca de papel num pill só. Clica -> dropdown com os papéis
               (Romulo: Admin|Romulo; Joas: Admin|Home); escolhe e o pill passa a mostrar o
               nome escolhido. Quem tem 1 papel só vê o pill estático (sem dropdown). */}
@@ -1181,7 +1187,7 @@ export default function Page() {
               </div>
             );
           })()}
-          {sessao.role === "admin" && (
+          {!isMobile && sessao.role === "admin" && (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
               {/* Toggle Sinc | Pause: a "chave" desliza pro lado ativo. Junta as 3 ações antigas —
                   Sinc = retoma (se pausado) e força um sync agora; Pause = pausa (libera cota do RD). */}
@@ -1232,14 +1238,42 @@ export default function Page() {
               </span>
             </div>
           )}
+          {!isMobile && (
           <button
             onClick={sair}
             style={{ background: "transparent", border: `1px solid ${RD.border}`, color: RD.gray, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
           >
             Sair
           </button>
+          )}
         </div>
       </div>
+
+      {isMobile && menuMobile && (() => {
+        const row = { display: "flex", alignItems: "center", gap: 6, width: "100%", boxSizing: "border-box" as const, padding: "13px 18px", fontSize: 15, fontWeight: 600, color: RD.navy, textDecoration: "none", background: "transparent", border: "none", borderBottom: `1px solid ${RD.border}`, cursor: "pointer", textAlign: "left" as const };
+        const fecha = () => setMenuMobile(false);
+        return (
+          <>
+            <div onClick={fecha} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,32,64,0.22)" }} />
+            <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
+              <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
+              <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
+              {sessao.role === "admin" && (
+                <>
+                  <a href="https://bi-conversas-murano.netlify.app/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>B.I. Conversas ↗</a>
+                  <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
+                  <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
+                  <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
+                </>
+              )}
+              <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
+              <a href="https://murano-catalogo.vercel.app/produtos" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Catálogo ↗</a>
+              <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
+              <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
+            </div>
+          </>
+        );
+      })()}
 
       <main style={{ padding: isMobile ? "12px 12px" : "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>

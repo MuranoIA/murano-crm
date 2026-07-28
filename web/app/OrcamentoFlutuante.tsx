@@ -37,6 +37,14 @@ export default function OrcamentoFlutuante({ onClose }: { onClose: () => void })
       .finally(() => setCarregando(false));
   }, []);
 
+  // centraliza ao abrir (evita sair da tela no celular)
+  useEffect(() => {
+    try {
+      const w = Math.min(620, window.innerWidth * 0.94);
+      setPos({ x: Math.max(8, Math.round((window.innerWidth - w) / 2)), y: 68 });
+    } catch { /* SSR */ }
+  }, []);
+
   const resultados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     if (!q) return [];
