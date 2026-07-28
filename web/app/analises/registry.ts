@@ -25,6 +25,16 @@ export const ANALISES: Analise[] = [
     tipo: "embed",
     url: "https://bi-conversas-murano.netlify.app/",
   },
+  {
+    slug: "inside-sales",
+    titulo: "Inside Sales — Desempenho",
+    desc: "Faturamento, ticket, clientes, preço, itens e mix por consultor — comparando os últimos meses. Atualiza toda madrugada.",
+    emoji: "📈",
+    cor: "#7C5CFC",
+    tag: "Vendas",
+    tipo: "interno",
+    url: "/analises/inside-sales",
+  },
 ];
 
 export const analiseBySlug = (slug: string) => ANALISES.find((a) => a.slug === slug) ?? null;

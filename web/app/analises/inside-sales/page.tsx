@@ -1,0 +1,310 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+
+// paleta do dashboard (tema escuro, igual ao original)
+const C = {
+  bg: "#0F0F13", card: "#1E1E28", border: "#2A2A38", accent: "#7C5CFC", accent2: "#C084FC",
+  green: "#34D399", red: "#F87171", yellow: "#FBBF24", text: "#E8E8F0", muted: "#8888A8",
+};
+
+type P = { bruto: number; dev: number; liq: number; clientes: number; itens: number; mix: number; preco: number | null; ticket: number | null };
+type Linha = { slug: string; nome: string; novato: boolean; cor: string; meta: number; p: P[] };
+type Dados = { atualizado: string; dias_movimento: number; periodos: { label: string }[]; mix_total: number; linhas: Linha[] };
+
+const moeda = (n: number) => "R$ " + Math.round(n).toLocaleString("pt-BR");
+const moeda2 = (n: number | null) => n == null ? "—" : "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moedaK = (n: number) => "R$ " + (n / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "k";
+const inteiro = (n: number) => Math.round(n).toLocaleString("pt-BR");
+const pct1 = (n: number) => n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+
+function delta(atual: number | null, ant: number | null) {
+  if (atual == null || ant == null || ant === 0) return null;
+  return ((atual - ant) / ant) * 100;
+}
+function DeltaCell({ d, novato }: { d: number | null; novato: boolean }) {
+  if (novato) return <span style={{ color: C.muted }}>— estreia</span>;
+  if (d == null) return <span style={{ color: C.muted }}>—</span>;
+  const up = d >= 0;
+  return <span style={{ color: up ? C.green : C.red }}>{up ? "▲" : "▼"} {up ? "+" : ""}{d.toFixed(1).replace(".", ",")}%</span>;
+}
+
+// gráfico de linhas SVG (4 pontos por consultor)
+function LineChart({ series, labels, fmt }: { series: { nome: string; cor: string; pts: (number | null)[] }[]; labels: string[]; fmt: (n: number) => string }) {
+  const W = 900, H = 260, padL = 64, padR = 16, padT = 16, padB = 34;
+  const vals = series.flatMap((s) => s.pts.filter((v): v is number => v != null));
+  const max = vals.length ? Math.max(...vals) : 1;
+  const min = 0;
+  const x = (i: number) => padL + (i * (W - padL - padR)) / (labels.length - 1);
+  const y = (v: number) => padT + (H - padT - padB) * (1 - (v - min) / (max - min || 1));
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((g) => min + (max - min) * g);
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }}>
+        {grid.map((gv, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(gv)} y2={y(gv)} stroke="rgba(255,255,255,.05)" />
+            <text x={padL - 8} y={y(gv) + 3} textAnchor="end" fontSize="10" fill={C.muted}>{fmt(gv)}</text>
+          </g>
+        ))}
+        {labels.map((l, i) => (
+          <text key={l} x={x(i)} y={H - 12} textAnchor="middle" fontSize="10.5" fill={C.muted}>{l}</text>
+        ))}
+        {series.map((s) => {
+          const pts = s.pts.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`)).filter(Boolean) as string[];
+          return (
+            <g key={s.nome}>
+              <polyline points={pts.join(" ")} fill="none" stroke={s.cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+              {s.pts.map((v, i) => v == null ? null : <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={s.cor} />)}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "center", marginTop: 8 }}>
+        {series.map((s) => (
+          <span key={s.nome} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: C.muted }}>
+            <span style={{ width: 12, height: 3, background: s.cor, borderRadius: 2 }} />{s.nome}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const TABS = [
+  { id: "fat", ico: "💰", nome: "Faturamento" },
+  { id: "ticket", ico: "🎫", nome: "Ticket Médio" },
+  { id: "clientes", ico: "👥", nome: "Clientes" },
+  { id: "preco", ico: "💲", nome: "Preço Médio" },
+  { id: "itens", ico: "📦", nome: "Itens" },
+  { id: "mix", ico: "🧪", nome: "Mix" },
+  { id: "opp", ico: "⚡", nome: "Oportunidades", soon: true },
+  { id: "novatos", ico: "🔍", nome: "Perfil Novatos", soon: true },
+];
+
+export default function InsideSales() {
+  const [role, setRole] = useState<string | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
+  const [dados, setDados] = useState<Dados | null>(null);
+  const [narr, setNarr] = useState<Record<string, string[]> | null>(null);
+  const [atualizado, setAtualizado] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [tab, setTab] = useState("fat");
+
+  useEffect(() => {
+    fetch("/api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => setRole(j?.role)).catch(() => {}).finally(() => setLoaded(true));
+    fetch("/api/analises/inside-sales", { cache: "no-store" })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => { if (!ok) setErro(j?.error ?? "erro"); else { setDados(j.dados); setNarr(j.narrativas ?? null); setAtualizado(j.atualizado_em); } })
+      .catch((e) => setErro(String(e)));
+  }, []);
+
+  const linhas = dados?.linhas ?? [];
+  const periodos = dados?.periodos?.map((x) => x.label) ?? ["", "", "", ""];
+  const mesAnt = (periodos[2] || "").split(" ")[0] || "ant.";
+
+  const kpis = useMemo(() => {
+    if (!linhas.length) return null;
+    const totIS = linhas.reduce((a, l) => a + (l.p[3]?.liq ?? 0), 0);
+    const metaTot = linhas.reduce((a, l) => a + l.meta, 0);
+    const totDev = linhas.reduce((a, l) => a + (l.p[3]?.dev ?? 0), 0);
+    const lider = [...linhas].sort((a, b) => (b.p[3]?.liq ?? 0) - (a.p[3]?.liq ?? 0))[0];
+    return { totIS, metaTot, totDev, lider };
+  }, [linhas]);
+
+  if (loaded && role !== "admin") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, fontFamily: "Inter,system-ui,sans-serif" }}>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>Inside Sales</div>
+        <div style={{ color: C.muted }}>Acesso restrito ao administrador.</div>
+        <Link href="/" style={{ color: C.accent2, textDecoration: "none" }}>← voltar ao funil</Link>
+      </div>
+    );
+  }
+
+  const sortBy = (fn: (l: Linha) => number) => [...linhas].sort((a, b) => fn(b) - fn(a));
+
+  // valor de período por métrica (para prior months: "—" se novato)
+  const cellMoney = (l: Linha, i: number, key: "liq") => l.novato && i < 3 ? "—" : moeda(l.p[i]?.[key] ?? 0);
+  const cell2 = (l: Linha, i: number, key: "ticket" | "preco") => l.novato && i < 3 ? "—" : moeda2(l.p[i]?.[key] ?? null);
+  const cellInt = (l: Linha, i: number, key: "clientes" | "itens" | "mix") => l.novato && i < 3 ? "—" : inteiro(l.p[i]?.[key] ?? 0);
+
+  const chartSeries = (get: (p: P) => number | null) => linhas.map((l) => ({ nome: l.nome, cor: l.cor, pts: l.p.map((pp, i) => (l.novato && i < 3 ? null : get(pp))) }));
+
+  const th: React.CSSProperties = { padding: "11px 14px", textAlign: "left", fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, whiteSpace: "nowrap" };
+  const thr: React.CSSProperties = { ...th, textAlign: "right" };
+  const td: React.CSSProperties = { padding: "11px 14px", fontSize: 12.5, borderTop: `1px solid ${C.border}` };
+  const tdr: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+  const nm: React.CSSProperties = { ...td, fontWeight: 600 };
+
+  const Analise = ({ id }: { id: string }) => {
+    const ps = narr?.[id];
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.accent}`, borderRadius: 12, padding: "18px 22px", marginTop: 22 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.accent, marginBottom: 10 }}>📊 Análise</div>
+        {ps?.length
+          ? ps.map((p, i) => <p key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "#C0C0D8", margin: "0 0 8px" }} dangerouslySetInnerHTML={{ __html: p }} />)
+          : <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>A análise interpretativa é gerada automaticamente toda madrugada (aparece aqui assim que o gerador de texto estiver ativo).</p>}
+      </div>
+    );
+  };
+
+  const tw = (children: React.ReactNode) => (
+    <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: 12 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>{children}</table>
+    </div>
+  );
+  const secHead = (eye: string, title: string, sub: string) => (
+    <>
+      <div style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: C.accent, marginBottom: 5 }}>{eye}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-.02em" }}>{title}</div>
+      <div style={{ fontSize: 12, color: C.muted, marginBottom: 22 }}>{sub}</div>
+    </>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "Inter,system-ui,sans-serif" }}>
+      {/* header */}
+      <div style={{ background: "linear-gradient(135deg,#1A1030,#0F0F1A 60%,#1A1030)", borderBottom: `1px solid ${C.border}`, padding: "18px 28px 0" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 3 }}>
+              <Link href="/analises" style={{ color: C.muted, textDecoration: "none", fontSize: 12, fontWeight: 600 }}>← Análises</Link>
+              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: C.muted }}>Murano · Inside Sales</span>
+            </div>
+            <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-.02em" }}>Dashboard de Desempenho</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>Filial 1 · F-Faturado · vlr_item − DEV · {dados?.dias_movimento ?? "—"} dias com movimento</div>
+            {atualizado && <div style={{ background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)", color: C.green, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20, marginTop: 6, display: "inline-block" }}>⟳ Atualizado {new Date(atualizado).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>}
+          </div>
+          {periodos[3] && <div style={{ background: "rgba(124,92,252,.15)", border: "1px solid rgba(124,92,252,.35)", color: C.accent2, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20 }}>{periodos[3]} vs {periodos[0]} · {periodos[1]} · {periodos[2]}</div>}
+        </div>
+        <div style={{ display: "flex", overflowX: "auto" }}>
+          {TABS.map((t) => (
+            <div key={t.id} onClick={() => !t.soon && setTab(t.id)}
+              style={{ padding: "11px 16px", fontSize: 11, fontWeight: 700, letterSpacing: ".07em", textTransform: "uppercase", cursor: t.soon ? "default" : "pointer", whiteSpace: "nowrap", color: tab === t.id ? C.accent2 : t.soon ? "#55556a" : C.muted, borderBottom: `2px solid ${tab === t.id ? C.accent : "transparent"}` }}>
+              {t.ico} {t.nome}{t.soon ? " · em breve" : ""}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <main style={{ padding: "28px 28px 60px", maxWidth: 1200, margin: "0 auto" }}>
+        {erro && <div style={{ background: "rgba(248,113,113,.1)", border: "1px solid rgba(248,113,113,.3)", color: C.red, borderRadius: 10, padding: "12px 16px" }}>{erro}</div>}
+        {!dados && !erro && <div style={{ color: C.muted }}>Carregando…</div>}
+
+        {dados && tab === "fat" && (() => {
+          const rows = sortBy((l) => l.p[3]?.liq ?? 0);
+          return (
+            <div>
+              {secHead("Indicador 01", "Faturamento Líquido", `vlr_item (VENDA F-Faturado) − vlr_item (DEV) · Filial 1 · ${dados.dias_movimento} dias comparáveis`)}
+              {kpis && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 24 }}>
+                  {[
+                    { l: `Total IS ${mesAtual(periodos)}`, v: moedaK(kpis.totIS), c: C.accent2, s: "líquido · período atual" },
+                    { l: "Meta total mês", v: moedaK(kpis.metaTot), c: C.text, s: "soma das metas" },
+                    { l: "Líder", v: kpis.lider?.nome ?? "—", c: C.green, s: moeda(kpis.lider?.p[3]?.liq ?? 0) },
+                    { l: "Total devoluções", v: moedaK(kpis.totDev), c: C.red, s: "equipe · período" },
+                  ].map((k, i) => (
+                    <div key={i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", position: "relative", overflow: "hidden" }}>
+                      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,${C.accent},${C.accent2})` }} />
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 7 }}>{k.l}</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "monospace", color: k.c }}>{k.v}</div>
+                      <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>{k.s}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {tw(<>
+                <thead><tr style={{ background: "rgba(124,92,252,.12)" }}>
+                  <th style={th}>Consultor</th>
+                  <th style={thr}>{periodos[0]}</th><th style={thr}>{periodos[1]}</th><th style={thr}>{periodos[2]}</th>
+                  <th style={thr}>Bruto</th><th style={thr}>Dev</th><th style={thr}>Líquido</th>
+                  <th style={thr}>Meta</th><th style={th}>% Meta</th><th style={thr}>vs {mesAnt}</th>
+                </tr></thead>
+                <tbody>{rows.map((l) => {
+                  const liq = l.p[3]?.liq ?? 0; const pctMeta = l.meta ? (liq / l.meta) * 100 : 0;
+                  const barCol = pctMeta >= 50 ? C.green : pctMeta >= 35 ? C.yellow : C.red;
+                  return (
+                    <tr key={l.slug}>
+                      <td style={nm}>{l.nome}{l.novato && <span style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", background: "rgba(52,211,153,.15)", color: C.green, border: "1px solid rgba(52,211,153,.3)", padding: "2px 6px", borderRadius: 8, marginLeft: 6 }}>novato</span>}</td>
+                      <td style={tdr}>{cellMoney(l, 0, "liq")}</td><td style={tdr}>{cellMoney(l, 1, "liq")}</td><td style={tdr}>{cellMoney(l, 2, "liq")}</td>
+                      <td style={tdr}>{moeda(l.p[3]?.bruto ?? 0)}</td>
+                      <td style={{ ...tdr, color: C.red }}>-{moeda(l.p[3]?.dev ?? 0)}</td>
+                      <td style={{ ...tdr, fontWeight: 700 }}>{moeda(liq)}</td>
+                      <td style={tdr}>{moeda(l.meta)}</td>
+                      <td style={td}><div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
+                        <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,.08)", borderRadius: 3, overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.min(pctMeta, 100)}%`, background: barCol, borderRadius: 3 }} /></div>
+                        <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: barCol, minWidth: 40, textAlign: "right" }}>{pct1(pctMeta)}</span>
+                      </div></td>
+                      <td style={tdr}><DeltaCell d={delta(l.p[3]?.liq ?? null, l.p[2]?.liq ?? null)} novato={l.novato} /></td>
+                    </tr>
+                  );
+                })}</tbody>
+              </>)}
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 22px", marginTop: 22 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 14 }}>📈 Evolução do Faturamento Líquido</div>
+                <LineChart labels={periodos} fmt={moedaK} series={chartSeries((p) => p.liq)} />
+              </div>
+              <Analise id="fat" />
+            </div>
+          );
+        })()}
+
+        {dados && (["ticket", "clientes", "preco", "itens", "mix"].includes(tab)) && (() => {
+          const cfg: Record<string, any> = {
+            ticket: { eye: "Indicador 02", title: "Ticket Médio por Cliente", sub: "vlr_item (VENDA F-Faturado) ÷ clientes únicos", key: "ticket", fmt: cell2, chart: (p: P) => p.ticket, cf: (n: number) => moedaK(n), extra: { label: "Clientes", val: (l: Linha) => inteiro(l.p[3]?.clientes ?? 0) } },
+            clientes: { eye: "Indicador 03", title: "Clientes Atendidos", sub: "Clientes únicos com VENDA F-Faturado", key: "clientes", fmt: cellInt, chart: (p: P) => p.clientes, cf: (n: number) => inteiro(n) },
+            preco: { eye: "Indicador 04", title: "Preço Médio por Produto", sub: "vlr_item ÷ quantidade (VENDA F-Faturado)", key: "preco", fmt: cell2, chart: (p: P) => p.preco, cf: (n: number) => moeda2(n) as string },
+            itens: { eye: "Indicador 05", title: "Itens Vendidos", sub: "Quantidade de unidades (VENDA F-Faturado)", key: "itens", fmt: cellInt, chart: (p: P) => p.itens, cf: (n: number) => inteiro(n) },
+            mix: { eye: "Indicador 06", title: "Positivação do Mix", sub: `Produtos distintos (VENDA F-Faturado) — ${dados.mix_total} produtos ativos`, key: "mix", fmt: cellInt, chart: (p: P) => p.mix, cf: (n: number) => inteiro(n) },
+          };
+          const g = cfg[tab];
+          const rows = sortBy((l) => (l.p[3]?.[g.key as keyof P] as number) ?? 0);
+          return (
+            <div>
+              {secHead(g.eye, g.title, `${g.sub} · ${dados.dias_movimento} dias comparáveis`)}
+              {tw(<>
+                <thead><tr style={{ background: "rgba(124,92,252,.12)" }}>
+                  <th style={th}>Consultor</th>
+                  <th style={thr}>{periodos[0]}</th><th style={thr}>{periodos[1]}</th><th style={thr}>{periodos[2]}</th><th style={thr}>{periodos[3]}</th>
+                  {tab === "ticket" && <th style={thr}>Clientes</th>}
+                  {tab === "mix" && <th style={thr}>% Mix</th>}
+                  <th style={thr}>vs {mesAnt}</th>
+                </tr></thead>
+                <tbody>{rows.map((l) => (
+                  <tr key={l.slug}>
+                    <td style={nm}>{l.nome}{l.novato && <span style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", background: "rgba(52,211,153,.15)", color: C.green, border: "1px solid rgba(52,211,153,.3)", padding: "2px 6px", borderRadius: 8, marginLeft: 6 }}>novato</span>}</td>
+                    <td style={tdr}>{g.fmt(l, 0, g.key)}</td><td style={tdr}>{g.fmt(l, 1, g.key)}</td><td style={tdr}>{g.fmt(l, 2, g.key)}</td>
+                    <td style={{ ...tdr, fontWeight: 700 }}>{g.fmt(l, 3, g.key)}</td>
+                    {tab === "ticket" && <td style={tdr}>{inteiro(l.p[3]?.clientes ?? 0)}</td>}
+                    {tab === "mix" && <td style={tdr}>{dados.mix_total ? pct1(((l.p[3]?.mix ?? 0) / dados.mix_total) * 100) : "—"}</td>}
+                    <td style={tdr}><DeltaCell d={delta((l.p[3]?.[g.key as keyof P] as number) ?? null, (l.p[2]?.[g.key as keyof P] as number) ?? null)} novato={l.novato} /></td>
+                  </tr>
+                ))}</tbody>
+              </>)}
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 22px", marginTop: 22 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 14 }}>📈 Evolução — {g.title}</div>
+                <LineChart labels={periodos} fmt={g.cf} series={chartSeries(g.chart)} />
+              </div>
+              <Analise id={tab} />
+            </div>
+          );
+        })()}
+
+        {dados && (tab === "opp" || tab === "novatos") && (
+          <div style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>🛠️</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Em breve</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>Esta aba entra na próxima etapa. As 6 abas quantitativas já estão no ar e atualizam toda madrugada.</div>
+          </div>
+        )}
+      </main>
+      <footer style={{ textAlign: "center", padding: "18px", fontSize: 10, color: C.muted, fontFamily: "monospace", borderTop: `1px solid ${C.border}` }}>
+        Murano · Inside Sales · Filial 1 · F-Faturado · vlr_item − DEV · atualização automática diária
+      </footer>
+    </div>
+  );
+}
+
+function mesAtual(periodos: string[]) { return (periodos[3] || "").split(" ")[0] || ""; }
