@@ -72,7 +72,7 @@ function LineChart({ series, labels, fmt }: { series: { nome: string; cor: strin
   );
 }
 
-const TABS = [
+const TABS: { id: string; ico: string; nome: string; soon?: boolean }[] = [
   { id: "fat", ico: "💰", nome: "Faturamento" },
   { id: "ticket", ico: "🎫", nome: "Ticket Médio" },
   { id: "clientes", ico: "👥", nome: "Clientes" },

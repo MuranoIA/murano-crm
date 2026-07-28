@@ -1917,63 +1917,54 @@ export default function Page() {
                                 {syncingCards[c.cliente_id] ? "…" : "↻"}
                               </button>
                             )}
-                            {alerta && (
-                              <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, color: "#dc2626", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
-                                <span style={{ width: 8, height: 8, borderRadius: 8, background: "#dc2626", animation: "pulse-alert 1.1s ease-in-out infinite" }} />
-                                AGUARDA RESPOSTA
-                              </span>
-                            )}
-                            {disparoRecente ? (
-                              <span
-                                title={`Template enviado ${tempoRelativo(ultimoDisparo!)} atrás — botão liberado após ${DIAS_RECONTATO} dias sem resposta`}
-                                style={{
-                                  marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3,
-                                  background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad",
-                                  borderRadius: 5, padding: "1px 5px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1,
-                                }}
-                              >
-                                <span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />
-                                AGUARDANDO RESPOSTA
-                              </span>
-                            ) : recontactar ? (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente); }}
-                                disabled={enviando === idEnvio}
-                                title="Enviar template (mensagem real no WhatsApp)"
-                                style={{
-                                  marginLeft: "auto", cursor: enviando === idEnvio ? "wait" : "pointer",
-                                  display: "inline-flex", alignItems: "center", gap: 3,
-                                  background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
-                                  borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1,
-                                }}
-                              >
-                                <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
-                                {enviando === idEnvio ? "ENVIANDO…" : "TEMPLATE"}
-                              </button>
-                            ) : col.key === "pedido_emitido" ? (
-                              <span
-                                title={`Faturado no período (nota fiscal, líquido)`}
-                                style={{
-                                  marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
-                                  background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd",
-                                  borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, letterSpacing: 0.2,
-                                }}
-                              >
-                                {moedaBR(c.venda_valor ?? 0)}
-                              </span>
-                            ) : null}
+                            <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                              {alerta && (
+                                <span
+                                  title="Aguardando resposta do cliente"
+                                  style={{ width: 10, height: 10, borderRadius: 10, background: "#dc2626", flexShrink: 0, boxShadow: "0 0 0 3px rgba(220,38,38,0.16)", animation: "pulse-alert 1.1s ease-in-out infinite" }}
+                                />
+                              )}
+                              {disparoRecente ? (
+                                <span
+                                  title={`Template enviado ${tempoRelativo(ultimoDisparo!)} atrás — aguardando resposta (botão liberado após ${DIAS_RECONTATO} dias)`}
+                                  style={{
+                                    display: "inline-flex", alignItems: "center", gap: 3,
+                                    background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad",
+                                    borderRadius: 5, padding: "1px 5px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1, whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  <span style={{ width: 6, height: 6, borderRadius: 6, background: "#e08a00", animation: "pulse-alert 1.1s ease-in-out infinite" }} />
+                                  AGUARDANDO
+                                </span>
+                              ) : recontactar ? (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente); }}
+                                  disabled={enviando === idEnvio}
+                                  title="Enviar template (mensagem real no WhatsApp)"
+                                  style={{
+                                    cursor: enviando === idEnvio ? "wait" : "pointer",
+                                    display: "inline-flex", alignItems: "center", gap: 3,
+                                    background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
+                                    borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1, whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
+                                  {enviando === idEnvio ? "ENVIANDO…" : "TEMPLATE"}
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={c.cliente}>
                             {c.cliente}
                           </div>
-                          {((col.key !== "pedido_emitido" && c.venda_valor != null) || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo])) && (
+                          {((c.venda_valor != null || col.key === "pedido_emitido") || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo])) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
-                              {col.key !== "pedido_emitido" && c.venda_valor != null && (
+                              {(c.venda_valor != null || col.key === "pedido_emitido") && (
                                 <span
-                                  title="Comprou no mês — valor faturado (fica no card até virar o mês)"
-                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: "1px 7px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}
+                                  title={col.key === "pedido_emitido" ? "Faturado no período (nota fiscal, líquido)" : "Comprou no mês — valor faturado (fica no card até virar o mês)"}
+                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: col.key === "pedido_emitido" ? "2px 9px" : "1px 7px", fontSize: col.key === "pedido_emitido" ? 11.5 : 10.5, fontWeight: 800, letterSpacing: 0.2 }}
                                 >
-                                  {moedaBR(c.venda_valor)}
+                                  {moedaBR(c.venda_valor ?? 0)}
                                 </span>
                               )}
                               {c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo] && (
