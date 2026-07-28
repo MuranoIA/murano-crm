@@ -30,41 +30,79 @@ function DeltaCell({ d, novato }: { d: number | null; novato: boolean }) {
   return <span style={{ color: up ? C.green : C.red }}>{up ? "▲" : "▼"} {up ? "+" : ""}{d.toFixed(1).replace(".", ",")}%</span>;
 }
 
-// gráfico de linhas SVG (4 pontos por consultor)
+// spline cúbica estilo Chart.js (tension 0.3) — deixa a linha suave em vez de reta
+function smoothPath(pts: { x: number; y: number }[], t = 0.3) {
+  const n = pts.length;
+  if (n < 2) return "";
+  const cp = pts.map(() => ({ px: 0, py: 0, nx: 0, ny: 0, has: false }));
+  for (let i = 1; i < n - 1; i++) {
+    const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+    const d01 = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    const d12 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const s = d01 + d12 || 1;
+    const fa = (t * d01) / s, fb = (t * d12) / s;
+    cp[i] = {
+      px: p1.x - fa * (p2.x - p0.x), py: p1.y - fa * (p2.y - p0.y),
+      nx: p1.x + fb * (p2.x - p0.x), ny: p1.y + fb * (p2.y - p0.y), has: true,
+    };
+  }
+  let d = `M ${pts[0].x},${pts[0].y}`;
+  for (let i = 0; i < n - 1; i++) {
+    const p1 = pts[i], p2 = pts[i + 1];
+    const c1 = cp[i].has ? { x: cp[i].nx, y: cp[i].ny } : p1;
+    const c2 = cp[i + 1].has ? { x: cp[i + 1].px, y: cp[i + 1].py } : p2;
+    d += ` C ${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`;
+  }
+  return d;
+}
+
+// gráfico de linhas SVG — mesmo look do Chart.js do arquivo (linha suave, sem preenchimento,
+// escala automática, grade em cruz, pontos e legenda em caixinha).
 function LineChart({ series, labels, fmt }: { series: { nome: string; cor: string; pts: (number | null)[] }[]; labels: string[]; fmt: (n: number) => string }) {
-  const W = 900, H = 260, padL = 64, padR = 16, padT = 16, padB = 34;
+  const W = 900, H = 270, padL = 66, padR = 18, padT = 18, padB = 40;
   const vals = series.flatMap((s) => s.pts.filter((v): v is number => v != null));
-  const max = vals.length ? Math.max(...vals) : 1;
-  const min = 0;
+  const lo = vals.length ? Math.min(...vals) : 0;
+  const hi = vals.length ? Math.max(...vals) : 1;
+  const range = hi - lo || 1;
+  const yMin = lo - range * 0.12, yMax = hi + range * 0.12; // escala auto (não força zero)
   const x = (i: number) => padL + (i * (W - padL - padR)) / (labels.length - 1);
-  const y = (v: number) => padT + (H - padT - padB) * (1 - (v - min) / (max - min || 1));
-  const grid = [0, 0.25, 0.5, 0.75, 1].map((g) => min + (max - min) * g);
+  const y = (v: number) => padT + (H - padT - padB) * (1 - (v - yMin) / (yMax - yMin || 1));
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((g) => yMin + (yMax - yMin) * g);
   return (
     <div style={{ overflowX: "auto" }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }}>
+        {/* grade horizontal + rótulos do eixo Y */}
         {grid.map((gv, i) => (
-          <g key={i}>
-            <line x1={padL} x2={W - padR} y1={y(gv)} y2={y(gv)} stroke="rgba(255,255,255,.05)" />
-            <text x={padL - 8} y={y(gv) + 3} textAnchor="end" fontSize="10" fill={C.muted}>{fmt(gv)}</text>
+          <g key={"h" + i}>
+            <line x1={padL} x2={W - padR} y1={y(gv)} y2={y(gv)} stroke="rgba(255,255,255,0.045)" />
+            <text x={padL - 10} y={y(gv) + 3.5} textAnchor="end" fontSize="10.5" fill={C.muted}>{fmt(gv)}</text>
           </g>
         ))}
+        {/* grade vertical + rótulos do eixo X */}
         {labels.map((l, i) => (
-          <text key={l} x={x(i)} y={H - 12} textAnchor="middle" fontSize="10.5" fill={C.muted}>{l}</text>
+          <g key={"v" + i}>
+            <line x1={x(i)} x2={x(i)} y1={padT} y2={H - padB} stroke="rgba(255,255,255,0.045)" />
+            <text x={x(i)} y={H - 14} textAnchor="middle" fontSize="11" fill={C.muted}>{l}</text>
+          </g>
         ))}
+        {/* linhas suaves + pontos */}
         {series.map((s) => {
-          const pts = s.pts.map((v, i) => (v == null ? null : `${x(i)},${y(v)}`)).filter(Boolean) as string[];
+          const real = s.pts.map((v, i) => (v == null ? null : { x: x(i), y: y(v) })).filter(Boolean) as { x: number; y: number }[];
           return (
             <g key={s.nome}>
-              <polyline points={pts.join(" ")} fill="none" stroke={s.cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-              {s.pts.map((v, i) => v == null ? null : <circle key={i} cx={x(i)} cy={y(v)} r="3.2" fill={s.cor} />)}
+              {real.length >= 2 && (
+                <path d={smoothPath(real)} fill="none" stroke={s.cor} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+              )}
+              {real.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="4" fill={s.cor} />)}
             </g>
           );
         })}
       </svg>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "center", marginTop: 8 }}>
+      {/* legenda em caixinha colorida (estilo Chart.js) */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", justifyContent: "center", marginTop: 10 }}>
         {series.map((s) => (
-          <span key={s.nome} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: C.muted }}>
-            <span style={{ width: 12, height: 3, background: s.cor, borderRadius: 2 }} />{s.nome}
+          <span key={s.nome} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, color: C.muted }}>
+            <span style={{ width: 13, height: 9, background: s.cor, borderRadius: 2, flexShrink: 0 }} />{s.nome}
           </span>
         ))}
       </div>
