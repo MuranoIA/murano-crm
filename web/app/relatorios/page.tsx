@@ -31,7 +31,7 @@ const num = (n: any) => (n == null ? "—" : Number(n).toLocaleString("pt-BR"));
 
 type Col = { k: string; h: string; kind?: "text" | "tel" | "money" | "date" | "num" | "cap"; align?: "left" | "right"; adminOnly?: boolean };
 type Resumo = { k: string; label: string; kind?: "int" | "money" | "raw"; cor?: string };
-type Rel = { id: string; nome: string; desc: string; endpoint: string; baixaNome: string; vazio: string; cols: Col[]; resumo: Resumo[] };
+type Rel = { id: string; nome: string; desc: string; endpoint: string; baixaNome: string; vazio: string; temPeriodo?: boolean; cols: Col[]; resumo: Resumo[] };
 
 // Catálogo de relatórios (extensível — novos relatórios entram aqui).
 const RELATORIOS: Rel[] = [
@@ -76,6 +76,28 @@ const RELATORIOS: Rel[] = [
       { k: "periodoLabel", label: "Período", kind: "raw" },
     ],
   },
+  {
+    id: "mosqueiro",
+    nome: "Clientes de Mosqueiro",
+    desc: "Clientes de Mosqueiro (cidade, bairro ou endereço) na carteira, com última compra e tempo sem comprar.",
+    endpoint: "mosqueiro",
+    baixaNome: "clientes_mosqueiro",
+    vazio: "Nenhum cliente de Mosqueiro na carteira.",
+    temPeriodo: false,
+    cols: [
+      { k: "cliente", h: "Cliente" },
+      { k: "telefone", h: "Telefone", kind: "tel" },
+      { k: "bairro", h: "Bairro" },
+      { k: "cidade", h: "Cidade" },
+      { k: "vendedor_slug", h: "Vendedor", kind: "cap", adminOnly: true },
+      { k: "ultima_compra", h: "Última compra", kind: "date", align: "right" },
+      { k: "dias_sem_comprar", h: "Dias s/ comprar", kind: "num", align: "right" },
+    ],
+    resumo: [
+      { k: "clientes", label: "Clientes em Mosqueiro", kind: "int", cor: WINE },
+      { k: "periodoLabel", label: "Filtro", kind: "raw" },
+    ],
+  },
 ];
 
 const fmtCel = (c: Col, v: any) => {
@@ -113,7 +135,8 @@ export default function Relatorios() {
   const carregar = useCallback(async () => {
     setCarregando(true); setErro(null);
     try {
-      const r = await fetch(`/api/relatorios/${rel.endpoint}?periodo=${periodo}`, { cache: "no-store" });
+      const qs = rel.temPeriodo === false ? "" : `?periodo=${periodo}`;
+      const r = await fetch(`/api/relatorios/${rel.endpoint}${qs}`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setErro(j?.error ?? `HTTP ${r.status}`); setDados(null); }
       else setDados(j);
@@ -127,12 +150,14 @@ export default function Relatorios() {
   async function baixar() {
     setBaixando(true);
     try {
-      const r = await fetch(`/api/relatorios/${rel.endpoint}?periodo=${periodo}&format=xlsx`);
+      const qs = rel.temPeriodo === false ? "?format=xlsx" : `?periodo=${periodo}&format=xlsx`;
+      const r = await fetch(`/api/relatorios/${rel.endpoint}${qs}`);
       if (!r.ok) { const j = await r.json().catch(() => ({})); alert("Falha ao gerar Excel: " + (j?.error ?? `HTTP ${r.status}`)); return; }
       const blob = await r.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `${rel.baixaNome}_${periodo}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const sufPeriodo = rel.temPeriodo === false ? "" : `${periodo}_`;
+      a.download = `${rel.baixaNome}_${sufPeriodo}${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
@@ -198,24 +223,28 @@ export default function Relatorios() {
 
           {/* controles */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: GRAY }}>Período:</span>
-            {PERIODOS.map((p) => {
-              const on = p.k === periodo;
-              return (
-                <button
-                  key={p.k}
-                  onClick={() => setPeriodo(p.k)}
-                  style={{
-                    cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
-                    padding: "5px 12px", borderRadius: 999,
-                    background: on ? WINE : "#f4eef1", color: on ? "#fff" : "#6b4257",
-                    border: `1px solid ${on ? WINE : "#e6d6df"}`,
-                  }}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
+            {rel.temPeriodo !== false && (
+              <>
+                <span style={{ fontSize: 12, fontWeight: 700, color: GRAY }}>Período:</span>
+                {PERIODOS.map((p) => {
+                  const on = p.k === periodo;
+                  return (
+                    <button
+                      key={p.k}
+                      onClick={() => setPeriodo(p.k)}
+                      style={{
+                        cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+                        padding: "5px 12px", borderRadius: 999,
+                        background: on ? WINE : "#f4eef1", color: on ? "#fff" : "#6b4257",
+                        border: `1px solid ${on ? WINE : "#e6d6df"}`,
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </>
+            )}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
               <button
                 onClick={carregar}
