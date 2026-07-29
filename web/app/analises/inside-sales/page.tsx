@@ -117,6 +117,7 @@ const TABS: { id: string; ico: string; nome: string; soon?: boolean }[] = [
   { id: "preco", ico: "💲", nome: "Preço Médio" },
   { id: "itens", ico: "📦", nome: "Itens" },
   { id: "mix", ico: "🧪", nome: "Mix" },
+  { id: "evolucao", ico: "📈", nome: "Evolução" },
   { id: "opp", ico: "⚡", nome: "Oportunidades" },
   { id: "novatos", ico: "🔍", nome: "Perfil Novatos" },
 ];
@@ -388,6 +389,106 @@ export default function InsideSales() {
                 </div>
               ))}
               <Analise id="opp" />
+            </div>
+          );
+        })()}
+
+        {dados && tab === "evolucao" && (() => {
+          const iAtual = periodos.length - 1;
+          const iAnt = iAtual - 1;
+          const labAtual = periodos[iAtual] || "atual";
+          const labAnt = periodos[iAnt] || "anterior";
+
+          // agregados da equipe por mês (consultor sem o mês — ex. novato — conta 0)
+          const teamP: P[] = periodos.map((_, m) => {
+            const sum = (f: (p: P) => number) => linhas.reduce((a, l) => a + (l.p[m] ? f(l.p[m]) : 0), 0);
+            const bruto = sum((p) => p.bruto), dev = sum((p) => p.dev), liq = sum((p) => p.liq);
+            const clientes = sum((p) => p.clientes), itens = sum((p) => p.itens);
+            return { bruto, dev, liq, clientes, itens, mix: 0, preco: itens ? bruto / itens : null, ticket: clientes ? bruto / clientes : null };
+          });
+          const bestIdx = (vals: (number | null)[]) => {
+            let bi = 0, bv = -Infinity;
+            vals.forEach((v, i) => { if (v != null && v > bv) { bv = v; bi = i; } });
+            return bi;
+          };
+          const teamBest = bestIdx(teamP.map((p) => p.liq));
+
+          const metricas: { k: keyof P; label: string; f: (n: number | null) => string }[] = [
+            { k: "liq", label: "Faturamento líquido", f: (n) => moeda(n ?? 0) },
+            { k: "bruto", label: "Faturamento bruto", f: (n) => moeda(n ?? 0) },
+            { k: "clientes", label: "Clientes atendidos", f: (n) => inteiro(n ?? 0) },
+            { k: "ticket", label: "Ticket médio", f: (n) => moeda2(n) },
+            { k: "preco", label: "Preço médio", f: (n) => moeda2(n) },
+            { k: "itens", label: "Itens vendidos", f: (n) => inteiro(n ?? 0) },
+          ];
+          const compTable = (refLabel: string, ref: P) => tw(<>
+            <thead><tr style={{ background: "rgba(124,92,252,.12)" }}>
+              <th style={th}>Métrica</th><th style={thr}>{refLabel}</th><th style={thr}>{labAtual}</th><th style={thr}>Δ%</th>
+            </tr></thead>
+            <tbody>{metricas.map((mt) => {
+              const a = teamP[iAtual][mt.k] as number | null;
+              const b = ref[mt.k] as number | null;
+              return (
+                <tr key={String(mt.k)}>
+                  <td style={nm}>{mt.label}</td>
+                  <td style={tdr}>{mt.f(b)}</td>
+                  <td style={{ ...tdr, fontWeight: 700 }}>{mt.f(a)}</td>
+                  <td style={tdr}><DeltaCell d={delta(a, b)} novato={false} /></td>
+                </tr>
+              );
+            })}</tbody>
+          </>);
+
+          const rows = sortBy((l) => l.p[iAtual]?.liq ?? 0);
+          return (
+            <div>
+              {secHead("Indicador 07", "Evolução de Desempenho", `${labAtual} vs ${labAnt} e vs melhor mês · equipe e por consultor`)}
+
+              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.accent2, marginBottom: 12 }}>🏢 Equipe</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 16, marginBottom: 26 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>Mês atual vs mês anterior ({labAnt})</div>
+                  {compTable(labAnt, teamP[iAnt])}
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>Mês atual vs melhor mês ({periodos[teamBest]})</div>
+                  {compTable(`Melhor · ${periodos[teamBest]}`, teamP[teamBest])}
+                </div>
+              </div>
+
+              <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.accent2, marginBottom: 12 }}>👤 Por consultor</p>
+              {tw(<>
+                <thead><tr style={{ background: "rgba(124,92,252,.12)" }}>
+                  <th style={th}>Consultor</th>
+                  <th style={thr}>Líquido {labAtual}</th>
+                  <th style={thr}>vs {labAnt}</th>
+                  <th style={th}>Melhor mês</th>
+                  <th style={thr}>Pico</th>
+                  <th style={thr}>vs melhor</th>
+                </tr></thead>
+                <tbody>{rows.map((l) => {
+                  const atual = l.p[iAtual]?.liq ?? 0;
+                  const bi = l.novato ? iAtual : bestIdx(l.p.map((p) => p?.liq ?? null));
+                  const pico = l.p[bi]?.liq ?? 0;
+                  const noPico = bi === iAtual;
+                  return (
+                    <tr key={l.slug}>
+                      <td style={nm}>{l.nome}{l.novato && <span style={{ fontSize: 8, fontWeight: 700, textTransform: "uppercase", background: "rgba(52,211,153,.15)", color: C.green, border: "1px solid rgba(52,211,153,.3)", padding: "2px 6px", borderRadius: 8, marginLeft: 6 }}>novato</span>}</td>
+                      <td style={{ ...tdr, fontWeight: 700 }}>{moeda(atual)}</td>
+                      <td style={tdr}><DeltaCell d={delta(l.p[iAtual]?.liq ?? null, l.p[iAnt]?.liq ?? null)} novato={l.novato} /></td>
+                      <td style={td}>{l.novato ? <span style={{ color: C.muted }}>estreia</span> : periodos[bi]}</td>
+                      <td style={tdr}>{moeda(pico)}</td>
+                      <td style={tdr}>{l.novato ? <span style={{ color: C.muted }}>—</span> : noPico ? <span style={{ color: C.green }}>★ melhor mês</span> : <DeltaCell d={delta(atual, pico)} novato={false} />}</td>
+                    </tr>
+                  );
+                })}</tbody>
+              </>)}
+
+              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "18px 22px", marginTop: 22 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.muted, marginBottom: 14 }}>📈 Evolução do Faturamento Líquido</div>
+                <LineChart labels={periodos} fmt={moedaK} series={chartSeries((p) => p.liq)} />
+              </div>
+              <Analise id="evolucao" />
             </div>
           );
         })()}
