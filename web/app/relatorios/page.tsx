@@ -98,6 +98,28 @@ const RELATORIOS: Rel[] = [
       { k: "periodoLabel", label: "Filtro", kind: "raw" },
     ],
   },
+  {
+    id: "santa-barbara",
+    nome: "Clientes de Santa Bárbara",
+    desc: "Clientes de Santa Bárbara (município) na carteira, com última compra e tempo sem comprar.",
+    endpoint: "santa-barbara",
+    baixaNome: "clientes_santa_barbara",
+    vazio: "Nenhum cliente de Santa Bárbara na carteira.",
+    temPeriodo: false,
+    cols: [
+      { k: "cliente", h: "Cliente" },
+      { k: "telefone", h: "Telefone", kind: "tel" },
+      { k: "bairro", h: "Bairro" },
+      { k: "cidade", h: "Cidade" },
+      { k: "vendedor_slug", h: "Vendedor", kind: "cap", adminOnly: true },
+      { k: "ultima_compra", h: "Última compra", kind: "date", align: "right" },
+      { k: "dias_sem_comprar", h: "Dias s/ comprar", kind: "num", align: "right" },
+    ],
+    resumo: [
+      { k: "clientes", label: "Clientes em Santa Bárbara", kind: "int", cor: WINE },
+      { k: "periodoLabel", label: "Filtro", kind: "raw" },
+    ],
+  },
 ];
 
 const fmtCel = (c: Col, v: any) => {
