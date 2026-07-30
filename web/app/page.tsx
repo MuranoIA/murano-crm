@@ -293,6 +293,10 @@ export default function Page() {
   const [parabensNome, setParabensNome] = useState("");
   const [parabensEnviando, setParabensEnviando] = useState(false);
   const [parabensMsg, setParabensMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  const [metasIndModal, setMetasIndModal] = useState(false);
+  const [metasInd, setMetasInd] = useState<{ slug: string; nome: string; meta: number }[]>([]);
+  const [metasIndLoad, setMetasIndLoad] = useState(false);
+  const [metasIndSalv, setMetasIndSalv] = useState(false);
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -486,6 +490,28 @@ export default function Page() {
       setParabensMsg({ ok: false, texto: "Falha: " + (e?.message ?? e) });
     } finally {
       setParabensEnviando(false);
+    }
+  }
+  // Metas individuais do dia: cadastro por vendedor. Ao bater, o painel mostra "BATEU A META".
+  async function abrirMetasInd() {
+    setMetasIndModal(true); setMetasIndLoad(true);
+    try {
+      const j = await fetch("/api/ranking/metas-individuais").then((r) => r.json());
+      setMetasInd(Array.isArray(j?.metas) ? j.metas : []);
+    } catch { setMetasInd([]); }
+    finally { setMetasIndLoad(false); }
+  }
+  async function salvarMetasInd() {
+    setMetasIndSalv(true);
+    try {
+      const r = await fetch("/api/ranking/metas-individuais", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ metas: metasInd }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert("Não foi possível salvar as metas: " + (j?.error ?? r.status)); return; }
+      setMetasIndModal(false);
+    } catch (e: any) {
+      alert("Erro ao salvar as metas: " + (e?.message ?? e));
+    } finally {
+      setMetasIndSalv(false);
     }
   }
 
@@ -1171,6 +1197,9 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirMeta(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
                             </button>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirMetasInd(); }} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
+                              🏅 Metas individuais
+                            </button>
                             <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
                             </button>
@@ -1328,6 +1357,7 @@ export default function Page() {
                   <button onClick={() => { fecha(); abrirParabens(); }} style={row}>🎊 Parabéns por cliente</button>
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
                   <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
+                  <button onClick={() => { fecha(); abrirMetasInd(); }} style={row}>🏅 Metas individuais</button>
                 </>
               )}
               <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
@@ -2319,6 +2349,41 @@ export default function Page() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 20 }}>
               <button onClick={() => setParabensModal(false)} disabled={parabensEnviando} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Fechar</button>
               <button onClick={() => enviarParabens()} disabled={parabensEnviando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: parabensEnviando ? "wait" : "pointer" }}>{parabensEnviando ? "Buscando…" : "Mostrar parabéns"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {metasIndModal && (
+        <div
+          onClick={() => !metasIndSalv && setMetasIndModal(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 420, maxHeight: "82vh", display: "flex", flexDirection: "column", background: RD.surface, borderRadius: 14, padding: 22, boxShadow: "0 20px 60px rgba(16,32,64,.3)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: RD.wine, marginBottom: 4 }}>🏅 Metas individuais do dia</div>
+            <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 14 }}>Meta de vendas (R$) por vendedor. Ao atingir, a tela <b>BATEU A META</b> aparece nas TVs. Deixe 0 (vazio) para sem meta. Vale para todos os dias.</div>
+            <div style={{ flex: 1, overflowY: "auto", margin: "0 -6px", padding: "0 6px" }}>
+              {metasIndLoad ? (
+                <div style={{ fontSize: 13, color: RD.gray, padding: "12px 0" }}>Carregando vendedores…</div>
+              ) : metasInd.length === 0 ? (
+                <div style={{ fontSize: 13, color: RD.gray, padding: "12px 0" }}>Nenhum vendedor encontrado.</div>
+              ) : metasInd.map((m, i) => (
+                <div key={m.slug} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${RD.border}` }}>
+                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: RD.navy, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.nome}</span>
+                  <span style={{ fontSize: 12, color: RD.grayLight }}>R$</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={m.meta ? String(m.meta) : ""}
+                    onChange={(e) => { const val = Math.max(0, Number(e.target.value.replace(/[^\d]/g, "")) || 0); setMetasInd((prev) => prev.map((x, ix) => (ix === i ? { ...x, meta: val } : x))); }}
+                    placeholder="0"
+                    style={{ width: 110, boxSizing: "border-box", padding: "7px 10px", fontSize: 14, fontWeight: 700, textAlign: "right", color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+              <button onClick={() => setMetasIndModal(false)} disabled={metasIndSalv} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
+              <button onClick={() => salvarMetasInd()} disabled={metasIndSalv || metasIndLoad} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metasIndSalv ? "wait" : "pointer" }}>{metasIndSalv ? "Salvando…" : "Salvar metas"}</button>
             </div>
           </div>
         </div>
