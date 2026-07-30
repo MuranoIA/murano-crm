@@ -8,10 +8,30 @@ Painel público (`murano-bi-ranking-vendas.netlify.app`) que mostra, ao vivo, o 
 
 ## 2. Cadeia de dados (de onde vêm os números)
 
+```mermaid
+flowchart LR
+  MG["MaxiGestao / MaximaTech<br/>painel oficial = a VERDADE"]
+  WT[("WinThor - Oracle<br/>ERP real")]
+  V2[("v2 - espelho do WinThor<br/>faturamento<br/>SEM campo de cancelamento")]
+  EF["edge function<br/>bi-ranking-vendas<br/>le v2 ao vivo"]
+  PN["Painel TV<br/>fonte-painel.html (Netlify)"]
+
+  WT -->|"sync ETL — por LINHA"| V2
+  V2 -->|"HTTP ao vivo"| EF
+  EF -->|"JSON a cada 60s"| PN
+  MG -.->|"le direto (sabe o cancelamento)"| WT
+
+  classDef verdade fill:#1d7a43,color:#fff,stroke:#0f5c30;
+  classDef gap fill:#7a1d1d,color:#fff,stroke:#5c0f0f;
+  class WT,MG verdade;
+  class V2 gap;
 ```
-WinThor (Oracle, ERP real)  ──►  v2 (murano-clientes-v2, espelho do WinThor)  ──►  edge function bi-ranking-vendas  ──►  painel (fonte-painel.html na Netlify)
-        ▲
-        └── o MaxiGestão (MáximaTech) lê AQUI — é a VERDADE oficial
+
+> **Onde mora o problema:** o nó vermelho (v2) é o espelho — ele **não tem** como saber de um cancelamento que não gerou linha nova. O verde (WinThor/MaxiGestão) sabe. A recomendação da seção 6 é justamente puxar **só o cancelamento** do verde para tapar o buraco do vermelho.
+
+```
+WinThor (Oracle, ERP real)  ──►  v2 (espelho)  ──►  edge function bi-ranking-vendas  ──►  painel (Netlify)
+        ▲ o MaxiGestão lê AQUI (a verdade)
 ```
 
 - **Fonte real:** WinThor (ERP Oracle). É o que o MaxiGestão consulta.
