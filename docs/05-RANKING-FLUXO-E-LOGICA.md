@@ -48,6 +48,10 @@ WinThor (Oracle, ERP real)  ──►  v2 (espelho)  ──►  edge function bi
 | murano-conversas | `bi_pedidos_dia` | espelho dos pedidos que **entraram** no ranking (auditoria) |
 | murano-conversas | `bi_ranking_snapshots` | "foto" a cada ~10 min (para ver dias anteriores) |
 
+**Diagrama completo** (fluxo em tempo real + tabelas de apoio + automação de cancelamento):
+
+![Fluxo completo do ranking de vendas e suas tabelas](ranking-fluxo-completo.svg)
+
 ## 3. A lógica (roteiro da edge function)
 1. Lê do v2 todas as linhas de `faturamento` **emitidas hoje** (`data_emissao`, fuso **Belém −3**), com **`tipo = VENDA`** e **`codfilial ≠ 3`** (filial 3 = Maranhão, fora). Paginado 1000/página.
 2. **Dedup por pedido:** fica a linha de **`max(id)`** (status atual). Mantém só **posições ativas: `L`, `B`, `M`, `F`, `P`**.

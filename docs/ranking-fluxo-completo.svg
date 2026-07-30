@@ -1,0 +1,81 @@
+<svg viewBox="0 0 1060 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="Inter, system-ui, sans-serif">
+<title id="ttl">Fluxo completo do ranking de vendas e suas tabelas</title>
+<desc id="dsc">WinThor (verdade) sincroniza para o espelho v2; a edge function bi-ranking-vendas le o v2 ao vivo, aplica regras e tabelas de apoio do murano-conversas, e envia ao painel. Abaixo, a automacao de cancelamento (Fase 1) via API do ERP.</desc>
+<style>
+  .bg{ fill:#ffffff; }
+  .box{ fill:#ffffff; stroke:#d9dde4; stroke-width:1.5; }
+  .band{ fill:#f4eef1; stroke:#e6dce4; stroke-width:1; }
+  .t{ fill:#142138; font-weight:800; font-size:14.5px; }
+  .s{ fill:#6b7280; font-weight:500; font-size:11px; }
+  .st{ fill:#142138; font-weight:600; font-size:11px; }
+  .eye{ fill:#6b7280; font-weight:700; font-size:9.5px; letter-spacing:.12em; }
+  .lbl{ fill:#6b7280; font-weight:700; font-size:10.5px; }
+  .sec{ fill:#142138; font-weight:800; font-size:13px; }
+  .arw{ stroke:#9aa2ad; stroke-width:2.2; fill:none; }
+  .dash{ stroke-dasharray:5 4; }
+</style>
+<defs><marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#9aa2ad"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1060" height="800"/>
+
+<text class="sec" x="26" y="20">1 · Fluxo principal (tempo real)</text>
+
+<rect class="box" x="26" y="34" width="220" height="50" rx="11"/><rect x="26" y="34" width="5" height="50" rx="2.5" fill="#1d7a43"/>
+<text class="eye" x="44" y="52">REFERENCIA OFICIAL</text><text class="t" x="44" y="72">MaxiGestao · MaximaTech</text>
+
+<rect class="box" x="26" y="120" width="220" height="82" rx="11"/><rect x="26" y="120" width="5" height="82" rx="2.5" fill="#1d7a43"/>
+<text class="t" x="44" y="150">WinThor · Oracle</text><text class="s" x="44" y="170">ERP real — a verdade</text><text class="s" x="44" y="187">conhece o cancelamento</text>
+
+<rect class="box" x="316" y="120" width="228" height="82" rx="11"/><rect x="316" y="120" width="5" height="82" rx="2.5" fill="#b3261e"/>
+<text class="t" x="334" y="150">v2 · faturamento</text><text class="s" x="334" y="170">espelho (lido ao vivo)</text><text class="s" x="334" y="187">SEM flag de cancelamento</text>
+
+<rect class="box" x="606" y="96" width="286" height="250" rx="12"/><rect x="606" y="96" width="5" height="250" rx="2.5" fill="#57163f"/>
+<text class="eye" x="624" y="120">MOTOR · EDGE FUNCTION (murano-conversas)</text>
+<text class="t" x="624" y="140">bi-ranking-vendas</text>
+<text class="st" x="624" y="170">1 · tipo VENDA · filial != 3 · hoje (Belem)</text>
+<text class="st" x="624" y="194">2 · dedup por pedido (linha de max id)</text>
+<text class="st" x="624" y="218">3 · posicoes L / B / M / F / P (bloq. conta)</text>
+<text class="st" x="624" y="242">4 · − bi_cancelados_dia</text>
+<text class="st" x="624" y="266">5 · − reemissao (passo 3b)</text>
+<text class="st" x="624" y="290">6 · soma por vendedor (nome_usuario)</text>
+<text class="s" x="624" y="322">valor = vlr_atendido · bonif. fora · dev nao subtrai</text>
+
+<rect class="box" x="928" y="150" width="112" height="94" rx="11"/><rect x="928" y="150" width="5" height="94" rx="2.5" fill="#57163f"/>
+<text class="t" x="944" y="184">Painel TV</text><text class="s" x="944" y="204">fonte-painel.html</text><text class="s" x="944" y="221">Netlify · 60s</text>
+
+<path class="arw dash" d="M136,84 L136,116" marker-end="url(#ah)"/><text class="lbl" x="146" y="106">le direto</text>
+<path class="arw" d="M246,161 L312,161" marker-end="url(#ah)"/><text class="lbl" x="250" y="151">sync por LINHA</text>
+<path class="arw" d="M544,161 L602,190" marker-end="url(#ah)"/><text class="lbl" x="548" y="150">HTTP vivo</text>
+<path class="arw" d="M892,200 L924,197" marker-end="url(#ah)"/><text class="lbl" x="894" y="188">JSON</text>
+
+<rect class="band" x="26" y="372" width="1014" height="92" rx="12"/>
+<text class="sec" x="40" y="394">2 · Tabelas de apoio · murano-conversas</text>
+<rect class="box" x="44" y="404" width="220" height="46" rx="9"/><text class="t" x="56" y="424" font-size="12.5">bi_config</text><text class="s" x="56" y="440">chave do v2 · meta do dia</text>
+<rect class="box" x="288" y="404" width="240" height="46" rx="9"/><text class="t" x="300" y="424" font-size="12.5">bi_cancelados_dia</text><text class="s" x="300" y="440">exclusoes (cancel. preso) -> passo 4</text>
+<rect class="box" x="552" y="404" width="220" height="46" rx="9"/><text class="t" x="564" y="424" font-size="12.5">bi_pedidos_dia</text><text class="s" x="564" y="440">espelho do que contou (auditoria)</text>
+<rect class="box" x="796" y="404" width="230" height="46" rx="9"/><text class="t" x="808" y="424" font-size="12.5">bi_ranking_snapshots</text><text class="s" x="808" y="440">fotos p/ dias anteriores</text>
+<path class="arw dash" d="M749,346 L749,370" marker-end="url(#ah)"/><text class="lbl" x="759" y="362">usa / grava</text>
+
+<line x1="26" y1="500" x2="1040" y2="500" stroke="#d9dde4" stroke-width="1"/>
+<text class="sec" x="26" y="528">3 · Automacao de cancelamento — Fase 1 (sombra) · <tspan fill="#b3261e">pendente: secrets API_USUARIO / API_SENHA</tspan></text>
+
+<rect class="box" x="26" y="548" width="220" height="76" rx="11"/><rect x="26" y="548" width="5" height="76" rx="2.5" fill="#1d7a43"/>
+<text class="t" x="44" y="576" font-size="13">API do ERP</text><text class="s" x="44" y="595">apiconsultacliente</text><text class="s" x="44" y="612">lista ATIVA (cancelado some)</text>
+
+<rect class="box" x="306" y="548" width="210" height="76" rx="11"/><rect x="306" y="548" width="5" height="76" rx="2.5" fill="#57163f"/>
+<text class="t" x="324" y="576" font-size="13">bi-cancelados-sombra</text><text class="s" x="324" y="595">compara ativos x contados</text><text class="s" x="324" y="612">acha os "presos"</text>
+
+<rect class="box dash" x="576" y="548" width="220" height="76" rx="11" stroke="#57163f" stroke-dasharray="5 4"/>
+<text class="t" x="594" y="576" font-size="13">bi_cancelados_candidatos</text><text class="s" x="594" y="595">candidatos — NAO aplica</text><text class="s" x="594" y="612">valida vs MaxiGestao</text>
+
+<rect class="box" x="856" y="548" width="184" height="76" rx="11"/><rect x="856" y="548" width="5" height="76" rx="2.5" fill="#57163f"/>
+<text class="t" x="874" y="576" font-size="13">bi_cancelados_dia</text><text class="s" x="874" y="595">apos validar + teto</text><text class="s" x="874" y="612">R$1500 -> revisao humana</text>
+
+<path class="arw" d="M246,586 L302,586" marker-end="url(#ah)"/><text class="lbl" x="250" y="576">token</text>
+<path class="arw" d="M516,586 L572,586" marker-end="url(#ah)"/>
+<path class="arw dash" d="M796,586 L852,586" marker-end="url(#ah)"/><text class="lbl" x="800" y="576">Fase 3</text>
+
+<rect x="26" y="700" width="13" height="13" rx="3" fill="#1d7a43"/><text class="s" x="46" y="711">fonte de verdade</text>
+<rect x="230" y="700" width="13" height="13" rx="3" fill="#b3261e"/><text class="s" x="250" y="711">espelho v2 (o gap do cancelamento)</text>
+<rect x="560" y="700" width="13" height="13" rx="3" fill="#57163f"/><text class="s" x="580" y="711">nosso processamento / tabelas</text>
+<text class="s" x="812" y="711" font-style="italic">— — borda tracejada = sombra / futuro</text>
+</svg>
