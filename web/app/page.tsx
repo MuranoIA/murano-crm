@@ -288,6 +288,7 @@ export default function Page() {
   const [metaSalvando, setMetaSalvando] = useState(false);
   const [verAntModal, setVerAntModal] = useState(false);
   const [dataAnterior, setDataAnterior] = useState("");
+  const [desfileStatus, setDesfileStatus] = useState<"" | "enviando" | "ok" | "erro">("");
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -447,9 +448,24 @@ export default function Page() {
 
   // abre a aba do Ranking (reusa a MESMA aba pelo nome "ranking_murano"; se já aberta, só
   // re-renderiza com a nova config). dia = 'AAAA-MM-DD' abre um dia passado; sem dia = ao vivo.
-  const RANKING_URL = "https://murano-bi-ranking-vendas.netlify.app/";
+  const RANKING_URL = "https://murano-ranking-vendas.vercel.app/";
   function abrirRanking(dia?: string) {
     window.open(RANKING_URL + (dia ? "?dia=" + encodeURIComponent(dia) : ""), "ranking_murano");
+  }
+  // Dispara o desfile (tela de parabéns de cada venda de hoje, 10s cada) em TODAS as TVs:
+  // grava o comando (bi_config.desfile_comando) e os painéis pegam pelo poll ~6s.
+  async function dispararDesfile() {
+    setDesfileStatus("enviando");
+    try {
+      const r = await fetch("/api/ranking/desfile", { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setDesfileStatus("erro"); alert("Não foi possível disparar o desfile: " + (j?.error ?? r.status)); return; }
+      setDesfileStatus("ok");
+      setTimeout(() => setDesfileStatus(""), 5000);
+    } catch (e: any) {
+      setDesfileStatus("erro");
+      alert("Falha ao disparar o desfile: " + (e?.message ?? e));
+    }
   }
 
   // escolhe o template padrão do momento (por navegador do vendedor)
@@ -1134,8 +1150,16 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirMeta(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
                             </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={itemStyle}>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
+                            </button>
+                            <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (10s cada) em todas as TVs" style={itemStyle}>
+                              🎉 Rodar desfile
+                              {desfileStatus === "enviando"
+                                ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
+                                : desfileStatus === "ok"
+                                ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
+                                : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
                             </button>
                           </div>
                         </>
@@ -1276,6 +1300,7 @@ export default function Page() {
                 <>
                   <a href="/analises" onClick={fecha} style={row}>Análises</a>
                   <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
+                  <button onClick={() => { fecha(); dispararDesfile(); }} style={row}>🎉 Rodar desfile <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>▶ nas TVs</span></button>
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
                   <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
                 </>
