@@ -514,6 +514,17 @@ export default function Page() {
       setMetasIndSalv(false);
     }
   }
+  // Preview da tela "BATEU A META" de um vendedor nas TVs (usa o valor digitado, mesmo sem salvar).
+  async function preverMetaBatida(m: { slug: string; nome: string; meta: number }) {
+    if (!m.meta) { alert(`Defina uma meta para ${m.nome} antes de ver a tela.`); return; }
+    try {
+      const r = await fetch("/api/ranking/metabatida", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug: m.slug, nome: m.nome, meta: m.meta }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert("Não foi possível exibir a tela: " + (j?.error ?? r.status)); return; }
+    } catch (e: any) {
+      alert("Falha ao exibir a tela: " + (e?.message ?? e));
+    }
+  }
 
   // escolhe o template padrão do momento (por navegador do vendedor)
   const escolherTemplate = (id: number) => {
@@ -2376,8 +2387,14 @@ export default function Page() {
                     value={m.meta ? String(m.meta) : ""}
                     onChange={(e) => { const val = Math.max(0, Number(e.target.value.replace(/[^\d]/g, "")) || 0); setMetasInd((prev) => prev.map((x, ix) => (ix === i ? { ...x, meta: val } : x))); }}
                     placeholder="0"
-                    style={{ width: 110, boxSizing: "border-box", padding: "7px 10px", fontSize: 14, fontWeight: 700, textAlign: "right", color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+                    style={{ width: 96, boxSizing: "border-box", padding: "7px 10px", fontSize: 14, fontWeight: 700, textAlign: "right", color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
                   />
+                  <button
+                    onClick={() => preverMetaBatida(m)}
+                    disabled={!m.meta}
+                    title={m.meta ? `Ver a tela BATEU A META de ${m.nome} nas TVs` : "Defina uma meta para ver a tela"}
+                    style={{ flex: "none", padding: "6px 9px", fontSize: 14, lineHeight: 1, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: m.meta ? "pointer" : "not-allowed", opacity: m.meta ? 1 : 0.4 }}
+                  >👁</button>
                 </div>
               ))}
             </div>
