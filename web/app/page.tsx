@@ -1148,6 +1148,7 @@ export default function Page() {
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="/catalogos" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo</a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+            <a href="/utilitarios" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Utilitários</a>
           </nav>
           )}
           {isMobile && (
@@ -1282,6 +1283,7 @@ export default function Page() {
               <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
+              <a href="/utilitarios" onClick={fecha} style={row}>Utilitários</a>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
           </>
