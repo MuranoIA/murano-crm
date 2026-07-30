@@ -289,6 +289,10 @@ export default function Page() {
   const [verAntModal, setVerAntModal] = useState(false);
   const [dataAnterior, setDataAnterior] = useState("");
   const [desfileStatus, setDesfileStatus] = useState<"" | "enviando" | "ok" | "erro">("");
+  const [parabensModal, setParabensModal] = useState(false);
+  const [parabensNome, setParabensNome] = useState("");
+  const [parabensEnviando, setParabensEnviando] = useState(false);
+  const [parabensMsg, setParabensMsg] = useState<{ ok: boolean; texto: string } | null>(null);
   const [checando, setChecando] = useState(true);
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
@@ -465,6 +469,23 @@ export default function Page() {
     } catch (e: any) {
       setDesfileStatus("erro");
       alert("Falha ao disparar o desfile: " + (e?.message ?? e));
+    }
+  }
+  // Mostra a tela de parabéns da venda de hoje de um cliente (por nome) em todas as TVs.
+  function abrirParabens() { setParabensNome(""); setParabensMsg(null); setParabensModal(true); }
+  async function enviarParabens() {
+    const nome = parabensNome.trim();
+    if (nome.length < 2) { setParabensMsg({ ok: false, texto: "Digite ao menos 2 letras do nome." }); return; }
+    setParabensEnviando(true); setParabensMsg(null);
+    try {
+      const r = await fetch("/api/ranking/parabens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setParabensMsg({ ok: false, texto: j?.error ?? ("Erro " + r.status) }); return; }
+      setParabensMsg({ ok: true, texto: `🎉 Parabéns de ${j.cliente} (venda de ${j.vendedor}, R$ ${Number(j.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}) enviada às TVs.` });
+    } catch (e: any) {
+      setParabensMsg({ ok: false, texto: "Falha: " + (e?.message ?? e) });
+    } finally {
+      setParabensEnviando(false);
     }
   }
 
@@ -1153,13 +1174,16 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
                             </button>
-                            <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (10s cada) em todas as TVs" style={itemStyle}>
+                            <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎉 Rodar desfile
                               {desfileStatus === "enviando"
                                 ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
                                 : desfileStatus === "ok"
                                 ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
                                 : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
+                            </button>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirParabens(); }} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={itemStyle}>
+                              🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
                             </button>
                           </div>
                         </>
@@ -1301,6 +1325,7 @@ export default function Page() {
                   <a href="/analises" onClick={fecha} style={row}>Análises</a>
                   <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
                   <button onClick={() => { fecha(); dispararDesfile(); }} style={row}>🎉 Rodar desfile <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>▶ nas TVs</span></button>
+                  <button onClick={() => { fecha(); abrirParabens(); }} style={row}>🎊 Parabéns por cliente</button>
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
                   <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
                 </>
@@ -2264,6 +2289,36 @@ export default function Page() {
               <button onClick={() => salvarMeta(0)} disabled={metaSalvando} title="Nenhuma meta — o quadro da meta some do Ranking" style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>Sem meta (none)</button>
               <button onClick={() => setMetaModal(false)} disabled={metaSalvando} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
               <button onClick={() => salvarMeta()} disabled={metaSalvando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metaSalvando ? "wait" : "pointer" }}>{metaSalvando ? "Salvando…" : "Salvar meta"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {parabensModal && (
+        <div
+          onClick={() => !parabensEnviando && setParabensModal(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 380, background: RD.surface, borderRadius: 14, padding: 22, boxShadow: "0 20px 60px rgba(16,32,64,.3)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: RD.wine, marginBottom: 4 }}>🎊 Parabéns por cliente</div>
+            <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 16 }}>Digite o nome da cliente. Se houver venda hoje, a tela de parabéns dessa venda aparece nas TVs.</div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: RD.navy }}>Nome da cliente</label>
+            <input
+              autoFocus
+              type="text"
+              value={parabensNome}
+              onChange={(e) => { setParabensNome(e.target.value); if (parabensMsg) setParabensMsg(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !parabensEnviando) enviarParabens(); }}
+              placeholder="ex: Raquel Rodrigues"
+              style={{ width: "100%", boxSizing: "border-box", marginTop: 6, padding: "10px 12px", fontSize: 15, fontWeight: 700, color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+            />
+            {parabensMsg && (
+              <div style={{ marginTop: 10, fontSize: 12.5, fontWeight: 600, color: parabensMsg.ok ? "#0a7d3c" : "#b3261e", background: parabensMsg.ok ? "rgba(10,125,60,.08)" : "rgba(179,38,30,.07)", border: `1px solid ${parabensMsg.ok ? "rgba(10,125,60,.3)" : "rgba(179,38,30,.3)"}`, borderRadius: 8, padding: "8px 10px", lineHeight: 1.4 }}>
+                {parabensMsg.texto}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 20 }}>
+              <button onClick={() => setParabensModal(false)} disabled={parabensEnviando} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Fechar</button>
+              <button onClick={() => enviarParabens()} disabled={parabensEnviando} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: parabensEnviando ? "wait" : "pointer" }}>{parabensEnviando ? "Buscando…" : "Mostrar parabéns"}</button>
             </div>
           </div>
         </div>
