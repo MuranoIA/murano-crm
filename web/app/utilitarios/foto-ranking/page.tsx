@@ -74,7 +74,7 @@ export default function FotoRanking() {
   return (
     <div style={{ minHeight: "100vh", background: BG, color: INK, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", background: SURF, borderBottom: `1px solid ${BORDER}` }}>
-        <Link href="/utilitarios" style={{ color: GRAY, textDecoration: "none", fontSize: 13, fontWeight: 600 }}>← Utilitários</Link>
+        <Link href="/" style={{ color: GRAY, textDecoration: "none", fontSize: 13, fontWeight: 600 }}>← Voltar ao CRM</Link>
         <div style={{ fontSize: 18, fontWeight: 800, color: WINE }}>📸 Foto no Ranking</div>
       </div>
 
