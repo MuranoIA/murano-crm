@@ -2553,10 +2553,7 @@ export default function Page() {
 }
 
 function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | null; papeis?: string[]; email?: string | null }) => void }) {
-  const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
   const [erro, setErro] = useState("");
-  const [entrando, setEntrando] = useState(false);
   const [gCarregando, setGCarregando] = useState(false);
 
   // mensagem de erro vinda do callback do Google (?erro=...)
@@ -2581,29 +2578,6 @@ function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | nu
     }
   }
 
-  async function entrar(e: any) {
-    e.preventDefault();
-    setErro("");
-    setEntrando(true);
-    try {
-      const r = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user, pass }),
-      });
-      const j = await r.json();
-      if (!r.ok) { setErro(j.error ?? "Falha no login"); return; }
-      const s = await fetch("/api/session").then((x) => x.json());
-      onLogin(s);
-    } catch (err: any) {
-      setErro(String(err?.message ?? err));
-    } finally {
-      setEntrando(false);
-    }
-  }
-
-  const inp = { padding: "9px 12px", border: `1px solid ${RD.border}`, borderRadius: 8, fontSize: 13, outline: "none" } as const;
-
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: 320, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 14, padding: 28, boxShadow: "0 8px 30px rgba(16,32,64,0.08)" }}>
@@ -2619,16 +2593,7 @@ function Login({ onLogin }: { onLogin: (s: { role: string; carteira: string | nu
         >
           {gCarregando ? "Redirecionando…" : "Entrar com Google"}
         </button>
-        <div style={{ textAlign: "center", color: RD.grayLight, fontSize: 11, margin: "12px 0" }}>— ou admin —</div>
-
-        <form onSubmit={entrar} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="Usuário" autoFocus style={inp} />
-          <input value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Senha" type="password" style={inp} />
-          {erro && <div style={{ color: "#e5484d", fontSize: 12 }}>{erro}</div>}
-          <button type="submit" disabled={entrando} style={{ padding: 10, borderRadius: 8, border: "none", background: RD.wine, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-            {entrando ? "Entrando…" : "Entrar"}
-          </button>
-        </form>
+        {erro && <div style={{ color: "#e5484d", fontSize: 12, marginTop: 10, textAlign: "center" }}>{erro}</div>}
       </div>
     </div>
   );
