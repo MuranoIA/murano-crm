@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../../lib/papel";
+import { nomeDoUsuario } from "../../../../lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -13,15 +13,6 @@ function sb() {
   if (!url || !key) throw new Error("Supabase envs ausentes");
   return createClient(url, key, { auth: { persistSession: false } });
 }
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-async function meuNome(email: string | undefined, sessao: string, c: ReturnType<typeof sb>) {
-  if (!email) return "Usuário";
-  let carteira = carteiraDe(sessao);
-  const { data } = await c.from("acesso").select("carteira").eq("email", email).maybeSingle();
-  if (data?.carteira) carteira = data.carteira;
-  return carteira ? cap(carteira) : email.split("@")[0];
-}
-
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const sessao = cookies().get("crm_sessao")?.value;
   const email = cookies().get("crm_email")?.value;
@@ -46,7 +37,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (b.status === "aberto") patch.resolvido_em = null;
   }
   if ((patch.devolutiva || patch.status === "andamento" || patch.status === "resolvido") && !cur.responsavel_nome) {
-    patch.responsavel_nome = await meuNome(email, sessao, c);
+    patch.responsavel_nome = await nomeDoUsuario(email, sessao, c);
   }
 
   const { data, error } = await c.from("tickets").update(patch).eq("id", params.id).select().single();

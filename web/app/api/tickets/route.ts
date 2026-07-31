@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../lib/papel";
+import { nomeDeEmailCarteira, nomeDoUsuario } from "../../../lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -12,15 +12,6 @@ function sb() {
   if (!url || !key) throw new Error("Supabase envs ausentes");
   return createClient(url, key, { auth: { persistSession: false } });
 }
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-async function nomeDoEmail(email: string | undefined, sessao: string, c: ReturnType<typeof sb>) {
-  if (!email) return "Usuário";
-  let carteira = carteiraDe(sessao);
-  const { data } = await c.from("acesso").select("carteira").eq("email", email).maybeSingle();
-  if (data?.carteira) carteira = data.carteira;
-  return carteira ? cap(carteira) : email.split("@")[0];
-}
-
 export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   const email = cookies().get("crm_email")?.value;
@@ -53,8 +44,8 @@ export async function POST(req: Request) {
   // valida destinatário (usuário ativo) e pega o nome
   const { data: dest } = await c.from("acesso").select("email,carteira,ativo").eq("email", destinatario).maybeSingle();
   if (!dest || dest.ativo === false) return Response.json({ error: "Destinatário inválido." }, { status: 400 });
-  const destNome = dest.carteira ? cap(dest.carteira) : destinatario.split("@")[0];
-  const autorNome = await nomeDoEmail(email, sessao, c);
+  const destNome = nomeDeEmailCarteira(destinatario, dest.carteira);
+  const autorNome = await nomeDoUsuario(email, sessao, c);
 
   const { data, error } = await c.from("tickets").insert({
     titulo: titulo.slice(0, 160), texto: texto.slice(0, 5000),
