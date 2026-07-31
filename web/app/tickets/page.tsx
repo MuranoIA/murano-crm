@@ -20,7 +20,7 @@ type Ticket = {
 const CATS = [
   { key: "bugs", nome: "Correção de Bugs", emoji: "🐞", desc: "Reportar erros e problemas no sistema.", cor: "#c0392b" },
   { key: "feature", nome: "Novas Features", emoji: "✨", desc: "Solicitar novas funcionalidades.", cor: "#7b2d8b" },
-  { key: "supervisor", nome: "Feedback ao Supervisor", emoji: "💬", desc: "Registrar feedbacks ao supervisor.", cor: "#185fa5" },
+  { key: "supervisor", nome: "Chamado ao Supervisor", emoji: "💬", desc: "Abrir um chamado ao supervisor.", cor: "#185fa5" },
 ];
 const ST: Record<string, { label: string; cor: string; bg: string }> = {
   aberto: { label: "Aberto", cor: "#a3401d", bg: "#faece7" },
