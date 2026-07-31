@@ -10,6 +10,7 @@ import Link from "next/link";
 
 const NAVY = "#111d33", WINE = "#57163f", CYAN = "#0ea3dc", GRAY = "#5a6472", GRAYL = "#7d8695";
 const BORDER = "#cdd6e2", BG = "#eef0f4", SURF = "#ffffff", PANEL = "#f3f5f9";
+const COL = "#dfe4ec"; // fundo cinza da coluna (corpo da categoria) — cards brancos saltam
 
 type Ticket = {
   id: string; categoria: string; titulo: string; texto: string;
@@ -75,7 +76,7 @@ export default function TicketsPage() {
     return true;
   }
 
-  const inputStyle: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 14, color: NAVY, border: `1px solid ${BORDER}`, borderRadius: 8, outline: "none", background: SURF, fontFamily: "inherit" };
+  const inputStyle: CSSProperties = { width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 14, color: NAVY, border: `1px solid ${BORDER}`, borderRadius: 8, outline: "none", background: PANEL, fontFamily: "inherit" };
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: NAVY, fontFamily: "Inter, system-ui, sans-serif" }}>
@@ -102,13 +103,13 @@ export default function TicketsPage() {
                   <div style={{ fontSize: 12.5, color: "rgba(255,255,255,.9)", marginTop: 2, fontWeight: 500 }}>{cat.desc}</div>
                 </div>
 
-                <div style={{ padding: 14 }}>
+                <div style={{ padding: 14, background: COL }}>
                   {!formAberto ? (
-                    <button onClick={() => { setAberto(cat.key); setTitulo(""); setTexto(""); }} style={{ width: "100%", padding: "11px 12px", fontSize: 13.5, fontWeight: 800, color: cat.cor, background: PANEL, border: `1.5px dashed ${cat.cor}`, borderRadius: 10, cursor: "pointer" }}>
+                    <button onClick={() => { setAberto(cat.key); setTitulo(""); setTexto(""); }} style={{ width: "100%", padding: "11px 12px", fontSize: 13.5, fontWeight: 800, color: cat.cor, background: SURF, border: `1.5px dashed ${cat.cor}`, borderRadius: 10, cursor: "pointer" }}>
                       ＋ Criar ticket
                     </button>
                   ) : (
-                    <div style={{ border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, background: PANEL }}>
+                    <div style={{ border: `1px solid ${BORDER}`, borderRadius: 10, padding: 12, background: SURF }}>
                       <label style={{ fontSize: 11.5, fontWeight: 800, color: NAVY }}>Título</label>
                       <input autoFocus value={titulo} onChange={(e) => setTitulo(e.target.value)} maxLength={160} placeholder="Resuma o chamado" style={{ ...inputStyle, marginTop: 4, marginBottom: 8, fontWeight: 700 }} />
                       <label style={{ fontSize: 11.5, fontWeight: 800, color: NAVY }}>Descrição</label>
