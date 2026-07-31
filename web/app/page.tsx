@@ -1183,13 +1183,13 @@ export default function Page() {
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
-              <>
-                <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
-                {(() => {
-                  // Dropdown "Ranking": (1) Ver anteriores -> calendário -> abre o ranking naquele dia;
-                  // (2) Meta do dia -> caixinha; (3) Ranking -> abre a aba ao vivo. Sempre reusa a MESMA
-                  // aba (window name "ranking_murano"): se já estiver aberta, só re-renderiza com a nova config.
-                  const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer" };
+              <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
+            )}
+            {(() => {
+                  // Dropdown "Ranking": admin vê tudo (metas/desfile/parabéns); vendedor e home veem
+                  // só "Ranking ao vivo" e "Subir foto". Reusa a MESMA aba "ranking_murano".
+                  const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer", textDecoration: "none" as const };
+                  const admin = sessao.role === "admin";
                   return (
                     <div style={{ position: "relative", display: "inline-flex" }}>
                       <button
@@ -1202,6 +1202,7 @@ export default function Page() {
                         <>
                           <div onClick={() => setRankingMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
                           <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 101, minWidth: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
+                            {admin && (<>
                             <button onClick={() => { setRankingMenuAberto(false); setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
                               📅 Ver anteriores
                             </button>
@@ -1211,9 +1212,11 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirMetasInd(); }} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🏅 Metas individuais
                             </button>
+                            </>)}
                             <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
                             </button>
+                            {admin && (<>
                             <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎉 Rodar desfile
                               {desfileStatus === "enviando"
@@ -1222,21 +1225,22 @@ export default function Page() {
                                 ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
                                 : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
                             </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirParabens(); }} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={itemStyle}>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirParabens(); }} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
                             </button>
+                            </>)}
+                            <a href="/utilitarios/foto-ranking" onClick={() => setRankingMenuAberto(false)} title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={itemStyle}>
+                              📸 Subir foto no ranking
+                            </a>
                           </div>
                         </>
                       )}
                     </div>
                   );
                 })()}
-              </>
-            )}
             <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="/catalogos" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo</a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
-            <a href="/utilitarios" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Utilitários</a>
           </nav>
           )}
           {isMobile && (
@@ -1361,9 +1365,12 @@ export default function Page() {
               <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
+                <a href="/analises" onClick={fecha} style={row}>Análises</a>
+              )}
+              <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
+              <a href="/utilitarios/foto-ranking" onClick={fecha} style={row}>📸 Subir foto no ranking</a>
+              {sessao.role === "admin" && (
                 <>
-                  <a href="/analises" onClick={fecha} style={row}>Análises</a>
-                  <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
                   <button onClick={() => { fecha(); dispararDesfile(); }} style={row}>🎉 Rodar desfile <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>▶ nas TVs</span></button>
                   <button onClick={() => { fecha(); abrirParabens(); }} style={row}>🎊 Parabéns por cliente</button>
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
@@ -1374,7 +1381,6 @@ export default function Page() {
               <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
-              <a href="/utilitarios" onClick={fecha} style={row}>Utilitários</a>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
           </>
