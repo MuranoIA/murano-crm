@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { nomeDeEmailCarteira } from "../../../../lib/tickets";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,6 @@ function sb() {
   if (!url || !key) throw new Error("Supabase envs ausentes");
   return createClient(url, key, { auth: { persistSession: false } });
 }
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-const nomeDe = (email: string, carteira: string | null) => (carteira ? cap(carteira) : String(email).split("@")[0]);
-
 export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   const email = cookies().get("crm_email")?.value;
@@ -23,7 +21,7 @@ export async function GET() {
 
   const usuarios = (data ?? [])
     .filter((u) => u.email && u.email !== email)
-    .map((u) => ({ email: u.email as string, nome: nomeDe(u.email, u.carteira), papel: u.papel as string | null }))
+    .map((u) => ({ email: u.email as string, nome: nomeDeEmailCarteira(u.email, u.carteira), papel: u.papel as string | null }))
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   return Response.json({ usuarios });
 }
