@@ -28,9 +28,17 @@ export async function GET(req: Request) {
     if (pedidoIdx >= atualIdx || atualIdx - pedidoIdx > 3)
       return Response.json({ error: "mês fora do intervalo disponível" }, { status: 400 });
 
-    const { data, error } = await sb.rpc("is_dashboard_as_of", { p_mes: `${mes}-01` });
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-    return Response.json({ dados: data, narrativas: null, atualizado_em: null, mes });
+    const [calc, narr] = await Promise.all([
+      sb.rpc("is_dashboard_as_of", { p_mes: `${mes}-01` }),
+      sb.from("is_narrativas_mes").select("narrativas,gerado_em").eq("mes", `${mes}-01`).maybeSingle(),
+    ]);
+    if (calc.error) return Response.json({ error: calc.error.message }, { status: 500 });
+    return Response.json({
+      dados: calc.data,
+      narrativas: narr.data?.narrativas ?? null,
+      atualizado_em: narr.data?.gerado_em ?? null,
+      mes,
+    });
   }
 
   const { data, error } = await sb
