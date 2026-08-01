@@ -204,7 +204,7 @@ export default function InsideSales() {
         {ps?.length
           ? ps.map((p, i) => <p key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "#C0C0D8", margin: "0 0 8px" }} dangerouslySetInnerHTML={{ __html: p }} />)
           : <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>{historico
-            ? "A análise interpretativa é gerada apenas para o mês corrente — os números acima são os resultados finais do mês selecionado."
+            ? "A análise deste mês ainda está sendo gerada — ela é criada uma única vez por mês encerrado e fica disponível na próxima atualização automática (madrugada)."
             : "A análise interpretativa é gerada automaticamente toda madrugada (aparece aqui assim que o gerador de texto estiver ativo)."}</p>}
       </div>
     );
@@ -234,8 +234,8 @@ export default function InsideSales() {
               <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase", color: C.muted }}>Murano · Inside Sales</span>
             </div>
             <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-.02em" }}>Dashboard de Desempenho</div>
-            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>Filial 1 · F-Faturado · vlr_item − DEV · {dados?.dias_movimento ?? "—"} dias com movimento</div>
-            {atualizado && <div style={{ background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)", color: C.green, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20, marginTop: 6, display: "inline-block" }}>⟳ Atualizado {new Date(atualizado).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>}
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>Filial 1 · F-Faturado · valor do pedido − devoluções · {dados?.dias_movimento ?? "—"} dias com movimento</div>
+            {atualizado && !historico && <div style={{ background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)", color: C.green, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20, marginTop: 6, display: "inline-block" }}>⟳ Atualizado {new Date(atualizado).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             <select value={mes} onChange={(e) => setMes(e.target.value)}
@@ -264,7 +264,7 @@ export default function InsideSales() {
           const rows = sortBy((l) => l.p[3]?.liq ?? 0);
           return (
             <div>
-              {secHead("Indicador 01", "Faturamento Líquido", `vlr_item (VENDA F-Faturado) − vlr_item (DEV) · Filial 1 · ${dados.dias_movimento} dias comparáveis`)}
+              {secHead("Indicador 01", "Faturamento Líquido", `Valor do pedido (VENDA F-Faturado) − devoluções · Filial 1 · ${dados.dias_movimento} dias comparáveis`)}
               {kpis && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 24 }}>
                   {[
@@ -320,9 +320,9 @@ export default function InsideSales() {
 
         {dados && (["ticket", "clientes", "preco", "itens", "mix"].includes(tab)) && (() => {
           const cfg: Record<string, any> = {
-            ticket: { eye: "Indicador 02", title: "Ticket Médio por Cliente", sub: "vlr_item (VENDA F-Faturado) ÷ clientes únicos", key: "ticket", fmt: cell2, chart: (p: P) => p.ticket, cf: (n: number) => moedaK(n), extra: { label: "Clientes", val: (l: Linha) => inteiro(l.p[3]?.clientes ?? 0) } },
+            ticket: { eye: "Indicador 02", title: "Ticket Médio por Cliente", sub: "Valor do pedido (VENDA F-Faturado) ÷ clientes únicos", key: "ticket", fmt: cell2, chart: (p: P) => p.ticket, cf: (n: number) => moedaK(n), extra: { label: "Clientes", val: (l: Linha) => inteiro(l.p[3]?.clientes ?? 0) } },
             clientes: { eye: "Indicador 03", title: "Clientes Atendidos", sub: "Clientes únicos com VENDA F-Faturado", key: "clientes", fmt: cellInt, chart: (p: P) => p.clientes, cf: (n: number) => inteiro(n) },
-            preco: { eye: "Indicador 04", title: "Preço Médio por Produto", sub: "vlr_item ÷ quantidade (VENDA F-Faturado)", key: "preco", fmt: cell2, chart: (p: P) => p.preco, cf: (n: number) => moeda2(n) as string },
+            preco: { eye: "Indicador 04", title: "Preço Médio por Produto", sub: "Valor dos itens ÷ quantidade (VENDA F-Faturado)", key: "preco", fmt: cell2, chart: (p: P) => p.preco, cf: (n: number) => moeda2(n) as string },
             itens: { eye: "Indicador 05", title: "Itens Vendidos", sub: "Quantidade de unidades (VENDA F-Faturado)", key: "itens", fmt: cellInt, chart: (p: P) => p.itens, cf: (n: number) => inteiro(n) },
             mix: { eye: "Indicador 06", title: "Positivação do Mix", sub: `Produtos distintos (VENDA F-Faturado) — ${dados.mix_total} produtos ativos`, key: "mix", fmt: cellInt, chart: (p: P) => p.mix, cf: (n: number) => inteiro(n) },
           };
@@ -583,7 +583,7 @@ export default function InsideSales() {
         })()}
       </main>
       <footer style={{ textAlign: "center", padding: "18px", fontSize: 10, color: C.muted, fontFamily: "monospace", borderTop: `1px solid ${C.border}` }}>
-        Murano · Inside Sales · Filial 1 · F-Faturado · vlr_item − DEV · atualização automática diária
+        Murano · Inside Sales · Filial 1 · F-Faturado · valor do pedido − devoluções · atualização automática diária
       </footer>
     </div>
   );

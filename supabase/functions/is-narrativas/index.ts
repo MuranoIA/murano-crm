@@ -1,8 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// Gera as análises (narrativas) do dashboard Inside Sales por IA e grava em
-// is_dashboard.narrativas. Disparada toda madrugada pelo pg_cron (is-narrativas-diario,
-// 45 6 * * * UTC = 03:45 BRT) após o is_refresh das 03:30. Deploy com verify_jwt=false.
+// Gera as análises (narrativas) do dashboard Inside Sales por IA.
+// Body {} → mês corrente: lê is_dashboard.dados e grava em is_dashboard.narrativas.
+// Body {"mes":"2026-07"} → mês encerrado: calcula via is_dashboard_as_of.
+// Em ambos os casos guarda o resultado em is_narrativas_mes (cache por mês), para que
+// o dropdown de mês do dashboard abra com a análise pronta.
+// Disparada toda madrugada pelo pg_cron (is-narrativas-diario, 45 6 * * * UTC = 03:45 BRT)
+// após o is_refresh das 03:30. Deploy com verify_jwt=false.
 // Secret necessário: ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
 // Modelo: Haiku 4.5 (econômico, ~centavos/dia). Trocar MODEL para claude-opus-5 se quiser
 // prosa mais rica (custa mais).
@@ -52,23 +56,61 @@ function buildEvolucao(dados: any) {
   return { mes_atual: periodos[iAtual], mes_anterior: periodos[iAnt], equipe_por_mes: team, equipe_melhor_mes: periodos[teamBest], consultores };
 }
 
-Deno.serve(async () => {
+// Ranking já ordenado do período de referência. Sem isso a IA erra a ordem — chegou a
+// escrever "Milene liderou, seguida por Thamires" com a Thamires valendo mais.
+function buildRanking(dados: any) {
+  const linhas: any[] = dados.linhas ?? [];
+  const i = (dados.periodos ?? []).length - 1;
+  return linhas
+    .map((l: any) => ({
+      nome: l.nome, novato: !!l.novato,
+      liq: l.p?.[i]?.liq ?? 0, meta: l.meta,
+      pct_meta: l.meta ? Math.round(((l.p?.[i]?.liq ?? 0) / l.meta) * 1000) / 10 : null,
+    }))
+    .sort((a, b) => b.liq - a.liq)
+    .map((r, idx) => ({ posicao: idx + 1, ...r }));
+}
+
+Deno.serve(async (req) => {
   try {
     const supaUrl = Deno.env.get("SUPABASE_URL")!;
     const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const anthKey = Deno.env.get("ANTHROPIC_API_KEY");
     if (!anthKey) return json({ error: "ANTHROPIC_API_KEY ausente no Supabase (Edge Functions → Secrets)" }, 500);
 
-    const sb = createClient(supaUrl, supaKey, { auth: { persistSession: false } });
-    const { data: row, error } = await sb.from("is_dashboard").select("dados").eq("id", 1).single();
-    if (error || !row?.dados) return json({ error: "is_dashboard.dados ausente" }, 500);
-    const dados = row.dados;
-    // injeta os agregados de evolução para a IA usar números exatos
-    const dadosAI = { ...dados, evolucao: buildEvolucao(dados) };
+    let mes: string | null = null;
+    try {
+      const body = await req.json();
+      if (body?.mes && /^\d{4}-\d{2}$/.test(body.mes)) mes = body.mes;
+    } catch (_e) { /* body vazio = mês corrente */ }
 
-    const abasTxt = Object.entries(ABAS).map(([k, v]) => `- ${k}: ${v}`).join("\n");
-    const sys = "Você é analista sênior de vendas da Murano Professional (distribuidora B2B de cosméticos, Belém/PA). Escreve análises curtas, executivas e acionáveis em português do Brasil para um dashboard de Inside Sales. Baseie-se ESTRITAMENTE nos números fornecidos — cite nomes de consultores e valores reais. Destaque a frase-chave de cada parágrafo com <strong>...</strong>. Não invente dados nem faça suposições além dos números.";
-    const user = `Dados do dashboard em JSON. Os períodos comparados estão em 'periodos' (o último é o mês atual). Para CADA aba abaixo, escreva de 2 a 4 parágrafos curtos de análise; cada parágrafo começa com uma frase-chave entre <strong>...</strong>.\n\nEXCEÇÃO — a aba 'evolucao' deve ter o DOBRO de profundidade das outras: escreva de 5 a 8 parágrafos, cobrindo (a) a EQUIPE no mês atual vs o mês anterior, (b) a EQUIPE vs o melhor mês, e (c) destaques por CONSULTOR (quem acelerou, quem desacelerou, quem está no pico e quem está longe dele). Use o bloco 'evolucao' dos dados para os números.\n\nAbas:\n${abasTxt}\n\nResponda EXCLUSIVAMENTE com um objeto JSON válido no formato {"fat":["...","..."],"ticket":[...],"clientes":[...],"preco":[...],"itens":[...],"mix":[...],"evolucao":["...","...","...","...","...","..."],"opp":[...],"novatos":[...]} — sem texto fora do JSON, sem crases.\n\nDADOS:\n${JSON.stringify(dadosAI)}`;
+    const sb = createClient(supaUrl, supaKey, { auth: { persistSession: false } });
+
+    let dados: any;
+    if (mes) {
+      const { data, error } = await sb.rpc("is_dashboard_as_of", { p_mes: `${mes}-01` });
+      if (error || !data) return json({ error: `is_dashboard_as_of falhou: ${error?.message}` }, 500);
+      dados = data;
+    } else {
+      const { data: row, error } = await sb.from("is_dashboard").select("dados").eq("id", 1).single();
+      if (error || !row?.dados) return json({ error: "is_dashboard.dados ausente" }, 500);
+      dados = row.dados;
+    }
+
+    // injeta agregados prontos (evolução e ranking ordenado) para a IA usar números exatos
+    const dadosAI = { ...dados, evolucao: buildEvolucao(dados), ranking: buildRanking(dados) };
+
+    // mês encerrado não tem oportunidades/novatos — não peça análise dessas abas
+    const abas: Record<string, string> = { ...ABAS };
+    if (!dados.oportunidades) delete abas.opp;
+    if (!dados.novatos) delete abas.novatos;
+    const abasTxt = Object.entries(abas).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+    const formato = "{" + Object.keys(abas).map((k) => `"${k}":["...","..."]`).join(",") + "}";
+    const sys = "Você é analista sênior de vendas da Murano Professional (distribuidora B2B de cosméticos, Belém/PA). Escreve análises curtas, executivas e acionáveis em português do Brasil para um dashboard de Inside Sales. Baseie-se ESTRITAMENTE nos números fornecidos — cite nomes de consultores e valores reais. Destaque a frase-chave de cada parágrafo com <strong>...</strong>. Não invente dados nem faça suposições além dos números. REGRA CRÍTICA: para qualquer afirmação de posição (quem lidera, quem vem em seguida, quem está por último) use EXCLUSIVAMENTE o bloco 'ranking' dos dados, que já vem ordenado do maior para o menor — nunca ordene por conta própria. Confira que o valor citado é coerente com a posição afirmada.";
+    const ctx = mes
+      ? `Este é um MÊS JÁ ENCERRADO (${dados.periodos?.[3]?.label ?? mes}) — os números são os resultados finais e fechados do mês. Escreva no passado, como um fechamento de mês, e não como acompanhamento em andamento.`
+      : `O último período é o MÊS EM ANDAMENTO.`;
+    const user = `Dados do dashboard em JSON. Os períodos comparados estão em 'periodos' (o último é o período de referência). ${ctx}\n\nPara CADA aba abaixo, escreva de 2 a 4 parágrafos curtos de análise; cada parágrafo começa com uma frase-chave entre <strong>...</strong>.\n\nEXCEÇÃO — a aba 'evolucao' deve ter o DOBRO de profundidade das outras: escreva de 5 a 8 parágrafos, cobrindo (a) a EQUIPE no período de referência vs o anterior, (b) a EQUIPE vs o melhor mês, e (c) destaques por CONSULTOR (quem acelerou, quem desacelerou, quem está no pico e quem está longe dele). Use o bloco 'evolucao' dos dados para os números.\n\nAbas:\n${abasTxt}\n\nResponda EXCLUSIVAMENTE com um objeto JSON válido no formato ${formato} — sem texto fora do JSON, sem crases.\n\nDADOS:\n${JSON.stringify(dadosAI)}`;
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -87,8 +129,15 @@ Deno.serve(async () => {
       return json({ error: "Resposta da IA não é JSON válido", amostra: txt.slice(0, 300) }, 502);
     }
 
-    await sb.from("is_dashboard").update({ narrativas: narr }).eq("id", 1);
-    return json({ ok: true, model: MODEL, abas: Object.keys(narr), tokens: j.usage });
+    // cache por mês (o dropdown lê daqui); mês corrente também alimenta is_dashboard
+    const mesRef = mes ?? String(dados.atualizado ?? "").slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(mesRef)) {
+      await sb.from("is_narrativas_mes")
+        .upsert({ mes: `${mesRef}-01`, narrativas: narr, gerado_em: new Date().toISOString() }, { onConflict: "mes" });
+    }
+    if (!mes) await sb.from("is_dashboard").update({ narrativas: narr }).eq("id", 1);
+
+    return json({ ok: true, model: MODEL, mes: mesRef, abas: Object.keys(narr), tokens: j.usage });
   } catch (e) {
     return json({ error: String((e as any)?.message ?? e) }, 500);
   }
