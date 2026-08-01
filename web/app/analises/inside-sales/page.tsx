@@ -130,14 +130,33 @@ export default function InsideSales() {
   const [atualizado, setAtualizado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [tab, setTab] = useState("fat");
+  const [mes, setMes] = useState("atual"); // "atual" (snapshot ao vivo) ou "YYYY-MM" (mês encerrado)
+
+  // mês atual + 3 anteriores (limite do espelho de 6 meses no banco)
+  const opcoesMes = useMemo(() => {
+    const nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    const agora = new Date();
+    const ops = [{ value: "atual", label: "Mês atual (ao vivo)" }];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
+      ops.push({ value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${nomes[d.getMonth()]}/${d.getFullYear()} · fechado` });
+    }
+    return ops;
+  }, []);
+  const historico = mes !== "atual";
 
   useEffect(() => {
     fetch("/api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => setRole(j?.role)).catch(() => {}).finally(() => setLoaded(true));
-    fetch("/api/analises/inside-sales", { cache: "no-store" })
+  }, []);
+
+  useEffect(() => {
+    setDados(null); setErro(null);
+    const url = "/api/analises/inside-sales" + (mes === "atual" ? "" : `?mes=${mes}`);
+    fetch(url, { cache: "no-store" })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => { if (!ok) setErro(j?.error ?? "erro"); else { setDados(j.dados); setNarr(j.narrativas ?? null); setAtualizado(j.atualizado_em); } })
       .catch((e) => setErro(String(e)));
-  }, []);
+  }, [mes]);
 
   const linhas = dados?.linhas ?? [];
   const periodos = dados?.periodos?.map((x) => x.label) ?? ["", "", "", ""];
@@ -184,7 +203,9 @@ export default function InsideSales() {
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: C.accent, marginBottom: 10 }}>📊 Análise</div>
         {ps?.length
           ? ps.map((p, i) => <p key={i} style={{ fontSize: 12, lineHeight: 1.7, color: "#C0C0D8", margin: "0 0 8px" }} dangerouslySetInnerHTML={{ __html: p }} />)
-          : <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>A análise interpretativa é gerada automaticamente toda madrugada (aparece aqui assim que o gerador de texto estiver ativo).</p>}
+          : <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>{historico
+            ? "A análise interpretativa é gerada apenas para o mês corrente — os números acima são os resultados finais do mês selecionado."
+            : "A análise interpretativa é gerada automaticamente toda madrugada (aparece aqui assim que o gerador de texto estiver ativo)."}</p>}
       </div>
     );
   };
@@ -216,7 +237,14 @@ export default function InsideSales() {
             <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontFamily: "monospace" }}>Filial 1 · F-Faturado · vlr_item − DEV · {dados?.dias_movimento ?? "—"} dias com movimento</div>
             {atualizado && <div style={{ background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.3)", color: C.green, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20, marginTop: 6, display: "inline-block" }}>⟳ Atualizado {new Date(atualizado).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>}
           </div>
-          {periodos[3] && <div style={{ background: "rgba(124,92,252,.15)", border: "1px solid rgba(124,92,252,.35)", color: C.accent2, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20 }}>{periodos[3]} vs {periodos[0]} · {periodos[1]} · {periodos[2]}</div>}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+            <select value={mes} onChange={(e) => setMes(e.target.value)}
+              style={{ background: C.card, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 10px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", outline: "none" }}>
+              {opcoesMes.map((o) => <option key={o.value} value={o.value}>📅 {o.label}</option>)}
+            </select>
+            {historico && <div style={{ background: "rgba(251,191,36,.12)", border: "1px solid rgba(251,191,36,.35)", color: C.yellow, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20 }}>mês encerrado · resultados finais</div>}
+            {periodos[3] && <div style={{ background: "rgba(124,92,252,.15)", border: "1px solid rgba(124,92,252,.35)", color: C.accent2, fontSize: 10, fontFamily: "monospace", padding: "3px 10px", borderRadius: 20 }}>{periodos[3]} vs {periodos[0]} · {periodos[1]} · {periodos[2]}</div>}
+          </div>
         </div>
         <div style={{ display: "flex", overflowX: "auto" }}>
           {TABS.map((t) => (
@@ -333,7 +361,7 @@ export default function InsideSales() {
 
         {dados && tab === "opp" && (() => {
           const opp: any = (dados as any).oportunidades;
-          if (!opp) return <div style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>Sem dados de oportunidades ainda.</div>;
+          if (!opp) return <div style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>{historico ? "Oportunidades estão disponíveis apenas no mês atual (dependem da recompra em andamento)." : "Sem dados de oportunidades ainda."}</div>;
           const tag = (s: string) => s === "urgente"
             ? { t: "🔴 Urgente", bg: "rgba(248,113,113,.15)", cl: C.red, bd: "rgba(248,113,113,.3)" }
             : { t: "🟡 Atenção", bg: "rgba(251,191,36,.12)", cl: C.yellow, bd: "rgba(251,191,36,.3)" };
@@ -495,7 +523,7 @@ export default function InsideSales() {
 
         {dados && tab === "novatos" && (() => {
           const nv: any = (dados as any).novatos;
-          if (!nv) return <div style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>Sem dados de novatos ainda.</div>;
+          if (!nv) return <div style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>{historico ? "Perfil de novatos está disponível apenas no mês atual." : "Sem dados de novatos ainda."}</div>;
           const k = nv.kpis ?? {}; const novs: any[] = nv.novatos ?? [];
           const pctNovos = k.total_clientes ? Math.round((k.clientes_novos / k.total_clientes) * 100) : 0;
           return (
