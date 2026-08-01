@@ -322,6 +322,17 @@ export default function Page() {
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     produtos: number[]; periodo: string; total: number;
   } | null>(null);
+  // filtro por cidade: mesma mecânica do de produto, porém SEM período (cidade é fixa).
+  // A seleção guarda a chave normalizada (cidade_norm); o rótulo bonito vem de `cidades`.
+  const [cidades, setCidades] = useState<{ cidade_norm: string; cidade: string; clientes: number }[]>([]);
+  const [cidPainel, setCidPainel] = useState(false);
+  const [cidSel, setCidSel] = useState<string[]>([]);
+  const [cidBusca, setCidBusca] = useState("");
+  const [cidCarregando, setCidCarregando] = useState(false);
+  const [cidFiltro, setCidFiltro] = useState<{
+    clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
+    cidades: string[]; total: number;
+  } | null>(null);
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
   const [cicloSel, setCicloSel] = useState<string[]>([]);
   const [cicloPainel, setCicloPainel] = useState(false);
@@ -769,6 +780,15 @@ export default function Page() {
       .catch(() => {});
   }, [sessao]);
 
+  // lista de cidades p/ o filtro (busca uma vez; ~394 itens, ordenadas por nº de clientes)
+  useEffect(() => {
+    if (!sessao) return;
+    fetch("/api/cidades")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.cidades) setCidades(j.cidades); })
+      .catch(() => {});
+  }, [sessao]);
+
   // status do ETL (só admin) — dá polling pra saber se já tem um run em andamento
   // (inclusive disparado por outra pessoa/via gh CLI), pra não deixar clicar à toa.
   useEffect(() => {
@@ -837,6 +857,21 @@ export default function Page() {
     if (t.length === 8 && prodFiltro.tel8.has(t)) return true;
     return false;
   };
+  // filtro por cidade: um card "casa" se o cliente é da(s) cidade(s) selecionada(s).
+  // Mesma lógica de identificadores do filtro de produto.
+  const matchCidade = (c: Card): boolean => {
+    if (!cidFiltro) return true;
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        const cc = Number(id.slice(id.indexOf(":") + 1));
+        if (cidFiltro.codclis.has(cc)) return true;
+      } else if (cidFiltro.clienteIds.has(id)) return true;
+    }
+    const t = String(c.telefone ?? "").replace(/\D/g, "").slice(-8);
+    if (t.length === 8 && cidFiltro.tel8.has(t)) return true;
+    return false;
+  };
   // filtro por ciclo: dois EIXOS.
   // - "URGENTE" (ligar hoje) é PRIORIDADE, não categoria: refina o resto (E/AND).
   // - as categorias (situação no ciclo) são OR entre si.
@@ -881,11 +916,12 @@ export default function Page() {
     const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (cidFiltro) r = r.filter(matchCidade);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [cards, filtro, busca, prodFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [cards, filtro, busca, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -895,11 +931,12 @@ export default function Page() {
     const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (cidFiltro) r = r.filter(matchCidade);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [pedidoCards, filtro, busca, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // total da carteira no cabeçalho = funil (conversa+prospecção, sem comprador do mês) +
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
@@ -961,8 +998,12 @@ export default function Page() {
       const nomes = prodFiltro.produtos.map((cp) => produtos.find((p) => p.codprod === cp)?.produto).filter(Boolean) as string[];
       parts.push(`Produto: ${nomes.length ? nomes.join(", ") : `${prodFiltro.produtos.length} selecionado(s)`} (${PROD_PER_LABEL[prodFiltro.periodo] ?? prodFiltro.periodo})`);
     }
+    if (cidFiltro) {
+      const nomes = cidFiltro.cidades.map((cn) => cidades.find((c) => c.cidade_norm === cn)?.cidade).filter(Boolean) as string[];
+      parts.push(`Cidade: ${nomes.length ? nomes.join(", ") : `${cidFiltro.cidades.length} selecionada(s)`}`);
+    }
     return parts;
-  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos]);
+  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos, cidFiltro, cidades]);
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
@@ -1061,6 +1102,13 @@ export default function Page() {
     return q ? produtos.filter((p) => (p.produto ?? "").toLowerCase().includes(q)) : produtos;
   }, [produtos, prodBusca]);
 
+  // cidades filtradas pela busca do painel (busca sem acento, igual à normalização do banco)
+  const semAcento = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const cidadesFiltradas = useMemo(() => {
+    const q = semAcento(cidBusca.trim());
+    return q ? cidades.filter((c) => semAcento(c.cidade ?? "").includes(q)) : cidades;
+  }, [cidades, cidBusca]);
+
   // resumo do filtro de produto: quantos clientes casaram e ONDE estão no board
   // (a maioria cai em Pedido emitido porque quem comprou no mês é movido pra lá).
   const prodResumo = useMemo(() => {
@@ -1105,8 +1153,30 @@ export default function Page() {
     setProdFiltro(null); setProdSel([]); setProdBusca(""); setProdPainel(false);
   }
 
+  function toggleCid(cidadeNorm: string) {
+    setCidSel((prev) => (prev.includes(cidadeNorm) ? prev.filter((x) => x !== cidadeNorm) : [...prev, cidadeNorm]));
+  }
+  async function aplicarCidade() {
+    if (cidSel.length === 0) { setCidFiltro(null); setCidPainel(false); return; }
+    setCidCarregando(true);
+    try {
+      const r = await fetch(`/api/clientes-por-cidade?cidades=${encodeURIComponent(cidSel.join(","))}`, { cache: "no-store" });
+      const j = await r.json();
+      setCidFiltro({
+        clienteIds: new Set<string>(j.cliente_ids ?? []),
+        codclis: new Set<number>((j.codclis ?? []).map(Number)),
+        tel8: new Set<string>(j.tel8 ?? []),
+        cidades: [...cidSel], total: j.total ?? 0,
+      });
+      setCidPainel(false);
+    } catch { /* mantém o filtro anterior */ } finally { setCidCarregando(false); }
+  }
+  function limparCidade() {
+    setCidFiltro(null); setCidSel([]); setCidBusca(""); setCidPainel(false);
+  }
+
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cicloSel, semCadFiltro, paradoSel]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -1560,6 +1630,82 @@ export default function Page() {
                       disabled={prodCarregando || prodSel.length === 0}
                       style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 7, cursor: prodCarregando || prodSel.length === 0 ? "default" : "pointer", opacity: prodCarregando || prodSel.length === 0 ? 0.6 : 1 }}
                     >{prodCarregando ? "Aplicando…" : "Aplicar"}</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setCidPainel((v) => !v)}
+              title="Filtrar clientes por cidade"
+              style={{
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
+                color: cidFiltro ? "#fff" : RD.gray,
+                background: cidFiltro ? "#2563eb" : RD.surface,
+                border: `1px solid ${cidFiltro ? "#2563eb" : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6,
+              }}
+            >
+              {cidFiltro
+                ? `Cidade: ${cidFiltro.cidades.length} · ${cidFiltro.total} clientes`
+                : "Filtro por cidade"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {cidFiltro && (
+              <span
+                onClick={limparCidade}
+                title="Limpar filtro de cidade"
+                style={{
+                  position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17,
+                  background: "#fff", border: "1px solid #2563eb", color: "#2563eb", fontSize: 11, fontWeight: 800,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1,
+                }}
+              >×</span>
+            )}
+            {cidPainel && (
+              <div
+                style={{
+                  position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 100, width: 320,
+                  background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10,
+                  boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 12,
+                }}
+              >
+                <input
+                  value={cidBusca}
+                  onChange={(e) => setCidBusca(e.target.value)}
+                  placeholder="Buscar cidade..."
+                  style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, outline: "none" }}
+                />
+                <div style={{ maxHeight: 232, overflowY: "auto", margin: "8px 0", border: `1px solid ${RD.border}`, borderRadius: 8 }}>
+                  {cidadesFiltradas.length === 0 ? (
+                    <div style={{ padding: 10, color: RD.grayLight, fontSize: 12 }}>
+                      {cidades.length === 0 ? "carregando cidades…" : "nenhuma cidade"}
+                    </div>
+                  ) : cidadesFiltradas.map((c) => (
+                    <label
+                      key={c.cidade_norm}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", fontSize: 12.5, color: RD.navy, cursor: "pointer", borderBottom: `1px solid ${RD.bg}` }}
+                    >
+                      <input type="checkbox" checked={cidSel.includes(c.cidade_norm)} onChange={() => toggleCid(c.cidade_norm)} />
+                      <span style={{ flex: 1, lineHeight: 1.25 }}>{c.cidade}</span>
+                      <span style={{ color: RD.grayLight, fontSize: 10.5, whiteSpace: "nowrap" }} title="clientes nesta cidade">{c.clientes}</span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 11.5, color: RD.grayLight }}>{cidSel.length} selecionada(s)</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={limparCidade}
+                      style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer" }}
+                    >Limpar</button>
+                    <button
+                      onClick={aplicarCidade}
+                      disabled={cidCarregando || cidSel.length === 0}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: "#2563eb", border: "1px solid #2563eb", borderRadius: 7, cursor: cidCarregando || cidSel.length === 0 ? "default" : "pointer", opacity: cidCarregando || cidSel.length === 0 ? 0.6 : 1 }}
+                    >{cidCarregando ? "Aplicando…" : "Aplicar"}</button>
                   </div>
                 </div>
               </div>
