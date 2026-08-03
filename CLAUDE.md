@@ -645,17 +645,39 @@ fica como **sinal secundário** (fechou no chat, nota ainda não faturou). Clien
 comprar volta pra negociação/tentativa. O card mostra o **valor R$** faturado no mês (`venda_valor`).
 Isso resolve o TODO "ajustar o app para ler `vw_pedido_emitido`" do handoff.
 
-### 12.5 Achado de segurança (NÃO resolvido) — anon com escrita
+### 12.5 Achado de segurança — anon com escrita (RESOLVIDO em 03/08/2026)
 
-As tabelas do ETL (`clientes`, `atendimentos`, `mensagens`, `vendedores`, `disparos_template`) estão
-com **RLS desligado e a chave anon com INSERT/UPDATE/DELETE/TRUNCATE**. Como o **nosso app não expõe
-a chave anon** (tudo via service_role server-side), não somos o vetor — mas é um buraco real a nível de
-banco (qualquer um com a anon key apaga a base). Conserto sugerido, **não aplicado** p/ não quebrar nada:
+**Era:** `clientes`, `atendimentos`, `mensagens`, `vendedores`, `disparos_template` (e mais 5) estavam
+com **RLS desligado e anon/authenticated com SELECT/INSERT/UPDATE/DELETE**. Comprovado ao vivo assumindo
+o papel: `set local role anon` lia **59.586 mensagens e 4.752 clientes**. Qualquer pessoa que abrisse o
+DevTools num app da Murano pegava a chave pública e apagava a base com um `curl`.
+
+**Conserto aplicado** (migration `rls_fechar_tabelas_expostas_anon`): RLS ligado **sem policy** nas 10
+tabelas. Sem policy, anon e authenticated não enxergam linha nenhuma; `service_role` e o dono continuam
+passando, porque ignoram RLS. É o mesmo padrão que `wth_*` e `tickets` já usavam neste banco.
+
 ```sql
-revoke insert, update, delete, truncate on clientes, atendimentos, mensagens,
-  vendedores, disparos_template from anon, authenticated;
+alter table clientes enable row level security;   -- + atendimentos, mensagens, vendedores,
+                                                  --   disparos_template, acesso, carteira_config,
+                                                  --   crm_templates, bi_meta_vendedor, wth_descartados
 ```
-Conferir antes se algum processo escreve com anon (o ETL escreve com **service_role**, então não quebra).
+
+Verificado depois: anon e authenticated leem **0** linhas; o dono lê as 59.586; `vw_funil` (4.667),
+`vw_pedido_emitido` (29.033) e `vw_fila_prospeccao` (720) continuam servindo.
+
+**Por que não quebrou nada** — as três checagens feitas antes de aplicar:
+1. Nenhum código no navegador lê tabela com a chave anon. O único uso da anon no browser
+   (`web/app/page.tsx`) é `signInWithOAuth`. `supa.from`, `supabase.from` e `/rest/v1`: zero ocorrências.
+2. ETL, rotas `/api/*`, `tools/persona.py` e as funções do `pg_cron` usam `service_role` ou rodam como dono.
+3. As 13 views que leem essas tabelas têm `security_invoker = false` — rodam como dono e atravessam o RLS
+   das tabelas-base. **Se algum dia uma view dessas virar `security_invoker = on`, ela para de retornar
+   linha.** É a única forma conhecida de quebrar isso depois.
+
+**Rollback**, se um consumidor externo desconhecido começar a receber lista vazia (PostgREST devolve `[]`,
+não erro — falha em silêncio): `alter table <nome> disable row level security;`
+
+**O que ficou de fora:** o `revoke` dos privilégios não foi aplicado. O RLS já bloqueia, e revogar GRANT
+tem mais chance de quebrar algo sem ganho adicional.
 
 ### 12.6 Pendências desta fase
 
