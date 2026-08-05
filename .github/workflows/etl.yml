@@ -49,17 +49,26 @@ jobs:
           # equilibra cobertura x tempo de execução (~1,2s/checagem). A cauda longa fica
           # com o full diário + os disparos recentes (abaixo).
           ETL_SCAN_DAYS: 3
-          # ESTABILIDADE + RESERVA DE COTA: teto de checagens /exists por run. A API do RD
-          # sustenta ~48 req/min. THROTTLADO de propósito (conc 1 + ETL_SCAN_SLEEP=700 =>
-          # ~30 req/min) pra DEIXAR ~15-18 req/min LIVRES pro auto-sync em tempo real da
-          # coluna Negociação (feito pelo board) e pros envios de template. 200 ≈ ~7 min.
-          # O que não coube entra no próximo run (rodízio; cobertura completa a cada ~30-40 min).
-          ETL_CALL_BUDGET: 200
+          # ORÇAMENTO DE CHAMADAS por run. A API do RD sustenta ~48 req/min (medido).
+          #
+          # REVISADO EM 03/08/2026: os valores antigos (budget 200, conc 1, sleep 700 =>
+          # ~30 req/min) throttlavam o ETL de propósito para "deixar 15-18 req/min livres
+          # pro auto-sync da coluna Negociação feito pelo board". Esse auto-sync foi
+          # REMOVIDO do navegador (ver web/app/page.tsx): ele consumia até 60 req/min POR
+          # ABA ABERTA contra um teto total de 48, e era o real motivo dos 429 nos envios
+          # de template. Com ele fora, a cota que o ETL cedia não tem mais para quem ir.
+          #
+          # Novos valores miram ~40 req/min, deixando ~8/min de folga para os envios de
+          # template do board (ação do usuário, não pode falhar) e para o etl-fast.
+          # SE VOLTAR A APARECER 429 NO ENVIO: baixe ETL_SCAN_CONC para 1 e suba
+          # ETL_SCAN_SLEEP — nesta ordem, e confira nos logs do run qual fase saturou.
+          ETL_CALL_BUDGET: 300
           ETL_CRON_MIN: 10
-          # pausa entre checagens /exists (ms). Maior = ETL mais lento porém deixa cota do RD
-          # livre pro real-time da negociação. Conc 1 pra a taxa ficar previsível (~30/min).
-          ETL_SCAN_SLEEP: 700
-          ETL_SCAN_CONC: 1
+          # pausa entre checagens /exists (ms) e concorrência. Concorrência NÃO fura o teto
+          # de 48/min (medido: conc=3 deu a mesma taxa que conc=1) — serve só para aproveitar
+          # a latência. conc=12 gerou 429 em 90% das chamadas; não passe de 3.
+          ETL_SCAN_SLEEP: 250
+          ETL_SCAN_CONC: 2
           # re-sincroniza clientes que receberam template PELO BOARD nos últimos N dias
           # (tabela disparos_template), mesmo que estejam "parados" fora da varredura —
           # garante que o template disparado apareça em mensagens rapidamente.
