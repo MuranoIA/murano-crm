@@ -1,8 +1,8 @@
 -- =============================================================================
 -- O card de venda passa a mostrar o valor da ÚLTIMA nota do mês (a que o vendedor
 -- reconhece), não a SOMA do mês. Antes somava todas as compras do cliente:
---   Samara: 289,99 (23/07) + 25 (16/07) = 314,99 -> mostra 289,99
---   Emanuelle: última nota 304 (23/07) -> mostra 304
+--   cliente S.S.B.: 289,99 (23/07) + 25 (16/07) = 314,99 -> mostra 289,99
+--   cliente E.A.: última nota 304 (23/07) -> mostra 304
 -- O TOTAL do mês (soma real, líquida) continua no cabeçalho (vw_vendas_totais).
 --
 -- Vale pros dois tipos de card: matched (via vínculo) e sintético (sem conversa).

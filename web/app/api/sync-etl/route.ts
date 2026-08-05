@@ -4,7 +4,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 // Repo/workflow do ETL (mesmo padrão de ids hardcoded do OPERADORES em send-template).
-const REPO = "romuloallbuquerque-netizen/rd-conversas-etl";
+// O repo foi transferido do GitHub pessoal para a org da empresa e renomeado
+// (romuloallbuquerque-netizen/rd-conversas-etl -> MuranoIA/murano-crm). A API do
+// GitHub redireciona o nome antigo, mas o redirect não é garantia: nome fixo aqui
+// é o atual. Espelho deste valor vive em wth_config.gh_etl_repo (pg_cron).
+const REPO = "MuranoIA/murano-crm";
 const WORKFLOW = "etl.yml";
 const WORKFLOWS = ["etl.yml", "etl-fast.yml"]; // os dois concorrem pela cota do RD
 const REF = "master";

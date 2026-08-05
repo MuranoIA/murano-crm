@@ -13,8 +13,8 @@
 -- Tambem corrige a deteccao de venda: a equipe usa tanto "*pedido faturado*"
 -- quanto "*pedido finalizado*" na pratica (confirmado nas mensagens reais);
 -- so o primeiro era reconhecido, casos com "finalizado" ficavam presos em
--- tentativa_contato/negociacao mesmo com a venda ja fechada (ex: Samara
--- Soares Brito, 23/07).
+-- tentativa_contato/negociacao mesmo com a venda ja fechada (ex: cliente
+-- S.S.B., 23/07).
 -- =============================================================================
 create or replace view vw_funil as
 select

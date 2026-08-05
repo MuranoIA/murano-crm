@@ -9,3 +9,4 @@ src/_tmp_*.ts
 
 .vercel
 .env*
+!.env.example
