@@ -358,7 +358,19 @@ export default function Page() {
   const [disparandoSync, setDisparandoSync] = useState(false);
   const [agora, setAgora] = useState(Date.now());
 
+  // GUARDA DE IN-FLIGHT + COALESCÊNCIA.
+  // /api/funil pagina três views e cruza wth_faturamento (~3,4s medido). Antes o
+  // board chamava load() num setInterval de 5s sem trava: se a query passasse de
+  // 5s as requisições se sobrepunham e empilhavam, cada uma re-executando as
+  // agregações inteiras na instância do Supabase.
+  // Agora: se já há um load em voo, marca `pendente` e roda UMA vez ao terminar.
+  // Nunca empilha e nunca perde uma atualização que chegou no meio do caminho.
+  const loadEmVoo = useRef(false);
+  const loadPendente = useRef(false);
+
   async function load() {
+    if (loadEmVoo.current) { loadPendente.current = true; return; }
+    loadEmVoo.current = true;
     try {
       const r = await fetch("/api/funil", { cache: "no-store" });
       const j = await r.json();
@@ -376,6 +388,8 @@ export default function Page() {
       setErro(String(e?.message ?? e));
     } finally {
       setCarregando(false);
+      loadEmVoo.current = false;
+      if (loadPendente.current) { loadPendente.current = false; void load(); }
     }
   }
 
@@ -728,12 +742,59 @@ export default function Page() {
       .finally(() => setChecando(false));
   }, []);
 
-  // carrega o board só quando autenticado
+  // ATUALIZAÇÃO DO BOARD — Realtime, não polling.
+  //
+  // Antes: setInterval(load, 5000) POR ABA. Com 7 vendedores logados eram ~84
+  // reconstruções completas do funil por minuto, quase todas devolvendo exatamente
+  // o mesmo resultado. Agora o Postgres avisa quando `mensagens`/`disparos_template`
+  // mudam de verdade (migration 0069) e o board recarrega só nessas horas.
+  //
+  // A ingestão do RD Conversas continua sendo pull — a API deles não tem webhook
+  // (404 confirmado, CLAUDE.md seção 2). O que deixou de ser polling é o trecho
+  // Supabase -> navegador, que nunca precisou ser.
+  //
+  // Canal PÚBLICO: o board autentica por cookie próprio (crm_sessao), não por
+  // Supabase Auth, então não existe JWT para validar um canal privado. O payload
+  // carrega só o slug da carteira; os dados continuam vindo de /api/funil, que
+  // aplica a autorização por carteira no servidor.
+  //
+  // REDE DE PROTEÇÃO: o poll lento de 60s continua. Se o WebSocket cair, o Realtime
+  // for desligado no projeto ou o trigger falhar, o board fica no máximo 1 min
+  // defasado em vez de congelar.
   useEffect(() => {
     if (!sessao) return;
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const lento = setInterval(load, 60_000);
+
+    let canal: any = null;
+    let cancelado = false;
+    (async () => {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!url || !anon) return; // sem env -> fica só o poll de 60s
+      try {
+        const { createBrowserClient } = await import("@supabase/ssr");
+        if (cancelado) return;
+        const supa = createBrowserClient(url, anon);
+        canal = supa
+          .channel("board")
+          .on("broadcast", { event: "mudou" }, (msg: any) => {
+            // vendedor só recarrega quando a PRÓPRIA carteira mexe; admin/home veem tudo.
+            // Fail-open de propósito: se o payload vier num formato inesperado, recarrega
+            // — errar para o lado de atualizar demais é melhor que congelar o board.
+            const cart = msg?.payload?.carteira ?? msg?.payload?.payload?.carteira ?? null;
+            if (cart && sessao.carteira && cart !== sessao.carteira) return;
+            load(); // a guarda de in-flight coalesce rajadas do ETL
+          })
+          .subscribe();
+      } catch { /* sem realtime: o poll de 60s cobre */ }
+    })();
+
+    return () => {
+      cancelado = true;
+      clearInterval(lento);
+      try { canal?.unsubscribe(); } catch {}
+    };
   }, [sessao]);
 
   // detecta celular (largura < 768) -> board empilhado com scroll horizontal por faixa
@@ -744,32 +805,32 @@ export default function Page() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // AUTO-SYNC "quase tempo real" da coluna NEGOCIAÇÃO (~10s): puxa do RD os cards de negociação
-  // (como se alguém clicasse no ↻ a cada 10s). Poucos cards; server-side em lote. Guarda os ids
-  // num ref pra não recriar o timer a cada load (o `cards` muda a cada 5s).
-  const negocIdsRef = useRef<string[]>([]);
-  useEffect(() => {
-    negocIdsRef.current = cards
-      .filter((c) => c.etapa === "negociacao" && !String(c.cliente_id).includes(":"))
-      .map((c) => c.cliente_id);
-  }, [cards]);
-  useEffect(() => {
-    // vendedor E home têm auto-sync; só o ADMIN fica de fora (atualiza pelo ↻ do card ampliado).
-    if (!sessao || sessao.role === "admin") return;
-    let rodando = false;
-    const tick = async () => {
-      if (rodando || !negocIdsRef.current.length) return;
-      rodando = true;
-      try {
-        const r = await fetch("/api/negociacao-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_ids: negocIdsRef.current }) });
-        const j = await r.json().catch(() => ({}));
-        if (j?.atualizados?.length) load(); // mostra na hora o que chegou (o poll de 5s também cobre)
-      } catch { /* rede: tenta no próximo tick */ }
-      finally { rodando = false; }
-    };
-    const t = setInterval(tick, 10000);
-    return () => clearInterval(t);
-  }, [sessao]);
+  // AUTO-SYNC DA COLUNA NEGOCIAÇÃO — REMOVIDO DO NAVEGADOR (03/08/2026).
+  //
+  // Existia aqui um setInterval de 10s que chamava /api/negociacao-sync com até 10
+  // cliente_ids, e cada id fazia um fetch COMPLETO de /v2/messages/history + decrypt.
+  // Ou seja: até 60 chamadas/min à API do RD POR ABA ABERTA.
+  //
+  // O teto medido da API do RD é ~48 chamadas/min NO TOTAL (CLAUDE.md 14.5). Uma
+  // única aba de vendedor já podia querer mais que o sistema inteiro tem; com 7
+  // vendedores logados a demanda chegava a ~420/min contra 48 disponíveis. Era o
+  // maior consumidor do recurso mais escasso do projeto — e sem nenhum teto, porque
+  // escalava com o número de abas abertas, não com o volume de trabalho real.
+  //
+  // Foi isso que forçou o ETL a ser throttlado (ETL_SCAN_SLEEP=700, conc=1, ~30/min
+  // "para deixar folga") e a existirem os botões Pausar/Retomar. Estrangular o ETL
+  // não resolvia: o consumidor do outro lado não tinha limite.
+  //
+  // ONDE A RESPONSABILIDADE FICOU:
+  //   - frescor automático: o fastSweep do ETL já coloca TODOS os cards de negociação
+  //     no tier A de todo sweep (src/etl/run.ts, clientesNegociacao) — mesmo trabalho,
+  //     feito uma vez só, num lugar só, com orçamento de chamadas controlado;
+  //   - o board recebe o resultado por Realtime (migration 0069), sem gastar cota;
+  //   - urgência pontual: o ↻ do card ampliado continua chamando /api/sync-cliente.
+  //
+  // A rota /api/negociacao-sync foi mantida (serve para chamada manual/pontual), mas
+  // não é mais chamada em loop. Se algum dia voltar a ser, precisa de coordenação
+  // entre abas — senão o problema volta idêntico.
 
   // lista de produtos p/ o filtro (busca uma vez; ~415 itens)
   useEffect(() => {
