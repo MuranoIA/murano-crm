@@ -201,8 +201,8 @@ API no campo `to_tabulation` de `/v4/reports`.
    tabulação, inferência por regra, ou classificação por LLM (ver abaixo).
 5. **PII real** (cpf, telefone, endereço, email) — decidir acesso/criptografia das
    colunas agora.
-6. **Flag `is_test`** (nossa, não vem da API) para filtrar contatos internos tipo
-   "Rômulo Albuquerque | Murano Professional".
+6. **Flag `is_test`** (nossa, não vem da API) para filtrar contatos internos, que
+   seguem o padrão `"<Nome da pessoa> | Murano Professional"` no `full_name`.
 
 **Vendas fechadas — parte semântica:** SQL cru não sabe ler "Fechado, agradecemos
 pela parceria" como venda. Se a tabulação não for adotada, o plano B é uma **passada
@@ -280,7 +280,7 @@ Mesmo conceito, nome diferente por tabela:
 Parece a FK certa (1.626 de 1.627 casam com `vendedores.id`), **mas não é o dono da carteira.**
 É o operador atribuído ou o último que mexeu no contato no painel. Concorda com a `carteira`
 em apenas **58,9%** dos casos. Confirma e generaliza o que já tínhamos visto isolado no caso
-do cliente Cleuson Madson (seção anterior desta sessão): `employee`/`employee_id` não é
+do cliente **C.M.** (seção anterior desta sessão): `employee`/`employee_id` não é
 confiável pra atribuição, `carteira` é.
 
 Sintoma: Henry (departamento "Clientes Inativos") aparece como `employee_id` de 416 clientes
@@ -316,8 +316,8 @@ atendimento vinculado, zero atendimentos órfãos.
 
 Não é espelho da carteira. Cliente que nunca foi abordado não aparece — e isso está correto.
 As RCAs 45/46/51 somam 2.611 clientes no WinThor contra ~1.630 contatos aqui. A diferença é
-**fila de prospecção**, não buraco de dados. **Isso explica o caso da cliente Emanuelle de
-Almeida** investigado nesta sessão: ela pode simplesmente nunca ter tido um atendimento com
+**fila de prospecção**, não buraco de dados. **Isso explica o caso da cliente E.A.**
+investigado nesta sessão: ela pode simplesmente nunca ter tido um atendimento com
 protocolo gerado ainda — vale checar `vw_fila_prospeccao` antes de assumir bug do ETL.
 
 ### 10.5 Módulo `wth_` — aplicado e rodando
@@ -561,11 +561,10 @@ nunca duplica. Migrations que definem: `0001` (original), `0003` (recência), `0
 **Regra de recência (fix da migration 0003):** a etapa olha a **última mensagem real** (ignora
 `tipo='evento_sistema'`), **não** "o cliente já respondeu alguma vez" — senão um card ficava preso
 em `negociacao` pra sempre depois da 1ª resposta, mesmo após reengajamento por template semanas
-depois (caso Maria Bernadete).
+depois (caso M.B.).
 
 **Venda — duas frases (fix 0003):** a equipe usa **`*pedido faturado*` E `*pedido finalizado*`**
-(as duas convivem no banco). Reconhecer só a 1ª deixava vendas presas na etapa errada (caso Samara
-Soares Brito). **Futuro ideal:** puxar a venda **de verdade** do `murano-clientes-v2` (via
+(as duas convivem no banco). Reconhecer só a 1ª deixava vendas presas na etapa errada (caso S.S.B.). **Futuro ideal:** puxar a venda **de verdade** do `murano-clientes-v2` (via
 `wth_vinculo.codcli` → faturamento), porque a equipe **não tem o hábito de fechar o atendimento**
 depois da venda — então tabulação sozinha é insuficiente, por isso o texto continua sendo sinal.
 
@@ -844,3 +843,86 @@ total ~361 chamadas em 6,5 min
 **Monitorar:** `select * from etl_trigger_log order by id desc limit 10;` — status **204**
 é sucesso. A função nunca lança exceção: qualquer falha vira linha no log (o risco clássico
 desse tipo de job é falhar em silêncio). Token em `wth_config.gh_etl_token`.
+
+## 15. Estado em 03/08/2026 — o navegador era o maior consumidor da cota do RD
+
+> Esta seção **corrige** partes das seções 13 e 14. Onde houver conflito, vale esta.
+> Migrations 0069, 0070, 0071.
+
+### 15.1 O achado
+
+O teto da API do RD é **~48 chamadas/min** (seção 14.5) e governa todo o desenho. Mas a
+contabilidade dessa cota só considerava o ETL. Faltava o navegador:
+
+`web/app/page.tsx` tinha um `setInterval` de 10s chamando `/api/negociacao-sync` com até
+10 `cliente_ids`, e **cada id fazia um fetch completo de `/v2/messages/history` + decrypt**.
+São até **60 chamadas/min POR ABA ABERTA**, contra 48/min disponíveis no sistema inteiro.
+Com 7 vendedores logados, a demanda chegava a ~420/min.
+
+Pior: era **incondicional**. O ETL é cuidadoso (checagem barata via `/exists`, diff dos
+contadores do `/v4/reports`, orçamento rotativo); o loop do navegador re-baixava os mesmos
+cards a cada 10s tivesse mudado algo ou não. E o `fastSweep` já colocava todos os cards de
+negociação no tier A de todo sweep — o mesmo trabalho, duplicado.
+
+**Isso explica sintomas que estavam sendo tratados como causa:** os 429 no envio de
+template, a necessidade dos botões Pausar/Retomar, e o throttle do ETL (`ETL_SCAN_SLEEP=700`,
+`conc=1`, ~30 req/min "para deixar folga"). O ETL foi estrangulado para abrir espaço a um
+consumidor que não tinha teto — escalava com o número de abas abertas, não com o trabalho real.
+
+### 15.2 A distinção que resolve
+
+| Trecho | Precisa de pull? |
+|---|---|
+| RD Conversas → Supabase (ingestão) | **Sim, sempre.** A API do RD não tem webhook (404 confirmado, seção 2). O ETL está certo. |
+| Supabase → navegadores (distribuição) | **Não.** O Postgres avisa; o Realtime entrega. |
+
+Todo o polling do front existia porque essa segunda peça estava faltando.
+
+### 15.3 O que mudou
+
+| Antes | Depois |
+|---|---|
+| `setInterval(load, 5000)` por aba (~84 reconstruções do funil/min com 7 abas) | Realtime broadcast (migration 0069) + poll de **60s** só como rede de proteção |
+| `setInterval` de 10s consumindo até 60 req/min do RD por aba | **Removido.** Frescor vem do `fastSweep` + Realtime; urgência pontual pelo ↻ (`/api/sync-cliente`) |
+| `load()` sem trava, requisições se sobrepondo | guarda de in-flight com coalescência (nunca empilha, nunca perde evento) |
+| ETL throttlado a ~30 req/min | `ETL_CALL_BUDGET=300`, `SCAN_CONC=2`, `SCAN_SLEEP=250` (~40 req/min, ~8 de folga) |
+| `etl-fast` no scheduler do GitHub (~1x/hora) | `pg_cron` job `etl-disparar-fast` a cada 15 min (migration 0070) |
+| PAT do GitHub em texto puro em `wth_config` | `public.segredo_de()` lê do Vault com fallback (migration 0071) |
+
+**Bug corrigido de quebra:** `etl_disparar_workflow` mandava sempre
+`inputs:{"mode":"incremental"}`, mas `etl-fast.yml` declara `workflow_dispatch:` **sem
+inputs** — o GitHub responde 422 a input não declarado. O corpo agora é montado conforme
+o workflow. Sem isso, o item anterior não funcionaria.
+
+**Nome do repo:** `wth_config.gh_etl_repo` e o default da função foram para
+`MuranoIA/murano-crm`. Antes o default era o nome antigo, dependendo do redirect do GitHub.
+
+### 15.4 Como o board atualiza agora
+
+Trigger de **statement** (não de linha — o ETL faz upsert em lotes de 500) em `mensagens`
+e `disparos_template` chama `realtime.send()` no tópico `board`, evento `mudou`, payload
+`{carteira, em}`. O front assina, filtra pela própria carteira (admin/home veem tudo) e
+chama `/api/funil` uma vez.
+
+- **Canal público de propósito:** o board autentica por cookie próprio (`crm_sessao`), não
+  por Supabase Auth — não há JWT para validar canal privado. O payload não carrega dado de
+  negócio; a autorização continua no servidor, em `/api/funil`.
+- **UPDATE é filtrado:** o id da mensagem é `sha1(cliente_id|created_at|content)`, então
+  upsert de linha existente tem conteúdo idêntico por construção. Só notifica se `status`
+  ou `tipo` mudarem — senão o board recarregaria a cada re-fetch do ETL sem novidade.
+- **Falha nunca derruba o ETL:** todo o corpo está sob `exception when others`. Se o
+  Realtime cair, degrada para o poll de 60s.
+
+Monitorar: `select * from vw_etl_trigger_saude;` (`desde_ultimo_ok` deve ficar < 20 min).
+
+### 15.5 Convenção de PII — o repositório é PÚBLICO
+
+O repo é público de propósito (Actions grátis/ilimitado). Logo: **nome completo de cliente
+não entra em arquivo versionado.** Casos são referenciados por iniciais (`S.S.B.`, `E.A.`,
+`M.B.`, `C.M.`) — o histórico de sessões anteriores foi convertido.
+
+Nomes de **vendedores** continuam em claro: são funcionais (o slug da carteira é chave em
+`carteira_config`, nas views e no ETL) e não são dado de cliente.
+
+Se um dia o conteúdo operacional precisar de nomes reais, o caminho é mover este arquivo
+para um repo privado — não tornar o repo do ETL privado, que custaria os minutos de Actions.
