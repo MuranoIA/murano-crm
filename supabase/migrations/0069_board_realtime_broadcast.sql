@@ -55,6 +55,13 @@ exception when others then
 end;
 $$;
 
+-- Função nova nasce com EXECUTE para PUBLIC e o PostgREST a expõe em /rest/v1/rpc/*.
+-- Ninguém de fora precisa chamá-la — quem dispara são os triggers abaixo. Sem este
+-- revoke, qualquer um com a chave anon forçaria TODOS os boards abertos a recarregar
+-- em loop (cada reload = /api/funil inteiro) — amplificação apontada justamente para
+-- o custo que esta migration elimina.
+revoke execute on function public.board_notificar_carteiras(text[]) from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------------
 -- mensagens: INSERT = mensagem nova, sempre é novidade real.
 -- ---------------------------------------------------------------------------

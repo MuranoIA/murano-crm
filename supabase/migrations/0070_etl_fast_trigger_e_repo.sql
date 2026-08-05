@@ -28,6 +28,10 @@ create or replace function etl_disparar_workflow(p_workflow text default 'etl.ym
 returns void
 language plpgsql
 security definer
+-- security definer sem search_path fixo é o vetor clássico de escalação (a 0042
+-- veio sem; como esta migration reescreve a função inteira, corrige aqui).
+-- http/http_header/http_response moram no schema extensions.
+set search_path to 'public','extensions'
 as $$
 declare
   v_token  text;
@@ -74,6 +78,13 @@ exception when others then
   insert into etl_trigger_log (workflow, status, erro) values (p_workflow, null, left(sqlerrm, 400));
 end;
 $$;
+
+-- A versão da 0042 ficou com EXECUTE para PUBLIC (default do Postgres) e exposta em
+-- /rest/v1/rpc/* pelo PostgREST — qualquer um com a chave anon disparava workflow no
+-- GitHub à vontade, queimando minutos de Actions e a cota do RD. Só o pg_cron (que
+-- roda como dono) precisa chamá-la. CREATE OR REPLACE preserva privilégios antigos,
+-- então o revoke é necessário mesmo reescrevendo a função.
+revoke execute on function public.etl_disparar_workflow(text) from public, anon, authenticated;
 
 -- nome do repo atual (espelho do const REPO em web/app/api/sync-etl/route.ts)
 insert into wth_config (chave, valor) values ('gh_etl_repo', 'MuranoIA/murano-crm')

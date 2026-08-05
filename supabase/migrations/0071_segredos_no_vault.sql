@@ -40,6 +40,15 @@ begin
 end;
 $$;
 
+-- SEM ESTE REVOKE A MIGRATION FAZ O CONTRÁRIO DO QUE PROMETE: função nova nasce com
+-- EXECUTE para PUBLIC, o PostgREST a expõe em /rest/v1/rpc/segredo_de, e ela é
+-- security definer — ou seja, atravessa o RLS que hoje protege wth_config. Qualquer
+-- pessoa com a chave anon (pública, está no navegador) faria
+--   POST /rest/v1/rpc/segredo_de {"p_nome":"gh_etl_token","p_chave_legado":"gh_etl_token"}
+-- e receberia o PAT em texto puro. Só as funções do banco (que rodam como dono)
+-- precisam deste leitor.
+revoke execute on function public.segredo_de(text, text) from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------------
 -- etl_disparar_workflow passa a ler o PAT pelo leitor acima.
 -- Corpo idêntico ao da 0070 — muda só a origem do token.
@@ -48,6 +57,7 @@ create or replace function etl_disparar_workflow(p_workflow text default 'etl.ym
 returns void
 language plpgsql
 security definer
+set search_path to 'public','extensions'
 as $$
 declare
   v_token  text;
@@ -90,6 +100,10 @@ exception when others then
   insert into etl_trigger_log (workflow, status, erro) values (p_workflow, null, left(sqlerrm, 400));
 end;
 $$;
+
+-- reafirma o revoke da 0070 (CREATE OR REPLACE preserva privilégios, mas se esta
+-- migration rodar num banco onde a 0070 não rodou, a função nasceria pública)
+revoke execute on function public.etl_disparar_workflow(text) from public, anon, authenticated;
 
 -- =============================================================================
 -- PASSO MANUAL (rodar no SQL Editor, NÃO versionar o valor real)
