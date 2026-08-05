@@ -199,7 +199,7 @@ async function checarMudaram(candidatos: Candidato[], conc = 1): Promise<{ id: s
 // por created_at (abertura), então um protocolo aberto há meses e nunca
 // fechado NUNCA mais reaparece na janela do incremental, mesmo com mensagens
 // novas todo dia — só re-checando "abertos" diretamente pega esse caso
-// (achado real: Samara Soares Brito, atendimento aberto desde 14/05, venda
+// (achado real: cliente S.S.B., atendimento aberto desde 14/05, venda
 // fechada hoje ficou invisível pro incremental até esse fix).
 async function clientesComAtendimentoAberto(): Promise<{ id: string; carteira: string }[]> {
   const out: { id: string; carteira: string }[] = [];
@@ -683,7 +683,7 @@ async function main() {
       // dias. É caro (~1.000 clientes hoje, 61% da base) — por isso NÃO roda no
       // incremental de 20min, senão o custo por ciclo ia de ~150-250 pra 1.000+.
       // Cobre o caso "conversa parada X dias, protocolo nunca fechado, reabriu hoje"
-      // (achado real: Samara Soares Brito) que o /v4/reports não pega de jeito
+      // (achado real: cliente S.S.B.) que o /v4/reports não pega de jeito
       // nenhum, nem com janela maior, porque ele filtra por created_at do protocolo.
       const abertos = await clientesComAtendimentoAberto();
       let addAbertos = 0;
