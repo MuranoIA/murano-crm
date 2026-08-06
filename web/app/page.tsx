@@ -337,6 +337,13 @@ export default function Page() {
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     cidades: string[]; total: number;
   } | null>(null);
+  // filtro MELHORES CLIENTES: top N por ticket médio dos últimos 3 meses (90d),
+  // entre quem comprou no período. Mesma mecânica de identificadores do produto.
+  const [melhoresPainel, setMelhoresPainel] = useState(false);
+  const [melhoresCarregando, setMelhoresCarregando] = useState(false);
+  const [melhoresFiltro, setMelhoresFiltro] = useState<{
+    clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>; qtd: number; total: number;
+  } | null>(null);
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
   const [cicloSel, setCicloSel] = useState<string[]>([]);
   const [cicloPainel, setCicloPainel] = useState(false);
@@ -937,6 +944,37 @@ export default function Page() {
     if (t.length === 8 && cidFiltro.tel8.has(t)) return true;
     return false;
   };
+  // filtro melhores clientes: card "casa" por qualquer identificador (igual cidade/produto)
+  const matchMelhores = (c: Card): boolean => {
+    if (!melhoresFiltro) return true;
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        const cc = Number(id.slice(id.indexOf(":") + 1));
+        if (melhoresFiltro.codclis.has(cc)) return true;
+      } else if (melhoresFiltro.clienteIds.has(id)) return true;
+    }
+    if (c.codcli != null && melhoresFiltro.codclis.has(Number(c.codcli))) return true;
+    const t = String(c.telefone ?? "").replace(/\D/g, "").slice(-8);
+    if (t.length === 8 && melhoresFiltro.tel8.has(t)) return true;
+    return false;
+  };
+  async function aplicarMelhores(qtd: number) {
+    setMelhoresCarregando(true);
+    setMelhoresPainel(false);
+    try {
+      const r = await fetch(`/api/melhores-clientes?qtd=${qtd}`, { cache: "no-store" });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j) {
+        setMelhoresFiltro({
+          clienteIds: new Set<string>(j.clienteIds ?? []),
+          codclis: new Set<number>(j.codclis ?? []),
+          tel8: new Set<string>(j.tel8 ?? []),
+          qtd, total: j.total ?? 0,
+        });
+      }
+    } finally { setMelhoresCarregando(false); }
+  }
   // filtro por ciclo: dois EIXOS.
   // - "URGENTE" (ligar hoje) é PRIORIDADE, não categoria: refina o resto (E/AND).
   // - as categorias (situação no ciclo) são OR entre si.
@@ -982,11 +1020,12 @@ export default function Page() {
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cidFiltro) r = r.filter(matchCidade);
+    if (melhoresFiltro) r = r.filter(matchMelhores);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [cards, filtro, busca, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [cards, filtro, busca, prodFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -997,11 +1036,12 @@ export default function Page() {
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
     if (cidFiltro) r = r.filter(matchCidade);
+    if (melhoresFiltro) r = r.filter(matchMelhores);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [pedidoCards, filtro, busca, prodFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // total da carteira no cabeçalho = funil (conversa+prospecção, sem comprador do mês) +
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
@@ -1074,8 +1114,9 @@ export default function Page() {
       const nomes = cidFiltro.cidades.map((cn) => cidades.find((c) => c.cidade_norm === cn)?.cidade).filter(Boolean) as string[];
       parts.push(`Cidade: ${nomes.length ? nomes.join(", ") : `${cidFiltro.cidades.length} selecionada(s)`}`);
     }
+    if (melhoresFiltro) parts.push(`Melhores clientes: top ${melhoresFiltro.qtd} (ticket médio 3 meses)`);
     return parts;
-  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos, cidFiltro, cidades]);
+  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos, cidFiltro, cidades, melhoresFiltro]);
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
@@ -1719,6 +1760,66 @@ export default function Page() {
                   </div>
                 </div>
               </div>
+            )}
+          </div>
+          {/* MELHORES CLIENTES: top N por ticket médio dos últimos 3 meses */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setMelhoresPainel((v) => !v)}
+              title="Top N clientes por ticket médio dos últimos 3 meses (entre quem comprou no período)"
+              style={{
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
+                color: melhoresFiltro ? "#fff" : RD.gray,
+                background: melhoresFiltro ? "#b8860b" : RD.surface,
+                border: `1px solid ${melhoresFiltro ? "#b8860b" : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              }}
+            >
+              {melhoresCarregando ? "Calculando…" : melhoresFiltro ? `🏆 Top ${melhoresFiltro.qtd} melhores` : "Melhores clientes"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {melhoresFiltro && (
+              <span
+                onClick={() => setMelhoresFiltro(null)}
+                title="Limpar filtro de melhores clientes"
+                style={{
+                  position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17,
+                  background: "#fff", border: `1px solid #b8860b`, color: "#b8860b", fontSize: 11, fontWeight: 800,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1,
+                }}
+              >×</span>
+            )}
+            {melhoresPainel && (
+              <>
+                <div onClick={() => setMelhoresPainel(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 101, minWidth: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 6 }}>
+                  <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "4px 8px 6px", lineHeight: 1.4 }}>
+                    Quem comprou nos últimos 3 meses,<br />ordenado pelo maior ticket médio:
+                  </div>
+                  {[10, 20, 30, 40, 50].map((n) => {
+                    const ativo = melhoresFiltro?.qtd === n;
+                    return (
+                      <button
+                        key={n}
+                        onClick={() => aplicarMelhores(n)}
+                        style={{ display: "flex", alignItems: "center", width: "100%", textAlign: "left", background: ativo ? RD.wineSoft : "transparent", border: "none", padding: "7px 10px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: ativo ? RD.wine : RD.navy, cursor: "pointer", borderRadius: 7 }}
+                      >
+                        🏆 {n} melhores
+                        {ativo && <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                  {melhoresFiltro && (
+                    <button
+                      onClick={() => { setMelhoresFiltro(null); setMelhoresPainel(false); }}
+                      style={{ display: "flex", alignItems: "center", width: "100%", textAlign: "left", background: "transparent", border: "none", borderTop: `1px solid ${RD.border}`, marginTop: 4, padding: "7px 10px", fontSize: 12, fontWeight: 600, color: RD.gray, cursor: "pointer" }}
+                    >
+                      Limpar filtro
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
           <div style={{ position: "relative" }}>
