@@ -6,7 +6,9 @@ cruza com os dados de venda/ciclo do ERP **WinThor**, e permite ao time atender 
 clientes (templates + texto livre dentro da janela de 24 h), acompanhar o funil,
 gerar relatórios, montar orçamentos e ver um ranking de vendas ao vivo.
 
-> **App em produção:** https://funil-murano.vercel.app
+> **App em produção:** https://crm.muranoprofessional.com.br
+> (domínio próprio via Cloudflare → Vercel; o projeto Vercel ainda se chama `funil-murano`
+> e a URL `funil-murano.vercel.app` está desativada — responde 402)
 > **Banco/back-office:** Supabase `murano-conversas`
 
 ---

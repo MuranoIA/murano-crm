@@ -623,6 +623,25 @@ No board o objeto `RD` é mutável de propósito: `Object.assign(RD, TEMAS[tema]
 `Page()` + re-render troca tudo sem refatorar os estilos inline. As telas de visões leem o
 mesmo `localStorage`.
 
+### 11.6 Chat (`/chat`) — ambiente de conversa estilo RD Conversas
+
+Botão **💬 Chat** no menu (desktop e mobile, todos os papéis). Layout WhatsApp Web
+(sidebar de conversas + thread), identidade Murano com regras do usuário: **púrpura
+`#7b2d8b` nos botões** (não laranja), **azul `#1a5fa8`** nos ticks de lida/links,
+**laranja só em avisos** (fora da janela 24h, falha de envio).
+
+- **Lista** = `GET /api/chat`: `vw_funil` com `ultima_atividade` não nula (corta
+  prospecção e ids sintéticos), escopo por carteira no servidor.
+- **Thread** = `GET /api/chat/thread?cliente_id=`: últimas 200 mensagens com
+  `id/status/tipo` (ticks ✓/✓✓/✓✓azul = wait/success/read, mapeados do RD e do
+  webhook Cloud). Não escopa por carteira (mesma razão do `/api/mensagens`).
+- **Envio** reusa `POST /api/send-message` (roteia RD × Cloud API pela regra da
+  seção 16.3; otimista no front; 422 `foraDaJanela` vira aviso pra mandar template
+  pelo board).
+- **Atualização** = mesmo Realtime do board (canal `board`, evento `mudou`) +
+  poll de 60s como rede de proteção + guarda de in-flight. Nenhuma chamada à API
+  do RD a partir do chat — só Supabase (cota preservada, seção 15).
+
 ## 12. Faturamento / vendas reais (nota fiscal WinThor)
 
 > Handoff de outra sessão Claude (conta oficial Murano). **Verificado ao vivo em 24/07/2026**:

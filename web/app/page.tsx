@@ -1322,6 +1322,7 @@ export default function Page() {
           {!isMobile && (
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
+            <a href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</a>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
             <a href="/visoes" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Visões</a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
@@ -1515,6 +1516,7 @@ export default function Page() {
           <>
             <div onClick={fecha} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,32,64,0.22)" }} />
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
+              <a href="/chat" onClick={fecha} style={row}>💬 Chat</a>
               <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
               <a href="/visoes" onClick={fecha} style={row}>Visões</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
