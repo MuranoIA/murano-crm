@@ -926,3 +926,85 @@ Nomes de **vendedores** continuam em claro: são funcionais (o slug da carteira 
 
 Se um dia o conteúdo operacional precisar de nomes reais, o caminho é mover este arquivo
 para um repo privado — não tornar o repo do ETL privado, que custaria os minutos de Actions.
+
+## 16. Migração para a WhatsApp Cloud API (Fases A/B validadas — 06/08/2026)
+
+> Canal direto com a Meta, em transição para substituir o RD Conversas. **Decisão de
+> arquitetura: adaptar este projeto, não recriar** — o canal novo é ADITIVO: grava nas
+> mesmas tabelas (`clientes`/`mensagens`), então board, views, Realtime e relatórios
+> funcionam sem mudança. O ETL do RD segue rodando em paralelo, intocado, até a Fase C.
+
+### 16.1 O que está no ar (PRs #37–#42)
+
+| Peça | O que faz |
+|---|---|
+| `web/app/api/whatsapp/webhook` | GET = verificação (`hub.challenge` + `WHATSAPP_VERIFY_TOKEN`); POST = mensagens recebidas → upsert em `mensagens` com **id = wamid** (idempotente) + statuses de envio (sent/delivered/read/failed) → update da mesma linha. Valida `X-Hub-Signature-256` se `WHATSAPP_APP_SECRET` existir. Sempre responde 200 (erro interno é logado — a Meta reenvia eternamente o que não recebe 200) |
+| `web/lib/whatsapp.ts` | `sendText`/`sendTemplate` (Graph **v22.0** — subir p/ v26 qualquer hora), `canalDoCliente()` e `canalDeResposta()` |
+| `send-message` / `send-template` | Roteiam por canal (16.3). Fluxo RD 100% intocado |
+| `web/app/api/whatsapp/send-test` | **TEMPORÁRIA** (allowlist com o telefone do dev hardcoded). Remover na Fase C — e o telefone sai do repo junto |
+
+### 16.2 Infra na Meta
+
+- App **Murano Pulse** `2654151365016843` · WABA de teste `28189344217325382`
+  ("Test WhatsApp Business Account") · phone_number_id `1221847701011584`
+  · número de teste **+1 555 671 6653**.
+- **WABA real "Murano Pro" `1441580480587007`** já existe no Business Manager —
+  candidata natural a receber o número oficial na Fase C. Há também contas
+  "Murano Cobrança", "Murano Shop" e apps de celular (Henry, Milene) a mapear.
+- Usuário do sistema **Murano Pulse** (Employee, `61592991989302`) com o app e as
+  WABAs atribuídos — dono do token permanente.
+- Webhook cadastrado: `https://crm.muranoprofessional.com.br/api/whatsapp/webhook`,
+  campo **`messages`** assinado (v26.0). **A URL de produção é o domínio próprio**
+  (Cloudflare → Vercel); `funil-murano.vercel.app` responde 402 DEPLOYMENT_DISABLED
+  e NÃO é a produção.
+
+### 16.3 Regras de roteamento e convergência
+
+- **Recebimento:** webhook grava tudo. Vínculo com cliente por **tel8** (últimos 8
+  dígitos — RD guarda 12 dígitos sem o nono, Meta manda 13). Sem match → cria cliente
+  **`wa:<wa_id>`** (id sintético, padrão `winthor:<codcli>`).
+- **Envio (`canalDeResposta`):** `wa:*` → Cloud API; senão, se a **última mensagem
+  recebida** do cliente tem id `wamid.*` → Cloud API (responde pelo canal em que o
+  cliente falou); senão → RD. Interruptor **`WHATSAPP_ENVIO_PADRAO=true`** (Vercel)
+  vira tudo para Cloud na migração do número, sem deploy.
+- **Envio espelhado:** toda mensagem enviada pela Cloud grava linha em `mensagens`
+  (id = wamid, status `wait`) — o webhook atualiza a MESMA linha com o recibo
+  (`wait`→`success`→`read`, mapeados de sent/delivered/read; `failed` fica literal).
+- **Template Cloud ≠ template RD:** é outro cadastro (nome aprovado no Gerenciador da
+  Meta). Env `WHATSAPP_TEMPLATE_RECONTATO` (nome) — enquanto vazia, o desvio Cloud do
+  send-template responde 501 com instrução.
+- Envs (nomes; valores só na Vercel): `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
+  `WHATSAPP_WABA_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` (pendente),
+  `WHATSAPP_ENVIO_PADRAO`, `WHATSAPP_TEMPLATE_RECONTATO` (pendente).
+
+### 16.4 Armadilhas já pagas (não repagar)
+
+1. **Graph 190 com token válido:** caractere invisível (espaço/quebra) colado junto do
+   token na Vercel. A lib sanitiza (`[^\x21-\x7E]` → remove) — mesmo bug que o RD já teve.
+2. **Graph 131030 com número cadastrado:** a allowlist de destinatários de teste guarda o
+   formato COM nono dígito; o `wa_id` do webhook vem SEM. Enviar sempre no formato cadastrado.
+3. **Webhook "validado" mas mudo:** validar a URL não basta — tem que ASSINAR o campo
+   `messages` (toggle em Configuração → Webhook → Gerenciar). O botão "Teste" do painel
+   dispara mesmo sem assinatura (falso positivo de sanidade).
+4. **Token do painel ("Configuração da API") é da SESSÃO PESSOAL do dev** — morre em ~24h
+   e a cada regeneração. Produção exige token de usuário do sistema com expiração "Nunca".
+5. **Gerar token de usuário do sistema pede aprovação de OUTRO admin** do portfólio
+   (solicitação expira em 7 dias). O limite da conta é 1 system user Admin — o Murano
+   Pulse é Employee, o que basta (poder vem dos ativos + permissões, não do papel).
+6. Teste de ponta: mandar mensagem para o número de TESTE do app (+1 555 671 6653), do
+   celular cadastrado como destinatário. Latência normal ponta a ponta: ~2 s.
+
+### 16.5 Pendências (ordem) e fases
+
+1. **Token permanente** — aguarda aprovação de outro admin (pedido de 06/08, expira em 7
+   dias). Até lá: token de 24h, envio quebra diariamente com Graph 190.
+2. `WHATSAPP_APP_SECRET` na Vercel (exige recuperar a senha do Facebook para revelar o
+   app secret) — liga a validação de assinatura do webhook.
+3. Template de recontato na Meta + `WHATSAPP_TEMPLATE_RECONTATO` (adiado pelo usuário).
+4. Graph v22 → v26 na lib; remover `send-test`.
+5. **Fase C (corte):** mapear o que o time usa do painel RD → migrar o número oficial
+   do RD/Tallos para a WABA (ponto sem volta: RD para de receber) → nome de exibição →
+   `WHATSAPP_ENVIO_PADRAO=true` → aposentar o ETL gradualmente.
+6. **Fase D:** mídia (webhook entrega media_id, que expira — baixar p/ Supabase Storage;
+   hoje entra como marcador `[image]` etc.), tela de chat no board, monitoramento do
+   webhook, limpeza do código RD e dos docs (ainda citam funil-murano.vercel.app).
