@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { canalDoCliente, sendTemplate } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
@@ -46,6 +47,39 @@ export async function POST(req: Request) {
     const { data: cfg } = await sb.from("carteira_config").select("employee_id").eq("slug", cli.carteira as string).maybeSingle();
     const operator_id = cfg?.employee_id ?? null;
     const primeiroNome = String(cli.nome_completo ?? "").trim().split(/\s+/)[0] || "";
+
+    // ---- canal direto (WhatsApp Cloud API) — clientes wa:* ou interruptor ligado ----
+    // Template na Cloud API é outro cadastro (nome aprovado no Gerenciador da Meta,
+    // não o id do RD). Enquanto WHATSAPP_TEMPLATE_RECONTATO não existir na Vercel,
+    // este desvio responde 501 com instrução clara. O fluxo RD abaixo segue intocado.
+    if (canalDoCliente(cliente_id) === "whatsapp") {
+      const nomeTemplate = process.env.WHATSAPP_TEMPLATE_RECONTATO;
+      if (!nomeTemplate) {
+        return Response.json({
+          error: "Template da Cloud API não configurado — criar o template no Gerenciador da Meta e definir WHATSAPP_TEMPLATE_RECONTATO na Vercel.",
+        }, { status: 501 });
+      }
+      try {
+        const to = String(cli.telefone).replace(/\D/g, "");
+        const { wamid } = await sendTemplate(to, nomeTemplate, "pt_BR", [
+          { type: "body", parameters: [{ type: "text", text: primeiroNome || "cliente" }] },
+        ]);
+        await sb.from("disparos_template").insert({
+          id: wamid, cliente_id: cli.id, telefone: cli.telefone, vendedor: cli.carteira,
+          operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
+        });
+        // espelha em mensagens como template (o funil usa isso p/ a etapa tentativa_contato)
+        await sb.from("mensagens").upsert({
+          id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
+          enviada_por: "operator", tipo: "template", conteudo: `[template] ${nomeTemplate}`,
+          status: "wait", criada_em: new Date().toISOString(),
+        }, { onConflict: "id" });
+        return Response.json({ ok: true, id: wamid, cliente: cli.nome_completo, canal: "whatsapp" });
+      } catch (e: any) {
+        return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
+      }
+    }
+
     const recipient = cli.telefone.startsWith("+") ? cli.telefone : `+${cli.telefone}`;
 
     const payload: Record<string, unknown> = {

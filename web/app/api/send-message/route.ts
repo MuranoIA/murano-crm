@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { canalDoCliente, sendText } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -39,10 +40,35 @@ export async function POST(req: Request) {
     const sb = createClient(supaUrl!, supaKey!, { auth: { persistSession: false } });
     const { data: cli, error: cliErr } = await sb
       .from("clientes")
-      .select("id,nome_completo,carteira")
+      .select("id,nome_completo,telefone,carteira")
       .eq("id", cliente_id)
       .single();
     if (cliErr || !cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
+
+    // ---- canal direto (WhatsApp Cloud API) — clientes wa:* ou interruptor ligado ----
+    // O fluxo RD abaixo segue intocado; este desvio só existe para o canal novo.
+    if (canalDoCliente(cliente_id) === "whatsapp") {
+      const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
+      if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
+      try {
+        const { wamid } = await sendText(to, texto);
+        // espelha no banco (mesma linha que o webhook atualiza com sent/delivered/read)
+        await sb.from("mensagens").upsert({
+          id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
+          enviada_por: "operator", tipo: "mensagem", conteudo: texto,
+          status: "wait", criada_em: new Date().toISOString(),
+        }, { onConflict: "id" });
+        return Response.json({ ok: true, cliente: cli.nome_completo, canal: "whatsapp" });
+      } catch (e: any) {
+        if (e?.foraDaJanela) {
+          return Response.json({
+            error: "Fora da janela de 24h do WhatsApp — envie um template para reabrir a conversa.",
+            foraDaJanela: true,
+          }, { status: 422 });
+        }
+        return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
+      }
+    }
 
     const { data: cfg } = await sb.from("carteira_config").select("employee_id").eq("slug", cli.carteira as string).maybeSingle();
     const operator_id = cfg?.employee_id ?? null;
