@@ -15,8 +15,10 @@ import { sendText } from "../../../../lib/whatsapp";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-// wa_ids autorizados a receber teste (formato E.164 sem '+')
-const DESTINOS_PERMITIDOS = new Set(["559184719702"]);
+// wa_ids autorizados a receber teste (formato E.164 sem '+').
+// As duas variantes do mesmo número: com e sem o nono dígito — o wa_id do webhook
+// vem sem o 9, mas a lista de permissão da Meta guarda o formato cadastrado.
+const DESTINOS_PERMITIDOS = new Set(["559184719702", "5591984719702"]);
 
 export async function POST(req: Request) {
   try {
