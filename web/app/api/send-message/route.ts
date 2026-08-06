@@ -93,7 +93,7 @@ export async function POST(req: Request) {
       });
       body = await rd.json().catch(() => ({}));
       if (rd.ok || ![429, 500, 502, 503].includes(rd.status) || tent >= 4) break;
-      await sleep(1200 * (tent + 1)); // 1.2s, 2.4s, 3.6s, 4.8s (cabe no maxDuration=30)
+      await sleep(2000 * (tent + 1)); // 2s, 4s, 6s, 8s (cabe no maxDuration=30)
     }
     if (!rd.ok) {
       return Response.json({ error: body?.message || `RD ${rd.status}`, detail: body }, { status: 502 });
