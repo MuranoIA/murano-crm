@@ -13,6 +13,19 @@
 
 const GRAPH_VERSION = "v22.0";
 
+/**
+ * Decide o canal de ENVIO de um cliente durante a transição RD → Cloud API.
+ * - `wa:<numero>`: contato que nasceu no canal direto (o RD nem o conhece) → whatsapp.
+ * - demais: RD Conversas (comportamento atual do board), até o interruptor
+ *   WHATSAPP_ENVIO_PADRAO=true ser ligado na Vercel (dia da migração do número —
+ *   vira o canal padrão sem precisar de deploy).
+ * O RECEBIMENTO não passa por aqui: o webhook grava tudo que chegar, sempre.
+ */
+export function canalDoCliente(clienteId: string): "whatsapp" | "rd" {
+  if (clienteId.startsWith("wa:")) return "whatsapp";
+  return process.env.WHATSAPP_ENVIO_PADRAO === "true" ? "whatsapp" : "rd";
+}
+
 type EnvioOk = { wamid: string };
 
 function env(nome: string): string {
