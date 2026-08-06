@@ -26,6 +26,28 @@ export function canalDoCliente(clienteId: string): "whatsapp" | "rd" {
   return process.env.WHATSAPP_ENVIO_PADRAO === "true" ? "whatsapp" : "rd";
 }
 
+/**
+ * Regra completa de roteamento de resposta: além de canalDoCliente(), responde
+ * pelo canal em que o CLIENTE falou por último — se a última mensagem recebida
+ * dele tem id `wamid.*` (chegou pelo webhook da Cloud API), a resposta volta
+ * pela Cloud API; senão, RD. Durante a transição isso roteia cada conversa
+ * sozinho, sem configuração por cliente.
+ */
+export async function canalDeResposta(
+  sb: { from: (t: string) => any },
+  clienteId: string,
+): Promise<"whatsapp" | "rd"> {
+  if (canalDoCliente(clienteId) === "whatsapp") return "whatsapp";
+  const { data } = await sb
+    .from("mensagens")
+    .select("id")
+    .eq("cliente_id", clienteId)
+    .eq("enviada_por", "customer")
+    .order("criada_em", { ascending: false })
+    .limit(1);
+  return typeof data?.[0]?.id === "string" && data[0].id.startsWith("wamid") ? "whatsapp" : "rd";
+}
+
 type EnvioOk = { wamid: string };
 
 function env(nome: string): string {
