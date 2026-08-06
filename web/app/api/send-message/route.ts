@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDoCliente, sendText } from "../../../lib/whatsapp";
+import { canalDeResposta, sendText } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -45,9 +45,10 @@ export async function POST(req: Request) {
       .single();
     if (cliErr || !cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
 
-    // ---- canal direto (WhatsApp Cloud API) — clientes wa:* ou interruptor ligado ----
-    // O fluxo RD abaixo segue intocado; este desvio só existe para o canal novo.
-    if (canalDoCliente(cliente_id) === "whatsapp") {
+    // ---- canal direto (WhatsApp Cloud API) ----
+    // wa:*, interruptor ligado, OU cliente cuja última mensagem chegou pelo canal
+    // direto (responde pelo canal em que ele falou). Fluxo RD abaixo segue intocado.
+    if ((await canalDeResposta(sb, cliente_id)) === "whatsapp") {
       const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
       if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
       try {

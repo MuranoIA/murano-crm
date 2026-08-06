@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDoCliente, sendTemplate } from "../../../lib/whatsapp";
+import { canalDeResposta, sendTemplate } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
     // Template na Cloud API é outro cadastro (nome aprovado no Gerenciador da Meta,
     // não o id do RD). Enquanto WHATSAPP_TEMPLATE_RECONTATO não existir na Vercel,
     // este desvio responde 501 com instrução clara. O fluxo RD abaixo segue intocado.
-    if (canalDoCliente(cliente_id) === "whatsapp") {
+    if ((await canalDeResposta(sb, cliente_id)) === "whatsapp") {
       const nomeTemplate = process.env.WHATSAPP_TEMPLATE_RECONTATO;
       if (!nomeTemplate) {
         return Response.json({
