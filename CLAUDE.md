@@ -1022,8 +1022,9 @@ para um repo privado — não tornar o repo do ETL privado, que custaria os minu
 
 ### 16.5 Pendências (ordem) e fases
 
-1. **Token permanente** — aguarda aprovação de outro admin (pedido de 06/08, expira em 7
-   dias). Até lá: token de 24h, envio quebra diariamente com Graph 190.
+1. ~~Token permanente~~ **RESOLVIDO (06/08):** aprovado pelo 2º admin, gerado no system
+   user Murano Pulse com expiração "Nunca", instalado na Vercel e testado. Envio não
+   expira mais.
 2. `WHATSAPP_APP_SECRET` na Vercel (exige recuperar a senha do Facebook para revelar o
    app secret) — liga a validação de assinatura do webhook.
 3. Template de recontato na Meta + `WHATSAPP_TEMPLATE_RECONTATO` (adiado pelo usuário).
