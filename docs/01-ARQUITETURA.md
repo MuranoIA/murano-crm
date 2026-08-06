@@ -26,7 +26,7 @@ ferramenta diária do time.
   ERP WinThor ──► murano-clientes-v2 ──(pg_cron: wth_sync_*)──► wth_* ───────┤
    (vendas/estoque)    (espelho, RO)                             (espelho)    │
                                                                               ▼
-                                                              Next.js na Vercel (funil-murano)
+                                             Next.js na Vercel (crm.muranoprofessional.com.br)
                                                                 board + ~18 rotas de API
                                                                               │
                                                                               ▼
