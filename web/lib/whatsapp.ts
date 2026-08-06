@@ -18,7 +18,9 @@ type EnvioOk = { wamid: string };
 function env(nome: string): string {
   const v = process.env[nome];
   if (!v) throw new Error(`Config ausente: ${nome}`);
-  return v;
+  // remove qualquer caractere fora do ASCII imprimível (espaço/quebra de linha
+  // colados junto do valor na Vercel) — mesma limpeza que as rotas do RD fazem.
+  return v.replace(/[^\x21-\x7E]/g, "");
 }
 
 async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
