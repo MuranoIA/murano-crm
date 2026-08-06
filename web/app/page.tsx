@@ -1126,7 +1126,13 @@ export default function Page() {
     try {
       const rp = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "pausar" }) });
       pausei = rp.ok;
-      if (pausei) setSyncPausado(true);
+      if (pausei) {
+        setSyncPausado(true);
+        // o servidor já espera os runners pararem (até ~18s). Se a cota ainda não
+        // liberou, dá mais um respiro — enviar contra um run ativo é 429 na certa.
+        const jp = await rp.json().catch(() => null);
+        if (jp && jp.cotaLivre === false) await new Promise((res) => setTimeout(res, 12_000));
+      }
     } catch {}
     let ok = 0, falhas = 0;
     const detalhe: { cliente: string; erro: string }[] = [];

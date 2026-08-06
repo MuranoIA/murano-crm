@@ -68,18 +68,39 @@ export async function POST(req: Request) {
 
   const acao = await req.json().then((b: any) => b?.acao).catch(() => undefined);
 
-  // PAUSAR: desabilita os DOIS workflows (incremental + fast) e cancela o que está rodando.
+  // PAUSAR: desabilita os DOIS workflows (incremental + fast), cancela o que está
+  // rodando E na fila, e ESPERA os runners pararem de verdade antes de responder.
   // Libera 100% da cota do RD pras ações do usuário (envio de template etc.).
+  // Sem a espera, o disparo em massa começava com um run ainda consumindo a cota
+  // e todos os envios morriam em RD 429 (caso de 06/08).
   if (acao === "pausar") {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     for (const wf of WORKFLOWS) {
       await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/disable`, { method: "PUT", headers: GH_HEADERS(token) });
-      const rr = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/runs?status=in_progress&per_page=15`, { headers: GH_HEADERS(token), cache: "no-store" });
-      const jj: any = await rr.json().catch(() => ({}));
-      for (const run of jj?.workflow_runs ?? []) {
-        await fetch(`https://api.github.com/repos/${REPO}/actions/runs/${run.id}/cancel`, { method: "POST", headers: GH_HEADERS(token) });
+      for (const status of ["in_progress", "queued"]) {
+        const rr = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/runs?status=${status}&per_page=20`, { headers: GH_HEADERS(token), cache: "no-store" });
+        const jj: any = await rr.json().catch(() => ({}));
+        for (const run of jj?.workflow_runs ?? []) {
+          await fetch(`https://api.github.com/repos/${REPO}/actions/runs/${run.id}/cancel`, { method: "POST", headers: GH_HEADERS(token) });
+        }
       }
     }
-    return Response.json({ ok: true, paused: true });
+    // poll (máx ~18s, cabe no maxDuration=30): cota só libera quando o runner PARA
+    const temAtivo = async (): Promise<boolean> => {
+      for (const wf of WORKFLOWS) {
+        const rr = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/runs?status=in_progress&per_page=1`, { headers: GH_HEADERS(token), cache: "no-store" });
+        const jj: any = await rr.json().catch(() => ({}));
+        if ((jj?.workflow_runs ?? []).length > 0) return true;
+      }
+      return false;
+    };
+    let cotaLivre = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 18_000) {
+      if (!(await temAtivo())) { cotaLivre = true; break; }
+      await sleep(2500);
+    }
+    return Response.json({ ok: true, paused: true, cotaLivre });
   }
 
   // RETOMAR: reabilita os dois workflows (os crons voltam a rodar).
