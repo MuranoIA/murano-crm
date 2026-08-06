@@ -1005,6 +1005,13 @@ export default function Page() {
     () => pedidoVisiveis.filter((c) => c.periodo === "mes").length,
     [pedidoVisiveis]
   );
+  // "na carteira" = só quem é CADASTRADO no WinThor (decisão de 06/08/2026).
+  // Cards sem_cadastro (lead novo, candidato ainda não qualificado) aparecem no
+  // board mas não somam aqui; pedido_emitido vem do faturamento, sempre cadastrado.
+  const naCarteiraCount = useMemo(
+    () => visiveis.filter((c) => !c.sem_cadastro).length + pedidoMesCount,
+    [visiveis, pedidoMesCount]
+  );
   // base do vendedor (sem os outros filtros) — pra mostrar a contagem de cards que CADA
   // filtro isoladamente traz, dentro da pill (padrão "Sem cadastro (N)").
   const baseVend = useMemo(
@@ -1544,7 +1551,7 @@ export default function Page() {
             </div>
           )}
           <span style={{ marginLeft: "auto", color: RD.gray, fontSize: 12.5, whiteSpace: "nowrap" }}>
-            {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
+            {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${naCarteiraCount} na carteira · ${atualizado}`}
           </span>
           </div>
           )}
@@ -1975,7 +1982,7 @@ export default function Page() {
           {/* Vendedor: "na carteira" no fim da linha única (não tem a linha de cima) */}
           {sessao.role === "vendedor" && (
             <span style={{ color: RD.gray, fontSize: 11.5, whiteSpace: "nowrap", marginLeft: 12 }}>
-              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${visiveis.length + pedidoMesCount} na carteira · ${atualizado}`}
+              {erro ? <span style={{ color: "#e5484d" }}>erro: {erro}</span> : `${naCarteiraCount} na carteira · ${atualizado}`}
             </span>
           )}
           </div>
