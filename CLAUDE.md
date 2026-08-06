@@ -597,6 +597,32 @@ Não há mais o número total ao lado do nome da etapa (removido a pedido do usu
   que sincroniza + cronômetro ao vivo. **Não** dispara o sync do WinThor (`wth_`, pg_cron separado).
 - **Botão TEMPLATE / disparos** (`/api/send-template`, `disparos_template`) — ver migration `0002`.
 
+### 11.5 Menu Visões (`/visoes`) e temas visuais
+
+**Visões** (item do menu, todos os papéis; vendedor vê só a própria carteira — filtro no servidor):
+hub com 5 visões, cada uma abre um board filtrado. Dados da **`vw_visoes_cliente`**
+(migration `0074`): agregados de compra por `codcli` do `wth_faturamento` (líquido, regras
+VENDA/DEV da seção 10.8) + `wth_carteira` + slug via `carteira_config`. As **regras de cada
+visão moram em `/api/visoes`** (TS, não na view — ajustar regra não pede migration):
+
+| Visão | Regra |
+|---|---|
+| 30 Melhores | rank F/M (meses c/ compra em 12m + líquido 12m, pesos iguais), top 30; ativo = compra ≤ **120 dias** |
+| Frequência | frequente = **3+ meses seguidos** de compra (mês corrente em aberto não quebra a sequência) |
+| Fidelização | novos com 1–2 meses de compra; ao fechar 3 meses viram "fidelizados" e passam pra Frequência |
+| Compras do mês | `comprou_mes` (desde o dia 1º, BRT), ordenado por valor |
+| Desativados | `wth_descartados` + coluna `observacao` (0074); dropdown de motivo + observação editáveis (PATCH `/api/descartados`); restaurar = DELETE |
+
+Desativados somem das visões 1–4 (mesma regra do board). A view tem ~5.9k linhas → a rota
+pagina de 1000 em 1000 (~0,4s por página).
+
+**Temas:** `web/lib/tema.ts` — paletas `padrao` (RD de sempre) e `murano` (**Tema 1**,
+identidade Murano Professional: vinho `#621244`, laranja `#dd4222` como ação, fundo `#f5edf4`).
+Botão 🎨 na top bar (e no menu mobile) alterna e persiste em `localStorage` (`crm_tema`).
+No board o objeto `RD` é mutável de propósito: `Object.assign(RD, TEMAS[tema])` no início do
+`Page()` + re-render troca tudo sem refatorar os estilos inline. As telas de visões leem o
+mesmo `localStorage`.
+
 ## 12. Faturamento / vendas reais (nota fiscal WinThor)
 
 > Handoff de outra sessão Claude (conta oficial Murano). **Verificado ao vivo em 24/07/2026**:
