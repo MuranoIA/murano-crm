@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
+import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -83,20 +84,12 @@ function codcliDe(c: Card): number | null {
 }
 
 // Paleta inspirada no RD Station CRM
-const RD = {
-  bg: "#eef0f4",
-  surface: "#ffffff",
-  colHeader: "#eae5f2",
-  border: "#d3dae5",
-  navy: "#111d33",
-  gray: "#616b79",
-  grayLight: "#7d8695",
-  cyan: "#0ea3dc",
-  cyanSoft: "#daeffb",
-  wine: "#57163f",
-  wineSoft: "#efe6eb",
-  cream: "#e7d7dc",
-};
+// Paleta ativa. Objeto MUTÁVEL de propósito: todo o arquivo lê RD.x na hora de
+// renderizar, então trocar o tema é Object.assign(RD, TEMAS[tema]) + re-render
+// (feito no início do Page) — sem refatorar as centenas de estilos inline.
+// As paletas moram em web/lib/tema.ts ("padrao" = esta de sempre; "murano" =
+// Tema 1, identidade visual Murano Professional).
+const RD = { ...TEMAS.padrao };
 
 function Logo({ size = 28 }: { size?: number }) {
   return (
@@ -239,6 +232,17 @@ function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
 }
 
 export default function Page() {
+  // tema visual (padrao ↔ murano/Tema 1). Carrega do localStorage após montar
+  // (SSR não tem window) e aplica mutando RD antes do render dos filhos.
+  const [tema, setTema] = useState<TemaId>("padrao");
+  useEffect(() => { setTema(temaSalvo()); }, []);
+  Object.assign(RD, TEMAS[tema]);
+  const alternarTema = () => {
+    const t: TemaId = tema === "padrao" ? "murano" : "padrao";
+    salvarTema(t);
+    setTema(t);
+  };
+
   const [cards, setCards] = useState<Card[]>([]);
   type TplTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
   const [templatesTotais, setTemplatesTotais] = useState<Record<string, TplTot>>({});
@@ -1319,6 +1323,7 @@ export default function Page() {
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
+            <a href="/visoes" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Visões</a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
@@ -1485,6 +1490,15 @@ export default function Page() {
           )}
           {!isMobile && (
           <button
+            onClick={alternarTema}
+            title={tema === "padrao" ? "Mudar para o Tema 1 (identidade Murano)" : "Voltar ao tema padrão"}
+            style={{ background: tema === "murano" ? RD.wineSoft : "transparent", border: `1px solid ${RD.border}`, color: RD.wine, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            🎨 {tema === "padrao" ? "Tema 1" : "Tema padrão"}
+          </button>
+          )}
+          {!isMobile && (
+          <button
             onClick={sair}
             style={{ background: "transparent", border: `1px solid ${RD.border}`, color: RD.gray, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
           >
@@ -1502,6 +1516,7 @@ export default function Page() {
             <div onClick={fecha} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,32,64,0.22)" }} />
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
               <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
+              <a href="/visoes" onClick={fecha} style={row}>Visões</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
                 <a href="/analises" onClick={fecha} style={row}>Análises</a>
@@ -1521,6 +1536,7 @@ export default function Page() {
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
+              <button onClick={() => { alternarTema(); }} style={row}>🎨 {tema === "padrao" ? "Tema 1 (Murano)" : "Tema padrão"}</button>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
           </>

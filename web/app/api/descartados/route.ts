@@ -15,7 +15,7 @@ const tel8 = (t: any) => String(t ?? "").replace(/\D/g, "").slice(-8) || null;
 export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  let q = sb().from("wth_descartados").select("id,cliente_id,codcli,tel8,cliente,vendedor,motivo,descartado_por,criado_em").order("criado_em", { ascending: false });
+  let q = sb().from("wth_descartados").select("id,cliente_id,codcli,tel8,cliente,vendedor,motivo,observacao,descartado_por,criado_em").order("criado_em", { ascending: false });
   if (!veTudo(sessao)) q = q.eq("vendedor", sessao);
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -38,6 +38,24 @@ export async function POST(req: Request) {
     motivo: b.motivo || "cliente final",
     descartado_por: sessao,
   });
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true });
+}
+
+// PATCH: atualiza motivo e/ou observação de um desativado (visão Desativados)
+export async function PATCH(req: Request) {
+  const sessao = cookies().get("crm_sessao")?.value;
+  if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
+  let b: any;
+  try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
+  if (!b?.id) return Response.json({ error: "id ausente" }, { status: 400 });
+  const patch: any = {};
+  if (typeof b.motivo === "string" && b.motivo.trim()) patch.motivo = b.motivo.trim();
+  if (typeof b.observacao === "string") patch.observacao = b.observacao.trim() || null;
+  if (!Object.keys(patch).length) return Response.json({ error: "nada pra atualizar" }, { status: 400 });
+  let q = sb().from("wth_descartados").update(patch).eq("id", b.id);
+  if (!veTudo(sessao)) q = q.eq("vendedor", sessao); // vendedor só edita o próprio
+  const { error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true });
 }
