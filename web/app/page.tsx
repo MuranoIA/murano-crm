@@ -232,15 +232,19 @@ function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
 }
 
 export default function Page() {
-  // tema visual (padrao ↔ murano/Tema 1). Carrega do localStorage após montar
-  // (SSR não tem window) e aplica mutando RD antes do render dos filhos.
+  // tema visual (padrao / murano "Tema 1" / escuro "Dark"). Carrega do
+  // localStorage após montar (SSR não tem window) e aplica mutando RD antes do
+  // render dos filhos.
   const [tema, setTema] = useState<TemaId>("padrao");
+  const [temaMenuAberto, setTemaMenuAberto] = useState(false);
   useEffect(() => { setTema(temaSalvo()); }, []);
   Object.assign(RD, TEMAS[tema]);
+  const TEMA_ROTULO: Record<TemaId, string> = { padrao: "Padrão", murano: "Tema 1", escuro: "Dark" };
+  const escolherTema = (t: TemaId) => { salvarTema(t); setTema(t); setTemaMenuAberto(false); };
+  // mobile: uma linha só que circula entre os três
   const alternarTema = () => {
-    const t: TemaId = tema === "padrao" ? "murano" : "padrao";
-    salvarTema(t);
-    setTema(t);
+    const ordem: TemaId[] = ["padrao", "murano", "escuro"];
+    escolherTema(ordem[(ordem.indexOf(tema) + 1) % ordem.length]);
   };
 
   const [cards, setCards] = useState<Card[]>([]);
@@ -1537,13 +1541,33 @@ export default function Page() {
             </div>
           )}
           {!isMobile && (
-          <button
-            onClick={alternarTema}
-            title={tema === "padrao" ? "Mudar para o Tema 1 (identidade Murano)" : "Voltar ao tema padrão"}
-            style={{ background: tema === "murano" ? RD.wineSoft : "transparent", border: `1px solid ${RD.border}`, color: RD.wine, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
-          >
-            🎨 {tema === "padrao" ? "Tema 1" : "Tema padrão"}
-          </button>
+          <div style={{ position: "relative", display: "inline-flex" }}>
+            <button
+              onClick={() => setTemaMenuAberto((v) => !v)}
+              title="Escolher o tema visual"
+              style={{ background: tema !== "padrao" ? RD.wineSoft : "transparent", border: `1px solid ${RD.border}`, color: RD.wine, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}
+            >
+              🎨 {TEMA_ROTULO[tema]}<span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+            </button>
+            {temaMenuAberto && (
+              <>
+                <div onClick={() => setTemaMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: 190, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 6 }}>
+                  {(["padrao", "murano", "escuro"] as TemaId[]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => escolherTema(t)}
+                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: t === tema ? RD.wineSoft : "transparent", border: "none", padding: "7px 10px", fontSize: 12.5, fontWeight: t === tema ? 800 : 600, color: RD.navy, cursor: "pointer", borderRadius: 7 }}
+                    >
+                      <span style={{ width: 14, height: 14, borderRadius: 14, background: TEMAS[t].bg, border: `1px solid ${TEMAS[t].wine}` }} />
+                      {TEMA_ROTULO[t]}{t === "murano" ? " (Murano claro)" : t === "escuro" ? " (Murano escuro)" : ""}
+                      {t === tema && <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine }}>✓</span>}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           )}
           {!isMobile && (
           <button
@@ -1585,7 +1609,7 @@ export default function Page() {
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
-              <button onClick={() => { alternarTema(); }} style={row}>🎨 {tema === "padrao" ? "Tema 1 (Murano)" : "Tema padrão"}</button>
+              <button onClick={() => { alternarTema(); }} style={row}>🎨 Tema: {TEMA_ROTULO[tema]} <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>trocar ↻</span></button>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
           </>
@@ -2312,9 +2336,9 @@ export default function Page() {
                           style={{
                             cursor: "pointer", height: mostraInput ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             ...(isMobile ? { width: "80vw", maxWidth: 340 } : {}),
-                            background: disparoRecente ? "#fffdf5" : recontactar ? "#fdf7fb" : RD.surface,
-                            border: `1px solid ${disparoRecente ? "#f3ddad" : recontactar ? "#ecdae4" : RD.border}`,
-                            borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? "#57163f" : RD.border}`,
+                            background: disparoRecente ? RD.aguardaBg : recontactar ? RD.recontatoBg : RD.surface,
+                            border: `1px solid ${disparoRecente ? RD.aguardaBorda : recontactar ? RD.recontatoBorda : RD.border}`,
+                            borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? RD.wine : RD.border}`,
                             borderRadius: 8, padding: "11px 13px", boxShadow: "0 1px 2px rgba(16,32,64,0.05)",
                           }}
                         >
