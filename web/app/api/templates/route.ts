@@ -17,12 +17,22 @@ function sb() {
 }
 
 const COLS = "id,nome,rd_template_id,padrao";
+const COLS_CATALOGO = "id,nome,rd_template_id,ativo,padrao,criado_em";
 
-export async function GET() {
+// GET: sem ?catalogo=1 -> lista enxuta dos ATIVOS (o que qualquer sessão usa pra ESCOLHER
+// um template pra enviar — card e disparo em massa). Com ?catalogo=1 (só admin) -> catálogo
+// completo (id, nome, rd_template_id, ativo, padrao, criado_em), incluindo inativos, pra tela
+// de gerenciar templates.
+export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const { data, error } = await sb()
-    .from("crm_templates").select(COLS).eq("ativo", true).order("id");
+
+  const catalogo = new URL(req.url).searchParams.get("catalogo") === "1";
+  if (catalogo && !podeAdmin(sessao)) return Response.json({ error: "apenas admin vê o catálogo completo" }, { status: 403 });
+
+  let q = sb().from("crm_templates").select(catalogo ? COLS_CATALOGO : COLS).order("id");
+  if (!catalogo) q = q.eq("ativo", true);
+  const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ templates: data ?? [] });
 }

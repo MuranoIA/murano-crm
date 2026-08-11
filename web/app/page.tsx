@@ -264,6 +264,9 @@ export default function Page() {
   // "padrão do sistema" (t.padrao, usado quando ninguém escolheu nada — disparo em massa e
   // fallback do servidor) é da tabela, editável por qualquer admin, sem redeploy.
   const [templates, setTemplates] = useState<{ id: number; nome: string; rd_template_id: string | null; padrao: boolean }[]>([]);
+  // catálogo completo (admin, inclui inativos) — id/nome/rd_template_id/ativo/padrao/criado_em
+  // direto da crm_templates, carregado ao abrir o menu Automáticos.
+  const [templatesCatalogo, setTemplatesCatalogo] = useState<{ id: number; nome: string; rd_template_id: string | null; ativo: boolean; padrao: boolean; criado_em: string }[] | null>(null);
   const [templatePadraoId, setTemplatePadraoId] = useState<number | null>(null);
   const [tplMenuAberto, setTplMenuAberto] = useState(false);
   const [addTplAberto, setAddTplAberto] = useState(false);
@@ -586,14 +589,30 @@ export default function Page() {
       const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome, rd_template_id: novoTplRd.trim() }) });
       const j = await r.json();
       if (!r.ok) { alert("Não foi possível cadastrar o template: " + (j?.error ?? r.status)); return; }
-      setTemplates((prev) => [...prev, j.template]);
       escolherTemplate(j.template.id);
       setNovoTplNome(""); setNovoTplRd(""); setAddTplAberto(false);
+      await recarregarTemplates();
     } catch (e: any) { alert("Erro ao cadastrar: " + (e?.message ?? e)); }
     finally { setSalvandoTpl(false); }
   }
   function iniciarEdicaoTemplate(t: { id: number; nome: string; rd_template_id: string | null }) {
     setEditandoTplId(t.id); setEditTplNome(t.nome); setEditTplRd(t.rd_template_id ?? "");
+  }
+  // recarrega a lista enxuta (ativos, usada pra ESCOLHER template pra enviar) e, se admin, o
+  // catálogo completo (inclui inativos + ativo/criado_em, usado só na tela de gerenciar).
+  async function recarregarTemplates() {
+    try {
+      const r = await fetch("/api/templates");
+      const j = await r.json();
+      if (j?.templates) setTemplates(j.templates);
+    } catch {}
+    if (sessao?.role === "admin") {
+      try {
+        const r2 = await fetch("/api/templates?catalogo=1");
+        const j2 = await r2.json();
+        if (j2?.templates) setTemplatesCatalogo(j2.templates);
+      } catch {}
+    }
   }
   // corrige nome/id de um template já cadastrado (ex.: id do RD desatualizado) sem apagar e recriar
   async function salvarEdicaoTemplate(id: number) {
@@ -602,8 +621,8 @@ export default function Page() {
       const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, nome: editTplNome.trim(), rd_template_id: editTplRd.trim() }) });
       const j = await r.json();
       if (!r.ok) { alert("Não foi possível salvar: " + (j?.error ?? r.status)); return; }
-      setTemplates((prev) => prev.map((t) => (t.id === id ? j.template : t)));
       setEditandoTplId(null);
+      await recarregarTemplates();
     } catch (e: any) { alert("Erro ao salvar: " + (e?.message ?? e)); }
     finally { setSalvandoEdicaoTpl(false); }
   }
@@ -614,18 +633,17 @@ export default function Page() {
       const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, padrao: true }) });
       const j = await r.json();
       if (!r.ok) { alert("Não foi possível marcar como padrão: " + (j?.error ?? r.status)); return; }
-      setTemplates((prev) => prev.map((t) => ({ ...t, padrao: t.id === id })));
+      await recarregarTemplates();
     } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
   }
-  async function excluirTemplate(id: number) {
-    if (!confirm("Remover este template cadastrado?")) return;
+  // desativa/reativa (não apaga — mantém histórico de disparos_template íntegro e reversível)
+  async function alternarAtivoTemplate(id: number, ativo: boolean) {
     try {
-      const r = await fetch("/api/templates", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ativo }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { alert("Não foi possível remover: " + (j?.error ?? r.status)); return; }
-      setTemplates((prev) => prev.filter((t) => t.id !== id));
-      if (templatePadraoId === id) setTemplatePadraoId(null);
-    } catch (e: any) { alert("Erro ao remover: " + (e?.message ?? e)); }
+      if (!r.ok) { alert("Não foi possível atualizar: " + (j?.error ?? r.status)); return; }
+      await recarregarTemplates();
+    } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
   }
 
   // abre o card ampliado (lupa) e carrega o histórico recente
@@ -2127,7 +2145,7 @@ export default function Page() {
             </div>
             <div style={{ position: "relative", display: "inline-flex" }}>
               <button
-                onClick={() => setTplMenuAberto((v) => !v)}
+                onClick={() => { setTplMenuAberto((v) => !v); if (sessao.role === "admin") recarregarTemplates(); }}
                 title="Escolher o template padrão que o botão dos cards envia"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", outline: "none" }}
               >
@@ -2138,15 +2156,18 @@ export default function Page() {
               {tplMenuAberto && (
                 <>
                   <div onClick={() => { setTplMenuAberto(false); setAddTplAberto(false); }} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
-                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: 250, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
-                    <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "9px 12px 5px" }}>Template padrão do botão do card</div>
-                    {templates.map((t) => {
-                      const ativo = t.id === templatePadraoId;
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: sessao.role === "admin" ? 340 : 250, maxWidth: 380, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
+                    <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "9px 12px 5px" }}>
+                      {sessao.role === "admin" ? "Catálogo de templates (crm_templates)" : "Template padrão do botão do card"}
+                    </div>
+                    {(sessao.role === "admin" && templatesCatalogo ? templatesCatalogo : templates).map((t) => {
+                      const escolhido = t.id === templatePadraoId;
+                      const inativo = "ativo" in t && !t.ativo;
                       if (editandoTplId === t.id) {
                         return (
                           <div key={t.id} style={{ borderTop: `1px solid ${RD.border}`, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
                             <input autoFocus value={editTplNome} onChange={(e) => setEditTplNome(e.target.value)} placeholder="Nome do template" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
-                            <input value={editTplRd} onChange={(e) => setEditTplRd(e.target.value)} placeholder="ID do template no RD" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
+                            <input value={editTplRd} onChange={(e) => setEditTplRd(e.target.value)} placeholder="ID do template no RD" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy, fontFamily: "monospace" }} />
                             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                               <button onClick={() => setEditandoTplId(null)} style={{ fontSize: 12, padding: "5px 10px", background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 6, color: RD.gray, cursor: "pointer" }}>Cancelar</button>
                               <button onClick={() => salvarEdicaoTemplate(t.id)} disabled={salvandoEdicaoTpl || !editTplNome.trim()} style={{ fontSize: 12, fontWeight: 700, padding: "5px 12px", background: RD.wine, border: "none", borderRadius: 6, color: "#fff", cursor: salvandoEdicaoTpl ? "wait" : "pointer" }}>{salvandoEdicaoTpl ? "…" : "Salvar"}</button>
@@ -2155,29 +2176,41 @@ export default function Page() {
                         );
                       }
                       return (
-                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 4, background: ativo ? "#f8e6ec" : "transparent", padding: "2px 6px 2px 0" }}>
+                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 4, background: escolhido ? "#f8e6ec" : "transparent", padding: "3px 6px 3px 0", opacity: inativo ? 0.55 : 1 }}>
                           <button
-                            onClick={() => { escolherTemplate(t.id); setTplMenuAberto(false); }}
-                            title="Usar como padrão do botão do card (só neste navegador)"
-                            style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, textAlign: "left", background: "transparent", border: "none", padding: "6px 6px 6px 12px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: "#9c1f47", cursor: "pointer" }}
+                            onClick={() => { if (!inativo) { escolherTemplate(t.id); setTplMenuAberto(false); } }}
+                            disabled={inativo}
+                            title={inativo ? "Inativo — reative pra poder escolher" : "Usar como padrão do botão do card (só neste navegador)"}
+                            style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, textAlign: "left", background: "transparent", border: "none", padding: "5px 6px 5px 12px", cursor: inativo ? "default" : "pointer", minWidth: 0 }}
                           >
-                            {t.nome}
-                            {t.padrao && <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>★ padrão do sistema</span>}
-                            {ativo && <span style={{ marginLeft: "auto", fontSize: 11 }}>✓</span>}
+                            <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", fontSize: 12.5, fontWeight: escolhido ? 800 : 600, color: "#9c1f47" }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>#{t.id} {t.nome}</span>
+                              {t.padrao && <span title="Padrão do sistema" style={{ fontSize: 10, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>★</span>}
+                              {inativo && <span style={{ fontSize: 9.5, color: RD.gray, fontWeight: 700, flexShrink: 0 }}>INATIVO</span>}
+                              {escolhido && <span style={{ marginLeft: "auto", fontSize: 11, flexShrink: 0 }}>✓</span>}
+                            </span>
+                            {sessao.role === "admin" && (
+                              <span style={{ fontSize: 10, color: RD.grayLight, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                                {t.rd_template_id || "(sem rd_template_id)"}
+                                {"criado_em" in t && t.criado_em ? ` · ${new Date(t.criado_em as string).toLocaleDateString("pt-BR")}` : ""}
+                              </span>
+                            )}
                           </button>
                           {sessao.role === "admin" && (
                             <>
-                              {!t.padrao && (
-                                <span onClick={() => marcarTemplatePadrao(t.id)} title="Marcar como padrão do sistema (usado quando ninguém escolhe nenhum — disparo em massa e botão automático)" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4 }}>☆</span>
+                              {!t.padrao && !inativo && (
+                                <span onClick={() => marcarTemplatePadrao(t.id)} title="Marcar como padrão do sistema (usado quando ninguém escolhe nenhum — disparo em massa e botão automático)" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>☆</span>
                               )}
-                              <span onClick={() => iniciarEdicaoTemplate(t)} title="Editar nome/ID" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4 }}>✎</span>
-                              <span onClick={() => excluirTemplate(t.id)} title="Remover" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4 }}>🗑</span>
+                              <span onClick={() => iniciarEdicaoTemplate(t)} title="Editar nome/ID" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>✎</span>
+                              {"ativo" in t && (
+                                <span onClick={() => alternarAtivoTemplate(t.id, !!inativo)} title={inativo ? "Reativar" : "Desativar (mantém histórico; some das listas de envio)"} style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>{inativo ? "↺" : "🗑"}</span>
+                              )}
                             </>
                           )}
                         </div>
                       );
                     })}
-                    {templates.length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: RD.grayLight }}>Nenhum template cadastrado.</div>}
+                    {(sessao.role === "admin" && templatesCatalogo ? templatesCatalogo : templates).length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: RD.grayLight }}>Nenhum template cadastrado.</div>}
                     {sessao.role === "admin" && (addTplAberto ? (
                       <div style={{ borderTop: `1px solid ${RD.border}`, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
                         <input autoFocus value={novoTplNome} onChange={(e) => setNovoTplNome(e.target.value)} placeholder="Nome do template" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
@@ -2916,7 +2949,9 @@ export default function Page() {
                   <select value={massaTemplate} onChange={(e) => setMassaTemplate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", margin: "6px 0 14px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}>
                     {templates.length === 0 && <option value="">Template padrão do sistema</option>}
                     {templates.map((t) => (
-                      <option key={t.id} value={t.rd_template_id ?? ""}>{t.nome}{t.padrao ? " (★ padrão do sistema)" : ""}</option>
+                      <option key={t.id} value={t.rd_template_id ?? ""}>
+                        {t.nome} — ID {t.rd_template_id || "(usa o padrão do sistema)"}{t.padrao ? " ★" : ""}
+                      </option>
                     ))}
                   </select>
                   <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Quantidade</label>
