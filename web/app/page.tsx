@@ -1363,7 +1363,17 @@ export default function Page() {
   if (!sessao) return <Login onLogin={setSessao} />;
 
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        // Fora do "escuro" o fundo da página nunca era pintado por tema — ficava
+        // preso no cinza claro fixo do layout.tsx, então nos temas claros aqui não
+        // muda nada visível. No "escuro" isto cobre o fundo inteiro (não só cards/
+        // topbar) com o mesmo gradiente de produção do hub, em vez de deixar a
+        // borda cinza clara aparecer nas frestas.
+        background: tema === "escuro" ? "linear-gradient(155deg, #1c0e1b 0%, #0d0512 100%)" : undefined,
+      }}
+    >
       <div style={{ height: 3, background: RD.wine }} />
       {/* Top bar */}
       <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px" }}>
