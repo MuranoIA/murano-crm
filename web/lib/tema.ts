@@ -16,7 +16,23 @@ export type Paleta = {
   cyan: string; cyanSoft: string; wine: string; wineSoft: string; cream: string;
   // fundos especiais de card (aguardando resposta / recontato) — no tema escuro
   // não podem ser os tons claros fixos, senão texto claro some no fundo claro
-  aguardaBg: string; aguardaBorda: string; recontatoBg: string; recontatoBorda: string;
+  aguardaBg: string; aguardaBorda: string; aguardaTexto: string; recontatoBg: string; recontatoBorda: string;
+  // Chips/badges semânticos que ATÉ 11/08/2026 eram hex fixo espalhado pelo
+  // arquivo, sem passar pelo tema — inofensivo nos temas claros (o pastel
+  // combina com fundo claro), mas no "escuro" virava um monte de pílulas
+  // pastel-claras brigando com o fundo quase preto (o problema real por trás
+  // do "sem harmonia" apontado depois do primeiro recálculo do Dark).
+  // padrao/murano usam exatamente os hex de sempre (zero mudança visual);
+  // escuro usa uma paleta bem mais contida, no espírito do Gestão de Ofertas
+  // (poucos matizes, um só de destaque por vez) e da regra do próprio hub de
+  // "laranja/verde marca UM número por tela, não vira cor de fundo em massa"
+  // (CLAUDE.md do hub, seção 6): a maioria dos chips no escuro vira neutro
+  // (tom de texto/pearl), só o número de faturamento (o "destaque da tela")
+  // guarda uma cor própria.
+  infoBg: string; infoBorda: string; infoTexto: string;
+  successBg: string; successBorda: string; successTexto: string;
+  autoBg: string; autoBorda: string; autoTexto: string;
+  avisoBg: string; avisoBorda: string; avisoTexto: string;
 };
 
 export const TEMAS: Record<TemaId, Paleta> = {
@@ -35,8 +51,13 @@ export const TEMAS: Record<TemaId, Paleta> = {
     cream: "#e7d7dc",
     aguardaBg: "#fffdf5",
     aguardaBorda: "#f3ddad",
+    aguardaTexto: "#b76e00",
     recontatoBg: "#fdf7fb",
     recontatoBorda: "#ecdae4",
+    infoBg: "#eaf6fd", infoBorda: "#bfe6f8", infoTexto: "#0b7fb0",
+    successBg: "#e7f6ec", successBorda: "#bfe6cd", successTexto: "#15803d",
+    autoBg: "#f8e6ec", autoBorda: "#ecc6d2", autoTexto: "#9c1f47",
+    avisoBg: "#fff3e0", avisoBorda: "#f0c987", avisoTexto: "#b45309",
   },
   murano: {
     bg: "#f5edf4",        // --murano-light
@@ -53,8 +74,16 @@ export const TEMAS: Record<TemaId, Paleta> = {
     cream: "#e4d4d3",     // --murano-blush
     aguardaBg: "#fffdf5",
     aguardaBorda: "#f3ddad",
+    aguardaTexto: "#b76e00",
     recontatoBg: "#fdf7fb",
     recontatoBorda: "#ecdae4",
+    // mesmos hex de sempre — os chips nunca seguiram o tema, então "Tema 1"
+    // já mostrava esses tons hoje; manter idêntico evita mudar algo que
+    // ninguém pediu pra mudar.
+    infoBg: "#eaf6fd", infoBorda: "#bfe6f8", infoTexto: "#0b7fb0",
+    successBg: "#e7f6ec", successBorda: "#bfe6cd", successTexto: "#15803d",
+    autoBg: "#f8e6ec", autoBorda: "#ecc6d2", autoTexto: "#9c1f47",
+    avisoBg: "#fff3e0", avisoBorda: "#f0c987", avisoTexto: "#b45309",
   },
   // Recalculado em 11/08/2026 pra bater com o murano-app de verdade, não só
   // "parecido": os valores abaixo saem 1:1 de src/app/globals.css do hub
@@ -74,6 +103,24 @@ export const TEMAS: Record<TemaId, Paleta> = {
   //    pra ~3,4:1. Ainda abaixo do ideal de texto de leitura (4,5:1), mas e
   //    usado em rotulo pequeno em negrito, nao paragrafo, e quase sempre ao
   //    lado de um "✓" que ja reforça o estado sem depender so da cor.
+  //
+  // Retrabalho de 11/08/2026 (2ª rodada, depois do feedback "sem harmonia"):
+  // os chips/badges abaixo (info/success/auto/aviso) antes eram hex fixo
+  // pastel-claro (herdado do tema "padrao") aparecendo por cima do fundo
+  // escuro — o choque de um monte de pilulas mint-green/rosa-choque/ciano-
+  // claro sobre #1c0e1b era a causa real da falta de harmonia, não só o tom
+  // do roxo. Referência usada: o app Gestão de Ofertas (murano-deals-hub) e
+  // o próprio shadcn/ui de lá — quase tudo em tons neutros/translúcidos da
+  // MESMA família (pearl/azul/roxo), com UMA cor de destaque só onde
+  // realmente importa. Aqui isso virou: "info" (contadores neutros,
+  // ativo/sincronizado) e "auto" (automático) ficam dentro da família
+  // azul/roxo que o resto do tema já usa — zero matiz novo. "success"
+  // (faturamento — o número mais importante da tela) é a ÚNICA cor extra
+  // deliberada, seguindo a regra do próprio hub de "uma cor de destaque por
+  // tela, não em massa" (CLAUDE.md do hub, seção 6, sobre o laranja no
+  // Consulta Clientes). "aviso" (sincronização pausada/falhou) é a outra
+  // exceção aceitável — aviso genuíno deve continuar visualmente diferente
+  // de "tudo normal".
   escuro: {
     bg: "#1c0e1b",        // --color-murano-dark
     surface: "#241327",   // --color-murano-black (base do .murano-card do hub)
@@ -89,8 +136,17 @@ export const TEMAS: Record<TemaId, Paleta> = {
     cream: "#f4e9f0",     // texto claro sobre preenchimento solido de wine (avatar, badge)
     aguardaBg: "#33260f", // âmbar escuro (aguardando resposta) — sem token no hub, mantido
     aguardaBorda: "#5c4415",
+    aguardaTexto: "#e0a458", // mesmo tom de avisoTexto — mesma familia ambar, legivel no escuro
     recontatoBg: "#331a2f", // vinho escuro (recontatar)
     recontatoBorda: "rgba(138, 42, 99, 0.35)",
+    // "info" = mesma familia azul (acao/ativo) que RD.cyan/cyanSoft ja usam
+    infoBg: "rgba(47, 127, 212, 0.14)", infoBorda: "rgba(47, 127, 212, 0.4)", infoTexto: "#2f7fd4",
+    // "success" (faturamento) = unica cor extra deliberada, o destaque da tela
+    successBg: "rgba(34, 197, 94, 0.14)", successBorda: "rgba(34, 197, 94, 0.4)", successTexto: "#4ade80",
+    // "auto" (automatico) = familia roxo/marca (RD.wine/wineSoft), nao um rosa a parte
+    autoBg: "rgba(138, 42, 99, 0.16)", autoBorda: "rgba(138, 42, 99, 0.4)", autoTexto: "#a8447f",
+    // "aviso" = ambar contido, so pra estado genuinamente anormal (pausado/falhou)
+    avisoBg: "rgba(217, 119, 6, 0.16)", avisoBorda: "#c98a3a", avisoTexto: "#e0a458",
   },
 };
 
