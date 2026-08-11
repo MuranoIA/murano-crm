@@ -12,13 +12,13 @@ export async function POST(req: Request) {
     const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const rdUrl = process.env.RD_CONVERSAS_BASE_URL;
     const rdToken = process.env.RD_CONVERSAS_TOKEN;
-    const templateId = process.env.TEMPLATE_RECONTATO_ID;
 
-    // valida env vars (falta de qualquer uma = erro claro, não crash vazio)
+    // valida env vars (falta de qualquer uma = erro claro, não crash vazio). O template
+    // padrão NÃO é mais uma env var (TEMPLATE_RECONTATO_ID) — vem de crm_templates.padrao,
+    // editável pela UI sem redeploy (ver /api/templates). Env var só como fallback legado.
     const faltando = Object.entries({
       SUPABASE_URL: supaUrl, SUPABASE_SERVICE_ROLE_KEY: supaKey,
       RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
-      TEMPLATE_RECONTATO_ID: templateId,
     }).filter(([, v]) => !v).map(([k]) => k);
     if (faltando.length) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
@@ -31,9 +31,18 @@ export async function POST(req: Request) {
       return Response.json({ error: "body inválido" }, { status: 400 });
     }
     if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
-    const tplId = template_id || templateId; // usa o escolhido; senão o padrão (recontato)
 
     const sb = createClient(supaUrl!, supaKey!, { auth: { persistSession: false } });
+
+    let tplId = template_id;
+    if (!tplId) {
+      const { data: padrao } = await sb
+        .from("crm_templates").select("rd_template_id").eq("padrao", true).eq("ativo", true).maybeSingle();
+      tplId = padrao?.rd_template_id || process.env.TEMPLATE_RECONTATO_ID || undefined;
+    }
+    if (!tplId) {
+      return Response.json({ error: "Nenhum template padrão configurado — marque um em Automáticos → editar." }, { status: 500 });
+    }
 
     // busca o contato (telefone/nome/carteira) server-side (não expõe telefone ao browser)
     const { data: cli, error: cliErr } = await sb

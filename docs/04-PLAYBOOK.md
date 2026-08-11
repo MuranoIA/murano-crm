@@ -83,6 +83,21 @@ da chave.
 > Se algo interromper no meio, confirme que a sincronização **voltou** (o `finally` retoma com
 > retries, mas verifique o botão Sinc | Pause).
 
+### Gerenciar templates (tabela `crm_templates`)
+
+Menu **Automáticos** (top bar, admin) lista os templates. Cada linha tem: **☆** marca como
+padrão do sistema (usado quando ninguém escolhe nenhum — disparo em massa "padrão" e o botão
+de recontato do card), **✎** edita nome/ID, **🗑** remove. O ID do template (`rd_template_id`)
+vem do painel do RD Conversas (`app.tallos.com.br`) — a API do RD **não tem endpoint pra listar
+templates** (confirmado, ver CLAUDE.md §2), então esse campo é sempre digitado à mão por um admin.
+
+**Sintoma "template message not found" no disparo em massa:** o `rd_template_id` guardado ficou
+desatualizado — o template foi editado/recriado/apagado no painel do RD e trocou de ID (mesmo
+padrão da rotação de chave JWE, seção 3 do CLAUDE.md, só que pra templates). Corrija pegando o
+ID atual no painel do RD e editando o template pelo **✎** — não precisa de redeploy na Vercel
+(desde a migration `0076`, o padrão é uma coluna na tabela, não mais a env var
+`TEMPLATE_RECONTATO_ID`, que hoje só serve de fallback legado).
+
 ## Orçamento — espelho de catálogo/estoque/campanhas
 
 O `/api/orcamento` lê **só** as tabelas `wth_catalogo` / `wth_estoque` / `wth_campanhas` no
