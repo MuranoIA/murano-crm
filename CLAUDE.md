@@ -1054,3 +1054,52 @@ para um repo privado — não tornar o repo do ETL privado, que custaria os minu
 6. **Fase D:** mídia (webhook entrega media_id, que expira — baixar p/ Supabase Storage;
    hoje entra como marcador `[image]` etc.), tela de chat no board, monitoramento do
    webhook, limpeza do código RD e dos docs (ainda citam funil-murano.vercel.app).
+
+## 17. Ponte de SSO com o hub interno (`/auth/hub-sso`, 11/08/2026)
+
+O `murano-app` (hub interno da Murano, repo separado) passou a embutir este
+CRM num `<iframe>` (rota `/crm-externo` de lá, card "CRM" no hub) — decisão
+tomada porque a reconstrução do CRM **dentro** do hub (que já tinha Fases 1-3a
+prontas) foi pausada em favor de uma solução mais rápida: continuar usando
+este app, do jeito que está, só que acessível sem sair do hub.
+
+**O que isso mudou aqui: só uma rota nova, aditiva.** `web/app/auth/hub-sso/route.ts`.
+O login por "Entrar com Google" (`/auth/callback`, `web/app/api/login`)
+**continua exatamente como está** — indefinidamente, por decisão explícita —
+essa rota nova é só um segundo caminho de entrar, pensado para quem já está
+autenticado no hub.
+
+**Como funciona:** o hub (que sabe o e-mail de quem está logado nele) assina
+um token curto (HMAC-SHA256, payload `{email, exp}` em base64url, TTL de
+segundos) com um segredo compartilhado `CRM_HUB_SSO_SECRET` — mesmo valor
+configurado na Vercel dos dois projetos — e aponta o `src` do iframe para
+`/auth/hub-sso?token=...`. Esta rota verifica a assinatura e o prazo, e a
+partir daí faz **exatamente** o que `/auth/callback` faz depois da troca de
+código do OAuth: busca `papel`/`carteira`/`ativo` em `acesso` (service_role,
+ignora RLS) e seta o cookie `crm_sessao` (+ `crm_email`). Sem `acesso` válido
+e `ativo`, cai no mesmo `?erro=nao_autorizado` do fluxo Google.
+
+**Por que o cookie sai com `SameSite=None` aqui e não `Lax` como no
+`/auth/callback`:** esta rota carrega dentro de um `<iframe>` cujo documento
+de topo é outro site (`app.muranoprofessional.com.br`) — `SameSite=Lax`
+(ou ausente, que cai em Lax por padrão) faz o navegador descartar o
+`Set-Cookie` nesse contexto, por ser cookie de terceiro. `None` exige
+`Secure` (`https`, sempre verdadeiro em produção — por isso não segue o
+mesmo `secure: NODE_ENV === "production"` condicional que o resto do app
+usa). **Isso não é garantia universal:** navegador com bloqueio total de
+cookie de terceiro ligado (Safari com "Impedir rastreamento entre sites" é o
+caso mais comum) descarta o cookie mesmo com `None;Secure` — o resultado
+nesse caso não é erro, é o iframe cair na tela de login normal do CRM
+(comportamento de hoje, sem SSO), nunca uma tela quebrada.
+
+**O que NÃO mudou:** nenhuma tabela, nenhuma policy de RLS, nenhum outro
+cookie, nenhuma rota existente. `web/lib/papel.ts` (`tokenDePapel`) é
+reaproveitado sem alteração.
+
+**Pendência:** `CRM_HUB_SSO_SECRET` precisa ser gerado (`openssl rand -hex
+32` ou equivalente) e configurado idêntico nas duas Vercel (este projeto e
+`murano-app`) antes desta rota funcionar em produção — sem a variável, ela
+redireciona pra `?erro=oauth` sempre. Teste ponta-a-ponta (hub → iframe →
+sessão ativa) ainda não realizado nesta sessão — fazer antes de considerar
+a integração pronta pra uso real, mesmo rigor aplicado às outras integrações
+deste ecossistema.
