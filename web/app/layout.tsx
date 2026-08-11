@@ -1,4 +1,11 @@
 import type { ReactNode } from "react";
+import { Inter } from "next/font/google";
+
+// Antes disto o body só CITAVA "Inter" pelo nome — sem o arquivo da fonte
+// carregado, o navegador caía no fallback do sistema sempre (a Inter não é
+// fonte de sistema em quase nenhum SO). O hub (murano-app) já carrega a Inter
+// de verdade via next/font; isto alinha o CRM ao mesmo padrão.
+const inter = Inter({ subsets: ["latin"], display: "swap" });
 
 export const metadata = {
   title: "CRM — Funil de Atendimentos",
@@ -7,11 +14,10 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" className={inter.className}>
       <body
         style={{
           margin: 0,
-          fontFamily: "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
           background: "#efe9ed",
           color: "#142138",
           minHeight: "100vh",

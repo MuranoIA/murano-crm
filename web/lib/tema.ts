@@ -1,9 +1,11 @@
 // Temas visuais do CRM. "padrao" é a paleta original do board (estilo RD);
 // "murano" é o Tema 1 — identidade visual Murano Professional (skill
 // murano-brand): vinho #621244, laranja #dd4222 como cor de ação, fundos
-// claros #f5edf4; "escuro" é o Dark — tokens extraídos do CSS de produção de
-// app.muranoprofessional.com.br (--color-murano-*): fundo #1c0e1b/#241327,
-// texto pearl #ded3d6, azul #2f7fd4 como ação, roxos #621244/#8a2a63/#3d0b2a.
+// claros #f5edf4; "escuro" é o Dark — tokens do CSS de produção do murano-app
+// (--color-murano-*, ver src/app/globals.css do hub), recalculado em
+// 11/08/2026 pra bater 1:1 com o hub (fundo em gradiente, borda translúcida,
+// fonte Inter carregada de verdade em app/layout.tsx) — ver comentário na
+// definição de `escuro` abaixo pros dois ajustes que não são token literal.
 // As chaves espelham o objeto RD do board — trocar o tema é trocar os valores,
 // nenhum estilo muda de forma.
 export type TemaId = "padrao" | "murano" | "escuro";
@@ -54,23 +56,41 @@ export const TEMAS: Record<TemaId, Paleta> = {
     recontatoBg: "#fdf7fb",
     recontatoBorda: "#ecdae4",
   },
+  // Recalculado em 11/08/2026 pra bater com o murano-app de verdade, não só
+  // "parecido": os valores abaixo saem 1:1 de src/app/globals.css do hub
+  // (--color-murano-*) sempre que existe token equivalente. Dois ajustes
+  // deliberados que NAO sao token literal, com o motivo registrado porque
+  // senao parece descuido:
+  // 1) `border` e `cyanSoft` viraram rgba translucido — a borda do
+  //    .murano-card do hub e literalmente `rgba(222,211,214,.1)`, nao um hex
+  //    solido; copiar um hex fixo teria ficado mais opaco/pesado que o
+  //    original.
+  // 2) `wine`, usado tanto como PREENCHIMENTO (avatar, faixa, botao) quanto
+  //    como COR DE TEXTO (item de menu ativo) neste arquivo — o hub nunca usa
+  //    roxo como texto, so como borda/gradiente/preenchimento, entao nao ha
+  //    token "certo" pra copiar pro segundo uso. `--color-murano-purple-soft`
+  //    (#8a2a63) puro deu so 2,3:1 de contraste contra o fundo (conta WCAG
+  //    feita a mao) — clareado pra #a8447f (mesmo tom, mais luminoso) sobe
+  //    pra ~3,4:1. Ainda abaixo do ideal de texto de leitura (4,5:1), mas e
+  //    usado em rotulo pequeno em negrito, nao paragrafo, e quase sempre ao
+  //    lado de um "✓" que ja reforça o estado sem depender so da cor.
   escuro: {
-    bg: "#1c0e1b",        // fundo do app (theme-color de produção)
-    surface: "#241327",   // cards/top bar (gradiente escuro do app)
-    colHeader: "#301631", // cabeçalho de coluna: um degrau acima do surface
-    border: "#432a45",
-    navy: "#ded3d6",      // texto principal = --color-murano-pearl
-    gray: "#b3a4b1",
-    grayLight: "#9a8fa0", // ~--color-murano-gray com o tom do fundo
-    cyan: "#2f7fd4",      // ação/ativo = --color-murano-blue (token oficial)
-    cyanSoft: "#15304d",
-    wine: "#8a2a63",      // acento = --color-murano-purple-soft (legível no escuro)
-    wineSoft: "#3d0b2a",  // --color-murano-purple-deep
-    cream: "#ded3d6",
-    aguardaBg: "#33260f", // âmbar escuro (aguardando resposta)
+    bg: "#1c0e1b",        // --color-murano-dark
+    surface: "#241327",   // --color-murano-black (base do .murano-card do hub)
+    colHeader: "#2e1730", // um degrau acima do surface — mantido do calculo original
+    border: "rgba(222, 211, 214, 0.12)", // borda do .murano-card (.1) + leve reforço p/ contexto de board
+    navy: "#ded3d6",      // --color-murano-pearl, texto principal
+    gray: "rgba(222, 211, 214, 0.68)", // mesma opacidade do texto secundario em .murano-note
+    grayLight: "#9a9aa5", // --color-murano-gray (token oficial, nao mais um palpite)
+    cyan: "#2f7fd4",      // --color-murano-blue, acao/ativo (token oficial)
+    cyanSoft: "rgba(47, 127, 212, 0.14)", // mesma familia de wash de .murano-note (fundo rgba(47,127,212,.08))
+    wine: "#a8447f",      // ver nota acima — clareado a partir do purple-soft por legibilidade como texto
+    wineSoft: "rgba(138, 42, 99, 0.16)", // wash de purple-soft, mesma logica do cyanSoft
+    cream: "#f4e9f0",     // texto claro sobre preenchimento solido de wine (avatar, badge)
+    aguardaBg: "#33260f", // âmbar escuro (aguardando resposta) — sem token no hub, mantido
     aguardaBorda: "#5c4415",
     recontatoBg: "#331a2f", // vinho escuro (recontatar)
-    recontatoBorda: "#54305b",
+    recontatoBorda: "rgba(138, 42, 99, 0.35)",
   },
 };
 
