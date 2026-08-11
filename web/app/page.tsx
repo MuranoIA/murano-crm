@@ -1348,8 +1348,8 @@ export default function Page() {
         style={{
           display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
           background: ativo ? RD.cyanSoft : RD.surface,
-          color: ativo ? "#0b7fb0" : RD.gray,
-          border: `1px solid ${ativo ? "#bfe6f8" : RD.border}`,
+          color: ativo ? RD.infoTexto : RD.gray,
+          border: `1px solid ${ativo ? RD.infoBorda : RD.border}`,
           borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 600,
         }}
       >
@@ -1511,8 +1511,8 @@ export default function Page() {
                   : "Sincronização ativa (RD → clientes/mensagens). Sinc = forçar agora · Pause = liberar a cota do RD pros envios de template."}
                 style={{
                   position: "relative", display: "inline-flex", width: 132, height: 30, boxSizing: "border-box",
-                  border: `1px solid ${syncPausado ? "#f0c987" : (syncRodando ? "#bfe6f8" : RD.border)}`,
-                  borderRadius: 20, background: syncPausado ? "#fff7ed" : (syncRodando ? "#eaf6fd" : RD.surface),
+                  border: `1px solid ${syncPausado ? RD.avisoBorda : (syncRodando ? RD.infoBorda : RD.border)}`,
+                  borderRadius: 20, background: syncPausado ? RD.avisoBg : (syncRodando ? RD.infoBg : RD.surface),
                   userSelect: "none", overflow: "hidden", opacity: pausandoSync ? 0.7 : 1,
                 }}
               >
@@ -1538,7 +1538,7 @@ export default function Page() {
                   {pausandoSync ? "…" : "Pause"}
                 </button>
               </div>
-              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? "#b45309" : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
+              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? RD.avisoTexto : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
                 {syncPausado ? "PAUSADA — dados não atualizam até retomar" : (
                   <>
                     RD Conversas → clientes e mensagens
@@ -1693,10 +1693,10 @@ export default function Page() {
                           <button
                             key={k}
                             onClick={() => { setPeriodoGlobal(k as Periodo); setPeriodoMenuAberto(false); }}
-                            style={{ display: "flex", alignItems: "center", width: "100%", textAlign: "left", background: ativo ? RD.cyanSoft : "transparent", border: "none", padding: "7px 10px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: ativo ? "#0b7fb0" : RD.navy, cursor: "pointer", borderRadius: 7 }}
+                            style={{ display: "flex", alignItems: "center", width: "100%", textAlign: "left", background: ativo ? RD.cyanSoft : "transparent", border: "none", padding: "7px 10px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: ativo ? RD.infoTexto : RD.navy, cursor: "pointer", borderRadius: 7 }}
                           >
                             {l}
-                            {ativo && <span style={{ marginLeft: "auto", fontSize: 11, color: "#0b7fb0" }}>✓</span>}
+                            {ativo && <span style={{ marginLeft: "auto", fontSize: 11, color: RD.infoTexto }}>✓</span>}
                           </button>
                         );
                       })}
@@ -2043,9 +2043,9 @@ export default function Page() {
             title="Mostrar só os contatos que existem no RD Conversas mas ainda NÃO têm cadastro no WinThor (leads de marketing). Some quando o cliente é cadastrado."
             style={{
               padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
-              color: semCadFiltro ? "#fff" : "#b45309",
-              background: semCadFiltro ? "#b45309" : "#fff3e0",
-              border: `1px solid ${semCadFiltro ? "#b45309" : "#f0c987"}`,
+              color: semCadFiltro ? "#fff" : RD.avisoTexto,
+              background: semCadFiltro ? "#b45309" : RD.avisoBg,
+              border: `1px solid ${semCadFiltro ? "#b45309" : RD.avisoBorda}`,
               borderRadius: 8, cursor: "pointer", outline: "none",
               display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
             }}
@@ -2072,7 +2072,7 @@ export default function Page() {
             title="Baixar um Excel detalhado dos clientes que casam com os filtros atuais (Base Completa + aba por consultor no admin)"
             style={{
               padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
-              color: "#15803d", background: "#e7f6ec", border: "1px solid #bfe6cd",
+              color: RD.successTexto, background: RD.successBg, border: `1px solid ${RD.successBorda}`,
               borderRadius: 8, cursor: baixando ? "wait" : "pointer", outline: "none",
               display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
             }}
@@ -2080,19 +2080,19 @@ export default function Page() {
             {baixando ? "Gerando…" : "⬇ .xls"}
           </button>
           <div style={{ marginLeft: isMobile ? 0 : "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: isMobile ? "wrap" : "nowrap" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
-              <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
-              <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: `1px solid ${RD.infoBorda}`, borderRadius: 8, whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: 11.5, color: RD.infoTexto, fontWeight: 600 }}>Templates</span>
+              <b style={{ fontSize: 12.5, color: RD.infoTexto, lineHeight: 1 }}>{tplHoje}</b>
             </div>
             <div style={{ position: "relative", display: "inline-flex" }}>
               <button
                 onClick={() => setTplMenuAberto((v) => !v)}
                 title="Escolher o template padrão que o botão dos cards envia"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", outline: "none" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.autoBg, border: `1px solid ${RD.autoBorda}`, borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", outline: "none" }}
               >
-                <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos</span>
-                <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
-                <span style={{ fontSize: 10, color: "#9c1f47", opacity: 0.7 }}>▾</span>
+                <span style={{ fontSize: 11.5, color: RD.autoTexto, fontWeight: 600 }}>Automáticos</span>
+                <b style={{ fontSize: 12.5, color: RD.autoTexto, lineHeight: 1 }}>{tplAutoHoje}</b>
+                <span style={{ fontSize: 10, color: RD.autoTexto, opacity: 0.7 }}>▾</span>
               </button>
               {tplMenuAberto && (
                 <>
@@ -2105,7 +2105,7 @@ export default function Page() {
                         <button
                           key={t.id}
                           onClick={() => { escolherTemplate(t.id); setTplMenuAberto(false); }}
-                          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: ativo ? "#f8e6ec" : "transparent", border: "none", padding: "8px 12px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: "#9c1f47", cursor: "pointer" }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: ativo ? RD.autoBg : "transparent", border: "none", padding: "8px 12px", fontSize: 12.5, fontWeight: ativo ? 800 : 600, color: RD.autoTexto, cursor: "pointer" }}
                         >
                           {t.nome}
                           {!t.rd_template_id && <span style={{ fontSize: 10, color: RD.grayLight, fontWeight: 600 }}>(padrão)</span>}
@@ -2132,10 +2132,10 @@ export default function Page() {
             </div>
             <div
               title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, whiteSpace: "nowrap", marginLeft: 12 }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.successBg, border: `1px solid ${RD.successBorda}`, borderRadius: 8, whiteSpace: "nowrap", marginLeft: 12 }}
             >
-              <b style={{ fontSize: 12.5, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
-              <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} VENDAS</span>
+              <b style={{ fontSize: 12.5, color: RD.successTexto, lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
+              <span style={{ fontSize: 9.5, color: RD.successTexto, fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} VENDAS</span>
             </div>
           </div>
           {/* Vendedor: "na carteira" no fim da linha única (não tem a linha de cima) */}
@@ -2348,7 +2348,7 @@ export default function Page() {
                             ...(isMobile ? { width: "80vw", maxWidth: 340 } : {}),
                             background: disparoRecente ? RD.aguardaBg : recontactar ? RD.recontatoBg : RD.surface,
                             border: `1px solid ${disparoRecente ? RD.aguardaBorda : recontactar ? RD.recontatoBorda : RD.border}`,
-                            borderLeft: `3px solid ${disparoRecente ? "#e08a00" : recontactar ? RD.wine : RD.border}`,
+                            borderLeft: `3px solid ${disparoRecente ? RD.aguardaTexto : recontactar ? RD.wine : RD.border}`,
                             borderRadius: 8, padding: "11px 13px", boxShadow: "0 1px 2px rgba(16,32,64,0.05)",
                           }}
                         >
@@ -2358,7 +2358,7 @@ export default function Page() {
                             {c.sem_cadastro && (
                               <span
                                 title="Só existe no RD Conversas — ainda não cadastrado no WinThor. Provável lead de marketing (Instagram, campanha). Ao efetuar a 1ª compra e ser cadastrado, o card se junta automaticamente ao cliente oficial (por telefone/CPF)."
-                                style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, cursor: "help", textTransform: "uppercase" }}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 3, background: RD.avisoBg, color: RD.avisoTexto, border: `1px solid ${RD.avisoBorda}`, borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, cursor: "help", textTransform: "uppercase" }}
                               >
                                 sem cadastro
                               </span>
@@ -2367,7 +2367,7 @@ export default function Page() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${codcli}`, "consultaclientes"); }}
                                 title={`Ver cadastro completo na Consulta Clientes (código ${codcli})`}
-                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.wineSoft, color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
                               >
                                 C
                               </button>
@@ -2376,7 +2376,7 @@ export default function Page() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); abrirZoom(c); }}
                                 title="Ampliar o card — ler a conversa e responder aqui mesmo"
-                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 10, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid ${RD.infoBorda}`, background: RD.infoBg, color: RD.infoTexto, fontSize: 10, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
                               >
                                 🔍
                               </button>
@@ -2403,11 +2403,11 @@ export default function Page() {
                                   title={`Template enviado ${tempoRelativo(ultimoDisparo!)} atrás — aguardando resposta (botão liberado após ${DIAS_RECONTATO} dias)`}
                                   style={{
                                     display: "inline-flex", alignItems: "center", gap: 3,
-                                    background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad",
+                                    background: RD.aguardaBg, color: RD.aguardaTexto, border: `1px solid ${RD.aguardaBorda}`,
                                     borderRadius: 5, padding: "1px 5px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1, whiteSpace: "nowrap",
                                   }}
                                 >
-                                  <span style={{ width: 6, height: 6, borderRadius: 6, background: "#e08a00", animation: "pulse-alert 1.1s ease-in-out infinite" }} />
+                                  <span style={{ width: 6, height: 6, borderRadius: 6, background: RD.aguardaTexto, animation: "pulse-alert 1.1s ease-in-out infinite" }} />
                                   AGUARDANDO
                                 </span>
                               ) : recontactar ? (
@@ -2418,11 +2418,11 @@ export default function Page() {
                                   style={{
                                     cursor: enviando === idEnvio ? "wait" : "pointer",
                                     display: "inline-flex", alignItems: "center", gap: 3,
-                                    background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
+                                    background: RD.autoBg, color: RD.autoTexto, border: `1px solid ${RD.autoBorda}`,
                                     borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1, whiteSpace: "nowrap",
                                   }}
                                 >
-                                  <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
+                                  <span style={{ width: 5, height: 5, borderRadius: 5, background: RD.autoTexto }} />
                                   {enviando === idEnvio ? "ENVIANDO…" : "TEMPLATE"}
                                 </button>
                               ) : null}
@@ -2436,7 +2436,7 @@ export default function Page() {
                               {(c.venda_valor != null || col.key === "pedido_emitido") && (
                                 <span
                                   title={col.key === "pedido_emitido" ? "Faturado no período (nota fiscal, líquido)" : "Comprou no mês — valor faturado (fica no card até virar o mês)"}
-                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: "#e7f6ec", color: "#15803d", border: "1px solid #bfe6cd", borderRadius: 6, padding: col.key === "pedido_emitido" ? "2px 9px" : "1px 7px", fontSize: col.key === "pedido_emitido" ? 11.5 : 10.5, fontWeight: 800, letterSpacing: 0.2 }}
+                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: RD.successBg, color: RD.successTexto, border: `1px solid ${RD.successBorda}`, borderRadius: 6, padding: col.key === "pedido_emitido" ? "2px 9px" : "1px 7px", fontSize: col.key === "pedido_emitido" ? 11.5 : 10.5, fontWeight: 800, letterSpacing: 0.2 }}
                                 >
                                   {moedaBR(c.venda_valor ?? 0)}
                                 </span>
@@ -2472,8 +2472,8 @@ export default function Page() {
                                     <div
                                       style={{
                                         maxWidth: "94%",
-                                        background: doCliente ? "#f2f4f7" : "#eaf6fd",
-                                        border: `1px solid ${doCliente ? "#e4e8ee" : "#cfeafb"}`,
+                                        background: doCliente ? RD.surface : RD.infoBg,
+                                        border: `1px solid ${doCliente ? RD.border : RD.infoBorda}`,
                                         borderRadius: 12,
                                         borderTopLeftRadius: doCliente ? 3 : 10,
                                         borderTopRightRadius: doCliente ? 10 : 3,
@@ -2602,17 +2602,17 @@ export default function Page() {
                 <span style={{ width: 12, height: 12, borderRadius: 3, background: zcol?.cor ?? RD.wine, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, color: RD.gray, fontWeight: 600 }}>{zcol?.status ?? ""}</span>
                 {zc.sem_cadastro && (
-                  <span title="Só existe no RD Conversas — ainda não cadastrado no WinThor." style={{ background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>sem cadastro</span>
+                  <span title="Só existe no RD Conversas — ainda não cadastrado no WinThor." style={{ background: RD.avisoBg, color: RD.avisoTexto, border: `1px solid ${RD.avisoBorda}`, borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>sem cadastro</span>
                 )}
                 {zcodcli != null && (
-                  <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
+                  <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.wineSoft, color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
                 <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>
-                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid ${RD.infoBorda}`, background: RD.infoBg, color: RD.infoTexto, fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
                 {zDisparoRecente ? (
-                  <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
+                  <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: RD.aguardaBg, color: RD.aguardaTexto, border: `1px solid ${RD.aguardaBorda}`, borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: RD.aguardaTexto }} />AGUARDANDO RESPOSTA</span>
                 ) : (zRecontactar && zid) ? (
-                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
+                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: RD.autoBg, color: RD.autoTexto, border: `1px solid ${RD.autoBorda}`, borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: RD.autoTexto }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
                 ) : null}
               </div>
               <div style={{ fontSize: 15, fontWeight: 800, color: RD.navy, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</div>
@@ -2629,7 +2629,7 @@ export default function Page() {
                 const doCliente = m.e === "customer";
                 return (
                   <div key={i} style={{ display: "flex", justifyContent: doCliente ? "flex-start" : "flex-end" }}>
-                    <div style={{ maxWidth: "80%", background: doCliente ? "#f2f4f7" : "#eaf6fd", border: `1px solid ${doCliente ? "#e4e8ee" : "#cfeafb"}`, borderRadius: 12, borderTopLeftRadius: doCliente ? 3 : 12, borderTopRightRadius: doCliente ? 12 : 3, padding: "7px 11px" }}>
+                    <div style={{ maxWidth: "80%", background: doCliente ? RD.surface : RD.infoBg, border: `1px solid ${doCliente ? RD.border : RD.infoBorda}`, borderRadius: 12, borderTopLeftRadius: doCliente ? 3 : 12, borderTopRightRadius: doCliente ? 12 : 3, padding: "7px 11px" }}>
                       <div style={{ fontSize: 13, lineHeight: 1.4, color: RD.navy, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{limpaMsg(m.c)}</div>
                       {m.t && <div style={{ marginTop: 2, textAlign: "right", fontSize: 9.5, color: RD.grayLight }}>{dataHora(m.t)}</div>}
                     </div>
@@ -2799,7 +2799,7 @@ export default function Page() {
             <div style={{ padding: 20 }}>
               {massaProg && massaProg.feitos >= massaProg.total && !massaEnviando ? (
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: massaProg.falhas ? "#b45309" : "#15803d", marginBottom: 8 }}>{massaProg.falhas ? "⚠️ Concluído com falhas" : "✅ Concluído"}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: massaProg.falhas ? RD.avisoTexto : RD.successTexto, marginBottom: 8 }}>{massaProg.falhas ? "⚠️ Concluído com falhas" : "✅ Concluído"}</div>
                   <div style={{ fontSize: 13, color: RD.navy }}>{massaProg.ok} enviados{massaProg.falhas ? `, ${massaProg.falhas} falharam` : ""} de {massaProg.total}.</div>
                   {massaFalhas.length > 0 && (
                     <div style={{ marginTop: 10, background: "#fdecec", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 10px", maxHeight: 150, overflow: "auto" }}>
@@ -2825,7 +2825,7 @@ export default function Page() {
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: RD.navy, marginBottom: 8 }}>Confirmar disparo</div>
                   <div style={{ fontSize: 13, color: RD.navy, lineHeight: 1.5 }}>
-                    Vai enviar <b>{massaSel.length}</b> templates <b>reais no WhatsApp</b> — custo <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>. Isso é irreversível.
+                    Vai enviar <b>{massaSel.length}</b> templates <b>reais no WhatsApp</b> — custo <b style={{ color: RD.successTexto }}>{moedaBR(massaCusto)}</b>. Isso é irreversível.
                   </div>
                   <div style={{ fontSize: 11.5, color: RD.grayLight, marginTop: 8, maxHeight: 84, overflow: "auto", lineHeight: 1.5 }}>
                     {massaSel.slice(0, 10).map((s) => s.c.cliente).join(" · ")}{massaSel.length > 10 ? ` +${massaSel.length - 10}` : ""}
@@ -2862,7 +2862,7 @@ export default function Page() {
                     ))}
                   </div>
                   <div style={{ fontSize: 13.5, color: RD.navy }}>
-                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · <b style={{ color: "#15803d" }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>
+                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · <b style={{ color: RD.successTexto }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total <b style={{ color: RD.successTexto }}>{moedaBR(massaCusto)}</b>
                   </div>
                   <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8, lineHeight: 1.5 }}>
                     Havendo mais elegíveis que a quantidade, escolhemos os <b>mais prioritários</b> (ciclo urgente + tempo parado + ticket).
