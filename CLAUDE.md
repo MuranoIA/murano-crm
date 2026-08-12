@@ -1044,9 +1044,19 @@ para um repo privado — não tornar o repo do ETL privado, que custaria os minu
 1. ~~Token permanente~~ **RESOLVIDO (06/08):** aprovado pelo 2º admin, gerado no system
    user Murano Pulse com expiração "Nunca", instalado na Vercel e testado. Envio não
    expira mais.
-2. `WHATSAPP_APP_SECRET` na Vercel (exige recuperar a senha do Facebook para revelar o
-   app secret) — liga a validação de assinatura do webhook.
-3. Template de recontato na Meta + `WHATSAPP_TEMPLATE_RECONTATO` (adiado pelo usuário).
+2. ~~`WHATSAPP_APP_SECRET`~~ **RESOLVIDO (11/08):** instalado na Vercel; o webhook passou
+   a validar `X-Hub-Signature-256`. Evidência dos dois lados, no domínio de produção:
+   POST sem assinatura respondia **200** antes e **403** depois; e um evento **real
+   assinado** da Meta (mensagem do celular do dev para o número de teste) foi aceito e
+   gravado em **~2 s** (`criada_em` 00:56:30 → `sincronizado_em` 00:56:32, Belém).
+   Só a *ausência* de assinatura foi exercitada — assinatura inválida cai no mesmo ramo,
+   mas não foi testada. **Não verificado:** em quais *environments* da Vercel a env
+   existe. Se só em Production, deploys de preview seguem aceitando evento não assinado.
+3. Template de recontato na Meta + `WHATSAPP_TEMPLATE_RECONTATO`. **Adiado pelo usuário
+   em 06/08 sem motivo declarado** (pediu para não criar naquele momento; ninguém
+   perguntou o porquê — não invente racional). Enquanto a env não existir, o botão
+   TEMPLATE responde **501** com instrução quando a conversa está no canal Cloud; o
+   fluxo RD segue normal.
 4. Graph v22 → v26 na lib; remover `send-test`.
 5. **Fase C (corte):** mapear o que o time usa do painel RD → migrar o número oficial
    do RD/Tallos para a WABA (ponto sem volta: RD para de receber) → nome de exibição →
@@ -1054,6 +1064,63 @@ para um repo privado — não tornar o repo do ETL privado, que custaria os minu
 6. **Fase D:** mídia (webhook entrega media_id, que expira — baixar p/ Supabase Storage;
    hoje entra como marcador `[image]` etc.), tela de chat no board, monitoramento do
    webhook, limpeza do código RD e dos docs (ainda citam funil-murano.vercel.app).
+
+### 16.6 Estado do painel da Meta — campo a campo
+
+> **Observado por captura de tela em 05–06/08/2026 e NÃO reverificado desde então**
+> (exceto a Chave Secreta, instalada em 11/08). Reconfirmar antes de agir.
+
+App **Murano Pulse** (`2654151365016843`), portfólio Murano Professional
+(`business_id 1132196710850578`):
+
+| Campo | Estado |
+|---|---|
+| Modo do app | **Desenvolvimento** — menu "Publicar" com selo *"Não publicado"* |
+| Business Verification | ✅ **concluída** |
+| "Análise do app" (pendente no painel) | **irrelevante** — só vale para Provedor de Tecnologia |
+| ID do app · Chave Secreta · Nome de exibição · E-mail de contato | preenchidos |
+| **URL da Política de Privacidade** | ❌ vazio |
+| **URL dos Termos de Serviço** | ❌ vazio |
+| **Domínios do app · Exclusão de dados · Categoria · Ícone** | ❌ vazios |
+
+Webhook: URL do domínio próprio salva e verificada, campo **`messages` assinado** ✅
+(demais campos não assinados), painel exibindo **v26.0** — contra `v22.0` na lib.
+
+**Nome de exibição do NÚMERO:** não se aplica ainda — estamos no número de **teste da
+Meta**, que não passa por esse processo. O status só existe depois que o número oficial
+for registrado na WABA (Fase C).
+
+**Para sair do modo Desenvolvimento** faltam, portanto: política de privacidade e termos
+publicados (URLs), mais os campos vazios acima. Nada disso exige App Review: para app do
+tipo Business acessando dados do próprio negócio, o **Acesso Padrão é aprovado
+automaticamente** — App Review/Acesso Avançado só é exigido para servir usuários sem
+papel no app (o caso dos BSPs, não o nosso).
+
+### 16.7 Mapa das WABAs e usuários do sistema (observado 06/08/2026)
+
+| Conta em "Contas do WhatsApp" | O que é | Confiança |
+|---|---|---|
+| **Test WhatsApp Business Account** (`28189344217325382`) | WABA de teste do nosso app; abriga o número de teste | alta |
+| **Murano Pro** (`1441580480587007`) | WABA real da empresa; candidata a receber o número oficial | alta que é real; **não confirmado** que contenha número hoje |
+| **Murano Cobrança** · **Murano Shop** | desconhecido — 1 pessoa e **1 parceiro** cada | **não investigado** |
+| **Henry** · **Atendente Milene Pamplona** | rotuladas "Aplicativo WhatsApp Business" = contas do **app de celular**, não API | alta |
+
+**Anomalia a conferir:** o resumo da *Murano Pro* mostrava **moeda INR (rupia indiana)**,
+fuso America/Belem. Corrigir antes de faturar mensagens por essa WABA.
+
+Usuários do sistema: `calling-api` (**Admin**, `61590860137092`, com o app calling-api e
+a WABA Murano Pro), `Conversions API System User` (Employee, Pixel) e **`Murano Pulse`**
+(Employee, `61592991989302`) — **dono do token permanente** do CRM, criado separado de
+propósito para isolar risco (anular tokens de um não derruba o outro). A conta tem limite
+de **1 system user Admin**, por isso o nosso é Employee — suficiente, porque o poder vem
+dos ativos atribuídos + permissões do token, não do papel.
+
+**Nada foi confirmado como descartável — não desative nenhuma dessas contas ainda.**
+Investigar antes, nesta ordem: (1) **onde vive hoje o número de produção** (provavelmente
+sob RD/Tallos como *parceiro* de alguma WABA — os "2 parceiros" da Murano Pro são pista,
+não prova; desativar às cegas derruba o atendimento real); (2) o que são Cobrança e Shop
+e quem é o parceiro de cada uma; (3) se os números de celular dos vendedores (Henry,
+Milene) entram no CRM ou seguem fora.
 
 ## 17. Ponte de SSO com o hub interno (`/auth/hub-sso`, 11/08/2026)
 
@@ -1103,3 +1170,94 @@ redireciona pra `?erro=oauth` sempre. Teste ponta-a-ponta (hub → iframe →
 sessão ativa) ainda não realizado nesta sessão — fazer antes de considerar
 a integração pronta pra uso real, mesmo rigor aplicado às outras integrações
 deste ecossistema.
+
+## 18. Chat (`/chat`) — o que falta para substituir o painel do RD
+
+> Levantamento de 12/08/2026, comparando o `/chat` atual (seção 11.6) com o que o RD
+> Conversas oferece como ferramenta de atendimento em equipe. **O chat hoje é um
+> WhatsApp Web funcional, ainda não uma ferramenta de atendimento em equipe** — a
+> diferença entre os dois é exatamente o que o RD vende. Esta lista é a régua para
+> decidir quando a Fase C pode acontecer sem o time sentir falta do painel antigo.
+
+**Já existe:** lista de conversas em tempo real com escopo por carteira · busca por
+nome/telefone · thread com separadores de dia, ticks de entrega/leitura e selo de
+template · envio com UI otimista e aviso da janela de 24h · Realtime + poll de
+segurança · mobile · identidade Murano.
+
+### P0 — indispensável ANTES do corte (Fase C)
+
+| # | O quê | Por quê / nota de implementação |
+|---|---|---|
+| 1 | **Mídia — receber** (foto, áudio, documento, sticker) | hoje entra como marcador `[image]`/`[audio]`. Cliente de salão manda foto e áudio o tempo todo; sem isso o vendedor volta pro celular. O webhook entrega `media_id`, que **expira** → baixar para o Supabase Storage e renderizar na bolha |
+| 2 | **Mídia — enviar** (ao menos imagem/documento) | upload → Graph API → espelho em `mensagens` |
+| 3 | **Não lidas + notificação** | a lista não distingue conversa respondida de pendente. Exige marca de leitura por usuário (`lida_ate`), contador na sidebar, badge no título da aba, som/Notification API |
+| 4 | **Status aberta / resolvida** (com motivo) | dá a noção de fila. Substitui o "fechar atendimento" do RD e **é a nossa tabulação**: motivo no encerramento vira a métrica confiável de venda que o RD nunca entregou (ver seções 6 e 8). Reabre sozinha quando o cliente responde |
+| 5 | **Template dentro do chat** | hoje o aviso de janela fechada manda o usuário ir ao board — quebra o fluxo. A rota já existe |
+
+### P1 — profissionalismo e produtividade (primeiras semanas pós-corte)
+
+Painel do contato na coluna direita (dados do WinThor, últimas compras, ciclo, valor no
+mês, etapa) — **vantagem estrutural que o RD não tem**, e as views já existem
+(`vw_cliente_compras`, `vw_ciclo_card`, `wth_vinculo`) · respostas rápidas (atalho `/`,
+`crm_templates` como base) · notas internas na thread · transferência de conversa entre
+vendedores com registro · busca no **conteúdo** das mensagens.
+
+### P2 — paridade avançada (quando a operação estabilizar)
+
+Indicadores TME/TMA por vendedor (os dados já estão em `mensagens` — vira view) ·
+mensagem automática fora do horário (no próprio webhook) · presença anti-colisão
+("fulano está nesta conversa", via Realtime Presence) · fila de não atribuídos
+(substituto do chatbot de triagem do RD) · reações e resposta citada (`is_reply` já vem
+do webhook, falta UI).
+
+**Esforço estimado:** P0 ≈ 3–5 sessões (mídia é o maior bloco); P1 ≈ 2–3; P2 contínuo.
+
+## 19. Ambiente local, segredos e drift de migrations (12/08/2026)
+
+### 19.1 Clone novo não traz `.env` — e a chave JWE tem UMA cópia legível
+
+A pasta de trabalho foi recriada como **clone novo** em 11/08. Código: nada perdido
+(remoto em dia, nenhum commit local pendente). Mas arquivos ignorados pelo git **não
+vêm**: `.env` da raiz (ETL), `web/.env.local` (app web) e `data/` (descartável).
+Isso bloqueia apenas rodar ETL/app **localmente** — produção intacta.
+
+**Ponto de atenção permanente:** `RD_CONVERSAS_PRIVATE_JWK` é mostrada **uma única vez**
+pela Tallos e a rotação torna o histórico cifrado ilegível para sempre (seção 3). Hoje
+ela vive em **GitHub Actions Secrets** (não pode ser lida de volta) e na **Vercel**
+(**única cópia legível**). Prova de que está viva: o ETL continua decriptando.
+→ **Ação recomendada:** revelar na Vercel `RD_CONVERSAS_PRIVATE_JWK` e
+`RD_CONVERSAS_TOKEN` e guardar em gerenciador de senhas — fecha a pendência nº 4 da
+seção 10.7, aberta desde julho. Mitigação que reduz o pânico: todo o histórico **já
+decriptado** está no Supabase; perder a chave só impede decriptar mensagens **novas**
+do RD.
+
+### 19.2 Migrations aplicadas no banco sem arquivo correspondente
+
+`supabase_migrations.schema_migrations` tem entradas que **não existem como arquivo** em
+`supabase/migrations/` — replay num banco limpo não as reproduz:
+
+| Entrada no banco | Situação |
+|---|---|
+| `wth_vinculo_origem_aceita_telefone` (06/08) | **coberta**: o `ALTER` foi dobrado dentro do arquivo `0073` como bloco "0)" |
+| `0074b_visoes_vinculo_dedup` (06/08) | sem arquivo — conferir com quem aplicou |
+| `create_cat_produtos` (06/08) | sem arquivo — conferir |
+| `create_scratch_orfaos_2025` (12/08) | sem arquivo; nome sugere tabela temporária — conferir se pode ser descartada |
+
+Convenção a manter: **toda DDL aplicada vira arquivo numerado no repo**, mesmo quando
+aplicada primeiro pelo painel/MCP.
+
+### 19.3 Pontas soltas conhecidas
+
+- **`web/app/api/whatsapp/send-test/route.ts` tem telefone hardcoded** numa allowlist,
+  em repositório público. Remover junto com a subida do Graph v22 → v26 (seção 16.5,
+  item 4) — contraria o espírito da seção 15.5.
+- **Migration 0073 deixou 85 contatos sem vínculo**: 81 sem match no WinThor e
+  **4 ambíguos** (mesmo telefone em mais de um cadastro), deixados de fora de propósito.
+  Os 4 ambíguos precisam de decisão manual.
+- **Decisão de 06/08 — não higienizar as tags de carteira no painel do RD** (as 17
+  divergentes que a 0073 corrigiu no board): o RD será aposentado e a atribuição oficial
+  já é o RCA via `wth_vinculo`. **Não sugerir de novo.**
+- **Rename `funil-murano` → `murano-crm` na Vercel: adiado** (05/08) e menos urgente,
+  porque a produção é o domínio próprio. Ao renomear, atualizar em cadeia: domínio na
+  Vercel, Redirect URLs do Supabase Auth (senão o login Google quebra), docs do repo.
+  O webhook da Meta **não** quebra (aponta para o domínio próprio).
