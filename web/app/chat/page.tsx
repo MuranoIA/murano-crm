@@ -49,6 +49,20 @@ type Msg = {
   id: string; conteudo: string; enviada_por: string; tipo: string | null; status: string | null; criada_em: string;
   midia_tipo?: string | null; midia_mime?: string | null; midia_nome?: string | null; midia_path?: string | null;
 };
+// painel do contato: dados do WinThor ao lado da conversa (o RD não tem isso)
+type Contato = {
+  compras: { codcli: number | null; cidade: string | null; compras: number | null; ultima_compra: string | null;
+             dias_sem_comprar: number | null; total_liquido: number | null; rca_oficial: string | null } | null;
+  ciclo: { pct_ciclo: number | null; ciclo_medio: number | null; dias_ausente: number | null;
+           tipo_oportunidade: string | null; acao_recomendada: string | null; tendencia: string | null } | null;
+  funil: { etapa: string | null; venda_valor: number | null; venda_data: string | null; sem_cadastro: boolean | null } | null;
+  ultimas_notas: { data_fat: string; valor: number; num_nota: string | number | null; filial: string | null }[];
+};
+
+const moedaBR = (v: number | null | undefined) =>
+  v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+const dataBR = (d: string | null | undefined) =>
+  d ? String(d).slice(0, 10).split("-").reverse().join("/") : "—";
 
 const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 const horaBR = (iso: string) =>
@@ -110,6 +124,101 @@ function Midia({ m }: { m: Msg }) {
 const rotuloMidia = (t: string) =>
   ({ image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha" }[t] ?? "Mídia");
 
+// ---------------------------------------------------------------------------
+// Painel do contato — dados do ERP (WinThor) ao lado da conversa. É o que o RD
+// Conversas nunca teve: o vendedor decide o que responder olhando o histórico de
+// compra, sem trocar de tela.
+// ---------------------------------------------------------------------------
+function PainelContato({ c }: { c: Contato | null }) {
+  if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
+  const { compras, ciclo, funil, ultimas_notas } = c;
+
+  if (!compras && !funil?.venda_valor && !ultimas_notas.length) {
+    return (
+      <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.5 }}>
+        Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP.
+      </div>
+    );
+  }
+
+  const Bloco = ({ titulo, children }: { titulo: string; children: any }) => (
+    <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
+      <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 6 }}>{titulo}</div>
+      {children}
+    </div>
+  );
+  const Linha = ({ r, v, forte }: { r: string; v: any; forte?: boolean }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "2px 0" }}>
+      <span style={{ color: M.gray }}>{r}</span>
+      <b style={{ color: forte ? M.wine : M.ink, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{v}</b>
+    </div>
+  );
+
+  // barra do ciclo: quanto do intervalo médio de recompra já passou
+  const pct = ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
+  const corCiclo = pct == null ? M.muted : pct >= 100 ? M.laranja : pct >= 75 ? "#b8860b" : "#1a6b3c";
+
+  return (
+    <div style={{ fontSize: 12.5 }}>
+      {compras && (
+        <Bloco titulo="Cliente no WinThor">
+          <Linha r="Código" v={compras.codcli ?? "—"} />
+          {compras.cidade && <Linha r="Cidade" v={compras.cidade} />}
+          {compras.rca_oficial && <Linha r="RCA oficial" v={compras.rca_oficial} />}
+        </Bloco>
+      )}
+
+      {compras && (
+        <Bloco titulo="Histórico de compra">
+          <Linha r="Compras" v={compras.compras ?? 0} />
+          <Linha r="Total líquido" v={moedaBR(compras.total_liquido)} forte />
+          <Linha r="Última compra" v={dataBR(compras.ultima_compra)} />
+          <Linha r="Sem comprar há" v={compras.dias_sem_comprar != null ? `${compras.dias_sem_comprar} dias` : "—"} />
+        </Bloco>
+      )}
+
+      {ciclo && (ciclo.ciclo_medio != null || ciclo.acao_recomendada) && (
+        <Bloco titulo="Ciclo de recompra">
+          {ciclo.ciclo_medio != null && <Linha r="Ciclo médio" v={`${Math.round(Number(ciclo.ciclo_medio))} dias`} />}
+          {pct != null && (
+            <>
+              <div style={{ height: 6, borderRadius: 6, background: "#e6d8e4", overflow: "hidden", margin: "6px 0 4px" }}>
+                <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: corCiclo }} />
+              </div>
+              <div style={{ fontSize: 11, color: corCiclo, fontWeight: 700 }}>
+                {pct >= 100 ? "Passou do ciclo — hora de reativar" : `${Math.round(pct)}% do ciclo percorrido`}
+              </div>
+            </>
+          )}
+          {ciclo.acao_recomendada && (
+            <div style={{ marginTop: 6, fontSize: 11.5, color: M.ink, background: M.roxoSoft, borderRadius: 8, padding: "6px 9px", lineHeight: 1.4 }}>
+              💡 {ciclo.acao_recomendada}
+            </div>
+          )}
+        </Bloco>
+      )}
+
+      {funil && (
+        <Bloco titulo="No funil">
+          <Linha r="Etapa" v={cap(String(funil.etapa ?? "—").replace(/_/g, " "))} />
+          {funil.venda_valor != null && <Linha r="Faturado no mês" v={moedaBR(funil.venda_valor)} forte />}
+        </Bloco>
+      )}
+
+      {!!ultimas_notas.length && (
+        <Bloco titulo="Últimas notas">
+          {ultimas_notas.map((n, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ color: M.gray }}>{dataBR(n.data_fat)}</span>
+              <b>{moedaBR(n.valor)}</b>
+            </div>
+          ))}
+        </Bloco>
+      )}
+    </div>
+  );
+}
+
 // ticks estilo WhatsApp: wait ✓ · success ✓✓ · read/checked ✓✓ azul · failed !
 function Ticks({ status }: { status: string | null }) {
   if (status === "failed") return <span style={{ color: M.laranja, fontWeight: 800 }}>!</span>;
@@ -136,6 +245,8 @@ export default function Chat() {
   const [filtro, setFiltro] = useState<"pendentes" | "todas" | "resolvidas">("todas");
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
+  const [contato, setContato] = useState<Contato | null>(null);
+  const [painelAberto, setPainelAberto] = useState(true);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const selRef = useRef<Conversa | null>(null);
@@ -216,9 +327,62 @@ export default function Chat() {
     document.title = naoLidas ? `(${naoLidas}) Chat — Murano` : "Chat — Murano";
   }, [naoLidas]);
 
+  // som + notificação do sistema quando CHEGA mensagem nova (não no primeiro
+  // carregamento, senão apitaria ao abrir a tela com conversas pendentes).
+  const naoLidasAnterior = useRef<number | null>(null);
+  useEffect(() => {
+    const antes = naoLidasAnterior.current;
+    naoLidasAnterior.current = naoLidas;
+    if (antes === null || naoLidas <= antes) return;
+    // bipe curto via WebAudio: não depende de arquivo de áudio hospedado
+    try {
+      const Ctx = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator(), ganho = ctx.createGain();
+        osc.connect(ganho); ganho.connect(ctx.destination);
+        osc.frequency.value = 880; osc.type = "sine";
+        ganho.gain.setValueAtTime(0.0001, ctx.currentTime);
+        ganho.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+        ganho.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+        osc.start(); osc.stop(ctx.currentTime + 0.36);
+        setTimeout(() => ctx.close().catch(() => {}), 600);
+      }
+    } catch { /* navegador sem WebAudio ou sem gesto do usuário ainda: silencioso */ }
+    // notificação do sistema só se o usuário já autorizou e a aba não está à frente
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+        new Notification("Nova mensagem no Chat", {
+          body: `${naoLidas} conversa${naoLidas > 1 ? "s" : ""} aguardando resposta`,
+          tag: "chat-murano",
+        });
+      }
+    } catch { /* idem */ }
+  }, [naoLidas]);
+
+  // pede permissão de notificação uma única vez, no primeiro clique do usuário
+  // (navegador exige gesto; pedir na carga da página costuma ser negado)
+  useEffect(() => {
+    const pedir = () => {
+      try {
+        if (typeof Notification !== "undefined" && Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
+        }
+      } catch {}
+      window.removeEventListener("click", pedir);
+    };
+    window.addEventListener("click", pedir);
+    return () => window.removeEventListener("click", pedir);
+  }, []);
+
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setAviso(null); setResolvendo(false);
+    setSel(c); setMsgs(null); setAviso(null); setResolvendo(false); setContato(null);
     carregarThread(c);
+    // painel do contato (WinThor) — falha aqui não atrapalha a conversa
+    fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setContato(j ?? null))
+      .catch(() => setContato(null));
     // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
     if (c.nao_lida) {
       setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
@@ -462,6 +626,12 @@ export default function Chat() {
                       {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
                     </span>
                   </span>
+                  {!isMobile && (
+                    <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente"}
+                      style={{ fontSize: 11.5, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      📊 Cliente
+                    </button>
+                  )}
                   {(sel.status ?? "aberta") === "resolvida" ? (
                     <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
                       style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -588,6 +758,17 @@ export default function Chat() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* ---- painel do contato (desktop): o ERP ao lado da conversa ---- */}
+        {mostraThread && sel && painelAberto && !isMobile && (
+          <div style={{ width: 268, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft }}>
+              <b style={{ fontSize: 12.5, color: M.wine }}>Dados do cliente</b>
+              <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>direto do WinThor</div>
+            </div>
+            <PainelContato c={contato} />
           </div>
         )}
       </div>
