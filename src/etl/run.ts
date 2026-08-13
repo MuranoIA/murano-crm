@@ -2,7 +2,10 @@ import "dotenv/config";
 import { RdConversasClient } from "../lib/rdConversasClient";
 import { decryptJwe } from "../lib/decryptMessages";
 import { getSupabase } from "../lib/supabaseClient";
-import { tipoMensagem, idMensagem, ts } from "../lib/transform";
+import {
+  tipoMensagem, idMensagem, ts, separaMidia,
+  TIPOS_HISTORICO, SENT_BY_HISTORICO, CANAIS_HISTORICO,
+} from "../lib/transform";
 
 const rd = new RdConversasClient({
   token: process.env.RD_CONVERSAS_TOKEN!,
@@ -489,39 +492,87 @@ async function loadReports(vendIds: Set<string>) {
 // ---------------------------------------------------------------------------
 // 3) MENSAGENS  (/v2/messages/history, decriptado) — só dos clientes ativos
 // ---------------------------------------------------------------------------
+// Busca o histórico COMPLETO de uma conversa, paginando.
+//
+// Corrige quatro defeitos que conviviam na chamada antiga
+// (`page:1, limit:50`, sem mais nada) — todos confirmados contra a API em 12/08/2026:
+//   1. sem `type`      -> a API assume "text" e descarta TODA mídia. Cliente que
+//                         responde por áudio parecia nunca ter respondido.
+//   2. sem `sent_by`   -> assume "customer, operator" e descarta o BOT.
+//   3. sem `channel`   -> assume "whatsapp" e descarta os demais canais.
+//   4. só `page=1`     -> pegava as 50 mais recentes e perdia o resto para sempre.
+// `limit` vai até 100 (documentado 1..100), então a maioria das conversas continua
+// resolvida em UMA chamada — o custo de cota fica praticamente igual ao de antes.
+const HIST_LIMIT = Math.min(100, Number(process.env.ETL_HIST_LIMIT ?? 100));
+const HIST_MAX_PAGES = Number(process.env.ETL_HIST_MAX_PAGES ?? 10);
+// 0 = não envia start_date (mantém a janela padrão da API, ~30 dias). O backfill
+// histórico é quem sobe isso; no incremental uma janela curta mantém o run previsível.
+const HIST_DIAS = Number(process.env.ETL_HIST_DAYS ?? 0);
+
+async function historicoCompleto(clienteId: string): Promise<any[]> {
+  const todas = new Map<string, any>();
+  const janela = HIST_DIAS > 0
+    ? { start_date: new Date(Date.now() - HIST_DIAS * 86400000).toISOString().slice(0, 10), end_date: hojeISO }
+    : {};
+  for (let page = 1; page <= HIST_MAX_PAGES; page++) {
+    const h: any = await withRetry(() => rd.get("/v2/messages/history", {
+      customer_id: clienteId, page, limit: HIST_LIMIT,
+      type: TIPOS_HISTORICO, sent_by: SENT_BY_HISTORICO, channel: CANAIS_HISTORICO,
+      ...janela,
+    }));
+    if (typeof h?.messages !== "string" || h.messages.length === 0) break;
+    const dec: any = await decryptJwe(h.messages, JWK);
+    const msgs: any[] = Array.isArray(dec) ? dec : [];
+    if (!msgs.length) break;
+    const antes = todas.size;
+    for (const m of msgs) todas.set(`${m.created_at}|${m.content ?? ""}`, m);
+    // página repetida (defesa contra `page` ignorada) ou última página incompleta
+    if (todas.size === antes || msgs.length < HIST_LIMIT) break;
+    await sleep(300);
+  }
+  return [...todas.values()];
+}
+
 async function loadMensagens(clientes: { id: string; carteira: string }[]) {
-  let done = 0, vazios = 0, erros = 0, total = 0;
+  let done = 0, vazios = 0, erros = 0, total = 0, comMidia = 0;
   for (const cli of clientes) {
     done++;
     if (done % 40 === 0) console.error(`[mensagens] ${done}/${clientes.length} (${total} msgs)`);
     await sleep(300);
     try {
-      const h: any = await withRetry(() => rd.get("/v2/messages/history", { customer_id: cli.id, page: 1, limit: 50 }));
-      if (typeof h?.messages !== "string" || h.messages.length === 0) { vazios++; continue; }
-      const dec: any = await decryptJwe(h.messages, JWK);
-      const msgs: any[] = Array.isArray(dec) ? dec : [];
+      const msgs = await historicoCompleto(cli.id);
+      if (!msgs.length) { vazios++; continue; }
       const seen = new Set<string>();
       const rows: any[] = [];
       for (const m of msgs) {
+        // hash sobre o content CRU: o rótulo de mídia não é único por mensagem
         const id = idMensagem(cli.id, m.created_at, m.content ?? "");
         if (seen.has(id)) continue;
         seen.add(id);
+        const { conteudo, midia } = separaMidia(m.content);
+        if (midia) comMidia++;
         rows.push({
           id,
           cliente_id: cli.id,
           vendedor_carteira: cli.carteira,
           enviada_por: m.sent_by ?? null,
           tipo: tipoMensagem(m),
-          conteudo: m.content ?? null,
+          conteudo,
+          midia,
           is_reply: m.is_reply ?? null,
           status: m.status ?? null,
           criada_em: ts(m.created_at),
         });
       }
       if (rows.length) { await upsert("mensagens", rows); total += rows.length; }
-    } catch { erros++; }
+    } catch (e: any) {
+      erros++;
+      // NÃO engolir: o catch mudo escondia falha de upsert e decrypt, e o run terminava
+      // "com sucesso" tendo gravado zero. Primeiros erros vão para o log; depois só conta.
+      if (erros <= 5) console.error(`[mensagens] erro em ${cli.id}: ${e?.message ?? e}`);
+    }
   }
-  console.error(`[mensagens] ${total} msgs | vazios: ${vazios} | erros: ${erros}`);
+  console.error(`[mensagens] ${total} msgs (${comMidia} de mídia) | vazios: ${vazios} | erros: ${erros}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +595,17 @@ async function validar() {
 // lê os clientes em escopo já no banco e baixa só o que falta (pula quem já tem
 // mensagem). Serve para completar a carga histórica em execuções sucessivas.
 async function backfillMensagens() {
+  // ETL_CLIENTES=id1,id2 -> re-sincroniza SÓ esses, ignorando escopo e "já tem mensagem".
+  // Serve para validar mudança de parâmetro numa conversa antes de soltar na base toda,
+  // e para consertar uma conversa específica sem esperar o ciclo.
+  const alvos = String(process.env.ETL_CLIENTES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (alvos.length) {
+    const carteiras = await carteirasConhecidas(alvos);
+    const lote = alvos.map((id) => ({ id, carteira: carteiras.get(id) ?? "" }));
+    console.error(`[backfill] alvo explícito: ${lote.length} cliente(s)`);
+    await loadMensagens(lote);
+    return;
+  }
   const todos = await clientesEmEscopoDoBanco();
   const jaTem = process.env.ETL_REFAZER === "1" ? new Set<string>() : await idsComMensagens();
   const faltantes = todos.filter((c) => !jaTem.has(c.id));

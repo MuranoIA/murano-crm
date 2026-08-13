@@ -3,7 +3,10 @@ export interface RdConversasClientOptions {
   baseUrl: string;
 }
 
-export type QueryParams = Record<string, string | number | undefined>;
+/** Valor array vira parâmetro REPETIDO (`type=a&type=b`). É a única forma que o RD
+ *  aceita para os arrays documentados (`type`, `sent_by`, `channel`): a lista separada
+ *  por vírgula devolve ZERO mensagens, sem erro — falha silenciosa (medido 12/08/2026). */
+export type QueryParams = Record<string, string | number | Array<string | number> | undefined>;
 
 export class RdConversasApiError extends Error {
   constructor(
@@ -25,7 +28,9 @@ export class RdConversasClient {
   async get<T = unknown>(path: string, params: QueryParams = {}): Promise<T> {
     const url = new URL(path, this.options.baseUrl);
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) url.searchParams.set(key, String(value));
+      if (value === undefined) continue;
+      if (Array.isArray(value)) for (const v of value) url.searchParams.append(key, String(v));
+      else url.searchParams.set(key, String(value));
     }
 
     const response = await fetch(url, {
