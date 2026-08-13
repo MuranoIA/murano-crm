@@ -17,6 +17,7 @@
 // padrão dos ids sintéticos `winthor:<codcli>` da prospecção.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -101,7 +102,7 @@ async function gravarMensagemRecebida(sb: any, msg: any, nomePerfil?: string): P
   if (!waId || !wamid) return;
 
   const cliente = await acharOuCriarCliente(sb, waId, nomePerfil);
-  const row = {
+  const row: Record<string, unknown> = {
     id: wamid,
     cliente_id: cliente.id,
     vendedor_carteira: cliente.carteira ?? null,
@@ -111,14 +112,68 @@ async function gravarMensagemRecebida(sb: any, msg: any, nomePerfil?: string): P
     is_reply: Boolean(msg.context?.id) || null,
     status: "success",
     criada_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
+    ...(await processarMidia(sb, msg, wamid, cliente.id)),
   };
   const { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });
   if (error) throw new Error(`upsert mensagens: ${error.message}`);
+
+  // conversa volta pra fila: cliente falou => reabre (status aberta/resolvida, §18 item 4)
+  await sb.from("chat_conversa").upsert(
+    { cliente_id: cliente.id, status: "aberta", atualizado_em: new Date().toISOString() },
+    { onConflict: "cliente_id" },
+  );
 }
 
-// Texto puro quando existir; para mídia, um marcador com o caption se houver.
-// (Download da mídia em si — imagem/áudio/documento — fica para a fase B/C:
-// o webhook só entrega o media_id, que expira; baixar exige chamada ao Graph.)
+const TIPOS_MIDIA = ["image", "audio", "video", "document", "sticker"] as const;
+
+/**
+ * Baixa a mídia da mensagem e guarda no bucket privado `wa-midia`, devolvendo as
+ * colunas de mídia para o upsert.
+ *
+ * Falha aqui NUNCA derruba a mensagem: se o download ou o upload falharem, a
+ * mensagem é gravada mesmo assim, com `midia_tipo` e `midia_id` preenchidos —
+ * o que permite tentar de novo depois (o media_id da Meta vale ~30 dias).
+ */
+async function processarMidia(
+  sb: any, msg: any, wamid: string, clienteId: string,
+): Promise<Record<string, unknown>> {
+  const tipo = String(msg?.type ?? "");
+  if (!TIPOS_MIDIA.includes(tipo as any)) return {};
+  const midia = msg[tipo] ?? {};
+  const mediaId = String(midia.id ?? "");
+  if (!mediaId) return {};
+
+  const base: Record<string, unknown> = {
+    midia_tipo: tipo,
+    midia_id: mediaId,
+    midia_nome: midia.filename ?? null,
+  };
+
+  try {
+    const { bytes, mime } = await baixarMidia(mediaId);
+    // chave do Storage: ano-mês / cliente / wamid.ext — sanitizada (o wamid é
+    // base64 e pode trazer '/' e '+', que quebrariam o caminho)
+    const limpo = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+    const mes = new Date().toISOString().slice(0, 7);
+    const path = `${mes}/${limpo(clienteId)}/${limpo(wamid)}.${extensaoDoMime(mime)}`;
+
+    const { error } = await sb.storage.from("wa-midia").upload(path, bytes, {
+      contentType: mime,
+      upsert: true,
+    });
+    if (error) throw new Error(error.message);
+
+    return { ...base, midia_path: path, midia_mime: mime };
+  } catch (e: any) {
+    console.error(`[wa-webhook] mídia ${tipo} (${mediaId}) não baixada:`, e?.message ?? e);
+    return base; // mensagem entra sem o arquivo; dá para reprocessar pelo midia_id
+  }
+}
+
+// Texto puro quando existir. Para mídia, o `conteudo` é a legenda (ou um rótulo
+// legível) — o arquivo em si vai para o Storage via processarMidia(). O rótulo
+// importa porque o CARD do board mostra `ultima_mensagem`: "📷 Foto" comunica,
+// "" não comunicaria nada.
 function extrairConteudo(msg: any): string {
   switch (msg.type) {
     case "text":
@@ -136,8 +191,12 @@ function extrairConteudo(msg: any): string {
     case "audio":
     case "document":
     case "sticker": {
-      const caption = msg[msg.type]?.caption;
-      return caption ? `[${msg.type}] ${caption}` : `[${msg.type}]`;
+      const rotulos: Record<string, string> = {
+        image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio",
+        document: "📎 Documento", sticker: "🙂 Figurinha",
+      };
+      const m = msg[msg.type] ?? {};
+      return String(m.caption || m.filename || rotulos[msg.type] || `[${msg.type}]`);
     }
     case "location":
       return "[localização]";

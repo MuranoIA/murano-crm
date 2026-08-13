@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
+import { usuarioDaSessao } from "../../../lib/chatUsuario";
 
 export const dynamic = "force-dynamic";
 
@@ -39,5 +40,29 @@ export async function GET() {
     !c.cliente_id.startsWith("winthor:") && !c.cliente_id.startsWith("venda:")
   );
 
-  return Response.json({ conversas, atualizado_em: new Date().toISOString() });
+  // ---- não lidas + status (P0 itens 3 e 4) --------------------------------
+  // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
+  // deste usuário. Sem marca, a conversa inteira conta como não lida.
+  const usuario = usuarioDaSessao();
+  const [{ data: leituras }, { data: estados }] = await Promise.all([
+    sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
+    sb.from("chat_conversa").select("cliente_id,status,motivo"),
+  ]);
+  const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
+  const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e]));
+
+  for (const c of conversas) {
+    const marca = lidaAte.get(c.cliente_id);
+    c.nao_lida = c.ultima_enviada_por === "customer" &&
+      (!marca || new Date(c.ultima_atividade) > new Date(marca));
+    const e = estado.get(c.cliente_id);
+    c.status = e?.status ?? "aberta";
+    c.motivo = e?.motivo ?? null;
+  }
+
+  return Response.json({
+    conversas,
+    nao_lidas: conversas.filter((c: any) => c.nao_lida).length,
+    atualizado_em: new Date().toISOString(),
+  });
 }
