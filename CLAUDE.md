@@ -1184,7 +1184,32 @@ nome/telefone · thread com separadores de dia, ticks de entrega/leitura e selo 
 template · envio com UI otimista e aviso da janela de 24h · Realtime + poll de
 segurança · mobile · identidade Murano.
 
-### P0 — indispensável ANTES do corte (Fase C)
+### ✅ P0 ENTREGUE em 12–13/08/2026 (PRs #56 e #58)
+
+Os cinco itens do P0 estão no ar, mais o maior item do P1. O que mudou de fato:
+
+| Item | Como ficou |
+|---|---|
+| Mídia — receber | O webhook baixa foto/áudio/vídeo/documento/figurinha na hora (o `media_id` da Meta expira), guarda no bucket **privado `wa-midia`** e grava `midia_*` em `mensagens`. Falha no download **não derruba a mensagem** — ela entra com `midia_id` para reprocessar. `/api/chat/midia` serve por **URL assinada** (302), então `<img>`/`<audio>` apontam direto pra rota |
+| Mídia — enviar | `/api/chat/enviar-midia` sobe pela Graph API, espelha no bucket e na tabela. Conversa que ainda vive no RD responde **501 com instrução** (o RD tem outro endpoint de anexo e será aposentado) |
+| Não lidas | `chat_leitura` guarda a marca **por usuário** (filas independentes, como no RD). Negrito + bolinha na lista, abas Pendentes/Abertas/Resolvidas com contador, aviso no título da aba (`(3) Chat`), **bipe via WebAudio** e notificação do sistema quando a aba não está à frente |
+| Status aberta/resolvida | `chat_conversa` (status + motivo + quem resolveu). O motivo é **a nossa tabulação**, agora no fluxo natural do encerramento. **Reabre sozinha** quando o cliente responde (quem faz isso é o webhook) |
+| Template no chat | Botão TEMPLATE na caixa de envio — o aviso de janela fechada não manda mais o usuário ao board |
+| **P1: painel do contato** | Coluna direita com o **ERP ao lado da conversa**: código/cidade/RCA, histórico de compra, ciclo de recompra com barra e ação recomendada, etapa no funil, faturado no mês e últimas notas (`/api/chat/contato`). É a vantagem que o RD não tem |
+
+Migration **0079** (a 0077 já estava tomada pela mídia do lado RD, do mesmo dia).
+
+**Duas trilhas de mídia convivem — não confundir:**
+
+| | Canal | Estado |
+|---|---|---|
+| `midia_*` (0079) | WhatsApp Cloud | completo: baixa, guarda e renderiza |
+| `midia jsonb` (0077) | RD Conversas | metadados salvos; **download e transcrição são outra frente**, com objetivo de corpus histórico para consultas/relatórios — **não** para operação do chat (decisão do usuário em 13/08) |
+
+Consequência prática enquanto o número de produção estiver no RD: o áudio real da
+cliente aparece no chat como rótulo (`[áudio]`), não como player. Isso é esperado.
+
+### P0 — a lista original (mantida como referência do que foi pedido)
 
 | # | O quê | Por quê / nota de implementação |
 |---|---|---|
@@ -1194,13 +1219,11 @@ segurança · mobile · identidade Murano.
 | 4 | **Status aberta / resolvida** (com motivo) | dá a noção de fila. Substitui o "fechar atendimento" do RD e **é a nossa tabulação**: motivo no encerramento vira a métrica confiável de venda que o RD nunca entregou (ver seções 6 e 8). Reabre sozinha quando o cliente responde |
 | 5 | **Template dentro do chat** | hoje o aviso de janela fechada manda o usuário ir ao board — quebra o fluxo. A rota já existe |
 
-### P1 — profissionalismo e produtividade (primeiras semanas pós-corte)
+### P1 — profissionalismo e produtividade (o que ainda falta)
 
-Painel do contato na coluna direita (dados do WinThor, últimas compras, ciclo, valor no
-mês, etapa) — **vantagem estrutural que o RD não tem**, e as views já existem
-(`vw_cliente_compras`, `vw_ciclo_card`, `wth_vinculo`) · respostas rápidas (atalho `/`,
-`crm_templates` como base) · notas internas na thread · transferência de conversa entre
-vendedores com registro · busca no **conteúdo** das mensagens.
+~~Painel do contato~~ **ENTREGUE** (ver quadro acima). Restam: respostas rápidas
+(atalho `/`, `crm_templates` como base) · notas internas na thread · transferência de
+conversa entre vendedores com registro · busca no **conteúdo** das mensagens.
 
 ### P2 — paridade avançada (quando a operação estabilizar)
 
