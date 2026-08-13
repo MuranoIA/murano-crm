@@ -460,6 +460,9 @@ disparo manual/scheduling desta sessão).
 
 **4. Token do RD Conversas em texto puro.** Está guardado como memória de conversa, não em
 cofre. Mover para os secrets do Supabase ou para um gerenciador de senhas.
+→ **PENDENTE, prioridade alta.** Detalhamento e estado verificado em **19.1** — inclui a
+`RD_CONVERSAS_PRIVATE_JWK`, cujo risco é maior que o do token (perdê-la torna o histórico
+cifrado ilegível para sempre).
 
 **5. Service_role key da v2 em `wth_config`.** Irrestrita — dá leitura e escrita na v2
 inteira, embora a função só faça `GET`. Considerar um role read-only na v2 com
@@ -1222,14 +1225,39 @@ vêm**: `.env` da raiz (ETL), `web/.env.local` (app web) e `data/` (descartável
 Isso bloqueia apenas rodar ETL/app **localmente** — produção intacta.
 
 **Ponto de atenção permanente:** `RD_CONVERSAS_PRIVATE_JWK` é mostrada **uma única vez**
-pela Tallos e a rotação torna o histórico cifrado ilegível para sempre (seção 3). Hoje
-ela vive em **GitHub Actions Secrets** (não pode ser lida de volta) e na **Vercel**
-(**única cópia legível**). Prova de que está viva: o ETL continua decriptando.
-→ **Ação recomendada:** revelar na Vercel `RD_CONVERSAS_PRIVATE_JWK` e
-`RD_CONVERSAS_TOKEN` e guardar em gerenciador de senhas — fecha a pendência nº 4 da
-seção 10.7, aberta desde julho. Mitigação que reduz o pânico: todo o histórico **já
-decriptado** está no Supabase; perder a chave só impede decriptar mensagens **novas**
-do RD.
+pela Tallos e a rotação torna o histórico cifrado ilegível para sempre (seção 3).
+
+#### ⚠️ PENDENTE — guardar os segredos do RD num gerenciador de senhas
+
+**Prioridade alta. Substitui a "ação recomendada" anterior desta seção, que era
+impossível de executar** (dizia "revelar na Vercel"; ver correção abaixo).
+
+Onde `RD_CONVERSAS_PRIVATE_JWK` e `RD_CONVERSAS_TOKEN` vivem hoje, verificado em
+12/08/2026:
+
+| Local | Dá para ler de volta? |
+|---|---|
+| GitHub Actions Secrets | **Não** — write-only por design |
+| Vercel | **Não** — as variáveis estão marcadas *Sensitive*; "Copy to Clipboard" fica travado e `vercel env pull` não traz o valor |
+| Supabase Vault | **Não existem lá** — `vault.secrets` está vazio |
+| `wth_config` | **Não estão lá** — só `gh_etl_token`, `gh_etl_repo`, `v2_rest_url`, `v2_service_key` |
+| `.env` local da máquina do Romulo | **SIM — única cópia legível conhecida** |
+
+Essa cópia foi recuperada por acaso, de uma pasta antiga do projeto, em 12/08. Se essa
+máquina falhar ou o arquivo se perder, **não há de onde tirar a chave outra vez** — e a
+única saída seria gerar chave nova na Tallos, o que torna ilegível todo o histórico
+cifrado que ainda não foi baixado.
+
+**Ação:** copiar os dois valores do `.env` da raiz para o gerenciador de senhas da
+empresa (junto com o `kid` da JWK, para conferência futura). Fecha também a pendência
+nº 4 da seção 10.7, aberta desde julho.
+
+Mitigação que reduz o pânico, mas não substitui a ação: todo o histórico **já
+decriptado** está no Supabase; perder a chave só impede decriptar mensagens **novas**.
+
+**Correção de fato:** a versão anterior desta seção afirmava que a Vercel era a "única
+cópia legível". Está errado — variável marcada *Sensitive* na Vercel é write-only.
+Não repetir esse caminho.
 
 ### 19.2 Migrations aplicadas no banco sem arquivo correspondente
 
