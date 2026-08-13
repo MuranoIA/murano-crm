@@ -1325,9 +1325,15 @@ export default function Page() {
       // com o filtro "ainda não comprou", as colunas de produto do Excel mostram o que
       // o cliente JÁ compra da linha — é o gancho da abordagem ("você leva X, conhece Y?").
       const codprods = prodFiltro ? prodFiltro.produtos : ncFiltro ? ncFiltro.linha : [];
+      // manda o vendedor selecionado no board: sem isso o admin recebia SEMPRE uma aba
+      // por consultor, mesmo olhando a carteira de um só. Com ele, sai uma aba única.
       const r = await fetch("/api/relatorio", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codclis, codprods, filtros: filtrosAtivosTxt, titulo: "Relatório de clientes — funil" }),
+        body: JSON.stringify({
+          codclis, codprods, filtros: filtrosAtivosTxt,
+          titulo: "Relatório de clientes — funil",
+          vendedor: filtro !== "todos" ? filtro : null,
+        }),
       });
       if (!r.ok) { const j = await r.json().catch(() => ({})); alert("Falha ao gerar relatório: " + (j.error ?? `HTTP ${r.status}`)); return; }
       const blob = await r.blob();
