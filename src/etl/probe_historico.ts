@@ -41,10 +41,24 @@ const GRAVAR = process.env.PROBE_GRAVAR === "1";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// mesma política do ETL (run.ts): a cota do RD é compartilhada com o job agendado
+// e com os envios do board, então 429 é esperado e transitório.
+async function withRetry<T>(fn: () => Promise<T>, a = 0): Promise<T> {
+  try { return await fn(); }
+  catch (e: any) {
+    if ((e?.status === 429 || e?.status === 500) && a < 8) {
+      console.log(`  (${e.status} — aguardando ${2.5 * (a + 1)}s, tentativa ${a + 1})`);
+      await sleep(2500 * (a + 1));
+      return withRetry(fn, a + 1);
+    }
+    throw e;
+  }
+}
+
 type Msg = { sent_by?: string; content?: string; created_at?: string; status?: string; is_reply?: boolean; is_template_message?: boolean };
 
 async function pagina(page: number, limit: number): Promise<{ env: any; msgs: Msg[]; erro?: string }> {
-  const env: any = await rd.get("/v2/messages/history", { customer_id: CLIENTE, page, limit });
+  const env: any = await withRetry(() => rd.get("/v2/messages/history", { customer_id: CLIENTE, page, limit }));
   if (typeof env?.messages !== "string" || env.messages.length === 0) return { env, msgs: [] };
   try {
     const dec: any = await decryptJwe(env.messages, JWK);
@@ -113,14 +127,19 @@ async function main() {
     if (page === MAX_PAGES) console.log("  (parou no teto PROBE_MAX_PAGES, pode haver mais)");
   }
 
-  // ---- 4) limit acima de 50 é aceito? ----
-  await sleep(1300);
-  const p100 = await pagina(1, 100);
-  console.log(`\nLIMIT=100 (page=1) -> ${JSON.stringify(resumo(p100.msgs))}`);
-  console.log(p100.msgs.length > 50
-    ? "  ACEITA mais de 50 -> backfill precisa de menos chamadas"
-    : "  capa em 50 -> aumentar limit não ajuda");
-  for (const m of p100.msgs) todas.set(chave(m), m);
+  // ---- 4) qual o teto do `limit`? cada degrau corta chamadas do backfill ----
+  console.log("\nTETO DO LIMIT (page=1):");
+  let melhor = 50;
+  for (const lim of [100, 200, 500, 1000]) {
+    await sleep(1300);
+    const p = await pagina(1, lim);
+    for (const m of p.msgs) todas.set(chave(m), m);
+    const teto = p.msgs.length < lim; // devolveu menos que pediu -> ou acabou o histórico, ou capou
+    console.log(`  limit=${lim} -> ${p.msgs.length} mensagens${teto ? " (menos que o pedido)" : ""}`);
+    if (p.msgs.length > melhor) melhor = p.msgs.length;
+    if (teto) break;
+  }
+  console.log(`  maior página obtida: ${melhor}`);
 
   const coletadas = [...todas.values()];
   console.log(`\nCONSOLIDADO: ${coletadas.length} mensagens distintas na API -> ${JSON.stringify(resumo(coletadas))}`);

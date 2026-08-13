@@ -9,7 +9,11 @@
     "etl": "ts-node src/etl/run.ts",
     "probe": "ts-node src/etl/probe_historico.ts",
     "build": "tsc",
-    "start": "node dist/etl.js"
+    "start": "node dist/etl.js",
+    "probe:janela": "ts-node src/etl/probe_janela.ts",
+    "probe:endpoints": "ts-node src/etl/probe_endpoints.ts",
+    "probe:type": "ts-node src/etl/probe_type.ts",
+    "probe:dump": "ts-node src/etl/probe_dump.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
