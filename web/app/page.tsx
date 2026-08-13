@@ -141,6 +141,25 @@ const PROD_PER_LABEL: Record<string, string> = {
   "5m": "últimos 5 meses", "6m": "últimos 6 meses", ano: "último ano",
 };
 
+// Produto da vw_produtos_venda: nome + quantos clientes já compraram + o
+// agrupamento do WinThor, que é o que define a "linha" no filtro cross-sell.
+type Produto = {
+  codprod: number; produto: string; clientes: number;
+  departamento: string | null; secao: string | null; marca: string | null;
+};
+type EscopoLinha = "departamento" | "secao" | "marca";
+const ESCOPO_LABEL: Record<EscopoLinha, string> = {
+  departamento: "Linha (departamento)", secao: "Seção", marca: "Marca",
+};
+// períodos da compra DA LINHA (o alvo é sempre "nunca", no histórico inteiro).
+// wth_itens começa em jan/2025 — é esse o alcance de "todo o histórico".
+const NC_PERIODOS: [string, string][] = [
+  ["mes", "último mês"], ["2m", "últimos 2 meses"], ["3m", "últimos 3 meses"],
+  ["6m", "últimos 6 meses"], ["ano", "último ano"], ["2anos", "últimos 2 anos"],
+  ["todos", "todo o histórico"],
+];
+const NC_PER_LABEL: Record<string, string> = Object.fromEntries(NC_PERIODOS);
+
 const CoresVendedor: Record<string, string> = {
   romulo: "#ea6a08",
   kamilly: "#9333ea",
@@ -329,7 +348,7 @@ export default function Page() {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   // filtro por produto: lista de produtos (busca 1x), painel, seleção/período (rascunho)
   // e o filtro aplicado (conjuntos de identificadores dos clientes que compraram).
-  const [produtos, setProdutos] = useState<{ codprod: number; produto: string; clientes: number }[]>([]);
+  const [produtos, setProdutos] = useState<Produto[]>([]);
   const [prodPainel, setProdPainel] = useState(false);
   const [prodSel, setProdSel] = useState<number[]>([]);
   const [prodPeriodo, setProdPeriodo] = useState<string>("mes");
@@ -338,6 +357,22 @@ export default function Page() {
   const [prodFiltro, setProdFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     produtos: number[]; periodo: string; total: number;
+  } | null>(null);
+  // filtro "AINDA NÃO COMPROU" (cross-sell): quem já compra a LINHA do produto
+  // mas nunca levou o produto em si. Ex.: já compra outra selagem, nunca comprou
+  // A-LIZZ. A linha sai do agrupamento do WinThor (departamento/seção/marca) e é
+  // resolvida aqui mesmo, com a lista de produtos que já está em memória.
+  const [ncPainel, setNcPainel] = useState(false);
+  const [ncAlvo, setNcAlvo] = useState<number | null>(null);      // produto que ele NÃO comprou
+  const [ncEscopo, setNcEscopo] = useState<EscopoLinha>("departamento");
+  const [ncLinhaSel, setNcLinhaSel] = useState<number[] | null>(null); // null = a linha inteira
+  const [ncPeriodo, setNcPeriodo] = useState<string>("ano");      // período da compra DA LINHA
+  const [ncBusca, setNcBusca] = useState("");
+  const [ncVerLinha, setNcVerLinha] = useState(false);
+  const [ncCarregando, setNcCarregando] = useState(false);
+  const [ncFiltro, setNcFiltro] = useState<{
+    clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
+    alvo: number; linha: number[]; escopo: EscopoLinha; periodo: string; total: number;
   } | null>(null);
   // filtro por cidade: mesma mecânica do de produto, porém SEM período (cidade é fixa).
   // A seleção guarda a chave normalizada (cidade_norm); o rótulo bonito vem de `cidades`.
@@ -992,6 +1027,21 @@ export default function Page() {
     if (t.length === 8 && prodFiltro.tel8.has(t)) return true;
     return false;
   };
+  // filtro "ainda não comprou": mesma mecânica de identificadores do de produto.
+  const matchNaoComprou = (c: Card): boolean => {
+    if (!ncFiltro) return true;
+    const id = c.cliente_id;
+    if (typeof id === "string") {
+      if (id.startsWith("winthor:") || id.startsWith("venda:")) {
+        const cc = Number(id.slice(id.indexOf(":") + 1));
+        if (ncFiltro.codclis.has(cc)) return true;
+      } else if (ncFiltro.clienteIds.has(id)) return true;
+    }
+    if (c.codcli != null && ncFiltro.codclis.has(Number(c.codcli))) return true;
+    const t = String(c.telefone ?? "").replace(/\D/g, "").slice(-8);
+    if (t.length === 8 && ncFiltro.tel8.has(t)) return true;
+    return false;
+  };
   // filtro por cidade: um card "casa" se o cliente é da(s) cidade(s) selecionada(s).
   // Mesma lógica de identificadores do filtro de produto.
   const matchCidade = (c: Card): boolean => {
@@ -1082,13 +1132,14 @@ export default function Page() {
     const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (ncFiltro) r = r.filter(matchNaoComprou);
     if (cidFiltro) r = r.filter(matchCidade);
     if (melhoresFiltro) r = r.filter(matchMelhores);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro);
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [cards, filtro, busca, prodFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [cards, filtro, busca, prodFiltro, ncFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // cards de pedido_emitido (das views de faturamento), filtrados por vendedor + busca.
   // Cada cliente tem 1 linha por período; a coluna escolhe pelo período ativo.
   const pedidoVisiveis = useMemo(() => {
@@ -1098,13 +1149,14 @@ export default function Page() {
     const soNum = !!busca.trim() && /^[\d\s()+.\-]+$/.test(busca.trim());
     if (busca.trim()) r = r.filter((c) => matchBusca(c, q, qDig, soNum));
     if (prodFiltro) r = r.filter(matchProduto);
+    if (ncFiltro) r = r.filter(matchNaoComprou);
     if (cidFiltro) r = r.filter(matchCidade);
     if (melhoresFiltro) r = r.filter(matchMelhores);
     if (cicloSel.length) r = r.filter(matchCiclo);
     if (semCadFiltro) r = r.filter((c) => c.sem_cadastro); // pedido nunca é sem_cadastro -> zera a coluna
     if (paradoSel.length) r = r.filter(matchParado);
     return r;
-  }, [pedidoCards, filtro, busca, prodFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
+  }, [pedidoCards, filtro, busca, prodFiltro, ncFiltro, cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel, disparos]);
   // total da carteira no cabeçalho = funil (conversa+prospecção, sem comprador do mês) +
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
@@ -1173,13 +1225,20 @@ export default function Page() {
       const nomes = prodFiltro.produtos.map((cp) => produtos.find((p) => p.codprod === cp)?.produto).filter(Boolean) as string[];
       parts.push(`Produto: ${nomes.length ? nomes.join(", ") : `${prodFiltro.produtos.length} selecionado(s)`} (${PROD_PER_LABEL[prodFiltro.periodo] ?? prodFiltro.periodo})`);
     }
+    if (ncFiltro) {
+      const alvo = produtos.find((p) => p.codprod === ncFiltro.alvo)?.produto ?? `cód. ${ncFiltro.alvo}`;
+      parts.push(
+        `Ainda não comprou: ${alvo} — mas comprou ${ncFiltro.linha.length} produto(s) da mesma ` +
+        `${ESCOPO_LABEL[ncFiltro.escopo].toLowerCase()} (${NC_PER_LABEL[ncFiltro.periodo] ?? ncFiltro.periodo})`
+      );
+    }
     if (cidFiltro) {
       const nomes = cidFiltro.cidades.map((cn) => cidades.find((c) => c.cidade_norm === cn)?.cidade).filter(Boolean) as string[];
       parts.push(`Cidade: ${nomes.length ? nomes.join(", ") : `${cidFiltro.cidades.length} selecionada(s)`}`);
     }
     if (melhoresFiltro) parts.push(`Melhores clientes: top ${melhoresFiltro.qtd} (ticket médio 3 meses)`);
     return parts;
-  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, produtos, cidFiltro, cidades, melhoresFiltro]);
+  }, [filtro, busca, cicloSel, paradoSel, prodFiltro, ncFiltro, produtos, cidFiltro, cidades, melhoresFiltro]);
   async function enviarMassa() {
     setMassaEnviando(true);
     setMassaFalhas([]);
@@ -1263,7 +1322,9 @@ export default function Page() {
       for (const c of pedidoVisiveis) { const cc = codcliDe(c); if (cc != null) set.add(cc); }
       const codclis = [...set];
       if (!codclis.length) { alert("Nenhum cliente com código WinThor no filtro atual."); return; }
-      const codprods = prodFiltro ? prodFiltro.produtos : [];
+      // com o filtro "ainda não comprou", as colunas de produto do Excel mostram o que
+      // o cliente JÁ compra da linha — é o gancho da abordagem ("você leva X, conhece Y?").
+      const codprods = prodFiltro ? prodFiltro.produtos : ncFiltro ? ncFiltro.linha : [];
       const r = await fetch("/api/relatorio", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ codclis, codprods, filtros: filtrosAtivosTxt, titulo: "Relatório de clientes — funil" }),
@@ -1299,6 +1360,13 @@ export default function Page() {
     const pedido = new Set(pedidoVisiveis.map((c) => c.cliente_id)).size; // clientes distintos em Pedido emitido
     return { outros, pedido, board: outros + pedido, total: prodFiltro.total };
   }, [prodFiltro, visiveis, pedidoVisiveis]);
+  // mesmo resumo para o filtro "ainda não comprou"
+  const ncResumo = useMemo(() => {
+    if (!ncFiltro) return null;
+    const outros = visiveis.length;
+    const pedido = new Set(pedidoVisiveis.map((c) => c.cliente_id)).size;
+    return { outros, pedido, board: outros + pedido, total: ncFiltro.total };
+  }, [ncFiltro, visiveis, pedidoVisiveis]);
 
   // total faturado (bruto, "quem lançou") no período da coluna Pedido emitido e no
   // vendedor filtrado. Fica FORA da coluna (mostrado acima dela) — é o KPI do mês,
@@ -1335,6 +1403,64 @@ export default function Page() {
     setProdFiltro(null); setProdSel([]); setProdBusca(""); setProdPainel(false);
   }
 
+  // === "AINDA NÃO COMPROU" =====================================================
+  // A LINHA do alvo = os outros produtos que compartilham o mesmo agrupamento do
+  // WinThor (departamento por padrão; seção ou marca se a vendedora quiser um
+  // recorte diferente). Produto sem agrupamento preenchido fica de fora.
+  const ncAlvoProd = useMemo(
+    () => (ncAlvo == null ? null : produtos.find((p) => p.codprod === ncAlvo) ?? null),
+    [produtos, ncAlvo]
+  );
+  const ncGrupo = ncAlvoProd ? ncAlvoProd[ncEscopo] : null;
+  const ncLinha = useMemo(() => {
+    if (!ncGrupo) return [] as Produto[];
+    return produtos
+      .filter((p) => p[ncEscopo] === ncGrupo && p.codprod !== ncAlvo)
+      .sort((a, b) => b.clientes - a.clientes);
+  }, [produtos, ncAlvo, ncEscopo, ncGrupo]);
+  // null = linha inteira (padrão). Trocar de alvo/escopo desfaz qualquer poda manual.
+  const ncLinhaEfetiva = useMemo(
+    () => (ncLinhaSel === null ? ncLinha.map((p) => p.codprod) : ncLinhaSel),
+    [ncLinha, ncLinhaSel]
+  );
+  useEffect(() => { setNcLinhaSel(null); }, [ncAlvo, ncEscopo]);
+
+  const ncProdutosFiltrados = useMemo(() => {
+    const q = ncBusca.trim().toLowerCase();
+    return q ? produtos.filter((p) => (p.produto ?? "").toLowerCase().includes(q)) : produtos;
+  }, [produtos, ncBusca]);
+
+  function toggleNcLinha(codprod: number) {
+    setNcLinhaSel((prev) => {
+      const base = prev ?? ncLinha.map((p) => p.codprod);
+      return base.includes(codprod) ? base.filter((x) => x !== codprod) : [...base, codprod];
+    });
+  }
+  async function aplicarNaoComprou() {
+    if (ncAlvo == null || ncLinhaEfetiva.length === 0) return;
+    setNcCarregando(true);
+    try {
+      const r = await fetch(
+        `/api/clientes-sem-produto?alvo=${ncAlvo}&linha=${ncLinhaEfetiva.join(",")}&periodo=${ncPeriodo}`,
+        { cache: "no-store" }
+      );
+      const j = await r.json();
+      if (j?.error) return; // mantém o filtro anterior
+      setNcFiltro({
+        clienteIds: new Set<string>(j.cliente_ids ?? []),
+        codclis: new Set<number>((j.codclis ?? []).map(Number)),
+        tel8: new Set<string>(j.tel8 ?? []),
+        alvo: ncAlvo, linha: [...ncLinhaEfetiva], escopo: ncEscopo,
+        periodo: ncPeriodo, total: j.total ?? 0,
+      });
+      setNcPainel(false);
+    } catch { /* mantém o filtro anterior */ } finally { setNcCarregando(false); }
+  }
+  function limparNaoComprou() {
+    setNcFiltro(null); setNcAlvo(null); setNcLinhaSel(null); setNcBusca("");
+    setNcVerLinha(false); setNcPainel(false);
+  }
+
   function toggleCid(cidadeNorm: string) {
     setCidSel((prev) => (prev.includes(cidadeNorm) ? prev.filter((x) => x !== cidadeNorm) : [...prev, cidadeNorm]));
   }
@@ -1358,7 +1484,7 @@ export default function Page() {
   }
 
   // troca de filtro/busca/período muda o conjunto exibido -> volta cada coluna pro lote inicial
-  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel]);
+  useEffect(() => { setVisiveisPorColuna({}); }, [filtro, busca, periodoPorColuna, prodFiltro, ncFiltro, cidFiltro, cicloSel, semCadFiltro, paradoSel]);
 
   // clica num chip de período da coluna: liga aquele período; clicar de novo no ativo desliga (volta pra "todos")
   function toggleColuna(colKey: string, p: Periodo) {
@@ -1861,6 +1987,152 @@ export default function Page() {
               </div>
             )}
           </div>
+          {/* AINDA NÃO COMPROU: já compra a linha, nunca levou este produto (cross-sell) */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setNcPainel((v) => !v)}
+              title="Clientes que ainda não compraram um produto, mas já compraram outro da mesma linha"
+              style={{
+                padding: "0 10px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 600,
+                color: ncFiltro ? "#fff" : RD.gray,
+                background: ncFiltro ? RD.cyan : RD.surface,
+                border: `1px solid ${ncFiltro ? RD.cyan : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              }}
+            >
+              {ncFiltro
+                ? `Não comprou: ${(produtos.find((p) => p.codprod === ncFiltro.alvo)?.produto ?? "").slice(0, 22)} · ${ncFiltro.total}`
+                : "Ainda não comprou"}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {ncFiltro && (
+              <span
+                onClick={limparNaoComprou}
+                title="Limpar filtro"
+                style={{
+                  position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: 17,
+                  background: "#fff", border: `1px solid ${RD.cyan}`, color: RD.cyan, fontSize: 11, fontWeight: 800,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", lineHeight: 1,
+                }}
+              >×</span>
+            )}
+            {ncPainel && (
+              <>
+                <div onClick={() => setNcPainel(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                <div
+                  style={{
+                    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 101, width: 360,
+                    background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10,
+                    boxShadow: "0 12px 32px rgba(16,32,64,.20)", padding: 12,
+                  }}
+                >
+                  {/* 1) o produto que ele NUNCA comprou */}
+                  <div style={{ fontSize: 11.5, color: RD.navy, fontWeight: 800, marginBottom: 6 }}>
+                    1. Nunca comprou este produto
+                  </div>
+                  <input
+                    value={ncBusca}
+                    onChange={(e) => setNcBusca(e.target.value)}
+                    placeholder="Buscar produto..."
+                    style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, outline: "none" }}
+                  />
+                  <div style={{ maxHeight: 150, overflowY: "auto", margin: "8px 0 10px", border: `1px solid ${RD.border}`, borderRadius: 8 }}>
+                    {ncProdutosFiltrados.length === 0 ? (
+                      <div style={{ padding: 10, color: RD.grayLight, fontSize: 12 }}>
+                        {produtos.length === 0 ? "carregando produtos…" : "nenhum produto"}
+                      </div>
+                    ) : ncProdutosFiltrados.map((p) => (
+                      <label
+                        key={p.codprod}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", fontSize: 12.5, color: RD.navy, cursor: "pointer", borderBottom: `1px solid ${RD.bg}`, background: ncAlvo === p.codprod ? RD.cyanSoft : "transparent" }}
+                      >
+                        <input type="radio" name="nc-alvo" checked={ncAlvo === p.codprod} onChange={() => setNcAlvo(p.codprod)} />
+                        <span style={{ flex: 1, lineHeight: 1.25 }}>{p.produto}</span>
+                        <span style={{ color: RD.grayLight, fontSize: 10.5, whiteSpace: "nowrap" }} title="clientes que já compraram">{p.clientes}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  {/* 2) mas JÁ COMPRA a linha do alvo */}
+                  <div style={{ fontSize: 11.5, color: RD.navy, fontWeight: 800, marginBottom: 6 }}>
+                    2. Mas já comprou da mesma linha
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <select
+                      value={ncEscopo}
+                      onChange={(e) => setNcEscopo(e.target.value as EscopoLinha)}
+                      title="Como agrupar a linha (agrupamento do WinThor)"
+                      style={{ flex: 1, padding: "6px 8px", fontSize: 12, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer", outline: "none" }}
+                    >
+                      {(Object.keys(ESCOPO_LABEL) as EscopoLinha[]).map((k) => (
+                        <option key={k} value={k}>{ESCOPO_LABEL[k]}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={ncPeriodo}
+                      onChange={(e) => setNcPeriodo(e.target.value)}
+                      title="Quando ele comprou da linha"
+                      style={{ flex: 1, padding: "6px 8px", fontSize: 12, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer", outline: "none" }}
+                    >
+                      {NC_PERIODOS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: RD.gray, lineHeight: 1.45, marginBottom: 8 }}>
+                    {ncAlvo == null ? (
+                      <span style={{ color: RD.grayLight }}>Escolha o produto acima para ver a linha dele.</span>
+                    ) : !ncGrupo ? (
+                      <span style={{ color: "#b45309" }}>Este produto não tem {ESCOPO_LABEL[ncEscopo].toLowerCase()} no WinThor — tente outro agrupamento.</span>
+                    ) : ncLinha.length === 0 ? (
+                      <span style={{ color: "#b45309" }}>
+                        <b>{ncGrupo}</b> não tem outro produto — tente um agrupamento mais amplo.
+                      </span>
+                    ) : (
+                      <>
+                        Linha <b>{ncGrupo}</b> · {ncLinhaEfetiva.length} de {ncLinha.length} produto(s)
+                        {" "}
+                        <span
+                          onClick={() => setNcVerLinha((v) => !v)}
+                          style={{ color: RD.cyan, cursor: "pointer", fontWeight: 700 }}
+                        >{ncVerLinha ? "ocultar" : "ver / escolher"}</span>
+                      </>
+                    )}
+                  </div>
+                  {ncVerLinha && ncLinha.length > 0 && (
+                    <div style={{ maxHeight: 140, overflowY: "auto", margin: "0 0 10px", border: `1px solid ${RD.border}`, borderRadius: 8 }}>
+                      {ncLinha.map((p) => (
+                        <label
+                          key={p.codprod}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", fontSize: 12.5, color: RD.navy, cursor: "pointer", borderBottom: `1px solid ${RD.bg}` }}
+                        >
+                          <input type="checkbox" checked={ncLinhaEfetiva.includes(p.codprod)} onChange={() => toggleNcLinha(p.codprod)} />
+                          <span style={{ flex: 1, lineHeight: 1.25 }}>{p.produto}</span>
+                          <span style={{ color: RD.grayLight, fontSize: 10.5, whiteSpace: "nowrap" }}>{p.clientes}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: 10.5, color: RD.grayLight, lineHeight: 1.35 }}>
+                      Compras desde jan/2025
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={limparNaoComprou}
+                        style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 7, cursor: "pointer" }}
+                      >Limpar</button>
+                      <button
+                        onClick={aplicarNaoComprou}
+                        disabled={ncCarregando || ncAlvo == null || ncLinhaEfetiva.length === 0}
+                        style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#fff", background: RD.cyan, border: `1px solid ${RD.cyan}`, borderRadius: 7, cursor: ncCarregando || ncAlvo == null || ncLinhaEfetiva.length === 0 ? "default" : "pointer", opacity: ncCarregando || ncAlvo == null || ncLinhaEfetiva.length === 0 ? 0.6 : 1 }}
+                      >{ncCarregando ? "Aplicando…" : "Aplicar"}</button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           {/* MELHORES CLIENTES: top N por ticket médio dos últimos 3 meses */}
           <div style={{ position: "relative" }}>
             <button
@@ -2268,6 +2540,31 @@ export default function Page() {
             <button
               onClick={limparProduto}
               style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${RD.wine}`, color: RD.wine, borderRadius: 7, padding: "4px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+            >Limpar filtro</button>
+          </div>
+        )}
+
+        {ncFiltro && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            background: RD.cyanSoft, border: `1px solid ${RD.cyan}33`, borderRadius: 10,
+            padding: "9px 14px", marginBottom: 14, fontSize: 12.5, color: RD.navy,
+          }}>
+            <span style={{ fontWeight: 700 }}>
+              Nunca compraram <b>{produtos.find((p) => p.codprod === ncFiltro.alvo)?.produto ?? `cód. ${ncFiltro.alvo}`}</b>
+              {" "}· mas compraram {ncFiltro.linha.length} produto{ncFiltro.linha.length > 1 ? "s" : ""} da mesma linha
+              {" "}({NC_PER_LABEL[ncFiltro.periodo] ?? ncFiltro.periodo})
+            </span>
+            <span>
+              <b>{ncResumo?.board ?? 0}</b> no seu board
+              {" — "}{ncResumo?.pedido ?? 0} em <b>Pedido emitido</b>, {ncResumo?.outros ?? 0} nas outras etapas
+            </span>
+            {ncResumo && ncResumo.total > ncResumo.board && (
+              <span style={{ color: RD.grayLight }}>({ncResumo.total} no total da empresa)</span>
+            )}
+            <button
+              onClick={limparNaoComprou}
+              style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${RD.cyan}`, color: RD.cyan, borderRadius: 7, padding: "4px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
             >Limpar filtro</button>
           </div>
         )}
