@@ -34,8 +34,21 @@ type Conversa = {
   cliente_id: string; cliente: string; vendedor: string | null; etapa: string | null;
   telefone: string | null; ultima_atividade: string | null;
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
+  nao_lida?: boolean; status?: string | null; motivo?: string | null;
 };
-type Msg = { id: string; conteudo: string; enviada_por: string; tipo: string | null; status: string | null; criada_em: string };
+
+// motivos de encerramento = a nossa tabulação (CLAUDE.md §6 e §18)
+const MOTIVOS: { v: string; rotulo: string }[] = [
+  { v: "venda_realizada", rotulo: "✅ Venda realizada" },
+  { v: "tentativa_contato", rotulo: "📞 Tentativa de contato" },
+  { v: "follow_up", rotulo: "🕗 Follow-up agendado" },
+  { v: "sem_interesse", rotulo: "🚫 Sem interesse" },
+  { v: "outro", rotulo: "• Outro" },
+];
+type Msg = {
+  id: string; conteudo: string; enviada_por: string; tipo: string | null; status: string | null; criada_em: string;
+  midia_tipo?: string | null; midia_mime?: string | null; midia_nome?: string | null; midia_path?: string | null;
+};
 
 const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 const horaBR = (iso: string) =>
@@ -48,6 +61,54 @@ const rotuloTempo = (iso: string | null) => {
   const d = diaBR(iso);
   return d === hoje ? horaBR(iso) : d.split("-").reverse().slice(0, 2).join("/");
 };
+
+// ---------------------------------------------------------------------------
+// Mídia na bolha. O arquivo mora em bucket privado; /api/chat/midia devolve uma
+// URL assinada por redirect, então <img>/<audio>/<video> apontam direto pra rota.
+// Se `midia_path` está vazio, a mensagem chegou mas o download falhou — mostra
+// aviso em vez de um player quebrado.
+// ---------------------------------------------------------------------------
+function Midia({ m }: { m: Msg }) {
+  if (!m.midia_tipo) return null;
+  const src = `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
+  const caixa = { borderRadius: 9, marginBottom: 4, display: "block" } as const;
+
+  if (!m.midia_path) {
+    return (
+      <div style={{ fontSize: 11.5, color: M.laranja, background: "#fdeae3", border: "1px solid #f0c4b0", borderRadius: 8, padding: "5px 9px", marginBottom: 4 }}>
+        ⚠️ {rotuloMidia(m.midia_tipo)} não pôde ser baixada
+      </div>
+    );
+  }
+  if (m.midia_tipo === "image" || m.midia_tipo === "sticker") {
+    const max = m.midia_tipo === "sticker" ? 140 : 260;
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer" title="Abrir em tamanho real">
+        <img src={src} alt={m.conteudo || "imagem"} style={{ ...caixa, maxWidth: max, maxHeight: 300, objectFit: "cover", cursor: "zoom-in" }} />
+      </a>
+    );
+  }
+  if (m.midia_tipo === "audio") {
+    return <audio controls preload="none" src={src} style={{ ...caixa, width: 240, height: 38 }} />;
+  }
+  if (m.midia_tipo === "video") {
+    return <video controls preload="metadata" src={src} style={{ ...caixa, maxWidth: 260, maxHeight: 300 }} />;
+  }
+  return (
+    <a href={src} target="_blank" rel="noopener noreferrer"
+       style={{ ...caixa, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(123,45,139,.07)", border: `1px solid ${M.border}`, textDecoration: "none", color: M.ink, maxWidth: 250 }}>
+      <span style={{ fontSize: 18 }}>📎</span>
+      <span style={{ minWidth: 0 }}>
+        <b style={{ display: "block", fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {m.midia_nome || "documento"}
+        </b>
+        <span style={{ fontSize: 10.5, color: M.azul, fontWeight: 700 }}>abrir ↗</span>
+      </span>
+    </a>
+  );
+}
+const rotuloMidia = (t: string) =>
+  ({ image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha" }[t] ?? "Mídia");
 
 // ticks estilo WhatsApp: wait ✓ · success ✓✓ · read/checked ✓✓ azul · failed !
 function Ticks({ status }: { status: string | null }) {
@@ -72,6 +133,10 @@ export default function Chat() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [filtro, setFiltro] = useState<"pendentes" | "todas" | "resolvidas">("todas");
+  const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
+  const [enviandoArquivo, setEnviandoArquivo] = useState(false);
+  const arquivoRef = useRef<HTMLInputElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
@@ -145,9 +210,85 @@ export default function Chat() {
     return () => { cancelado = true; clearInterval(lento); try { canal?.unsubscribe(); } catch {} };
   }, [sessao, carregarLista, carregarThread]);
 
+  // aviso no título da aba: "(3) Chat" — o vendedor percebe sem estar na tela
+  const naoLidas = conversas.filter((c) => c.nao_lida).length;
+  useEffect(() => {
+    document.title = naoLidas ? `(${naoLidas}) Chat — Murano` : "Chat — Murano";
+  }, [naoLidas]);
+
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setAviso(null);
+    setSel(c); setMsgs(null); setAviso(null); setResolvendo(false);
     carregarThread(c);
+    // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
+    if (c.nao_lida) {
+      setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
+    }
+    fetch("/api/chat/lida", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cliente_id: c.cliente_id }),
+    }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
+  }
+
+  // resolver / reabrir a conversa (o substituto do "fechar atendimento" do RD)
+  async function mudarStatus(status: "aberta" | "resolvida", motivo?: string) {
+    if (!sel) return;
+    const antes = sel.status ?? "aberta";
+    setSel({ ...sel, status, motivo: motivo ?? null });
+    setConversas((cs) => cs.map((x) => (x.cliente_id === sel.cliente_id ? { ...x, status, motivo: motivo ?? null } : x)));
+    setResolvendo(false);
+    try {
+      const r = await fetch("/api/chat/status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, status, motivo }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? `erro ${r.status}`);
+    } catch (e: any) {
+      setSel((s) => (s ? { ...s, status: antes } : s));   // desfaz o otimismo
+      setAviso(`Não consegui mudar o status: ${e?.message ?? e}`);
+    }
+  }
+
+  // envio de arquivo (foto, áudio, documento) pelo canal WhatsApp direto
+  async function enviarArquivo(file: File) {
+    if (!sel || enviandoArquivo) return;
+    setEnviandoArquivo(true); setAviso(null);
+    try {
+      const fd = new FormData();
+      fd.set("cliente_id", sel.cliente_id);
+      fd.set("arquivo", file);
+      if (texto.trim()) fd.set("legenda", texto.trim());
+      const r = await fetch("/api/chat/enviar-midia", { method: "POST", body: fd });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) {
+        setAviso(j?.foraDaJanela
+          ? "Fora da janela de 24h — envie um TEMPLATE para reabrir a conversa."
+          : (j?.error ?? `erro ${r.status}`));
+      } else {
+        setTexto("");
+        carregarThread(sel, true);
+        carregarLista();
+      }
+    } catch (e: any) {
+      setAviso(`Falha ao enviar arquivo: ${e?.message ?? e}`);
+    } finally {
+      setEnviandoArquivo(false);
+      if (arquivoRef.current) arquivoRef.current.value = "";
+    }
+  }
+
+  // template de recontato — reabre conversa fora da janela sem sair do chat
+  async function enviarTemplate() {
+    if (!sel || enviando) return;
+    setEnviando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/send-template", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
+      else { carregarThread(sel, true); carregarLista(); }
+    } finally { setEnviando(false); }
   }
 
   async function enviar() {
@@ -168,7 +309,7 @@ export default function Chat() {
       if (!r.ok) {
         setMsgs((m) => (m ?? []).filter((x) => x.id !== otimista.id));
         setAviso(j?.foraDaJanela
-          ? "Fora da janela de 24h do WhatsApp — envie um TEMPLATE pelo board para reabrir a conversa."
+          ? "Fora da janela de 24h do WhatsApp — use o botão TEMPLATE aqui do lado para reabrir a conversa."
           : (j?.error ?? `erro ${r.status}`));
         setTexto(t); // devolve o texto pro campo
       } else {
@@ -190,10 +331,15 @@ export default function Chat() {
   }
 
   const filtradas = conversas.filter((c) => {
+    const st = c.status ?? "aberta";
+    if (filtro === "pendentes" && !(st === "aberta" && c.nao_lida)) return false;
+    if (filtro === "resolvidas" && st !== "resolvida") return false;
+    if (filtro === "todas" && st === "resolvida") return false; // resolvida sai da fila
     if (!busca.trim()) return true;
     const b = busca.toLowerCase();
-    return (c.cliente ?? "").toLowerCase().includes(b) || String(c.telefone ?? "").includes(b.replace(/\D/g, "") || " ");
+    return (c.cliente ?? "").toLowerCase().includes(b) || String(c.telefone ?? "").includes(b.replace(/\D/g, "") || " ");
   });
+  const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida").length;
 
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
@@ -221,13 +367,31 @@ export default function Chat() {
         {/* ---- sidebar: lista de conversas ---- */}
         {mostraLista && (
           <div style={{ width: isMobile ? "100%" : 340, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
-            <div style={{ padding: 10, borderBottom: `1px solid ${M.border}` }}>
+            <div style={{ padding: 10, borderBottom: `1px solid ${M.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
               <input
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 placeholder="🔍  Buscar conversa…"
                 style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10, outline: "none" }}
               />
+              {/* fila: pendentes = cliente falou e ninguém leu ainda */}
+              <div style={{ display: "flex", gap: 6 }}>
+                {([
+                  { k: "pendentes" as const, r: "Pendentes", n: naoLidas },
+                  { k: "todas" as const, r: "Abertas", n: conversas.length - contaResolvidas },
+                  { k: "resolvidas" as const, r: "Resolvidas", n: contaResolvidas },
+                ]).map((t) => {
+                  const on = filtro === t.k;
+                  return (
+                    <button key={t.k} onClick={() => setFiltro(t.k)}
+                      style={{ flex: 1, padding: "5px 6px", fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                        color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                        border: `1px solid ${on ? M.roxo : M.border}`, borderRadius: 8 }}>
+                      {t.r}{t.n > 0 ? ` ${t.n}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ flex: 1, overflowY: "auto" }}>
               {erro && <div style={{ padding: 14, fontSize: 12.5, color: M.laranja }}>{erro}</div>}
@@ -246,8 +410,11 @@ export default function Chat() {
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                        <b style={{ fontSize: 13.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{c.cliente}</b>
-                        <span style={{ fontSize: 10.5, color: doCliente ? M.laranja : M.muted, fontWeight: doCliente ? 800 : 400, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{rotuloTempo(c.ultima_atividade)}</span>
+                        <b style={{ fontSize: 13.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, fontWeight: c.nao_lida ? 900 : 700 }}>{c.cliente}</b>
+                        {(c.status ?? "aberta") === "resolvida" && (
+                          <span title="conversa resolvida" style={{ fontSize: 10, color: "#1a6b3c", flexShrink: 0 }}>✓</span>
+                        )}
+                        <span style={{ fontSize: 10.5, color: c.nao_lida ? M.roxo : M.muted, fontWeight: c.nao_lida ? 800 : 400, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{rotuloTempo(c.ultima_atividade)}</span>
                       </span>
                       <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                         <span style={{ fontSize: 12, color: M.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
@@ -255,6 +422,9 @@ export default function Chat() {
                         </span>
                         {c.vendedor && sessao.carteira == null && (
                           <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{cap(c.vendedor)}</span>
+                        )}
+                        {c.nao_lida && (
+                          <span title="não lida" style={{ width: 9, height: 9, borderRadius: 9, background: M.roxo, flexShrink: 0 }} />
                         )}
                       </span>
                     </span>
@@ -292,12 +462,44 @@ export default function Chat() {
                       {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
                     </span>
                   </span>
+                  {(sel.status ?? "aberta") === "resolvida" ? (
+                    <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
+                      style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      ✓ Resolvida — reabrir
+                    </button>
+                  ) : (
+                    <button onClick={() => setResolvendo((v) => !v)} title="Encerrar atendimento com um motivo"
+                      style={{ fontSize: 11.5, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      Resolver
+                    </button>
+                  )}
                   {sel.telefone && (
                     <a href={`https://wa.me/${String(sel.telefone).replace(/\D/g, "").length <= 11 ? "55" : ""}${String(sel.telefone).replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" title="Abrir no WhatsApp" style={{ fontSize: 12, fontWeight: 700, color: M.azul, textDecoration: "none", whiteSpace: "nowrap" }}>
                       WhatsApp ↗
                     </a>
                   )}
                 </div>
+
+                {/* escolha do motivo — é a nossa tabulação, no fluxo natural do encerramento */}
+                {resolvendo && (
+                  <div style={{ padding: "10px 14px", background: M.roxoSoft, borderBottom: `1px solid ${M.border}` }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, color: M.wine, marginBottom: 7, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      Por que está encerrando?
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {MOTIVOS.map((mo) => (
+                        <button key={mo.v} onClick={() => mudarStatus("resolvida", mo.v)}
+                          style={{ fontSize: 12, fontWeight: 600, color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+                          {mo.rotulo}
+                        </button>
+                      ))}
+                      <button onClick={() => setResolvendo(false)}
+                        style={{ fontSize: 12, color: M.gray, background: "transparent", border: "none", padding: "6px 8px", cursor: "pointer", fontFamily: "inherit" }}>
+                        cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* mensagens */}
                 <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -316,7 +518,11 @@ export default function Chat() {
                               {m.tipo === "template" && (
                                 <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.roxo, marginBottom: 3 }}>template</div>
                               )}
-                              <div style={{ fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.conteudo}</div>
+                              <Midia m={m} />
+                              {/* com mídia, o texto só aparece se for legenda de verdade (não o rótulo) */}
+                              {(!m.midia_tipo || (m.conteudo && !/^(📷|🎬|🎤|📎|🙂)/.test(m.conteudo))) && (
+                                <div style={{ fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.conteudo}</div>
+                              )}
                               <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                                 {horaBR(m.criada_em)}
                                 {fora && <Ticks status={m.status} />}
@@ -338,7 +544,31 @@ export default function Chat() {
                 )}
 
                 {/* caixa de envio */}
-                <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: M.surface, borderTop: `1px solid ${M.border}` }}>
+                <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: M.surface, borderTop: `1px solid ${M.border}`, alignItems: "flex-end" }}>
+                  {/* anexo: foto, áudio, documento — o texto digitado vira legenda */}
+                  <input
+                    ref={arquivoRef}
+                    type="file"
+                    accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
+                    style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarArquivo(f); }}
+                  />
+                  <button
+                    onClick={() => arquivoRef.current?.click()}
+                    disabled={enviandoArquivo}
+                    title="Anexar foto, áudio ou documento"
+                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 17, cursor: enviandoArquivo ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    {enviandoArquivo ? "…" : "📎"}
+                  </button>
+                  <button
+                    onClick={enviarTemplate}
+                    disabled={enviando}
+                    title="Enviar template de recontato (reabre conversa fora da janela de 24h)"
+                    style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    TEMPLATE
+                  </button>
                   <textarea
                     value={texto}
                     onChange={(e) => setTexto(e.target.value)}
@@ -351,7 +581,7 @@ export default function Chat() {
                     onClick={enviar}
                     disabled={enviando || !texto.trim()}
                     title="Enviar (Enter)"
-                    style={{ alignSelf: "flex-end", width: 44, height: 42, borderRadius: 12, border: "none", background: texto.trim() ? M.roxo : M.roxoSoft, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s" }}
+                    style={{ width: 44, height: 42, borderRadius: 12, border: "none", background: texto.trim() ? M.roxo : M.roxoSoft, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
                   >
                     {enviando ? "…" : "➤"}
                   </button>

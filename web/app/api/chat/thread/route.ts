@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   const [{ data: cli }, { data, error }] = await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
-      .select("id,conteudo,enviada_por,tipo,status,criada_em")
+      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: false })
       .limit(200),

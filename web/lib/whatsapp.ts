@@ -88,6 +88,113 @@ export function sendText(to: string, texto: string): Promise<EnvioOk> {
   return post({ to, type: "text", text: { body: texto, preview_url: false } });
 }
 
+// ---------------------------------------------------------------------------
+// MÍDIA
+// ---------------------------------------------------------------------------
+
+/** Metadados + binário de uma mídia recebida. */
+export type MidiaBaixada = { bytes: ArrayBuffer; mime: string; tamanho: number };
+
+/**
+ * Baixa a mídia de uma mensagem recebida. São DUAS chamadas ao Graph: a primeira
+ * troca o `media_id` por uma URL temporária, a segunda busca o binário (e também
+ * exige o token — a URL sozinha não abre).
+ *
+ * O `media_id` expira (~30 dias), então o webhook baixa na hora que a mensagem
+ * chega. `timeoutMs` existe porque o webhook precisa responder rápido: se a
+ * Meta não receber 200 a tempo, ela reenvia o evento.
+ */
+export async function baixarMidia(mediaId: string, timeoutMs = 8000): Promise<MidiaBaixada> {
+  const token = env("WHATSAPP_TOKEN");
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const metaResp = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctrl.signal,
+    });
+    const meta: any = await metaResp.json().catch(() => ({}));
+    if (!metaResp.ok || !meta?.url) {
+      throw new Error(`Graph media ${metaResp.status}: ${meta?.error?.message ?? "sem url"}`);
+    }
+    const binResp = await fetch(meta.url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctrl.signal,
+    });
+    if (!binResp.ok) throw new Error(`download da mídia falhou: HTTP ${binResp.status}`);
+    const bytes = await binResp.arrayBuffer();
+    return {
+      bytes,
+      mime: String(meta.mime_type ?? binResp.headers.get("content-type") ?? "application/octet-stream"),
+      tamanho: bytes.byteLength,
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** Categoria de mídia que a Cloud API aceita, deduzida do mime do arquivo. */
+export function tipoDoMime(mime: string): "image" | "audio" | "video" | "document" {
+  const m = mime.split(";")[0].trim().toLowerCase();
+  if (m.startsWith("image/")) return "image";
+  if (m.startsWith("audio/")) return "audio";
+  if (m.startsWith("video/")) return "video";
+  return "document";
+}
+
+/**
+ * Envia mídia: primeiro sobe o arquivo (vira um `media_id` na Meta), depois manda
+ * a mensagem referenciando esse id. Como texto livre, só funciona dentro da janela
+ * de 24h — `foraDaJanela` é sinalizado igual ao sendText.
+ */
+export async function sendMedia(
+  to: string, arquivo: ArrayBuffer, mime: string, nome: string, legenda?: string,
+): Promise<EnvioOk> {
+  const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
+  const token = env("WHATSAPP_TOKEN");
+
+  const form = new FormData();
+  form.set("messaging_product", "whatsapp");
+  form.set("type", mime);
+  form.set("file", new Blob([arquivo], { type: mime }), nome);
+
+  const up = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const upBody: any = await up.json().catch(() => ({}));
+  if (!up.ok || !upBody?.id) {
+    throw new Error(`upload da mídia falhou: ${upBody?.error?.message ?? `HTTP ${up.status}`}`);
+  }
+
+  const tipo = tipoDoMime(mime);
+  // legenda: só imagem, vídeo e documento aceitam; áudio não
+  const conteudo: Record<string, unknown> = { id: upBody.id };
+  if (legenda && tipo !== "audio") conteudo.caption = legenda;
+  if (tipo === "document") conteudo.filename = nome;
+
+  return post({ to, type: tipo, [tipo]: conteudo });
+}
+
+/** Extensão de arquivo a partir do mime — só para o nome no Storage ficar legível. */
+export function extensaoDoMime(mime: string): string {
+  const mapa: Record<string, string> = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/amr": "amr", "audio/aac": "aac",
+    "video/mp4": "mp4", "video/3gpp": "3gp",
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  };
+  const limpo = mime.split(";")[0].trim().toLowerCase();
+  if (mapa[limpo]) return mapa[limpo];
+  const sub = limpo.split("/")[1] ?? "bin";
+  return sub.replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
+}
+
 /** Template aprovado. `components` segue o formato do Graph (body params etc.); omitir se o template não tem variáveis. */
 export function sendTemplate(
   to: string,
