@@ -73,10 +73,14 @@ export async function GET(req: Request) {
   const waba = new URL(req.url).searchParams.get("waba") || process.env.WHATSAPP_WABA_ID;
   if (!waba) return Response.json({ error: "informe ?waba=<id> ou configure WHATSAPP_WABA_ID" }, { status: 400 });
 
-  const [numeros, inscritos, conta] = await Promise.all([
-    graph(`${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type`),
+  const [numeros, inscritos, conta, permissoes] = await Promise.all([
+    graph(`${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,code_verification_status,platform_type,status,name_status,throughput`),
     graph(`${waba}/subscribed_apps`),
     graph(`${waba}?fields=id,name,currency,timezone_id,message_template_namespace`),
+    // QUAIS TAREFAS o nosso usuário do sistema tem nesta conta. É o que distingue
+    // "consigo ler mas não enviar" (acesso parcial) de "o número não está
+    // registrado na Cloud API" — as duas causas clássicas do erro #200.
+    graph(`${waba}/assigned_users?fields=name,tasks`),
   ]);
 
   return Response.json({
@@ -85,7 +89,8 @@ export async function GET(req: Request) {
     conta,
     numeros,
     apps_inscritos_no_webhook: inscritos,
-    dica: "o phone_number_id do número desejado é `numeros.data[].id`; se `apps_inscritos_no_webhook` não listar o nosso app, chame este endpoint com POST para inscrever",
+    permissoes_do_usuario_do_sistema: permissoes,
+    dica: "para ENVIAR é preciso: tasks incluir MANAGE em `permissoes_do_usuario_do_sistema`, e o número estar registrado (`numeros.data[].status` = CONNECTED)",
   });
 }
 
