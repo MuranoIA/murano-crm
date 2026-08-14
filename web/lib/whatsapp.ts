@@ -133,6 +133,16 @@ export async function baixarMidia(mediaId: string, timeoutMs = 8000): Promise<Mi
   }
 }
 
+/**
+ * phone_number_id da linha usada para ENVIAR hoje. Enquanto houver uma linha só,
+ * vem da env; quando existirem várias (linha por vendedor), este é o ponto único
+ * a trocar por uma escolha por conversa.
+ */
+export function linhaDeEnvio(): string | null {
+  const v = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  return v ? v.replace(/[^\x21-\x7E]/g, "") : null;
+}
+
 /** Categoria de mídia que a Cloud API aceita, deduzida do mime do arquivo. */
 export function tipoDoMime(mime: string): "image" | "audio" | "video" | "document" {
   const m = mime.split(";")[0].trim().toLowerCase();

@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendText } from "../../../lib/whatsapp";
+import { canalDeResposta, sendText, linhaDeEnvio } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -58,6 +58,7 @@ export async function POST(req: Request) {
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "mensagem", conteudo: texto,
           status: "wait", criada_em: new Date().toISOString(),
+          linha_id: linhaDeEnvio(),
         }, { onConflict: "id" });
         return Response.json({ ok: true, cliente: cli.nome_completo, canal: "whatsapp" });
       } catch (e: any) {
