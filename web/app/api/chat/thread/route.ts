@@ -18,13 +18,20 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const [{ data: cli }, { data, error }] = await Promise.all([
+  const [{ data: cli }, { data, error }, { data: notas }] = await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
       .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: false })
       .limit(200),
+    // notas internas (migration 0080) — vêm à parte e o front intercala pela data.
+    // Todas, sem limite de janela: são poucas por conversa, e esconder uma nota
+    // que caiu fora das 200 últimas mensagens seria perder um recado da equipe.
+    sb.from("chat_nota")
+      .select("id,autor,texto,criada_em")
+      .eq("cliente_id", cliente_id)
+      .order("criada_em", { ascending: true }),
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -35,6 +42,7 @@ export async function GET(req: Request) {
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
     mensagens,
+    notas: notas ?? [],
     atualizado_em: new Date().toISOString(),
   });
 }

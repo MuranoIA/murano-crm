@@ -1222,11 +1222,31 @@ cliente aparece no chat como rótulo (`[áudio]`), não como player. Isso é esp
 | 4 | **Status aberta / resolvida** (com motivo) | dá a noção de fila. Substitui o "fechar atendimento" do RD e **é a nossa tabulação**: motivo no encerramento vira a métrica confiável de venda que o RD nunca entregou (ver seções 6 e 8). Reabre sozinha quando o cliente responde |
 | 5 | **Template dentro do chat** | hoje o aviso de janela fechada manda o usuário ir ao board — quebra o fluxo. A rota já existe |
 
-### P1 — profissionalismo e produtividade (o que ainda falta)
+### P1 — profissionalismo e produtividade
 
-~~Painel do contato~~ **ENTREGUE** (ver quadro acima). Restam: respostas rápidas
-(atalho `/`, `crm_templates` como base) · notas internas na thread · transferência de
-conversa entre vendedores com registro · busca no **conteúdo** das mensagens.
+~~Painel do contato~~ **ENTREGUE** (ver quadro acima).
+
+**✅ Respostas rápidas e notas internas — ENTREGUES em 14/08/2026 (migration 0080).**
+
+| Item | Como ficou |
+|---|---|
+| Respostas rápidas | Digitar `/` (ou o botão ⚡) na caixa abre a lista; `/atalho` filtra, ↑↓ navega, Enter cola o texto. Alcance duplo: `carteira is null` = **da casa** (todo mundo vê, só admin/home cria) · `carteira = <slug>` = **pessoal** do vendedor. Cria-se salvando o texto que já está na caixa — sem tela de cadastro à parte. Rota `/api/chat/respostas` (GET/POST/PATCH/DELETE) |
+| Notas internas | Botão 🗒️ troca a caixa de "mensagem" para "nota"; a caixa muda de cor para deixar óbvio que **aquilo não vai pro cliente**. A nota aparece na thread, no ponto da conversa em que foi escrita, como papel amarelo. Apaga só o autor (ou o admin). Rota `/api/chat/notas` (POST/DELETE); a leitura vem junto do `/api/chat/thread`, que agora devolve `notas[]` e o front intercala pela data |
+
+**⚠️ Correção do que este documento afirmava:** a linha anterior dizia para usar
+`crm_templates` como base das respostas rápidas. **Não dá** — aquela tabela guarda
+`nome` + `rd_template_id` (o template aprovado na Meta/RD que reabre a janela de
+24h) e **não tem coluna de corpo**: o texto mora fora do nosso banco. São conceitos
+diferentes com nomes parecidos. Daí a tabela nova `chat_resposta_rapida`.
+
+**Por que `chat_nota` é tabela separada e não uma linha em `mensagens` com
+`tipo='nota'`:** `mensagens` é espelho do que trafegou no WhatsApp, escrito por
+UPSERT do ETL e do webhook — uma nota ali corre risco de sumir num re-fetch, e
+contaminaria os contadores, as views e a régua de "quem falou por último" que
+decide a etapa do funil (§11.1). Mesmo raciocínio da §10.11.
+
+**Restam:** transferência de conversa entre vendedores com registro · busca no
+**conteúdo** das mensagens.
 
 ### P2 — paridade avançada (quando a operação estabilizar)
 

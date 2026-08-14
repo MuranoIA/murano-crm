@@ -49,6 +49,16 @@ type Msg = {
   id: string; conteudo: string; enviada_por: string; tipo: string | null; status: string | null; criada_em: string;
   midia_tipo?: string | null; midia_mime?: string | null; midia_nome?: string | null; midia_path?: string | null;
 };
+// nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
+type Nota = { id: number; autor: string; texto: string; criada_em: string };
+// resposta rápida: texto nosso colado na caixa pelo atalho `/` — NÃO é template
+// do WhatsApp (aquele mora em crm_templates e reabre a janela de 24h)
+type Resposta = { id: number; atalho: string; titulo: string; corpo: string; carteira: string | null };
+// a thread mistura os dois na ordem do relógio
+type Item = { k: "m"; em: string; m: Msg } | { k: "n"; em: string; n: Nota };
+
+// cor da nota interna: papel de recado, deliberadamente fora da paleta das bolhas
+const NOTA = { bg: "#fdf6e3", borda: "#e8d9a8", ink: "#6b5a1f" };
 // painel do contato: dados do WinThor ao lado da conversa (o RD não tem isso)
 type Contato = {
   compras: { codcli: number | null; cidade: string | null; compras: number | null; ultima_compra: string | null;
@@ -247,7 +257,17 @@ export default function Chat() {
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
   const [painelAberto, setPainelAberto] = useState(true);
+  // --- P1: notas internas e respostas rápidas -------------------------------
+  const [notas, setNotas] = useState<Nota[]>([]);
+  const [modoNota, setModoNota] = useState(false);        // caixa escreve nota, não mensagem
+  const [respostas, setRespostas] = useState<Resposta[]>([]);
+  const [picker, setPicker] = useState(false);            // lista de respostas aberta
+  const [pickerIdx, setPickerIdx] = useState(0);          // item destacado (setas do teclado)
+  const [novaAberta, setNovaAberta] = useState(false);    // formulário "nova resposta"
+  const [novoAtalho, setNovoAtalho] = useState("");
+  const [novoTitulo, setNovoTitulo] = useState("");
   const arquivoRef = useRef<HTMLInputElement>(null);
+  const textoRef = useRef<HTMLTextAreaElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
@@ -284,13 +304,24 @@ export default function Chat() {
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     setMsgs(j?.mensagens ?? []);
+    setNotas(j?.notas ?? []);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
+  }, []);
+
+  // catálogo de respostas rápidas: carrega uma vez por sessão (muda raramente).
+  // Vendedor recebe as da casa + as dele; admin/home recebem todas.
+  const carregarRespostas = useCallback(async () => {
+    try {
+      const r = await fetch("/api/chat/respostas", { cache: "no-store" });
+      if (r.ok) setRespostas((await r.json())?.respostas ?? []);
+    } catch { /* sem respostas rápidas o chat funciona igual */ }
   }, []);
 
   // carga inicial + poll lento (rede de proteção) + Realtime (mesmo canal do board)
   useEffect(() => {
     if (!sessao) return;
     carregarLista();
+    carregarRespostas();
     const lento = setInterval(() => {
       carregarLista();
       if (selRef.current) carregarThread(selRef.current, false);
@@ -319,7 +350,7 @@ export default function Chat() {
     })();
 
     return () => { cancelado = true; clearInterval(lento); try { canal?.unsubscribe(); } catch {} };
-  }, [sessao, carregarLista, carregarThread]);
+  }, [sessao, carregarLista, carregarThread, carregarRespostas]);
 
   // aviso no título da aba: "(3) Chat" — o vendedor percebe sem estar na tela
   const naoLidas = conversas.filter((c) => c.nao_lida).length;
@@ -376,7 +407,8 @@ export default function Chat() {
   }, []);
 
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setAviso(null); setResolvendo(false); setContato(null);
+    setSel(c); setMsgs(null); setNotas([]); setAviso(null); setResolvendo(false); setContato(null);
+    setModoNota(false); setPicker(false); setNovaAberta(false);
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
@@ -455,6 +487,97 @@ export default function Chat() {
     } finally { setEnviando(false); }
   }
 
+  // ---- notas internas ------------------------------------------------------
+  // Não passam pelo WhatsApp: gravam em chat_nota e aparecem só aqui. É o recado
+  // que antes ia parar no caderno do vendedor ou num grupo paralelo.
+  async function enviarNota() {
+    const t = texto.trim();
+    if (!t || !sel || enviando) return;
+    setEnviando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/notas", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, texto: t }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
+      else {
+        setNotas((n) => [...n, j.nota]);
+        setTexto("");
+        setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+      }
+    } finally { setEnviando(false); }
+  }
+
+  async function apagarNota(id: number) {
+    const antes = notas;
+    setNotas((n) => n.filter((x) => x.id !== id));     // otimista
+    try {
+      const r = await fetch("/api/chat/notas", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? `erro ${r.status}`);
+    } catch (e: any) {
+      setNotas(antes);                                  // desfaz
+      setAviso(`Não consegui apagar a nota: ${e?.message ?? e}`);
+    }
+  }
+
+  // ---- respostas rápidas ---------------------------------------------------
+  function inserirResposta(r: Resposta) {
+    setTexto(r.corpo);
+    setPicker(false); setNovaAberta(false);
+    setTimeout(() => {
+      const el = textoRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 10);
+  }
+
+  // salva o que está escrito na caixa como uma resposta nova. Vendedor cria a
+  // dele; admin/home criam a da casa — quem decide é o servidor, pela sessão.
+  async function salvarResposta() {
+    const corpo = texto.trim();
+    if (!corpo || corpo.startsWith("/")) return;
+    try {
+      const r = await fetch("/api/chat/respostas", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ atalho: novoAtalho, titulo: novoTitulo || corpo.slice(0, 40), corpo }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      setRespostas((rs) => [...rs, j.resposta].sort((a, b) => a.atalho.localeCompare(b.atalho)));
+      setNovaAberta(false); setNovoAtalho(""); setNovoTitulo("");
+    } catch (e: any) {
+      setAviso(`Não consegui salvar a resposta: ${e?.message ?? e}`);
+    }
+  }
+
+  async function apagarResposta(r: Resposta) {
+    if (!confirm(`Apagar a resposta rápida /${r.atalho}?`)) return;
+    const antes = respostas;
+    setRespostas((rs) => rs.filter((x) => x.id !== r.id));
+    try {
+      const res = await fetch("/api/chat/respostas", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: r.id }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? `erro ${res.status}`);
+    } catch (e: any) {
+      setRespostas(antes);
+      setAviso(`Não consegui apagar: ${e?.message ?? e}`);
+    }
+  }
+
+  // digitar `/` (ou `/algo`, sem espaço) no início da caixa abre a lista
+  function aoDigitar(v: string) {
+    setTexto(v);
+    if (modoNota) { setPicker(false); return; }
+    const ehAtalho = /^\/[a-zA-Z0-9]*$/.test(v);
+    setPicker(ehAtalho);
+    if (ehAtalho) setPickerIdx(0);
+  }
+
   async function enviar() {
     const t = texto.trim();
     if (!t || !sel || enviando) return;
@@ -508,14 +631,27 @@ export default function Chat() {
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
 
-  // agrupa mensagens por dia pro separador de data
-  const grupos: { dia: string; itens: Msg[] }[] = [];
-  for (const m of msgs ?? []) {
-    const d = diaBR(m.criada_em);
+  // thread = mensagens + notas internas na mesma linha do tempo, agrupadas por dia
+  const linha: Item[] = [
+    ...(msgs ?? []).map((m) => ({ k: "m" as const, em: m.criada_em, m })),
+    ...notas.map((n) => ({ k: "n" as const, em: n.criada_em, n })),
+  ].sort((a, b) => (a.em < b.em ? -1 : a.em > b.em ? 1 : 0));
+
+  const grupos: { dia: string; itens: Item[] }[] = [];
+  for (const it of linha) {
+    const d = diaBR(it.em);
     const g = grupos[grupos.length - 1];
-    if (g && g.dia === d) g.itens.push(m);
-    else grupos.push({ dia: d, itens: [m] });
+    if (g && g.dia === d) g.itens.push(it);
+    else grupos.push({ dia: d, itens: [it] });
   }
+
+  // respostas rápidas visíveis no picker: filtradas pelo que veio depois da `/`
+  const termo = texto.startsWith("/") ? texto.slice(1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+  const respostasFiltradas = respostas.filter(
+    (r) => !termo || r.atalho.includes(termo) || r.titulo.toLowerCase().includes(termo),
+  );
+  const idxAtual = Math.min(pickerIdx, Math.max(0, respostasFiltradas.length - 1));
+  const podeSalvar = !!texto.trim() && !texto.startsWith("/");
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
@@ -674,13 +810,41 @@ export default function Chat() {
                 {/* mensagens */}
                 <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
-                  {msgs?.length === 0 && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
+                  {msgs?.length === 0 && !notas.length && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
                   {grupos.map((g) => (
                     <div key={g.dia} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <div style={{ alignSelf: "center", fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px", margin: "8px 0 4px" }}>
                         {g.dia.split("-").reverse().join("/")}
                       </div>
-                      {g.itens.map((m) => {
+                      {g.itens.map((it) => {
+                        // nota interna: papel amarelo no meio da thread, sem tick e
+                        // sem lado — não é mensagem, o cliente não vê
+                        if (it.k === "n") {
+                          const n = it.n;
+                          return (
+                            <div key={`n${n.id}`} style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
+                              <div style={{ maxWidth: "82%", background: NOTA.bg, border: `1px solid ${NOTA.borda}`, borderRadius: 10, padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.05)" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                                  <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: NOTA.ink }}>
+                                    🗒️ nota interna
+                                  </span>
+                                  <span style={{ fontSize: 10, color: NOTA.ink, opacity: 0.75, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {n.autor}
+                                  </span>
+                                  <button onClick={() => apagarNota(n.id)} title="Apagar nota"
+                                    style={{ background: "transparent", border: "none", color: NOTA.ink, opacity: 0.55, fontSize: 12, cursor: "pointer", padding: "0 2px", fontFamily: "inherit", flexShrink: 0 }}>
+                                    ✕
+                                  </button>
+                                </div>
+                                <div style={{ fontSize: 13, lineHeight: 1.45, color: NOTA.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{n.texto}</div>
+                                <div style={{ textAlign: "right", fontSize: 10, color: NOTA.ink, opacity: 0.6, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                                  {horaBR(n.criada_em)}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        const m = it.m;
                         const fora = m.enviada_por !== "customer"; // operator/bot = lado direito
                         return (
                           <div key={m.id} style={{ display: "flex", justifyContent: fora ? "flex-end" : "flex-start" }}>
@@ -713,8 +877,88 @@ export default function Chat() {
                   </div>
                 )}
 
-                {/* caixa de envio */}
-                <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: M.surface, borderTop: `1px solid ${M.border}`, alignItems: "flex-end" }}>
+                {/* ---- respostas rápidas: abre digitando `/` ou pelo botão ⚡ ---- */}
+                {picker && (
+                  <div style={{ margin: "0 14px", background: M.surface, border: `1px solid ${M.border}`, borderRadius: "10px 10px 0 0", borderBottom: "none", overflow: "hidden" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", background: M.roxoSoft, borderBottom: `1px solid ${M.border}` }}>
+                      <b style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.wine }}>⚡ Respostas rápidas</b>
+                      <span style={{ flex: 1, fontSize: 10.5, color: M.gray }}>
+                        {termo ? `filtrando “${termo}”` : "digite / e o atalho · ↑↓ navega · Enter usa"}
+                      </span>
+                      <button onClick={() => { setPicker(false); setNovaAberta(false); }} title="Fechar"
+                        style={{ background: "transparent", border: "none", color: M.gray, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                    </div>
+
+                    <div style={{ maxHeight: 210, overflowY: "auto" }}>
+                      {respostasFiltradas.map((r, i) => {
+                        const dela = r.carteira == null;                       // resposta da casa
+                        const podeApagar = sessao.carteira == null || r.carteira === sessao.carteira;
+                        return (
+                          <div key={r.id} onMouseEnter={() => setPickerIdx(i)}
+                            style={{ display: "flex", alignItems: "stretch", background: i === idxAtual ? M.roxoSoft : "transparent", borderBottom: `1px solid ${M.bg}` }}>
+                            <button onClick={() => inserirResposta(r)}
+                              style={{ flex: 1, minWidth: 0, textAlign: "left", display: "flex", alignItems: "baseline", gap: 8, padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: M.roxo, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 6, padding: "1px 6px", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                                /{r.atalho}
+                              </span>
+                              <span style={{ minWidth: 0, flex: 1 }}>
+                                <b style={{ display: "block", fontSize: 12.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.titulo}</b>
+                                <span style={{ display: "block", fontSize: 11.5, color: M.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.corpo}</span>
+                              </span>
+                              <span title={dela ? "resposta da casa — todo mundo vê" : "sua resposta"}
+                                style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", color: dela ? M.wine : M.azul, flexShrink: 0 }}>
+                                {dela ? "casa" : "sua"}
+                              </span>
+                            </button>
+                            {podeApagar && (
+                              <button onClick={() => apagarResposta(r)} title={`Apagar /${r.atalho}`}
+                                style={{ background: "transparent", border: "none", color: M.muted, fontSize: 12, cursor: "pointer", padding: "0 10px", fontFamily: "inherit" }}>✕</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {!respostasFiltradas.length && (
+                        <div style={{ padding: "12px 14px", fontSize: 12, color: M.muted }}>
+                          {termo ? `Nenhuma resposta com “${termo}”.` : "Você ainda não tem respostas rápidas."}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* criar uma nova a partir do que está escrito na caixa */}
+                    <div style={{ borderTop: `1px solid ${M.border}`, padding: "8px 12px", background: M.bg }}>
+                      {!novaAberta ? (
+                        <button onClick={() => { setNovaAberta(true); setNovoAtalho(""); setNovoTitulo(""); }}
+                          disabled={!podeSalvar}
+                          title={podeSalvar ? "Salvar o texto da caixa como resposta rápida" : "Escreva o texto na caixa primeiro"}
+                          style={{ fontSize: 11.5, fontWeight: 700, color: podeSalvar ? M.roxo : M.muted, background: "transparent", border: "none", cursor: podeSalvar ? "pointer" : "default", fontFamily: "inherit", padding: 0 }}>
+                          ＋ salvar o texto da caixa como resposta rápida
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 12, color: M.gray }}>/</span>
+                          <input value={novoAtalho} onChange={(e) => setNovoAtalho(e.target.value)} placeholder="atalho" autoFocus
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); salvarResposta(); } }}
+                            style={{ width: 96, padding: "5px 8px", fontSize: 12, fontFamily: "inherit", color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none" }} />
+                          <input value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} placeholder="título (opcional)"
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); salvarResposta(); } }}
+                            style={{ flex: 1, minWidth: 120, padding: "5px 8px", fontSize: 12, fontFamily: "inherit", color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none" }} />
+                          <button onClick={salvarResposta} disabled={!novoAtalho.trim()}
+                            style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: novoAtalho.trim() ? M.roxo : M.roxoSoft, border: "none", borderRadius: 8, padding: "6px 12px", cursor: novoAtalho.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                            salvar
+                          </button>
+                          <button onClick={() => setNovaAberta(false)}
+                            style={{ fontSize: 11.5, color: M.gray, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>cancelar</button>
+                          <div style={{ width: "100%", fontSize: 11, color: M.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            texto: “{texto.trim()}”
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
+                <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
                   {/* anexo: foto, áudio, documento — o texto digitado vira legenda */}
                   <input
                     ref={arquivoRef}
@@ -725,35 +969,67 @@ export default function Chat() {
                   />
                   <button
                     onClick={() => arquivoRef.current?.click()}
-                    disabled={enviandoArquivo}
-                    title="Anexar foto, áudio ou documento"
-                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 17, cursor: enviandoArquivo ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    disabled={enviandoArquivo || modoNota}
+                    title={modoNota ? "Nota interna não leva anexo" : "Anexar foto, áudio ou documento"}
+                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 17, opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {enviandoArquivo ? "…" : "📎"}
                   </button>
+                  {/* ⚡ respostas rápidas — o mesmo que digitar `/` */}
                   <button
-                    onClick={enviarTemplate}
-                    disabled={enviando}
-                    title="Enviar template de recontato (reabre conversa fora da janela de 24h)"
-                    style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
+                    disabled={modoNota}
+                    title="Respostas rápidas (ou digite / na caixa)"
+                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    TEMPLATE
+                    ⚡
                   </button>
+                  {/* 🗒️ nota interna — o cliente NUNCA vê o que for escrito aqui */}
+                  <button
+                    onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
+                    title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
+                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    🗒️
+                  </button>
+                  {!modoNota && (
+                    <button
+                      onClick={enviarTemplate}
+                      disabled={enviando}
+                      title="Enviar template de recontato (reabre conversa fora da janela de 24h)"
+                      style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    >
+                      TEMPLATE
+                    </button>
+                  )}
                   <textarea
+                    ref={textoRef}
                     value={texto}
-                    onChange={(e) => setTexto(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
-                    placeholder="Escreva uma mensagem… (Enter envia, Shift+Enter quebra linha)"
+                    onChange={(e) => aoDigitar(e.target.value)}
+                    onKeyDown={(e) => {
+                      // com a lista aberta, o teclado pertence a ela
+                      if (picker && respostasFiltradas.length) {
+                        const n = respostasFiltradas.length;
+                        if (e.key === "ArrowDown") { e.preventDefault(); setPickerIdx((i) => (Math.min(i, n - 1) + 1) % n); return; }
+                        if (e.key === "ArrowUp") { e.preventDefault(); setPickerIdx((i) => (Math.min(i, n - 1) - 1 + n) % n); return; }
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); inserirResposta(respostasFiltradas[idxAtual]); return; }
+                      }
+                      if (e.key === "Escape" && picker) { e.preventDefault(); setPicker(false); setNovaAberta(false); return; }
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (modoNota) enviarNota(); else enviar(); }
+                    }}
+                    placeholder={modoNota
+                      ? "Nota interna — só a equipe vê (Enter salva)"
+                      : "Escreva uma mensagem… (/ abre respostas rápidas, Enter envia)"}
                     rows={1}
-                    style={{ flex: 1, resize: "none", padding: "10px 13px", fontSize: 13.5, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12, outline: "none", lineHeight: 1.4, maxHeight: 110 }}
+                    style={{ flex: 1, resize: "none", padding: "10px 13px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: modoNota ? M.surface : M.bg, border: `1px solid ${modoNota ? NOTA.borda : M.border}`, borderRadius: 12, outline: "none", lineHeight: 1.4, maxHeight: 110 }}
                   />
                   <button
-                    onClick={enviar}
+                    onClick={() => (modoNota ? enviarNota() : enviar())}
                     disabled={enviando || !texto.trim()}
-                    title="Enviar (Enter)"
-                    style={{ width: 44, height: 42, borderRadius: 12, border: "none", background: texto.trim() ? M.roxo : M.roxoSoft, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
+                    title={modoNota ? "Salvar nota interna (Enter)" : "Enviar (Enter)"}
+                    style={{ width: 44, height: 42, borderRadius: 12, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
                   >
-                    {enviando ? "…" : "➤"}
+                    {enviando ? "…" : modoNota ? "🗒️" : "➤"}
                   </button>
                 </div>
               </>
