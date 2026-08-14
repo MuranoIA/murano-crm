@@ -78,13 +78,19 @@ async function processar(body: any): Promise<void> {
     for (const change of entry?.changes ?? []) {
       if (change?.field !== "messages") continue;
       const value = change.value ?? {};
+      // POR QUAL LINHA esta mensagem entrou. Com mais de um número ativo, é o que
+      // permite responder pelo número certo — a janela de 24h é por par
+      // (número, cliente), então responder pela linha errada quebra a conversa.
+      const linhaId: string | null = value?.metadata?.phone_number_id
+        ? String(value.metadata.phone_number_id)
+        : null;
       // nome de perfil por wa_id (vem junto com as mensagens)
       const nomes = new Map<string, string>();
       for (const c of value.contacts ?? []) {
         if (c?.wa_id && c?.profile?.name) nomes.set(c.wa_id, c.profile.name);
       }
       for (const msg of value.messages ?? []) {
-        await gravarMensagemRecebida(sb, msg, nomes.get(msg.from));
+        await gravarMensagemRecebida(sb, msg, nomes.get(msg.from), linhaId);
       }
       for (const st of value.statuses ?? []) {
         await atualizarStatus(sb, st);
@@ -96,7 +102,9 @@ async function processar(body: any): Promise<void> {
 // ---------------------------------------------------------------------------
 // Mensagem recebida do cliente
 // ---------------------------------------------------------------------------
-async function gravarMensagemRecebida(sb: any, msg: any, nomePerfil?: string): Promise<void> {
+async function gravarMensagemRecebida(
+  sb: any, msg: any, nomePerfil?: string, linhaId?: string | null,
+): Promise<void> {
   const waId: string = String(msg.from ?? "");
   const wamid: string = String(msg.id ?? "");
   if (!waId || !wamid) return;
@@ -112,6 +120,7 @@ async function gravarMensagemRecebida(sb: any, msg: any, nomePerfil?: string): P
     is_reply: Boolean(msg.context?.id) || null,
     status: "success",
     criada_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
+    linha_id: linhaId ?? null,
     ...(await processarMidia(sb, msg, wamid, cliente.id)),
   };
   const { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });

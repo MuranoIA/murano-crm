@@ -246,6 +246,7 @@ export default function Chat() {
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
+  const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
   const [painelAberto, setPainelAberto] = useState(true);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
@@ -284,6 +285,7 @@ export default function Chat() {
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     setMsgs(j?.mensagens ?? []);
+    setLinha(j?.linha ?? null);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
 
@@ -624,6 +626,17 @@ export default function Chat() {
                     <b style={{ display: "block", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sel.cliente}</b>
                     <span style={{ fontSize: 11, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                       {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
+                      {/* por qual NÚMERO esta conversa corre — com mais de uma linha
+                          ativa, é o que evita responder pela linha errada (a janela
+                          de 24h é por par número+cliente) */}
+                      {linha && (
+                        <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
+                          color: linha.canal === "rd" ? M.gray : M.roxo,
+                          background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
+                          borderRadius: 999, padding: "1px 7px" }}>
+                          {linha.rotulo}
+                        </span>
+                      )}
                     </span>
                   </span>
                   {!isMobile && (

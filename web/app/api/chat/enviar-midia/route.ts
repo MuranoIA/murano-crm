@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { canalDeResposta, sendMedia, tipoDoMime, extensaoDoMime } from "../../../../lib/whatsapp";
+import { canalDeResposta, sendMedia, tipoDoMime, extensaoDoMime, linhaDeEnvio } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // upload + envio: mais folga que o texto
@@ -90,6 +90,7 @@ export async function POST(req: Request) {
     midia_path,
     midia_mime: mime,
     midia_nome: arquivo.name || null,
+    linha_id: linhaDeEnvio(),
   }, { onConflict: "id" });
 
   return Response.json({ ok: true, wamid, tipo });
