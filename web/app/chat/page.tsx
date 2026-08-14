@@ -35,6 +35,11 @@ type Conversa = {
   telefone: string | null; ultima_atividade: string | null;
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
+  // `vendedor` já vem como o dono EFETIVO (depois da transferência); isto diz de
+  // qual carteira ela veio, para o selo "recebida de fulano" (migration 0081)
+  transferida_de?: string | null;
+  // só nos resultados da busca por conteúdo
+  trecho?: string; trecho_em?: string; de?: string; n?: number;
 };
 
 // motivos de encerramento = a nossa tabulação (CLAUDE.md §6 e §18)
@@ -54,8 +59,17 @@ type Nota = { id: number; autor: string; texto: string; criada_em: string };
 // resposta rápida: texto nosso colado na caixa pelo atalho `/` — NÃO é template
 // do WhatsApp (aquele mora em crm_templates e reabre a janela de 24h)
 type Resposta = { id: number; atalho: string; titulo: string; corpo: string; carteira: string | null };
-// a thread mistura os dois na ordem do relógio
-type Item = { k: "m"; em: string; m: Msg } | { k: "n"; em: string; n: Nota };
+// passagem de bastão registrada: aparece na thread onde aconteceu (0081)
+type Transferencia = {
+  id: number; de_carteira: string | null; para_carteira: string;
+  por: string; observacao: string | null; criada_em: string;
+};
+type Vendedor = { slug: string; cor: string | null };
+// a thread mistura os três na ordem do relógio
+type Item =
+  | { k: "m"; em: string; m: Msg }
+  | { k: "n"; em: string; n: Nota }
+  | { k: "t"; em: string; t: Transferencia };
 
 // cor da nota interna: papel de recado, deliberadamente fora da paleta das bolhas
 const NOTA = { bg: "#fdf6e3", borda: "#e8d9a8", ink: "#6b5a1f" };
@@ -133,6 +147,28 @@ function Midia({ m }: { m: Msg }) {
 }
 const rotuloMidia = (t: string) =>
   ({ image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha" }[t] ?? "Mídia");
+
+// Trecho da mensagem achada na busca, recortado em volta do termo e com ele
+// destacado — a mensagem inteira não cabe na linha da sidebar.
+function Trecho({ texto, termo }: { texto: string; termo: string }) {
+  const t = texto ?? "";
+  const i = t.toLowerCase().indexOf(termo.toLowerCase());
+  if (i < 0) return <>{t.slice(0, 90)}</>;
+  const ini = Math.max(0, i - 28);
+  const corte = t.slice(ini, i + termo.length + 60);
+  const j = corte.toLowerCase().indexOf(termo.toLowerCase());
+  return (
+    <>
+      {ini > 0 ? "…" : ""}
+      {corte.slice(0, j)}
+      <mark style={{ background: "#ffe9a8", color: M.ink, padding: "0 1px", borderRadius: 3 }}>
+        {corte.slice(j, j + termo.length)}
+      </mark>
+      {corte.slice(j + termo.length)}
+      {t.length > ini + corte.length ? "…" : ""}
+    </>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Painel do contato — dados do ERP (WinThor) ao lado da conversa. É o que o RD
@@ -266,6 +302,14 @@ export default function Chat() {
   const [novaAberta, setNovaAberta] = useState(false);    // formulário "nova resposta"
   const [novoAtalho, setNovoAtalho] = useState("");
   const [novoTitulo, setNovoTitulo] = useState("");
+  // --- P1: transferência e busca no conteúdo --------------------------------
+  const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
+  const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [transferindo, setTransferindo] = useState(false);  // painel de destino aberto
+  const [obsTransf, setObsTransf] = useState("");
+  const [achados, setAchados] = useState<Conversa[] | null>(null);  // busca no conteúdo
+  const [buscandoMsgs, setBuscandoMsgs] = useState(false);
+  const [truncado, setTruncado] = useState(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const textoRef = useRef<HTMLTextAreaElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
@@ -293,7 +337,7 @@ export default function Chat() {
     try {
       const r = await fetch("/api/chat", { cache: "no-store" });
       const j = await r.json().catch(() => null);
-      if (r.ok) { setConversas(j?.conversas ?? []); setErro(null); }
+      if (r.ok) { setConversas(j?.conversas ?? []); setVendedores(j?.vendedores ?? []); setErro(null); }
       else if (r.status === 401) setSessao(null);
       else setErro(j?.error ?? `erro ${r.status}`);
     } finally { carregandoLista.current = false; }
@@ -305,6 +349,7 @@ export default function Chat() {
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     setMsgs(j?.mensagens ?? []);
     setNotas(j?.notas ?? []);
+    setTransferencias(j?.transferencias ?? []);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
 
@@ -406,8 +451,63 @@ export default function Chat() {
     return () => window.removeEventListener("click", pedir);
   }, []);
 
+  // busca no CONTEÚDO das mensagens. O filtro por nome/telefone continua local e
+  // instantâneo; esta vai ao servidor, com 400ms de folga para não disparar uma
+  // consulta por tecla. Mínimo de 3 letras: abaixo disso o índice trigrama não é
+  // usado e a busca viraria varredura de 72 mil linhas (migration 0081).
+  useEffect(() => {
+    const q = busca.trim();
+    if (q.length < 3) { setAchados(null); setBuscandoMsgs(false); setTruncado(false); return; }
+    let vivo = true;
+    setBuscandoMsgs(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/chat/buscar?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+        const j = await r.json().catch(() => null);
+        if (!vivo) return;
+        setAchados(r.ok ? (j?.conversas ?? []) : []);
+        setTruncado(!!j?.truncado);
+      } catch {
+        if (vivo) setAchados([]);
+      } finally {
+        if (vivo) setBuscandoMsgs(false);
+      }
+    }, 400);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [busca]);
+
+  // passa a conversa para outro vendedor. Não mexe na carteira do cliente (essa
+  // vem do RCA do WinThor) — só em quem atende o diálogo daqui pra frente.
+  async function transferir(para: string) {
+    if (!sel) return;
+    setTransferindo(false);
+    try {
+      const r = await fetch("/api/chat/transferir", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, para, observacao: obsTransf.trim() || undefined }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      setObsTransf("");
+      setTransferencias((ts) => [...ts, j.transferencia]);
+      // se saiu da minha carteira, ela deixa a minha lista — fecha a thread para
+      // não ficar uma conversa aberta que já não é mais minha
+      const minha = sessao?.carteira ?? null;
+      if (minha && para !== minha) {
+        setSel(null); setMsgs(null); setNotas([]); setTransferencias([]);
+      } else {
+        // admin/home continuam vendo: acompanha o novo dono no cabeçalho
+        setSel((s) => (s ? { ...s, vendedor: para, transferida_de: s.vendedor } : s));
+      }
+      carregarLista();
+    } catch (e: any) {
+      setAviso(`Não consegui transferir: ${e?.message ?? e}`);
+    }
+  }
+
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setNotas([]); setAviso(null); setResolvendo(false); setContato(null);
+    setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
+    setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
@@ -627,14 +727,18 @@ export default function Chat() {
     return (c.cliente ?? "").toLowerCase().includes(b) || String(c.telefone ?? "").includes(b.replace(/\D/g, "") || " ");
   });
   const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida").length;
+  // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
+  const jaNaLista = new Set(filtradas.map((c) => c.cliente_id));
+  const achadosNovos = (achados ?? []).filter((c) => !jaNaLista.has(c.cliente_id));
 
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
 
-  // thread = mensagens + notas internas na mesma linha do tempo, agrupadas por dia
+  // thread = mensagens + notas internas + transferências na mesma linha do tempo
   const linha: Item[] = [
     ...(msgs ?? []).map((m) => ({ k: "m" as const, em: m.criada_em, m })),
     ...notas.map((n) => ({ k: "n" as const, em: n.criada_em, n })),
+    ...transferencias.map((t) => ({ k: "t" as const, em: t.criada_em, t })),
   ].sort((a, b) => (a.em < b.em ? -1 : a.em > b.em ? 1 : 0));
 
   const grupos: { dia: string; itens: Item[] }[] = [];
@@ -720,6 +824,12 @@ export default function Chat() {
                         <span style={{ fontSize: 12, color: M.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
                           {c.ultima_enviada_por === "operator" ? "Você: " : ""}{c.ultima_mensagem ?? "…"}
                         </span>
+                        {c.transferida_de && (
+                          <span title={`recebida de ${cap(c.transferida_de)}`}
+                            style={{ fontSize: 9.5, fontWeight: 800, color: M.wine, background: "#f6e8f0", border: `1px solid ${M.border}`, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>
+                            ↪ {cap(c.transferida_de)}
+                          </span>
+                        )}
                         {c.vendedor && sessao.carteira == null && (
                           <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{cap(c.vendedor)}</span>
                         )}
@@ -731,7 +841,51 @@ export default function Chat() {
                   </button>
                 );
               })}
-              {busca && !filtradas.length && <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Nada encontrado para “{busca}”.</div>}
+              {busca && !filtradas.length && !buscandoMsgs && !achadosNovos.length && (
+                <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Nada encontrado para “{busca}”.</div>
+              )}
+
+              {/* ---- busca no CONTEÚDO das mensagens (servidor) ---- */}
+              {busca.trim().length >= 3 && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", background: M.bg, borderTop: `1px solid ${M.border}`, borderBottom: `1px solid ${M.border}` }}>
+                    <b style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.wine }}>
+                      🔎 Nas mensagens
+                    </b>
+                    <span style={{ flex: 1, fontSize: 10.5, color: M.muted }}>
+                      {buscandoMsgs ? "procurando…" : `${achadosNovos.length} conversa${achadosNovos.length === 1 ? "" : "s"}`}
+                    </span>
+                  </div>
+                  {truncado && !buscandoMsgs && (
+                    <div style={{ padding: "6px 12px", fontSize: 10.5, color: M.laranja, background: "#fdeae3" }}>
+                      Muitos resultados — mostrando os mais recentes. Use um termo mais específico.
+                    </div>
+                  )}
+                  {!buscandoMsgs && achados !== null && !achadosNovos.length && (
+                    <div style={{ padding: "10px 12px", fontSize: 12, color: M.muted }}>
+                      Nenhuma mensagem com “{busca.trim()}”.
+                    </div>
+                  )}
+                  {achadosNovos.map((c) => (
+                    <button key={`b:${c.cliente_id}`} onClick={() => abrir(c)}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", background: sel?.cliente_id === c.cliente_id ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
+                      <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        <b style={{ fontSize: 13, color: M.ink, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.cliente}</b>
+                        {(c.n ?? 1) > 1 && (
+                          <span style={{ fontSize: 9.5, fontWeight: 800, color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>
+                            {c.n}×
+                          </span>
+                        )}
+                        <span style={{ fontSize: 10.5, color: M.muted, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{rotuloTempo(c.trecho_em ?? null)}</span>
+                      </span>
+                      <span style={{ display: "block", fontSize: 11.5, color: M.gray, lineHeight: 1.4, marginTop: 2 }}>
+                        {c.de === "customer" ? "" : "Você: "}
+                        <Trecho texto={c.trecho ?? ""} termo={busca.trim()} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -768,6 +922,11 @@ export default function Chat() {
                       📊 Cliente
                     </button>
                   )}
+                  <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
+                    title="Passar esta conversa para outro vendedor"
+                    style={{ fontSize: 11.5, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    ↪ Transferir
+                  </button>
                   {(sel.status ?? "aberta") === "resolvida" ? (
                     <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
                       style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -785,6 +944,42 @@ export default function Chat() {
                     </a>
                   )}
                 </div>
+
+                {/* transferir: passa quem ATENDE o diálogo. A carteira do cliente
+                    (dono comercial, vinda do RCA do WinThor) não muda — por isso o aviso. */}
+                {transferindo && (
+                  <div style={{ padding: "10px 14px", background: M.roxoSoft, borderBottom: `1px solid ${M.border}` }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, color: M.wine, marginBottom: 7, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                      Transferir a conversa para
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                      {vendedores
+                        .filter((v) => v.slug !== (sel.vendedor ?? ""))
+                        .map((v) => (
+                          <button key={v.slug} onClick={() => transferir(v.slug)}
+                            style={{ fontSize: 12, fontWeight: 700, color: M.ink, background: M.surface, border: `1px solid ${v.cor ?? M.border}`, borderLeft: `4px solid ${v.cor ?? M.roxo}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+                            {cap(v.slug)}
+                          </button>
+                        ))}
+                      {!vendedores.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando vendedores…</span>}
+                    </div>
+                    <input
+                      value={obsTransf}
+                      onChange={(e) => setObsTransf(e.target.value)}
+                      placeholder="Motivo da passagem (opcional) — fica registrado na conversa"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12, fontFamily: "inherit", color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none" }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7 }}>
+                      <span style={{ flex: 1, fontSize: 10.5, color: M.gray, lineHeight: 1.4 }}>
+                        Muda só quem <b>atende</b> aqui no chat. A carteira do cliente continua a mesma — ela vem do RCA no WinThor.
+                      </span>
+                      <button onClick={() => setTransferindo(false)}
+                        style={{ fontSize: 12, color: M.gray, background: "transparent", border: "none", padding: "4px 6px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                        cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* escolha do motivo — é a nossa tabulação, no fluxo natural do encerramento */}
                 {resolvendo && (
@@ -817,6 +1012,23 @@ export default function Chat() {
                         {g.dia.split("-").reverse().join("/")}
                       </div>
                       {g.itens.map((it) => {
+                        // transferência: marco no meio da conversa, o registro
+                        // aparecendo no ponto exato em que o bastão passou
+                        if (it.k === "t") {
+                          const t = it.t;
+                          return (
+                            <div key={`t${t.id}`} style={{ display: "flex", justifyContent: "center", margin: "6px 0" }}>
+                              <div style={{ maxWidth: "80%", textAlign: "center", fontSize: 11, color: M.gray, background: M.surface, border: `1px dashed ${M.border}`, borderRadius: 999, padding: "4px 14px", lineHeight: 1.5 }}>
+                                ↪ <b style={{ color: M.wine }}>{cap(t.de_carteira) || "sem dono"}</b> transferiu para{" "}
+                                <b style={{ color: M.roxo }}>{cap(t.para_carteira)}</b>
+                                <span style={{ color: M.muted }}> · {horaBR(t.criada_em)}</span>
+                                {t.observacao && (
+                                  <div style={{ fontStyle: "italic", color: M.gray, marginTop: 2 }}>“{t.observacao}”</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
                         // nota interna: papel amarelo no meio da thread, sem tick e
                         // sem lado — não é mensagem, o cliente não vê
                         if (it.k === "n") {
