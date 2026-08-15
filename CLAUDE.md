@@ -1222,11 +1222,74 @@ cliente aparece no chat como rótulo (`[áudio]`), não como player. Isso é esp
 | 4 | **Status aberta / resolvida** (com motivo) | dá a noção de fila. Substitui o "fechar atendimento" do RD e **é a nossa tabulação**: motivo no encerramento vira a métrica confiável de venda que o RD nunca entregou (ver seções 6 e 8). Reabre sozinha quando o cliente responde |
 | 5 | **Template dentro do chat** | hoje o aviso de janela fechada manda o usuário ir ao board — quebra o fluxo. A rota já existe |
 
-### P1 — profissionalismo e produtividade (o que ainda falta)
+### P1 — profissionalismo e produtividade
 
-~~Painel do contato~~ **ENTREGUE** (ver quadro acima). Restam: respostas rápidas
-(atalho `/`, `crm_templates` como base) · notas internas na thread · transferência de
-conversa entre vendedores com registro · busca no **conteúdo** das mensagens.
+~~Painel do contato~~ **ENTREGUE** (ver quadro acima).
+
+**✅ Respostas rápidas e notas internas — ENTREGUES em 14/08/2026 (migration 0080).**
+
+| Item | Como ficou |
+|---|---|
+| Respostas rápidas | Digitar `/` (ou o botão ⚡) na caixa abre a lista; `/atalho` filtra, ↑↓ navega, Enter cola o texto. Alcance duplo: `carteira is null` = **da casa** (todo mundo vê, só admin/home cria) · `carteira = <slug>` = **pessoal** do vendedor. Cria-se salvando o texto que já está na caixa — sem tela de cadastro à parte. Rota `/api/chat/respostas` (GET/POST/PATCH/DELETE) |
+| Notas internas | Botão 🗒️ troca a caixa de "mensagem" para "nota"; a caixa muda de cor para deixar óbvio que **aquilo não vai pro cliente**. A nota aparece na thread, no ponto da conversa em que foi escrita, como papel amarelo. Apaga só o autor (ou o admin). Rota `/api/chat/notas` (POST/DELETE); a leitura vem junto do `/api/chat/thread`, que agora devolve `notas[]` e o front intercala pela data |
+
+**⚠️ Correção do que este documento afirmava:** a linha anterior dizia para usar
+`crm_templates` como base das respostas rápidas. **Não dá** — aquela tabela guarda
+`nome` + `rd_template_id` (o template aprovado na Meta/RD que reabre a janela de
+24h) e **não tem coluna de corpo**: o texto mora fora do nosso banco. São conceitos
+diferentes com nomes parecidos. Daí a tabela nova `chat_resposta_rapida`.
+
+**Por que `chat_nota` é tabela separada e não uma linha em `mensagens` com
+`tipo='nota'`:** `mensagens` é espelho do que trafegou no WhatsApp, escrito por
+UPSERT do ETL e do webhook — uma nota ali corre risco de sumir num re-fetch, e
+contaminaria os contadores, as views e a régua de "quem falou por último" que
+decide a etapa do funil (§11.1). Mesmo raciocínio da §10.11.
+
+**✅ Transferência de conversa e busca no conteúdo — ENTREGUES em 14/08/2026
+(migration 0081). Com isso o P1 inteiro está fechado.**
+
+| Item | Como ficou |
+|---|---|
+| Transferência | Botão **↪ Transferir** no cabeçalho da conversa, com os vendedores ativos de `carteira_config` e um campo de motivo. A passagem aparece na própria thread, no ponto em que aconteceu. Quem pode: o dono efetivo atual, ou admin/home — um vendedor não tira conversa da mão do outro (validado no servidor) |
+| Busca no conteúdo | Trigrama (`pg_trgm` + GIN em `mensagens.conteudo`). A busca por nome/telefone continua local e instantânea; abaixo dela, a seção **🔎 Nas mensagens** traz o resultado do servidor, com o trecho recortado e o termo destacado. Mínimo de 3 letras, debounce de 400 ms |
+
+#### Transferir conversa ≠ mudar carteira
+
+São coisas diferentes e confundi-las quebraria o resto do sistema:
+
+| | O que é | Onde mora |
+|---|---|---|
+| **carteira do cliente** | dono comercial | RCA do WinThor via `wth_vinculo` (§10.3); `clientes.carteira` é espelho do ETL |
+| **transferência de conversa** | quem **atende este diálogo agora** | `chat_transferencia`, tabela nossa, só vale dentro do chat |
+
+Por isso a transferência **não** faz update em `clientes`: seria desfeito no
+próximo upsert do ETL (§10.11) e desalinharia o board do ERP. É o mesmo recorte
+que o RD Conversas faz entre "carteira" e "transferir atendimento". A tela avisa
+isso em texto, para ninguém usar o botão esperando trocar a carteira.
+
+`chat_transferencia` é **append-only** — o "registro" pedido no P1 é o histórico
+completo, não o estado. A atribuição vigente é a última linha, exposta em
+`vw_chat_atribuicao` (`distinct on (cliente_id) … order by criada_em desc`).
+Devolver a conversa é só mais uma linha no sentido inverso; nenhum caso especial.
+
+**Dono efetivo = transferência vigente ?? `vw_funil.vendedor`.** Essa régua está
+em `web/lib/chatEscopo.ts` e é usada por `/api/chat` **e** `/api/chat/buscar` —
+se ficasse duplicada, uma conversa transferida sumiria de uma e apareceria na
+outra. Consequência no `/api/chat`: o filtro SQL por carteira não traz o que foi
+transferido **para** mim de outra carteira, então essas linhas são buscadas à
+parte e juntadas antes do escopo ser aplicado.
+
+**Por que trigrama e não full-text:** quem procura numa conversa digita pedaço de
+palavra, nome de produto abreviado e erro de digitação — casos em que
+`ILIKE '%termo%'` acerta e o stemming do `to_tsvector('portuguese')` erra. O
+preço é exigir 3+ caracteres (abaixo disso o índice não é usado). Medido em
+produção com 72.087 mensagens: **0,98 ms**, via `Bitmap Index Scan`. A busca tem
+teto de 400 mensagens varridas por consulta e devolve `truncado: true` quando
+bate nele — a tela avisa em vez de fingir cobertura completa.
+
+⚠️ O índice GIN entra num caminho de escrita quente: o ETL faz UPSERT em lotes de
+500 em `mensagens`. `fastupdate` (ligado por padrão) amortece, mas **se o ETL
+ficar mais lento logo depois desta migration, este índice é o primeiro suspeito.**
 
 ### P2 — paridade avançada (quando a operação estabilizar)
 

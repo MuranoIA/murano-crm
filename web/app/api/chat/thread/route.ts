@@ -18,13 +18,29 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const [{ data: cli }, { data, error }, { data: linhas }] = await Promise.all([
+  const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }] =
+    await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
       .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: false })
       .limit(200),
+    // notas internas (migration 0080) — vêm à parte e o front intercala pela data.
+    // Todas, sem limite de janela: são poucas por conversa, e esconder uma nota
+    // que caiu fora das 200 últimas mensagens seria perder um recado da equipe.
+    sb.from("chat_nota")
+      .select("id,autor,texto,criada_em")
+      .eq("cliente_id", cliente_id)
+      .order("criada_em", { ascending: true }),
+    // histórico de transferências (0081) — o "registro" pedido no P1 aparece na
+    // própria conversa, no ponto em que a passagem aconteceu
+    sb.from("chat_transferencia")
+      .select("id,de_carteira,para_carteira,por,observacao,criada_em")
+      .eq("cliente_id", cliente_id)
+      .order("criada_em", { ascending: true }),
+    // catálogo das linhas (0080 multi-linha) — para rotular por qual número a
+    // conversa corre
     sb.from("chat_linha").select("phone_number_id,rotulo,numero"),
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -45,6 +61,8 @@ export async function GET(req: Request) {
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
     linha,
     mensagens,
+    notas: notas ?? [],
+    transferencias: transferencias ?? [],
     atualizado_em: new Date().toISOString(),
   });
 }
