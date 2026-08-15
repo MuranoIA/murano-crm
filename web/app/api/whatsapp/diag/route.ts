@@ -43,6 +43,14 @@ const BUSINESS_ID = "1132196710850578"; // portfólio Murano Professional
 // Para liberar uma conta nova para escrita, acrescente o id aqui, de propósito,
 // com o time avisado — nunca por parâmetro na chamada.
 // ---------------------------------------------------------------------------
+// Mesma lógica para NÚMEROS: registrar um número o vincula ao NOSSO app para
+// envio (e desaloja o app que o detinha). O número oficial de produção
+// (1004405886099218) jamais pode entrar nesta lista.
+const NUMEROS_REGISTRO_PERMITIDO = new Set([
+  "973434089176828",  // +55 91 9806-0032 — linha piloto (Murano Shop)
+  "1221847701011584", // número de teste da Meta
+]);
+
 const WABAS_ESCRITA_PERMITIDA = new Set([
   "1384896129703324", // Murano Shop — linha secundária do piloto
   "28189344217325382", // Test WhatsApp Business Account — número de teste da Meta
@@ -53,12 +61,16 @@ function token(): string | null {
   return t ? t.replace(/[^\x21-\x7E]/g, "") : null;
 }
 
-async function graph(caminho: string, metodo: "GET" | "POST" = "GET") {
+async function graph(caminho: string, metodo: "GET" | "POST" = "GET", corpo?: unknown) {
   const t = token();
   if (!t) return { erro: "WHATSAPP_TOKEN ausente na Vercel" };
   const r = await fetch(`https://graph.facebook.com/${GRAPH}/${caminho}`, {
     method: metodo,
-    headers: { Authorization: `Bearer ${t}` },
+    headers: {
+      Authorization: `Bearer ${t}`,
+      ...(corpo ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(corpo ? { body: JSON.stringify(corpo) } : {}),
   });
   const body = await r.json().catch(() => ({}));
   return r.ok ? body : { erro: body?.error?.message ?? `HTTP ${r.status}`, codigo: body?.error?.code ?? null };
@@ -117,10 +129,33 @@ export async function POST(req: Request) {
   if (!podeAdmin(cookies().get("crm_sessao")?.value)) {
     return Response.json({ error: "só admin" }, { status: 403 });
   }
-  let waba: string | undefined;
+  let waba: string | undefined, acao: string | undefined, phone_number_id: string | undefined, pin: string | undefined;
   try {
-    ({ waba } = await req.json());
+    ({ waba, acao, phone_number_id, pin } = await req.json());
   } catch { /* body opcional */ }
+
+  // ---- ação: registrar o número sob o NOSSO app ---------------------------
+  // Necessário para ENVIAR: receber webhook basta estar inscrito, mas enviar é
+  // privilégio do app que detém o registro do número. Registrar aqui DESALOJA o
+  // app que o detinha (no piloto, o "Suri by Chatbot Maker").
+  if (acao === "registrar") {
+    if (!phone_number_id || !NUMEROS_REGISTRO_PERMITIDO.has(phone_number_id)) {
+      return Response.json({
+        error: "BLOQUEADO: registro permitido apenas nos números de teste/piloto. " +
+               "O número oficial de produção nunca entra nesta lista.",
+        permitidos: [...NUMEROS_REGISTRO_PERMITIDO],
+      }, { status: 423 });
+    }
+    if (!/^\d{6}$/.test(String(pin ?? ""))) {
+      return Response.json({ error: "pin deve ter exatamente 6 dígitos" }, { status: 400 });
+    }
+    const reg = await graph(`${phone_number_id}/register`, "POST", {
+      messaging_product: "whatsapp",
+      pin: String(pin),
+    });
+    const depois = await graph(`${phone_number_id}?fields=id,display_phone_number,status,quality_rating`);
+    return Response.json({ acao: "registrar", phone_number_id, resultado: reg, numero_agora: depois });
+  }
   const alvo = waba || process.env.WHATSAPP_WABA_ID;
   if (!alvo) return Response.json({ error: "informe {waba} ou configure WHATSAPP_WABA_ID" }, { status: 400 });
   if (!WABAS_ESCRITA_PERMITIDA.has(alvo)) {
