@@ -1,5 +1,12 @@
 -- =============================================================================
--- 0080 · Chat P1 — respostas rápidas e notas internas
+-- 0082 · Chat P1 — respostas rápidas e notas internas
+--
+-- ⚠️ Renumerada de 0080 para 0082 em 15/08/2026: o número 0080 já estava
+-- ocupado por `0080_chat_linha_multilinha.sql`, aplicada no mesmo dia por
+-- outra frente. As duas são independentes — a ordem entre elas não importa —,
+-- mas número duplicado quebra o replay num banco limpo e é o drift que a
+-- seção 19.2 do CLAUDE.md manda evitar. Já estava aplicada no banco com o
+-- nome `chat_respostas_rapidas_e_notas`; o rename é só do arquivo.
 --
 -- Duas ferramentas de atendimento que o painel do RD Conversas tem e o nosso
 -- chat não tinha (CLAUDE.md §18, bloco P1).

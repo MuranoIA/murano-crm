@@ -1226,7 +1226,8 @@ cliente aparece no chat como rótulo (`[áudio]`), não como player. Isso é esp
 
 ~~Painel do contato~~ **ENTREGUE** (ver quadro acima).
 
-**✅ Respostas rápidas e notas internas — ENTREGUES em 14/08/2026 (migration 0080).**
+**✅ Respostas rápidas e notas internas — ENTREGUES em 14/08/2026 (migration 0082,
+renumerada de 0080 — ver nota de numeração no fim desta seção).**
 
 | Item | Como ficou |
 |---|---|
@@ -1454,3 +1455,31 @@ entrega, e **`linha_id`** gravado nos dois sentidos.
 Pendências para o piloto valer com clientes reais: app em **modo Ativo** (hoje em
 Desenvolvimento — só números da allowlist chegam), política de privacidade e termos
 publicados, e template de recontato aprovado. Ver §16.5 e §16.6.
+
+### ✅ P1 COMPLETO e mesclado em 15/08/2026 (PR #61)
+
+Os quatro itens restantes do P1 entraram: **respostas rápidas**, **notas internas**,
+**transferência de conversa** e **busca no conteúdo**. Com isso o bloco P1 fecha —
+resta o P2.
+
+**Numeração das migrations — resolvida:** duas frentes trabalharam o chat em
+paralelo e ambas criaram uma `0080`. Ficou assim:
+
+| Arquivo | O que é |
+|---|---|
+| `0079_chat_p0_midia_leitura_status.sql` | P0: mídia, leitura, status |
+| `0080_chat_linha_multilinha.sql` | linha telefônica por mensagem (`linha_id`, `chat_linha`) |
+| `0081_chat_transferencia_e_busca.sql` | transferência + busca (pg_trgm) |
+| `0082_chat_respostas_rapidas_e_notas.sql` | respostas rápidas + notas (**renumerada de 0080**) |
+
+Todas já aplicadas no banco. As três do chat são independentes entre si — a ordem
+não importa —, mas número duplicado quebraria o replay num banco limpo (§19.2).
+
+**Colisão de nome resolvida no merge:** `linha` passou a significar **linha
+telefônica** em todo o projeto (`chat_linha`, `linha_id`, `linhaDeEnvio`). A variável
+local do chat que montava a linha do tempo da conversa virou **`linhaDoTempo`**. Ao
+mexer nessa tela, manter a distinção.
+
+**O que o `/api/chat/thread` devolve hoje** (as duas frentes convivendo): `mensagens`,
+`notas`, `transferencias` e `linha` — o front intercala as três primeiras por data e
+usa a última para a etiqueta do número no cabeçalho.
