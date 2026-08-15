@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendTemplate } from "../../../lib/whatsapp";
+import { canalDeResposta, sendTemplate, linhaDeEnvio } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
@@ -82,6 +82,7 @@ export async function POST(req: Request) {
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "template", conteudo: `[template] ${nomeTemplate}`,
           status: "wait", criada_em: new Date().toISOString(),
+          linha_id: linhaDeEnvio(),
         }, { onConflict: "id" });
         return Response.json({ ok: true, id: wamid, cliente: cli.nome_completo, canal: "whatsapp" });
       } catch (e: any) {

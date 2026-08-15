@@ -18,10 +18,11 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }] = await Promise.all([
+  const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }] =
+    await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
-      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path")
+      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: false })
       .limit(200),
@@ -38,6 +39,9 @@ export async function GET(req: Request) {
       .select("id,de_carteira,para_carteira,por,observacao,criada_em")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: true }),
+    // catálogo das linhas (0080 multi-linha) — para rotular por qual número a
+    // conversa corre
+    sb.from("chat_linha").select("phone_number_id,rotulo,numero"),
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -45,8 +49,17 @@ export async function GET(req: Request) {
     .filter((m: any) => m.tipo !== "evento_sistema")
     .reverse(); // cronológico (mais antiga em cima)
 
+  // por qual linha esta conversa corre: a da última mensagem que tem linha.
+  // Sem linha = conversa do RD Conversas (o ETL não tem esse conceito).
+  const rotulos = new Map((linhas ?? []).map((l: any) => [l.phone_number_id, l.rotulo]));
+  const ultimaComLinha = [...mensagens].reverse().find((m: any) => m.linha_id);
+  const linha = ultimaComLinha
+    ? { id: ultimaComLinha.linha_id, rotulo: rotulos.get(ultimaComLinha.linha_id) ?? "linha nova", canal: "whatsapp" }
+    : { id: null, rotulo: "RD Conversas", canal: "rd" };
+
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
+    linha,
     mensagens,
     notas: notas ?? [],
     transferencias: transferencias ?? [],

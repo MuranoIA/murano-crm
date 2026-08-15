@@ -292,6 +292,7 @@ export default function Chat() {
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
+  const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
   const [painelAberto, setPainelAberto] = useState(true);
   // --- P1: notas internas e respostas rápidas -------------------------------
   const [notas, setNotas] = useState<Nota[]>([]);
@@ -350,6 +351,7 @@ export default function Chat() {
     setMsgs(j?.mensagens ?? []);
     setNotas(j?.notas ?? []);
     setTransferencias(j?.transferencias ?? []);
+    setLinha(j?.linha ?? null);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
 
@@ -735,14 +737,16 @@ export default function Chat() {
   const mostraThread = !isMobile || !!sel;
 
   // thread = mensagens + notas internas + transferências na mesma linha do tempo
-  const linha: Item[] = [
+  // (nome explícito: `linha` sozinho agora significa a LINHA TELEFÔNICA em todo
+  //  o projeto — chat_linha, linha_id, linhaDeEnvio)
+  const linhaDoTempo: Item[] = [
     ...(msgs ?? []).map((m) => ({ k: "m" as const, em: m.criada_em, m })),
     ...notas.map((n) => ({ k: "n" as const, em: n.criada_em, n })),
     ...transferencias.map((t) => ({ k: "t" as const, em: t.criada_em, t })),
   ].sort((a, b) => (a.em < b.em ? -1 : a.em > b.em ? 1 : 0));
 
   const grupos: { dia: string; itens: Item[] }[] = [];
-  for (const it of linha) {
+  for (const it of linhaDoTempo) {
     const d = diaBR(it.em);
     const g = grupos[grupos.length - 1];
     if (g && g.dia === d) g.itens.push(it);
@@ -914,6 +918,17 @@ export default function Chat() {
                     <b style={{ display: "block", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sel.cliente}</b>
                     <span style={{ fontSize: 11, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                       {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
+                      {/* por qual NÚMERO esta conversa corre — com mais de uma linha
+                          ativa, é o que evita responder pela linha errada (a janela
+                          de 24h é por par número+cliente) */}
+                      {linha && (
+                        <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
+                          color: linha.canal === "rd" ? M.gray : M.roxo,
+                          background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
+                          borderRadius: 999, padding: "1px 7px" }}>
+                          {linha.rotulo}
+                        </span>
+                      )}
                     </span>
                   </span>
                   {!isMobile && (
