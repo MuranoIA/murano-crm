@@ -20,6 +20,7 @@ export const maxDuration = 30;
 // Protegida por sessão de admin do CRM. REMOVER quando a Fase C fechar.
 // ---------------------------------------------------------------------------
 const GRAPH = "v22.0";
+const BUSINESS_ID = "1132196710850578"; // portfólio Murano Professional
 
 // ---------------------------------------------------------------------------
 // TRAVA DE ESCRITA — desenho por LISTA DE PERMISSÃO, não de bloqueio.
@@ -80,8 +81,19 @@ export async function GET(req: Request) {
     // QUAIS TAREFAS o nosso usuário do sistema tem nesta conta. É o que distingue
     // "consigo ler mas não enviar" (acesso parcial) de "o número não está
     // registrado na Cloud API" — as duas causas clássicas do erro #200.
-    graph(`${waba}/assigned_users?fields=name,tasks`),
+    graph(`${waba}/assigned_users?business=${BUSINESS_ID}&fields=name,tasks`),
   ]);
+
+  // O QUE O TOKEN REALMENTE COBRE. `granular_scopes` lista, por permissão, os ids
+  // de conta a que ela se aplica — resposta definitiva para o #200 no envio: se
+  // whatsapp_business_messaging não incluir esta WABA, o token foi gerado sem ela
+  // selecionada, e nenhuma atribuição de ativo conserta (só regerar escolhendo).
+  // `impressao_do_token` ajuda a saber se a Vercel está mesmo com o token novo.
+  const t = token();
+  const dbg: any = t ? await graph(`debug_token?input_token=${encodeURIComponent(t)}`) : { erro: "sem token" };
+  const impressao = t
+    ? { tamanho: t.length, comeca: t.slice(0, 6), termina: t.slice(-6) }
+    : null;
 
   return Response.json({
     waba_consultada: waba,
@@ -90,7 +102,10 @@ export async function GET(req: Request) {
     numeros,
     apps_inscritos_no_webhook: inscritos,
     permissoes_do_usuario_do_sistema: permissoes,
-    dica: "para ENVIAR é preciso: tasks incluir MANAGE em `permissoes_do_usuario_do_sistema`, e o número estar registrado (`numeros.data[].status` = CONNECTED)",
+    escopo_do_token: dbg?.data?.granular_scopes ?? dbg,
+    token_expira_em: dbg?.data?.expires_at ?? null,
+    impressao_do_token: impressao,   // só tamanho e pontas: não expõe o segredo
+    dica: "para ENVIAR: `escopo_do_token` precisa trazer whatsapp_business_messaging com esta WABA em target_ids. Se não trouxer, regerar o token SELECIONANDO esta conta.",
   });
 }
 
