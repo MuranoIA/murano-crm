@@ -1312,3 +1312,82 @@ aplicada primeiro pelo painel/MCP.
   porque a produção é o domínio próprio. Ao renomear, atualizar em cadeia: domínio na
   Vercel, Redirect URLs do Supabase Auth (senão o login Google quebra), docs do repo.
   O webhook da Meta **não** quebra (aponta para o domínio próprio).
+
+## 20. Segunda linha no Cloud API — piloto validado (15/08/2026)
+
+> Primeira linha REAL nossa no WhatsApp Cloud API, rodando **em paralelo** ao número
+> oficial. Receber, enviar e mídia validados ponta a ponta. A produção não foi tocada.
+
+### 20.1 As duas contas — não confundir
+
+| | WABA | Número | Papel |
+|---|---|---|---|
+| **Produção** | Murano Pro `1441580480587007` | +55 91 2018-2357 (`1004405886099218`) | oficial, vendedores atendendo pelo **RD/Tallos**, faturamento em tempo real |
+| **Piloto** | Murano Shop `1384896129703324` | +55 91 9806-0032 (`973434089176828`) | linha secundária, canal direto Cloud API |
+
+`chat_linha` (migration 0080) guarda o rótulo de cada `phone_number_id`; o chat mostra
+a etiqueta no cabeçalho da conversa.
+
+### 20.2 A armadilha que custou horas: PARCEIRO detém o direito de enviar
+
+Sintoma: **recebíamos** mensagens normalmente pela linha nova, mas todo envio voltava
+`(#200) You do not have the necessary permissions to send messages on behalf of this
+WhatsApp Business Account`.
+
+Foram verificados e descartados, um a um: token permanente (não expira, com
+`whatsapp_business_messaging`), tarefas do usuário do sistema na conta (`MANAGE`),
+inscrição do app no webhook (feita), registro do número (`status: CONNECTED`), env
+`WHATSAPP_PHONE_NUMBER_ID` (correta) e até re-registro do número com PIN novo.
+
+**A causa era outra:** a WABA Murano Shop tinha um **parceiro (BSP)** atribuído —
+"Suri by Chatbot Maker". O parceiro detinha a mensageria da conta; nosso app conseguia
+ler, assinar webhook e registrar, mas **não enviar**. Remover o parceiro em
+*Contas do WhatsApp → a conta → aba Parceiros* liberou o envio na primeira tentativa.
+
+**A pista que resolveu foi operacional, não técnica:** o usuário notou que o número
+respondia sozinho a qualquer mensagem. Se o chatbot enviava, alguém tinha permissão de
+envio que nós não tínhamos — e isso apontou direto para o parceiro.
+
+**Regra para a Fase C:** antes de migrar o número oficial, conferir a aba **Parceiros**
+da WABA de destino. Um parceiro herdado bloqueia o envio sem dar nenhuma pista no
+token, nas permissões ou no número.
+
+**Diagnóstico que fecha isso em minutos** (o `subscribed_apps` também denuncia a
+presença do outro app):
+
+```
+GET /api/whatsapp/diag?waba=<id>    → números + ids, apps inscritos, permissões, escopo do token
+POST /api/whatsapp/diag {acao:"testar-envio", phone_number_id, destino}
+```
+Comparar a linha suspeita com uma que funciona, usando o MESMO token, isola em uma
+tentativa se o problema é do token ou da conta.
+
+### 20.3 Rota `/api/whatsapp/diag` — temporária, com travas
+
+Criada para diagnosticar sem ninguém manusear token (usa o `WHATSAPP_TOKEN` da Vercel).
+Protegida por sessão de admin. **Escrita por lista de PERMISSÃO, não de bloqueio** —
+lista de bloqueio protegeria só o que alguém lembrou de listar, e qualquer conta nova
+nasceria desprotegida:
+
+- `WABAS_ESCRITA_PERMITIDA` — só Murano Shop e a conta de teste;
+- `NUMEROS_REGISTRO_PERMITIDO` — só os números de teste/piloto.
+- **O número oficial de produção nunca entra nessas listas.**
+
+Remover junto com `send-test` quando a Fase C fechar.
+
+### 20.4 Redução de raio: o token não enxerga mais a produção
+
+Em 15/08 a WABA **Murano Pro foi removida dos ativos do usuário do sistema Murano
+Pulse**. Consulta a ela passou a responder erro 100 (sem permissão) — ou seja, o token
+do CRM ficou **fisicamente incapaz** de ler ou alterar a conta de produção, em vez de
+depender de trava em código. Reatribuir é o mesmo caminho, quando a Fase C começar.
+
+### 20.5 Estado do piloto
+
+Validado em 15/08: **recebimento** (~2 s), **mídia** (foto de 620 KB baixada para o
+bucket `wa-midia`), **envio** pela rota do app com espelho em `mensagens` e recibo de
+entrega, e **`linha_id`** gravado nos dois sentidos.
+
+Pendências para o piloto valer com clientes reais: app em **modo Ativo** (hoje em
+Desenvolvimento — só números da allowlist chegam), política de privacidade e termos
+publicados, e template de recontato aprovado. Ver §16.5 e §16.6.
