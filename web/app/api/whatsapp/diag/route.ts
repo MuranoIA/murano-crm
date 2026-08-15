@@ -73,7 +73,18 @@ async function graph(caminho: string, metodo: "GET" | "POST" = "GET", corpo?: un
     ...(corpo ? { body: JSON.stringify(corpo) } : {}),
   });
   const body = await r.json().catch(() => ({}));
-  return r.ok ? body : { erro: body?.error?.message ?? `HTTP ${r.status}`, codigo: body?.error?.code ?? null };
+  // erro COMPLETO: subcode e error_user_msg costumam trazer o motivo acionável,
+  // que a mensagem genérica esconde (ex.: "#200 sem permissão" pode ser, na
+  // verdade, falta de método de pagamento ou de aceite de termos na conta).
+  return r.ok ? body : {
+    erro: body?.error?.message ?? `HTTP ${r.status}`,
+    codigo: body?.error?.code ?? null,
+    subcodigo: body?.error?.error_subcode ?? null,
+    titulo_usuario: body?.error?.error_user_title ?? null,
+    msg_usuario: body?.error?.error_user_msg ?? null,
+    tipo: body?.error?.type ?? null,
+    fbtrace: body?.error?.fbtrace_id ?? null,
+  };
 }
 
 // GET /api/whatsapp/diag[?waba=<id>]
@@ -129,10 +140,30 @@ export async function POST(req: Request) {
   if (!podeAdmin(cookies().get("crm_sessao")?.value)) {
     return Response.json({ error: "só admin" }, { status: 403 });
   }
-  let waba: string | undefined, acao: string | undefined, phone_number_id: string | undefined, pin: string | undefined;
+  let waba: string | undefined, acao: string | undefined, phone_number_id: string | undefined,
+      pin: string | undefined, destino: string | undefined;
   try {
-    ({ waba, acao, phone_number_id, pin } = await req.json());
+    ({ waba, acao, phone_number_id, pin, destino } = await req.json());
   } catch { /* body opcional */ }
+
+  // ---- ação: testar envio por uma linha ESPECÍFICA -------------------------
+  // Serve para comparar a linha piloto com a de teste usando o MESMO token: se a
+  // de teste envia e a piloto não, o problema é da conta; se nenhuma envia, é do
+  // token. Sem isso, o env único não deixa comparar.
+  if (acao === "testar-envio") {
+    if (!phone_number_id || !NUMEROS_REGISTRO_PERMITIDO.has(phone_number_id)) {
+      return Response.json({ error: "BLOQUEADO: só números de teste/piloto", permitidos: [...NUMEROS_REGISTRO_PERMITIDO] }, { status: 423 });
+    }
+    const para = String(destino ?? "").replace(/\D/g, "");
+    if (!para) return Response.json({ error: "informe `destino` (E.164 sem +)" }, { status: 400 });
+    const envio = await graph(`${phone_number_id}/messages`, "POST", {
+      messaging_product: "whatsapp",
+      to: para,
+      type: "text",
+      text: { body: "Teste de linha — diagnóstico do CRM Murano." },
+    });
+    return Response.json({ acao: "testar-envio", linha: phone_number_id, destino: para, resultado: envio });
+  }
 
   // ---- ação: registrar o número sob o NOSSO app ---------------------------
   // Necessário para ENVIAR: receber webhook basta estar inscrito, mas enviar é
