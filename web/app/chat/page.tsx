@@ -54,6 +54,8 @@ const MOTIVOS: { v: string; rotulo: string }[] = [
 type Msg = {
   id: string; conteudo: string; enviada_por: string; tipo: string | null; status: string | null; criada_em: string;
   midia_tipo?: string | null; midia_mime?: string | null; midia_nome?: string | null; midia_path?: string | null;
+  reacao?: string | null;      // emoji com que a cliente reagiu A ESTA mensagem
+  resposta_a?: string | null;  // wamid da mensagem citada
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -1199,11 +1201,26 @@ export default function Chat() {
                         const m = it.m;
                         const fora = m.enviada_por !== "customer"; // operator/bot = lado direito
                         return (
-                          <div key={m.id} style={{ display: "flex", justifyContent: fora ? "flex-end" : "flex-start" }}>
-                            <div style={{ maxWidth: "72%", background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? "#dcc8e2" : M.border}`, borderRadius: fora ? "12px 12px 3px 12px" : "12px 12px 12px 3px", padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.06)" }}>
+                          <div key={m.id} style={{ display: "flex", justifyContent: fora ? "flex-end" : "flex-start", position: "relative" }}>
+                            <div style={{ maxWidth: "72%", background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? "#dcc8e2" : M.border}`, borderRadius: fora ? "12px 12px 3px 12px" : "12px 12px 12px 3px", padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
                               {m.tipo === "template" && (
                                 <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.roxo, marginBottom: 3 }}>template</div>
                               )}
+                              {m.tipo === "auto" && (
+                                <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.gray, marginBottom: 3 }}>resposta automática</div>
+                              )}
+                              {/* trecho citado: dá sentido à resposta quando a conversa
+                                  tem vários assuntos ao mesmo tempo */}
+                              {m.resposta_a && (() => {
+                                const alvo = (msgs ?? []).find((x) => x.id === m.resposta_a);
+                                return (
+                                  <div style={{ borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: "4px 8px", marginBottom: 4, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden" }}>
+                                    {alvo
+                                      ? (alvo.conteudo || rotuloMidia(alvo.midia_tipo ?? "")).slice(0, 120)
+                                      : "mensagem citada (fora do histórico carregado)"}
+                                  </div>
+                                );
+                              })()}
                               <Midia m={m} />
                               {/* com mídia, o texto só aparece se for legenda de verdade (não o rótulo) */}
                               {(!m.midia_tipo || (m.conteudo && !/^(📷|🎬|🎤|📎|🙂)/.test(m.conteudo))) && (
@@ -1213,6 +1230,15 @@ export default function Chat() {
                                 {horaBR(m.criada_em)}
                                 {fora && <Ticks status={m.status} />}
                               </div>
+                              {/* reação: pendurada na borda da bolha, como no WhatsApp */}
+                              {m.reacao && (
+                                <span title="reação do cliente"
+                                  style={{ position: "absolute", bottom: -2, [fora ? "right" : "left"]: 14,
+                                    background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999,
+                                    padding: "1px 5px", fontSize: 12, lineHeight: 1.2, boxShadow: "0 1px 2px rgba(28,14,27,.12)" } as any}>
+                                  {m.reacao}
+                                </span>
+                              )}
                             </div>
                           </div>
                         );

@@ -110,6 +110,19 @@ async function gravarMensagemRecebida(
   const wamid: string = String(msg.id ?? "");
   if (!waId || !wamid) return;
 
+  // REAÇÃO não é mensagem: é atributo da mensagem reagida (como no WhatsApp).
+  // Gravá-la como linha nova a tornaria "a última mensagem" da conversa — mexendo
+  // na etapa do funil — e abriria uma "espera" no indicador de tempo de resposta
+  // que ninguém precisa responder. `emoji` vazio = reação removida.
+  if (msg.type === "reaction") {
+    const alvo = String(msg.reaction?.message_id ?? "");
+    if (!alvo) return;
+    const emoji = String(msg.reaction?.emoji ?? "").trim() || null;
+    const { error } = await sb.from("mensagens").update({ reacao: emoji }).eq("id", alvo);
+    if (error) console.error("[wa-webhook] reação não gravada:", error.message);
+    return;
+  }
+
   const cliente = await acharOuCriarCliente(sb, waId, nomePerfil);
   const row: Record<string, unknown> = {
     id: wamid,
@@ -119,6 +132,7 @@ async function gravarMensagemRecebida(
     tipo: "mensagem",
     conteudo: extrairConteudo(msg),
     is_reply: Boolean(msg.context?.id) || null,
+    resposta_a: msg.context?.id ? String(msg.context.id) : null,   // qual mensagem foi citada
     status: "success",
     criada_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
     linha_id: linhaId ?? null,
