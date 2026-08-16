@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { canalDeResposta, sendMedia, tipoDoMime, extensaoDoMime, linhaDeEnvio } from "../../../../lib/whatsapp";
+import { ehWebm, webmParaOgg, mp4ComOpus } from "../../../../lib/opusOgg";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // upload + envio: mais folga que o texto
@@ -50,13 +51,39 @@ export async function POST(req: Request) {
   const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
   if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
 
-  const mime = arquivo.type || "application/octet-stream";
-  const bytes = await arquivo.arrayBuffer();
+  let mime = arquivo.type || "application/octet-stream";
+  let bytes: ArrayBuffer | Uint8Array = await arquivo.arrayBuffer();
+  let nome = arquivo.name || `arquivo.${extensaoDoMime(mime)}`;
   const tipo = tipoDoMime(mime);
+
+  // ÁUDIO: o WhatsApp só aceita Opus dentro de Ogg. O MediaRecorder do Chrome
+  // entrega Opus dentro de WebM (ou de MP4, se pedirem `audio/mp4`), e a Graph
+  // API ACEITA o upload nos dois casos — olhando só o container — para falhar
+  // depois na entrega, com wamid válido e `status: failed` chegando pelo
+  // webhook. Foi o que derrubou o primeiro teste de áudio (16/08). Aqui o
+  // container é reescrito antes de sair; o áudio em si não é tocado.
+  if (tipo === "audio") {
+    if (ehWebm(bytes)) {
+      const ogg = webmParaOgg(bytes);
+      if (!ogg) {
+        return Response.json({
+          error: "Não consegui converter este áudio para o formato que o WhatsApp aceita. Tente gravar de novo ou envie um MP3.",
+        }, { status: 422 });
+      }
+      bytes = ogg;
+      mime = "audio/ogg";
+      nome = nome.replace(/\.[^.]+$/, "") + ".ogg";
+    } else if (mp4ComOpus(bytes)) {
+      // recusa explícita: seria aceito no upload e nunca entregue
+      return Response.json({
+        error: "Este áudio está em MP4 com codec Opus, que o WhatsApp aceita mas não entrega. Grave de novo pelo botão de microfone ou envie um MP3.",
+      }, { status: 422 });
+    }
+  }
 
   let wamid: string;
   try {
-    ({ wamid } = await sendMedia(to, bytes, mime, arquivo.name || `arquivo.${extensaoDoMime(mime)}`, legenda));
+    ({ wamid } = await sendMedia(to, bytes, mime, nome, legenda));
   } catch (e: any) {
     if (e?.foraDaJanela) {
       return Response.json({
@@ -83,13 +110,17 @@ export async function POST(req: Request) {
     vendedor_carteira: cli.carteira ?? null,
     enviada_por: "operator",
     tipo: "mensagem",
-    conteudo: legenda || arquivo.name || rotulo(tipo),
+    // áudio não leva legenda e o nome do arquivo é lixo gerado ("audio-173…ogg"):
+    // vale o rótulo, igual ao que o webhook grava no áudio RECEBIDO. Este texto
+    // não fica só na bolha — é o que o board e a `vw_funil` mostram como última
+    // mensagem da conversa.
+    conteudo: legenda || (tipo === "audio" ? rotulo(tipo) : nome || rotulo(tipo)),
     status: "wait",
     criada_em: new Date().toISOString(),
     midia_tipo: tipo,
     midia_path,
     midia_mime: mime,
-    midia_nome: arquivo.name || null,
+    midia_nome: nome || null,
     linha_id: linhaDeEnvio(),
   }, { onConflict: "id" });
 
