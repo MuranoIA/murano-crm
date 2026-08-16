@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
-      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id")
+      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a")
       .eq("cliente_id", cliente_id)
       .order("criada_em", { ascending: false })
       .limit(200),
