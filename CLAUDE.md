@@ -1483,3 +1483,54 @@ mexer nessa tela, manter a distinção.
 **O que o `/api/chat/thread` devolve hoje** (as duas frentes convivendo): `mensagens`,
 `notas`, `transferencias` e `linha` — o front intercala as três primeiras por data e
 usa a última para a etiqueta do número no cabeçalho.
+
+## 21. Chat — P2 COMPLETO (16/08/2026). O chat cobre o que o RD oferece.
+
+PRs #70–#74. Com isso os três blocos do §18 estão entregues: **P0, P1 e P2**.
+
+| Item | Como ficou | Migration |
+|---|---|---|
+| **Presença anti-colisão** | Canal único de Realtime: cada aba publica em qual conversa está. Aviso no cabeçalho (`👀 Fulano está aqui`) e marcador na lista. Payload **sem e-mail** (canal público, §15.4) e filtro **por rótulo, não por aba** — senão a 2ª aba do próprio usuário (PC + celular) apareceria como "outra pessoa" | — |
+| **Fila de não atribuídos** | Conversa sem dono ganha aba própria, visível a **todos**, com botão ✋ Pegar. **Sem tabela nova**: pegar = transferência de ninguém para mim, reusando `chat_transferencia` (append-only), então o histórico de quem puxou sai de graça. Admin/home não têm carteira: veem selo e designam pelo Transferir | — |
+| **Indicadores de atendimento** | `/chat/indicadores` — tempo de resposta (mediana, p90, faixas), volume e encerramentos por motivo. Escopo no servidor | 0084 |
+| **Mensagem fora do horário** | Config em tabela (horário, dias, texto, intervalo). **NASCE DESLIGADA** — envia a cliente real, ligar é decisão do usuário | 0085 |
+| **Reações e resposta citada** | Reação vira atributo da mensagem; citação mostra o trecho original | 0086 |
+
+### 21.1 Decisões de método que sustentam os indicadores
+
+Sem elas o número engana, e engana para melhor — o pior tipo de erro numa métrica de equipe:
+
+- **Uma espera por RAJADA.** Cinco mensagens seguidas da cliente contam como UMA espera. Senão o denominador infla e a métrica vira ficção.
+- **Corte de 24h.** Acima disso a janela do WhatsApp fechou: é reengajamento por template, não demora de atendimento.
+- **CONTAGENS, não percentuais, na view.** Somar `pct` diário daria peso igual a um dia de 3 respostas e a um de 300.
+- **A mediana lidera.** Medido em 30 dias: **mediana 2,1 min contra média 36,5 min** — a média é dominada por poucas esperas longas. E o resumo se chama "mediana **típica do dia**", porque a mediana do período não se deriva das diárias; preferimos o rótulo honesto ao número falsamente preciso.
+- **`tipo='auto'` fica FORA do indicador.** Robô respondendo em 2 s de madrugada faria o TME parecer ótimo.
+
+### 21.2 Dois bugs silenciosos que a reação revelou
+
+Reação era gravada como mensagem nova. Consequências que ninguém tinha notado:
+1. virava "a última mensagem" → **movia o card de etapa no funil** (§11.1);
+2. contava como fala do cliente → **abria uma espera** no indicador de tempo de resposta.
+
+Um polegar levantado mexia no funil e piorava o número do vendedor. Corrigido na 0086 —
+mas fica o alerta: **o que entra em `mensagens` alimenta funil, board e métricas**. Antes de
+gravar um evento novo ali, verificar se ele é mesmo uma mensagem.
+
+### 21.3 Numeração das migrations (o mapa vale mais que a regra)
+
+Duas frentes trabalharam o chat em paralelo e colidiram duas vezes. Estado final:
+
+`0079` P0 · `0080` linha telefônica · `0081` transferência+busca · `0082` respostas+notas
+(renumerada) · `0084` indicadores · `0085` fora do horário · `0086` reações.
+**`0083` foi deixado livre** para a frente do ranking renumerar a dela.
+
+### 21.4 O caminho crítico agora NÃO é código
+
+Falta só acabamento técnico (Graph v22→v26; remover `send-test` e `diag`, ambas temporárias).
+O que separa o projeto do corte é operacional:
+
+1. Política de privacidade e termos publicados (minuta pronta, §16/relatório)
+2. Dados básicos do app → **modo Ativo** (sem isso o piloto só funciona com a allowlist)
+3. Template de recontato aprovado na Meta
+4. **Time usando o chat em paralelo ao RD por alguns dias.** O que os vendedores
+   reclamarem vale mais que qualquer item adivinhado numa lista.
