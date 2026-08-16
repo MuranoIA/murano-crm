@@ -293,6 +293,20 @@ export default function Chat() {
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
   const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
+  // presença: cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta
+  const [presentes, setPresentes] = useState<Record<string, string[]>>({});
+  const presencaCanalRef = useRef<any>(null);
+  // id desta ABA (chave de presença): permite ter várias abas abertas sem uma
+  // derrubar o registro da outra
+  const presencaIdRef = useRef<string>(
+    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Math.random()),
+  );
+  // como apareço para os outros. Sem e-mail: o canal é público (§15.4)
+  const rotuloUsuario = !sessao
+    ? ""
+    : sessao.carteira
+      ? cap(sessao.carteira)
+      : sessao.role === "admin" ? "Admin" : "Supervisão";
   const [painelAberto, setPainelAberto] = useState(true);
   // --- P1: notas internas e respostas rápidas -------------------------------
   const [notas, setNotas] = useState<Nota[]>([]);
@@ -375,6 +389,7 @@ export default function Chat() {
     }, 60_000);
 
     let canal: any = null;
+    let canalPresenca: any = null;
     let cancelado = false;
     (async () => {
       const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -393,11 +408,61 @@ export default function Chat() {
             if (selRef.current) carregarThread(selRef.current, false);
           })
           .subscribe();
-      } catch { /* sem realtime: o poll de 60s cobre */ }
+
+        // ---- PRESENÇA (anti-colisão) ------------------------------------
+        // Um canal só para todo o time: cada aba publica em qual conversa está,
+        // e todos veem. Com ~7 pessoas isso é barato — um canal por conversa
+        // exigiria entrar e sair a cada clique.
+        //
+        // O payload NÃO leva e-mail: só um rótulo de exibição e um id aleatório
+        // de aba. O canal é público (mesma razão do `board`, §15.4), então nada
+        // de identificável vai nele.
+        canalPresenca = supa.channel("chat-presenca", {
+          config: { presence: { key: presencaIdRef.current } },
+        });
+        const recalcular = () => {
+          const estado = canalPresenca.presenceState() as Record<string, any[]>;
+          const porConversa: Record<string, string[]> = {};
+          for (const metas of Object.values(estado)) {
+            for (const m of metas as any[]) {
+              // filtra pelo RÓTULO, não pela chave da aba: assim minhas outras
+              // abas não aparecem como se fossem outra pessoa
+              if (!m?.cliente_id || !m?.rotulo || m.rotulo === rotuloUsuario) continue;
+              const lista = (porConversa[m.cliente_id] ??= []);
+              if (!lista.includes(m.rotulo)) lista.push(m.rotulo);
+            }
+          }
+          setPresentes(porConversa);
+        };
+        canalPresenca
+          .on("presence", { event: "sync" }, recalcular)
+          .on("presence", { event: "join" }, recalcular)
+          .on("presence", { event: "leave" }, recalcular)
+          .subscribe((status: string) => {
+            if (status === "SUBSCRIBED") {
+              presencaCanalRef.current = canalPresenca;
+              // publica onde estou agora (pode já haver conversa aberta)
+              canalPresenca.track({ rotulo: rotuloUsuario, cliente_id: selRef.current?.cliente_id ?? null });
+            }
+          });
+      } catch { /* sem realtime: o poll de 60s cobre, e a presença some sem quebrar nada */ }
     })();
 
-    return () => { cancelado = true; clearInterval(lento); try { canal?.unsubscribe(); } catch {} };
-  }, [sessao, carregarLista, carregarThread, carregarRespostas]);
+    return () => {
+      cancelado = true;
+      clearInterval(lento);
+      try { canal?.unsubscribe(); } catch {}
+      try { canalPresenca?.unsubscribe(); } catch {}
+      presencaCanalRef.current = null;
+    };
+  }, [sessao, carregarLista, carregarThread, carregarRespostas, rotuloUsuario]);
+
+  // republica a presença sempre que troco de conversa (ou fecho a thread)
+  useEffect(() => {
+    const c = presencaCanalRef.current;
+    if (!c) return;
+    try { c.track({ rotulo: rotuloUsuario, cliente_id: sel?.cliente_id ?? null }); } catch {}
+  }, [sel?.cliente_id, rotuloUsuario]);
 
   // aviso no título da aba: "(3) Chat" — o vendedor percebe sem estar na tela
   const naoLidas = conversas.filter((c) => c.nao_lida).length;
@@ -837,6 +902,10 @@ export default function Chat() {
                         {c.vendedor && sessao.carteira == null && (
                           <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{cap(c.vendedor)}</span>
                         )}
+                        {!!presentes[c.cliente_id]?.length && (
+                          <span title={`${presentes[c.cliente_id].join(", ")} com esta conversa aberta`}
+                            style={{ fontSize: 10, flexShrink: 0 }}>👀</span>
+                        )}
                         {c.nao_lida && (
                           <span title="não lida" style={{ width: 9, height: 9, borderRadius: 9, background: M.roxo, flexShrink: 0 }} />
                         )}
@@ -927,6 +996,15 @@ export default function Chat() {
                           background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
                           borderRadius: 999, padding: "1px 7px" }}>
                           {linha.rotulo}
+                        </span>
+                      )}
+                      {/* anti-colisão: quem mais está com ESTA conversa aberta */}
+                      {!!presentes[sel.cliente_id]?.length && (
+                        <span title="outra pessoa está com esta conversa aberta"
+                          style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
+                            color: "#8a2f12", background: "#fdeae3", border: "1px solid #f0c4b0",
+                            borderRadius: 999, padding: "1px 7px" }}>
+                          👀 {presentes[sel.cliente_id].join(", ")} {presentes[sel.cliente_id].length > 1 ? "estão aqui" : "está aqui"}
                         </span>
                       )}
                     </span>
