@@ -635,6 +635,64 @@ export default function Chat() {
     }
   }
 
+  // ---- gravação de áudio (como no WhatsApp / RD) --------------------------
+  // ARMADILHA DE FORMATO: o WhatsApp aceita ogg/opus, mp4, aac, amr e mpeg —
+  // NÃO aceita webm, que é justamente o padrão do MediaRecorder no Chrome.
+  // Por isso a escolha é por ordem de compatibilidade; webm fica por último,
+  // como último recurso (e aí o envio pode ser recusado pela Meta).
+  const FORMATOS_AUDIO = [
+    "audio/ogg;codecs=opus",  // nativo do WhatsApp; Firefox grava
+    "audio/mp4",              // Safari
+    "audio/aac",
+    "audio/webm;codecs=opus", // Chrome: opus dentro de container que a Meta recusa
+    "audio/webm",
+  ];
+  const recRef = useRef<MediaRecorder | null>(null);
+  const pedacosRef = useRef<Blob[]>([]);
+  const [gravando, setGravando] = useState(false);
+  const [segundos, setSegundos] = useState(0);
+
+  async function alternarGravacao() {
+    if (gravando) { recRef.current?.stop(); return; }
+    if (!sel) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = FORMATOS_AUDIO.find((f) => (window as any).MediaRecorder?.isTypeSupported?.(f)) ?? "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      pedacosRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size) pedacosRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setGravando(false);
+        const tipo = rec.mimeType || mime || "audio/ogg";
+        const blob = new Blob(pedacosRef.current, { type: tipo });
+        if (blob.size < 1200) { setAviso("Áudio muito curto — segure mais tempo."); return; }
+        const ext = tipo.includes("ogg") ? "ogg" : tipo.includes("mp4") ? "m4a" : tipo.includes("aac") ? "aac" : "webm";
+        await enviarArquivo(new File([blob], `audio-${Date.now()}.${ext}`, { type: tipo.split(";")[0] }));
+      };
+      recRef.current = rec;
+      rec.start();
+      setGravando(true); setSegundos(0); setAviso(null);
+    } catch {
+      setAviso("Não consegui acessar o microfone — verifique a permissão do navegador.");
+    }
+  }
+
+  // cronômetro da gravação
+  useEffect(() => {
+    if (!gravando) return;
+    const t = setInterval(() => setSegundos((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [gravando]);
+
+  function cancelarGravacao() {
+    const rec = recRef.current;
+    if (!rec) return;
+    rec.onstop = () => { rec.stream.getTracks().forEach((t) => t.stop()); setGravando(false); };
+    rec.stop();
+    pedacosRef.current = [];
+  }
+
   // envio de arquivo (foto, áudio, documento) pelo canal WhatsApp direto
   async function enviarArquivo(file: File) {
     if (!sel || enviandoArquivo) return;
@@ -1353,6 +1411,30 @@ export default function Chat() {
                   >
                     {enviandoArquivo ? "…" : "📎"}
                   </button>
+                  {/* 🎤 gravar áudio — clica pra gravar, clica de novo pra enviar */}
+                  <button
+                    onClick={alternarGravacao}
+                    disabled={enviandoArquivo || modoNota}
+                    title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
+                    style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
+                      opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
+                      border: `1px solid ${gravando ? M.laranja : M.border}`,
+                      background: gravando ? "#fdeae3" : M.bg, color: gravando ? M.laranja : M.gray }}
+                  >
+                    {gravando ? "⏹" : "🎤"}
+                  </button>
+                  {gravando && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 7, alignSelf: "center", whiteSpace: "nowrap" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 8, background: M.laranja }} />
+                      <b style={{ fontSize: 13, color: M.laranja, fontVariantNumeric: "tabular-nums" }}>
+                        {String(Math.floor(segundos / 60)).padStart(2, "0")}:{String(segundos % 60).padStart(2, "0")}
+                      </b>
+                      <button onClick={cancelarGravacao} title="Descartar gravação"
+                        style={{ background: "transparent", border: "none", color: M.gray, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                        descartar
+                      </button>
+                    </span>
+                  )}
                   {/* ⚡ respostas rápidas — o mesmo que digitar `/` */}
                   <button
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
