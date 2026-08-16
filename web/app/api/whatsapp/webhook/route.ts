@@ -18,6 +18,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
+import { avisarForaDeHorario } from "../../../../lib/foraDeHorario";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -131,6 +132,10 @@ async function gravarMensagemRecebida(
     { cliente_id: cliente.id, status: "aberta", atualizado_em: new Date().toISOString() },
     { onConflict: "cliente_id" },
   );
+
+  // aviso de fora do horário (nasce desligado; não repete na mesma rajada).
+  // Depois do upsert de propósito: se falhar, a mensagem da cliente já está salva.
+  await avisarForaDeHorario(sb, cliente.id, waId);
 }
 
 const TIPOS_MIDIA = ["image", "audio", "video", "document", "sticker"] as const;
