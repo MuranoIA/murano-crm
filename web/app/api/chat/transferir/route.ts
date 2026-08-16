@@ -51,7 +51,11 @@ export async function POST(req: Request) {
   ]);
   const de = donoEfetivo(cliente_id, (linha?.vendedor as string) ?? null, atrib);
 
-  if (!tudo && de !== carteira) {
+  // `de === null` = conversa SEM DONO (contato novo, sem carteira e nunca
+  // transferido). Está na fila: qualquer um pode puxar, e é assim que a fila de
+  // não atribuídos funciona — "pegar" é uma transferência de ninguém para mim.
+  // Fora esse caso, um vendedor não tira conversa da mão do outro.
+  if (!tudo && de !== null && de !== carteira) {
     return Response.json({ error: "essa conversa não está com você" }, { status: 403 });
   }
   if (de === para) {

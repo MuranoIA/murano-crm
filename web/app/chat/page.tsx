@@ -35,6 +35,7 @@ type Conversa = {
   telefone: string | null; ultima_atividade: string | null;
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
+  na_fila?: boolean;   // sem dono: qualquer um pode puxar
   // `vendedor` já vem como o dono EFETIVO (depois da transferência); isto diz de
   // qual carteira ela veio, para o selo "recebida de fulano" (migration 0081)
   transferida_de?: string | null;
@@ -288,7 +289,8 @@ export default function Chat() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [filtro, setFiltro] = useState<"pendentes" | "todas" | "resolvidas">("todas");
+  const [filtro, setFiltro] = useState<"pendentes" | "todas" | "resolvidas" | "fila">("todas");
+  const [puxando, setPuxando] = useState(false);
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
@@ -592,6 +594,26 @@ export default function Chat() {
     }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
   }
 
+  // puxar da fila: "pegar" é uma transferência de ninguém para mim. Reaproveita
+  // /api/chat/transferir (append-only), que aceita origem nula justamente por isso.
+  async function puxarDaFila() {
+    if (!sel || !sessao?.carteira || puxando) return;
+    setPuxando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/transferir", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, para: sessao.carteira, observacao: "puxou da fila" }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      setSel({ ...sel, na_fila: false, vendedor: sessao.carteira });
+      await carregarLista();
+      await carregarThread(sel, false);
+    } catch (e: any) {
+      setAviso(`Não consegui puxar: ${e?.message ?? e}`);
+    } finally { setPuxando(false); }
+  }
+
   // resolver / reabrir a conversa (o substituto do "fechar atendimento" do RD)
   async function mudarStatus(status: "aberta" | "resolvida", motivo?: string) {
     if (!sel) return;
@@ -786,6 +808,8 @@ export default function Chat() {
 
   const filtradas = conversas.filter((c) => {
     const st = c.status ?? "aberta";
+    // a fila é uma aba própria: sem dono, não polui as listas de quem tem dono
+    if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
     if (filtro === "pendentes" && !(st === "aberta" && c.nao_lida)) return false;
     if (filtro === "resolvidas" && st !== "resolvida") return false;
     if (filtro === "todas" && st === "resolvida") return false; // resolvida sai da fila
@@ -793,7 +817,8 @@ export default function Chat() {
     const b = busca.toLowerCase();
     return (c.cliente ?? "").toLowerCase().includes(b) || String(c.telefone ?? "").includes(b.replace(/\D/g, "") || " ");
   });
-  const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida").length;
+  const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
+  const contaFila = conversas.filter((c) => c.na_fila).length;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
   const jaNaLista = new Set(filtradas.map((c) => c.cliente_id));
   const achadosNovos = (achados ?? []).filter((c) => !jaNaLista.has(c.cliente_id));
@@ -851,7 +876,8 @@ export default function Chat() {
               <div style={{ display: "flex", gap: 6 }}>
                 {([
                   { k: "pendentes" as const, r: "Pendentes", n: naoLidas },
-                  { k: "todas" as const, r: "Abertas", n: conversas.length - contaResolvidas },
+                  { k: "todas" as const, r: "Abertas", n: conversas.filter((c) => !c.na_fila).length - contaResolvidas },
+                  { k: "fila" as const, r: "Fila", n: contaFila },
                   { k: "resolvidas" as const, r: "Resolvidas", n: contaResolvidas },
                 ]).map((t) => {
                   const on = filtro === t.k;
@@ -1009,6 +1035,22 @@ export default function Chat() {
                       )}
                     </span>
                   </span>
+                  {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
+                  {sel.na_fila && (
+                    sessao.carteira ? (
+                      <button onClick={puxarDaFila} disabled={puxando} title="Assumir este atendimento"
+                        style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: "#1a6b3c", border: "none",
+                          borderRadius: 999, padding: "6px 13px", cursor: puxando ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                        {puxando ? "…" : "✋ Pegar atendimento"}
+                      </button>
+                    ) : (
+                      <span title="admin/supervisão não têm carteira: use Transferir para designar alguém"
+                        style={{ fontSize: 10.5, fontWeight: 700, color: "#8a2f12", background: "#fdeae3", border: "1px solid #f0c4b0",
+                          borderRadius: 999, padding: "4px 10px", whiteSpace: "nowrap" }}>
+                        na fila — sem dono
+                      </span>
+                    )
+                  )}
                   {!isMobile && (
                     <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente"}
                       style={{ fontSize: 11.5, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>

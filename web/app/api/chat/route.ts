@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
-import { carregarAtribuicoes, aplicaEscopo, emLotes } from "../../../lib/chatEscopo";
+import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +54,34 @@ export async function GET() {
     }
   }
 
+  // ---- FILA de não atribuídos (P2) ----------------------------------------
+  // Conversa sem dono nenhum: sem carteira no funil e nunca transferida. É o
+  // caso do contato novo que o webhook cria (`wa:<numero>`, sem cadastro no
+  // WinThor) — hoje ele ficava invisível para os vendedores, porque o filtro
+  // por carteira o descartava, e só o admin o via.
+  //
+  // A fila é visível para TODOS, de propósito: é dela que se puxa atendimento.
+  // Buscada à parte porque o filtro por carteira acima nunca traz `null`.
+  const filaCandidatos: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await sb.from("vw_funil").select(COLS)
+      .not("ultima_atividade", "is", null)
+      .is("vendedor", null)
+      .order("ultima_atividade", { ascending: false })
+      .range(from, from + PAGE - 1);
+    filaCandidatos.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  // `vendedor` nulo no funil não basta: pode ter sido transferida para alguém.
+  // Sem dono efetivo = está mesmo na fila.
+  const naFila = new Set(
+    filaCandidatos
+      .filter((c: any) => donoEfetivo(c.cliente_id, c.vendedor ?? null, atrib) === null)
+      .map((c: any) => c.cliente_id),
+  );
+  const jaListado = new Set(out.map((c: any) => c.cliente_id));
+  out.push(...filaCandidatos.filter((c: any) => naFila.has(c.cliente_id) && !jaListado.has(c.cliente_id)));
+
   // ids sintéticos (winthor:/venda:) não têm thread de mensagens — fora do chat
   const reais = out.filter((c: any) =>
     typeof c.cliente_id === "string" &&
@@ -62,7 +90,12 @@ export async function GET() {
 
   // dono efetivo: tira o que foi transferido PRA FORA e marca o que chegou.
   // `vendedor` passa a ser quem atende hoje — é o que a tela mostra e filtra.
-  const conversas = aplicaEscopo(reais, atrib, carteira)
+  // A fila entra fora do escopo: sem dono, não pertence a carteira nenhuma.
+  const doEscopo = aplicaEscopo(reais.filter((c: any) => !naFila.has(c.cliente_id)), atrib, carteira);
+  const daFila = reais
+    .filter((c: any) => naFila.has(c.cliente_id))
+    .map((c: any) => ({ ...c, vendedor: null, transferida_de: null, na_fila: true }));
+  const conversas = [...doEscopo, ...daFila]
     .sort((a: any, b: any) => (a.ultima_atividade < b.ultima_atividade ? 1 : -1));
 
   // ---- não lidas + status (P0 itens 3 e 4) --------------------------------
@@ -90,7 +123,8 @@ export async function GET() {
   return Response.json({
     conversas,
     vendedores: vendedores ?? [],
-    nao_lidas: conversas.filter((c: any) => c.nao_lida).length,
+    nao_lidas: conversas.filter((c: any) => c.nao_lida && !c.na_fila).length,
+    na_fila: conversas.filter((c: any) => c.na_fila).length,
     atualizado_em: new Date().toISOString(),
   });
 }
