@@ -158,15 +158,21 @@ export function tipoDoMime(mime: string): "image" | "audio" | "video" | "documen
  * de 24h — `foraDaJanela` é sinalizado igual ao sendText.
  */
 export async function sendMedia(
-  to: string, arquivo: ArrayBuffer, mime: string, nome: string, legenda?: string,
+  to: string, arquivo: ArrayBuffer | Uint8Array, mime: string, nome: string, legenda?: string,
 ): Promise<EnvioOk> {
   const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
   const token = env("WHATSAPP_TOKEN");
 
+  // aceita ArrayBuffer ou view (o remux de áudio devolve Uint8Array); a cópia
+  // recorta exatamente os bytes da view, sem carregar o buffer inteiro junto
+  const binario: ArrayBuffer = arquivo instanceof ArrayBuffer
+    ? arquivo
+    : (arquivo.buffer.slice(arquivo.byteOffset, arquivo.byteOffset + arquivo.byteLength) as ArrayBuffer);
+
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", mime);
-  form.set("file", new Blob([arquivo], { type: mime }), nome);
+  form.set("file", new Blob([binario], { type: mime }), nome);
 
   const up = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/media`, {
     method: "POST",

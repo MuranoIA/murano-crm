@@ -636,16 +636,23 @@ export default function Chat() {
   }
 
   // ---- gravação de áudio (como no WhatsApp / RD) --------------------------
-  // ARMADILHA DE FORMATO: o WhatsApp aceita ogg/opus, mp4, aac, amr e mpeg —
-  // NÃO aceita webm, que é justamente o padrão do MediaRecorder no Chrome.
-  // Por isso a escolha é por ordem de compatibilidade; webm fica por último,
-  // como último recurso (e aí o envio pode ser recusado pela Meta).
+  // ARMADILHA DE FORMATO, medida no primeiro teste (16/08): o WhatsApp aceita
+  // Opus só dentro de Ogg e AAC só dentro de MP4. Pedir `audio/mp4` ao Chrome
+  // devolve OPUS dentro de MP4 — combinação que a Graph API aceita no upload e
+  // depois não entrega, virando `status: failed` sem erro no envio.
+  //
+  // A ordem abaixo é o que cada navegador consegue gravar, do melhor para o
+  // pior, e nenhuma opção é um beco sem saída:
+  //   ogg/opus  → Firefox: já é o formato final, segue direto
+  //   webm/opus → Chrome/Edge: MESMO codec, container errado; o servidor
+  //               reescreve o container (lib/opusOgg.ts) antes de enviar
+  //   mp4/AAC   → Safari, que não grava webm; AAC é aceito como audio/mp4
+  // `audio/mp4` sem codec explícito ficou de fora de propósito: é justamente o
+  // que produz o Opus-em-MP4 no Chrome.
   const FORMATOS_AUDIO = [
-    "audio/ogg;codecs=opus",  // nativo do WhatsApp; Firefox grava
-    "audio/mp4",              // Safari
-    "audio/aac",
-    "audio/webm;codecs=opus", // Chrome: opus dentro de container que a Meta recusa
-    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/webm;codecs=opus",
+    "audio/mp4;codecs=mp4a.40.2",
   ];
   const recRef = useRef<MediaRecorder | null>(null);
   const pedacosRef = useRef<Blob[]>([]);
