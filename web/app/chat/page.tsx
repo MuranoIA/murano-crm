@@ -859,6 +859,11 @@ export default function Chat() {
         <Link href="/" style={{ color: M.gray, textDecoration: "none", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>← CRM</Link>
         <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.3, color: M.wine }}>💬 Chat</div>
         <div style={{ fontSize: 11.5, color: M.muted }}>mensagens em tempo real — envio livre dentro da janela de 24h</div>
+        <Link href="/chat/indicadores" title="Tempo de resposta e encerramentos por vendedor"
+          style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: M.wine, textDecoration: "none",
+            background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
+          📊 Indicadores
+        </Link>
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
