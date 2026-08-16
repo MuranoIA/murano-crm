@@ -36,15 +36,20 @@ Deno.serve(async (req: Request) => {
     const querVendas = !!url.searchParams.get("vendas");
     const hoje = hojeBelem();
 
+    const parseJson = (s: any) => { if (!s) return null; try { return JSON.parse(s as string); } catch { return null; } };
+
     if (url.searchParams.get("comando")) {
-      const { data: cmds } = await sb.from("bi_config").select("chave,valor").in("chave", ["desfile_comando", "parabens_comando", "metabatida_comando"]);
+      const { data: cmds } = await sb.from("bi_config").select("chave,valor").in("chave", ["desfile_comando", "parabens_comando", "metabatida_comando", "parabens_musica"]);
       const m = new Map((cmds ?? []).map((c: any) => [c.chave, c.valor]));
-      const parseJson = (s: any) => { if (!s) return null; try { return JSON.parse(s as string); } catch { return null; } };
-      return resposta({ desfile: m.get("desfile_comando") ?? null, parabens: parseJson(m.get("parabens_comando")), metabatida: parseJson(m.get("metabatida_comando")) });
+      // `musica` vai junto do comando (poll de ~6s) para o painel ter sempre a
+      // versao atual quando a tela de parabens aparecer; null = som sintetizado.
+      return resposta({ desfile: m.get("desfile_comando") ?? null, parabens: parseJson(m.get("parabens_comando")), metabatida: parseJson(m.get("metabatida_comando")), musica: parseJson(m.get("parabens_musica")) });
     }
 
-    const { data: metaCfg } = await sb.from("bi_config").select("valor").eq("chave", "meta_dia").maybeSingle();
-    const meta = Number(metaCfg?.valor ?? 0) || 0;
+    const { data: cfgRows } = await sb.from("bi_config").select("chave,valor").in("chave", ["meta_dia", "parabens_musica"]);
+    const cfgMap = new Map((cfgRows ?? []).map((c: any) => [c.chave, c.valor]));
+    const meta = Number(cfgMap.get("meta_dia") ?? 0) || 0;
+    const musica = parseJson(cfgMap.get("parabens_musica")); // {url, nome, segundos, cortado} ou null
 
     const { data: diasRows } = await sb.from("bi_ranking_snapshots").select("dia").order("dia", { ascending: false });
     const diasDisponiveis = [...new Set((diasRows ?? []).map((r: any) => r.dia))];
@@ -83,10 +88,10 @@ Deno.serve(async (req: Request) => {
     if (diaParam && diaParam !== hoje) {
       const { data: snap } = await sb.from("bi_ranking_snapshots").select("payload,capturado_em").eq("dia", diaParam).order("capturado_em", { ascending: false }).limit(1);
       if (!snap?.length) {
-        return resposta({ dia: diaParam, aoVivo: false, semDados: true, meta, diasDisponiveis, geradoEm: new Date().toISOString(), ranking: [], totais: { bruto: 0, devolucoes: 0, liquido: 0, pedidos: 0, dev_pedidos: 0, clientes: 0 } });
+        return resposta({ dia: diaParam, aoVivo: false, semDados: true, meta, musica, diasDisponiveis, geradoEm: new Date().toISOString(), ranking: [], totais: { bruto: 0, devolucoes: 0, liquido: 0, pedidos: 0, dev_pedidos: 0, clientes: 0 } });
       }
       const p: any = snap[0].payload ?? {};
-      p.dia = diaParam; p.aoVivo = false; p.meta = meta; p.diasDisponiveis = diasDisponiveis; p.geradoEm = snap[0].capturado_em;
+      p.dia = diaParam; p.aoVivo = false; p.meta = meta; p.musica = musica; p.diasDisponiveis = diasDisponiveis; p.geradoEm = snap[0].capturado_em;
       if (Array.isArray(p.ranking)) p.ranking = p.ranking.map((e: any) => ({ ...e, foto: fotoDe.get(slugDe(e.nome)) ?? null }));
       return resposta(p);
     }
@@ -169,7 +174,7 @@ Deno.serve(async (req: Request) => {
     const totalLiquido = Math.round(pedidos.reduce((s, p) => s + Number(p.vlr_atendido ?? 0), 0) * 100) / 100;
     const clientesTotal = new Set(pedidos.filter((p) => p.codcli != null).map((p) => p.codcli)).size;
     const payload: any = {
-      geradoEm: new Date().toISOString(), dia: hoje, aoVivo: true, meta, diasDisponiveis,
+      geradoEm: new Date().toISOString(), dia: hoje, aoVivo: true, meta, musica, diasDisponiveis,
       criterio: "pedidos emitidos hoje (data_emissao, fuso Belem), estados ativos (bloqueado conta), menos cancelados e reemissoes",
       totais: { bruto: totalLiquido, devolucoes: 0, liquido: totalLiquido, pedidos: pedidos.length, dev_pedidos: 0, clientes: clientesTotal },
       ranking,

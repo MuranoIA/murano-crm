@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
+import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -329,6 +330,14 @@ export default function Page() {
   const [parabensNome, setParabensNome] = useState("");
   const [parabensEnviando, setParabensEnviando] = useState(false);
   const [parabensMsg, setParabensMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  // música da tela de parabéns do Ranking (admin sobe o arquivo; as TVs só leem)
+  const [musicaModal, setMusicaModal] = useState(false);
+  const [musica, setMusica] = useState<{ url: string; nome: string; segundos: number; cortado: boolean; origem?: string; atualizado_em: string } | null>(null);
+  const [musicaLoad, setMusicaLoad] = useState(false);
+  const [musicaEnviando, setMusicaEnviando] = useState<"" | "preparando" | "enviando">("");
+  const [musicaMsg, setMusicaMsg] = useState<{ ok: boolean; texto: string } | null>(null);
+  const [musicaInicio, setMusicaInicio] = useState("0:00");
+  const musicaInputRef = useRef<HTMLInputElement>(null);
   const [metasIndModal, setMetasIndModal] = useState(false);
   const [metasInd, setMetasInd] = useState<{ slug: string; nome: string; meta: number }[]>([]);
   const [metasIndLoad, setMetasIndLoad] = useState(false);
@@ -608,6 +617,85 @@ export default function Page() {
     } catch (e: any) {
       alert("Falha ao exibir a tela: " + (e?.message ?? e));
     }
+  }
+
+  // ---- Música da tela de parabéns ------------------------------------------
+  // O admin escolhe um MP3/MP4; o corte de 20s acontece AQUI no navegador
+  // (lib/musicaParabens.ts) — de um .mp4 só o áudio é decodificado, o vídeo é
+  // descartado. Sobe o trecho, e os painéis passam a tocá-lo no lugar do samba
+  // sintetizado. Sem arquivo configurado, o som padrão volta sozinho.
+  const MUSICA_MAX_ORIGEM = 40 * 1024 * 1024;
+  async function abrirMusica() {
+    setMusicaModal(true); setMusicaMsg(null); setMusicaLoad(true);
+    try {
+      const j = await fetch("/api/ranking/musica").then((r) => r.json());
+      setMusica(j?.musica ?? null);
+    } catch { setMusica(null); }
+    finally { setMusicaLoad(false); }
+  }
+  // aceita "80", "1:20" ou "1:20,5" -> segundos
+  function inicioEmSegundos(txt: string) {
+    const t = txt.trim().replace(",", ".");
+    if (!t) return 0;
+    const p = t.split(":").map((x) => Number(x) || 0);
+    const s = p.length > 1 ? p[0] * 60 + p[1] : p[0];
+    return Math.max(0, s);
+  }
+  async function enviarMusica(file: File) {
+    if (file.size > MUSICA_MAX_ORIGEM) {
+      setMusicaMsg({ ok: false, texto: `Arquivo muito grande (${(file.size / 1048576).toFixed(1)} MB). Máximo 40 MB.` });
+      return;
+    }
+    setMusicaMsg(null); setMusicaEnviando("preparando");
+    try {
+      const inicio = inicioEmSegundos(musicaInicio);
+      const trecho = await prepararTrecho(file, inicio);
+      const fd = new FormData();
+      if (trecho) {
+        fd.append("audio", new File([trecho.blob], "parabens.wav", { type: "audio/wav" }), "parabens.wav");
+        fd.append("cortado", "1");
+      } else {
+        // navegador não decodificou (codec exótico): sobe o original e QUEM corta
+        // os 20s é o player do painel. Aí o limite do bucket (20 MB) vale.
+        if (file.size > 20 * 1024 * 1024) {
+          setMusicaMsg({ ok: false, texto: "Não consegui extrair o áudio deste arquivo neste navegador, e ele é grande demais (máx. 20 MB) para subir inteiro. Converta para MP3 e tente de novo." });
+          return;
+        }
+        fd.append("audio", file, file.name);
+        fd.append("cortado", "0");
+      }
+      fd.append("nome", file.name);
+      fd.append("origem", file.type || "");
+      setMusicaEnviando("enviando");
+      const r = await fetch("/api/ranking/musica", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMusicaMsg({ ok: false, texto: j?.error ?? ("Erro " + r.status) }); return; }
+      setMusica(j.musica);
+      setMusicaMsg({
+        ok: true,
+        texto: trecho
+          ? `🎵 Pronto — ${segundosFmt(trecho.segundos)} de “${file.name}”${trecho.temVideo ? " (só o áudio; o vídeo foi descartado)" : ""}. Já vale na próxima venda.`
+          : `🎵 Enviado “${file.name}”. Não deu para cortar aqui, então o painel corta em ${SEGUNDOS_PARABENS}s na hora de tocar.`,
+      });
+    } catch (e: any) {
+      setMusicaMsg({ ok: false, texto: "Falha: " + (e?.message ?? e) });
+    } finally {
+      setMusicaEnviando("");
+      if (musicaInputRef.current) musicaInputRef.current.value = ""; // permite reenviar o mesmo arquivo
+    }
+  }
+  async function removerMusica() {
+    if (!confirm("Voltar ao som padrão (samba sintetizado) na tela de parabéns?")) return;
+    setMusicaEnviando("enviando"); setMusicaMsg(null);
+    try {
+      const r = await fetch("/api/ranking/musica", { method: "DELETE" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMusicaMsg({ ok: false, texto: j?.error ?? ("Erro " + r.status) }); return; }
+      setMusica(null);
+      setMusicaMsg({ ok: true, texto: "Som padrão restaurado." });
+    } catch (e: any) {
+      setMusicaMsg({ ok: false, texto: "Falha: " + (e?.message ?? e) });
+    } finally { setMusicaEnviando(""); }
   }
 
   // escolhe o template padrão do momento (por navegador do vendedor)
@@ -1608,6 +1696,9 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirMetasInd(); }} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🏅 Metas individuais
                             </button>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirMusica(); }} title="Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca 20 segundos)" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
+                              🎵 Música dos parabéns
+                            </button>
                             </>)}
                             <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
@@ -1804,6 +1895,7 @@ export default function Page() {
                   <button onClick={() => { fecha(); setDataAnterior(""); setVerAntModal(true); }} style={row}>📅 Ranking — ver anteriores</button>
                   <button onClick={() => { fecha(); abrirMeta(); }} style={row}>🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 13, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}</button>
                   <button onClick={() => { fecha(); abrirMetasInd(); }} style={row}>🏅 Metas individuais</button>
+                  <button onClick={() => { fecha(); abrirMusica(); }} style={row}>🎵 Música dos parabéns{musica ? <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{musica.nome}</span> : null}</button>
                 </>
               )}
               <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
@@ -3182,6 +3274,81 @@ export default function Page() {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
               <button onClick={() => setMetasIndModal(false)} disabled={metasIndSalv} style={{ marginLeft: "auto", padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
               <button onClick={() => salvarMetasInd()} disabled={metasIndSalv || metasIndLoad} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: metasIndSalv ? "wait" : "pointer" }}>{metasIndSalv ? "Salvando…" : "Salvar metas"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {musicaModal && (
+        <div
+          onClick={() => !musicaEnviando && setMusicaModal(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 470, maxWidth: "100%", maxHeight: "86vh", overflowY: "auto", background: RD.surface, borderRadius: 14, padding: 22, boxShadow: "0 20px 60px rgba(16,32,64,.3)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: RD.wine, marginBottom: 4 }}>🎵 Música dos parabéns</div>
+            <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 16, lineHeight: 1.5 }}>
+              Toca nas TVs quando entra uma venda nova. Envie um <b>MP3</b> ou um <b>MP4</b> — de vídeo só aproveitamos o áudio,
+              a imagem é descartada. Tocam <b>{SEGUNDOS_PARABENS} segundos</b>, com um fade no fim.
+            </div>
+
+            {musicaLoad ? (
+              <div style={{ fontSize: 13, color: RD.gray, padding: "10px 0" }}>Carregando…</div>
+            ) : musica ? (
+              <div style={{ border: `1px solid ${RD.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray, letterSpacing: .3, marginBottom: 4 }}>TOCANDO HOJE</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, wordBreak: "break-word" }}>{musica.nome}</div>
+                <audio controls preload="none" src={musica.url} style={{ width: "100%", marginTop: 10 }} />
+                <div style={{ fontSize: 11.5, color: RD.gray, marginTop: 8, lineHeight: 1.5 }}>
+                  {musica.cortado
+                    ? `Trecho de ${musica.segundos}s já recortado.`
+                    : `Arquivo inteiro — o painel corta em ${musica.segundos}s ao tocar.`}
+                  {" · "}atualizada em {new Date(musica.atualizado_em).toLocaleString("pt-BR", { timeZone: "America/Belem" })}
+                </div>
+              </div>
+            ) : (
+              <div style={{ border: `1px dashed ${RD.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 12.5, color: RD.gray }}>
+                Nenhuma música enviada — as TVs usam o som padrão (samba/pagode sintetizado).
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: RD.navy }}>Começar em</span>
+              <input
+                type="text"
+                value={musicaInicio}
+                onChange={(e) => setMusicaInicio(e.target.value)}
+                placeholder="0:00"
+                title="Ponto da música onde o trecho começa (mm:ss). Útil para pegar o refrão em vez da introdução."
+                style={{ width: 80, boxSizing: "border-box", padding: "7px 10px", fontSize: 13.5, fontWeight: 700, textAlign: "center", color: RD.navy, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
+              />
+              <span style={{ fontSize: 11.5, color: RD.gray }}>mm:ss — pule a introdução e pegue o refrão</span>
+            </div>
+
+            <input
+              ref={musicaInputRef}
+              type="file"
+              accept="audio/*,video/mp4,video/webm,video/quicktime,.mp3,.m4a,.wav,.ogg,.mp4"
+              disabled={!!musicaEnviando}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarMusica(f); }}
+              style={{ display: "block", width: "100%", fontSize: 12.5, color: RD.navy }}
+            />
+            <div style={{ fontSize: 11.5, color: RD.gray, marginTop: 6 }}>Até 40 MB. O corte acontece aqui no seu navegador — só o trecho sobe.</div>
+
+            {musicaEnviando && (
+              <div style={{ marginTop: 12, fontSize: 12.5, fontWeight: 600, color: RD.wine }}>
+                {musicaEnviando === "preparando" ? "Extraindo o áudio e cortando o trecho…" : "Enviando para as TVs…"}
+              </div>
+            )}
+            {musicaMsg && (
+              <div style={{ marginTop: 12, fontSize: 12.5, fontWeight: 600, color: musicaMsg.ok ? "#0a7d3c" : "#b3261e", background: musicaMsg.ok ? "rgba(10,125,60,.08)" : "rgba(179,38,30,.07)", border: `1px solid ${musicaMsg.ok ? "rgba(10,125,60,.3)" : "rgba(179,38,30,.3)"}`, borderRadius: 8, padding: "8px 10px", lineHeight: 1.4 }}>
+                {musicaMsg.texto}
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
+              {musica && (
+                <button onClick={() => removerMusica()} disabled={!!musicaEnviando} title="Apaga a música e volta ao som sintetizado" style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#b3261e", background: "transparent", border: "1px solid rgba(179,38,30,.35)", borderRadius: 8, cursor: musicaEnviando ? "wait" : "pointer" }}>Voltar ao som padrão</button>
+              )}
+              <button onClick={() => setMusicaModal(false)} disabled={!!musicaEnviando} style={{ marginLeft: "auto", padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: "pointer" }}>Fechar</button>
             </div>
           </div>
         </div>

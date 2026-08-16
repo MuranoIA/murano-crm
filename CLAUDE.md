@@ -1521,8 +1521,12 @@ gravar um evento novo ali, verificar se ele é mesmo uma mensagem.
 Duas frentes trabalharam o chat em paralelo e colidiram duas vezes. Estado final:
 
 `0079` P0 · `0080` linha telefônica · `0081` transferência+busca · `0082` respostas+notas
-(renumerada) · `0084` indicadores · `0085` fora do horário · `0086` reações.
-**`0083` foi deixado livre** para a frente do ranking renumerar a dela.
+(renumerada) · `0083` música dos parabéns (renumerada de 0082) · `0084` indicadores ·
+`0085` fora do horário · `0086` reações.
+
+O `0083` estava reservado justamente para a frente do ranking, que tinha criado a sua
+como `0082` — renumerada em 16/08, sem efeito no banco: lá a migration está registrada
+como `ranking_musica_parabens`, sem o prefixo numérico.
 
 ### 21.4 O caminho crítico agora NÃO é código
 
