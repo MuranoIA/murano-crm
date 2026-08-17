@@ -1033,12 +1033,28 @@ export default function Chat() {
       )}
       {lig.desfechoDe && <DesfechoLigacao c={lig.desfechoDe} onSalvar={lig.salvarDesfecho} />}
       {lig.erro && (
-        <div onClick={lig.limparErro} title="clique para fechar"
-          style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 75, maxWidth: 460,
+        <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 75, maxWidth: 460,
             background: "#fdeae3", color: "#8a2f12", border: "1px solid #f0c4b0", borderRadius: 10,
-            padding: "9px 14px", fontSize: 12.5, lineHeight: 1.45, cursor: "pointer",
+            padding: "9px 14px", fontSize: 12.5, lineHeight: 1.45,
             boxShadow: "0 6px 20px rgba(28,14,27,0.18)" }}>
-          📞 {lig.erro}
+          <div onClick={lig.limparErro} title="clique para fechar" style={{ cursor: "pointer" }}>
+            📞 {lig.erro}
+          </div>
+          {/* sem autorização o erro vira AÇÃO: o pedido é o caminho que a própria
+              API indica, e a cota (1/dia) justifica ser um clique consciente */}
+          {lig.pedirPara && (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 8 }}>
+              <button onClick={lig.pedirPermissao} disabled={lig.ocupado}
+                style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: M.roxo, border: "none",
+                  borderRadius: 999, padding: "6px 14px", cursor: lig.ocupado ? "default" : "pointer",
+                  opacity: lig.ocupado ? 0.6 : 1, fontFamily: "inherit" }}>
+                {lig.ocupado ? "…" : "Pedir autorização"}
+              </button>
+              <span style={{ fontSize: 10.5, opacity: 0.85 }}>
+                1 pedido por dia, 2 por semana
+              </span>
+            </div>
+          )}
         </div>
       )}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
