@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }] =
+  const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
     sb.from("mensagens")
@@ -42,6 +42,14 @@ export async function GET(req: Request) {
     // catálogo das linhas (0080 multi-linha) — para rotular por qual número a
     // conversa corre
     sb.from("chat_linha").select("phone_number_id,rotulo,numero"),
+    // ligações (0087) — nos dois canais. Aparecem como marco na thread, no ponto
+    // em que aconteceram, como as transferências. Não vêm de `mensagens` de
+    // propósito: ligação não é mensagem (ver cabeçalho da 0087).
+    sb.from("chat_ligacao")
+      .select("id,canal,direcao,status,por,carteira,iniciada_em,atendida_em,encerrada_em,duracao_seg,motivo,observacao,call_id")
+      .eq("cliente_id", cliente_id)
+      .order("iniciada_em", { ascending: true })
+      .limit(200),
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -63,6 +71,7 @@ export async function GET(req: Request) {
     mensagens,
     notas: notas ?? [],
     transferencias: transferencias ?? [],
+    ligacoes: ligacoes ?? [],
     atualizado_em: new Date().toISOString(),
   });
 }

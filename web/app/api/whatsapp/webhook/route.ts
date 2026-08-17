@@ -77,6 +77,12 @@ async function processar(body: any): Promise<void> {
 
   for (const entry of body?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
+      // campo `calls` = chamadas de voz (Calling API, migration 0087). Assinatura
+      // separada de `messages` no painel da Meta — assinar um não assina o outro.
+      if (change?.field === "calls") {
+        await processarChamadas(sb, change.value ?? {});
+        continue;
+      }
       if (change?.field !== "messages") continue;
       const value = change.value ?? {};
       // POR QUAL LINHA esta mensagem entrou. Com mais de um número ativo, é o que
@@ -268,6 +274,169 @@ async function acharOuCriarCliente(
   const { error } = await sb.from("clientes").upsert(novo, { onConflict: "id" });
   if (error) throw new Error(`upsert clientes: ${error.message}`);
   return { id: novo.id, carteira: null };
+}
+
+// ---------------------------------------------------------------------------
+// CHAMADAS DE VOZ (campo `calls` — WhatsApp Business Calling API, migration 0087)
+//
+// Este bloco é a metade "de fora" do WebRTC. O navegador do vendedor produz o
+// SDP local; o SDP da OUTRA ponta chega aqui, num processo que não tem acesso
+// nenhum àquela aba. Por isso o SDP é GRAVADO em `chat_ligacao`, e o trigger da
+// 0087 toca a campainha pelo Realtime levando só o `call_id` — o navegador então
+// busca o resto por /api/chat/ligacao/acao, que autoriza no servidor.
+//
+// Três eventos importam:
+//   · connect   — BUSINESS_INITIATED: a cliente aceitou, vem o `answer` da nossa
+//                 oferta. USER_INITIATED: a cliente está LIGANDO, vem o `offer`.
+//   · statuses  — RINGING / ACCEPTED / REJECTED (type: 'call')
+//   · terminate — acabou; traz duração e se foi COMPLETED ou FAILED
+// ---------------------------------------------------------------------------
+async function processarChamadas(sb: any, value: any): Promise<void> {
+  const linhaId: string | null = value?.metadata?.phone_number_id
+    ? String(value.metadata.phone_number_id) : null;
+  const nomes = new Map<string, string>();
+  for (const c of value.contacts ?? []) {
+    if (c?.wa_id && c?.profile?.name) nomes.set(c.wa_id, c.profile.name);
+  }
+
+  for (const call of value.calls ?? []) {
+    try {
+      await processarChamada(sb, call, linhaId, nomes.get(String(call?.from ?? "")));
+    } catch (e: any) {
+      console.error("[wa-webhook] chamada não processada:", e?.message ?? e);
+    }
+  }
+
+  // RINGING / ACCEPTED / REJECTED da chamada que NÓS originamos
+  for (const st of value.statuses ?? []) {
+    if (st?.type !== "call") continue;
+    const mapa: Record<string, string> = {
+      RINGING: "tocando", ACCEPTED: "em_curso", REJECTED: "recusada",
+    };
+    const novo = mapa[String(st.status ?? "").toUpperCase()];
+    if (!novo) continue;
+    const patch: Record<string, unknown> = { status: novo };
+    if (novo === "em_curso") patch.atendida_em = new Date().toISOString();
+    if (novo === "recusada") patch.encerrada_em = new Date().toISOString();
+    // só avança quem ainda está viva: um RINGING atrasado não pode ressuscitar
+    // uma chamada já encerrada (a Meta reentrega eventos)
+    const { error } = await sb.from("chat_ligacao").update(patch)
+      .eq("call_id", String(st.id ?? "")).in("status", ["discando", "tocando", "em_curso"]);
+    if (error) console.error("[wa-webhook] status de chamada:", error.message);
+  }
+}
+
+async function processarChamada(
+  sb: any, call: any, linhaId: string | null, nomePerfil?: string,
+): Promise<void> {
+  const callId = String(call?.id ?? "");
+  const evento = String(call?.event ?? "");
+  if (!callId) return;
+  const entrante = String(call?.direction ?? "") === "USER_INITIATED";
+  const waId = String((entrante ? call.from : call.to) ?? "").replace(/\D/g, "");
+
+  // ---- terminate: fecha o registro ----------------------------------------
+  if (evento === "terminate") {
+    const lig = await acharLigacao(sb, call, waId);
+    if (!lig) return;
+    const falhou = String(call?.status ?? "").toUpperCase() === "FAILED";
+    // "atendeu e acabou" ≠ "tocou e ninguém atendeu": a duração da Meta é o
+    // tempo FALADO, então 0/ausente sem atendida_em é chamada não atendida
+    const daMeta = Number.isFinite(Number(call?.duration)) ? Number(call.duration) : null;
+    const atendeu = Boolean(lig.atendida_em) || (daMeta ?? 0) > 0;
+    const fim = call?.end_time ? new Date(Number(call.end_time) * 1000) : new Date();
+    // a duração da Meta manda; sem ela, calcula do atendimento local
+    const duracao = daMeta ?? (lig.atendida_em
+      ? Math.max(0, Math.round((fim.getTime() - new Date(lig.atendida_em).getTime()) / 1000))
+      : null);
+    const { error } = await sb.from("chat_ligacao").update({
+      status: falhou ? "falhou" : atendeu ? "concluida" : "nao_atendida",
+      encerrada_em: fim.toISOString(),
+      duracao_seg: duracao,
+      sdp_remoto: null, sdp_tipo: null,
+      ...(call?.errors?.[0]?.message ? { erro: String(call.errors[0].message).slice(0, 500) } : {}),
+    }).eq("id", lig.id);
+    if (error) throw new Error(`update terminate: ${error.message}`);
+    return;
+  }
+
+  if (evento !== "connect") return;   // 'call_created' é do fluxo SIP; não usamos
+  const sdp = String(call?.session?.sdp ?? "");
+  const sdpTipo = String(call?.session?.sdp_type ?? "");
+
+  // ---- chamada RECEBIDA: a cliente está ligando ---------------------------
+  if (entrante) {
+    const cliente = await acharOuCriarCliente(sb, waId, nomePerfil);
+    // upsert por call_id: a Meta reentrega o mesmo evento se não receber 200
+    const { error } = await sb.from("chat_ligacao").upsert({
+      call_id: callId,
+      cliente_id: cliente.id,
+      canal: "whatsapp",
+      direcao: "entrada",
+      status: "tocando",
+      carteira: cliente.carteira ?? null,
+      telefone: waId,
+      linha_id: linhaId,
+      iniciada_em: call?.timestamp
+        ? new Date(Number(call.timestamp) * 1000).toISOString()
+        : new Date().toISOString(),
+      sdp_remoto: sdp || null,
+      sdp_tipo: sdp ? "offer" : null,
+    }, { onConflict: "call_id" });
+    if (error) throw new Error(`upsert chamada entrante: ${error.message}`);
+    return;
+  }
+
+  // ---- chamada NOSSA aceita: chegou o `answer` ----------------------------
+  const lig = await acharLigacao(sb, call, waId);
+  if (!lig) {
+    console.error("[wa-webhook] connect sem ligação correspondente:", callId);
+    return;
+  }
+  const { error } = await sb.from("chat_ligacao").update({
+    call_id: callId,
+    status: "em_curso",
+    atendida_em: lig.atendida_em ?? new Date().toISOString(),
+    sdp_remoto: sdp || null,
+    sdp_tipo: sdpTipo === "offer" ? "offer" : "answer",
+    ...(linhaId ? { linha_id: linhaId } : {}),
+  }).eq("id", lig.id);
+  if (error) throw new Error(`update connect: ${error.message}`);
+}
+
+/**
+ * Acha a linha de `chat_ligacao` desta chamada.
+ *
+ * Três caminhos porque há uma CORRIDA real: o webhook do `connect` pode chegar
+ * antes de a resposta HTTP do Graph voltar e a rota gravar o `call_id`. São
+ * processos distintos e a ordem não é garantida.
+ *   1. call_id — o caso normal;
+ *   2. `biz_opaque_callback_data` = "lig:<id>", que mandamos ao discar e a Meta
+ *      devolve nos eventos — imune à corrida;
+ *   3. último recurso: a chamada viva mais recente para o mesmo telefone.
+ */
+async function acharLigacao(
+  sb: any, call: any, waId: string,
+): Promise<{ id: number; atendida_em: string | null } | null> {
+  const callId = String(call?.id ?? "");
+  const cols = "id,atendida_em";
+
+  const { data: porId } = await sb.from("chat_ligacao").select(cols).eq("call_id", callId).maybeSingle();
+  if (porId) return porId;
+
+  const rastro = String(call?.biz_opaque_callback_data ?? "");
+  const m = /^lig:(\d+)$/.exec(rastro);
+  if (m) {
+    const { data } = await sb.from("chat_ligacao").select(cols).eq("id", Number(m[1])).maybeSingle();
+    if (data) return data;
+  }
+
+  const { data: recente } = await sb.from("chat_ligacao").select(cols)
+    .eq("telefone", waId).eq("direcao", "saida")
+    .in("status", ["discando", "tocando", "em_curso"])
+    .gt("iniciada_em", new Date(Date.now() - 5 * 60_000).toISOString())
+    .order("iniciada_em", { ascending: false }).limit(1).maybeSingle();
+  return recente ?? null;
 }
 
 // ---------------------------------------------------------------------------

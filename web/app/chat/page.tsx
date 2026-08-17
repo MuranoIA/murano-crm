@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
+  type Ligacao,
+} from "./ligacao";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
@@ -29,6 +33,53 @@ const M = {
   bolhaFora: "#ecdcf0",   // mensagem enviada (operator) — púrpura bem claro
   bolhaDentro: "#ffffff", // mensagem recebida (customer)
 };
+
+// Mesma marca do board (app/page.tsx) — a barra de navegação do topo passou a ser
+// a do CRM inteiro, como o RD faz: o Chat é uma aba do produto, não uma tela solta.
+function Logo({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" style={{ display: "block" }} aria-label="Murano">
+      <rect width="100" height="100" rx="18" fill="#57163f" />
+      <path d="M31 74 C 31 48, 33 36, 47 28" fill="none" stroke="#e7d7dc" strokeWidth="9.5" strokeLinecap="round" />
+      <path d="M53 74 C 53 48, 55 36, 69 28" fill="none" stroke="#e7d7dc" strokeWidth="9.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// as mesmas rotas do menu do board, na mesma ordem — quem vem do board não perde
+// a referência ao entrar no chat
+const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
+  { href: "/", rotulo: "Negociações" },
+  { href: "/chat", rotulo: "💬 Chat" },
+  { href: "/relatorios", rotulo: "Relatórios" },
+  { href: "/visoes", rotulo: "Visões" },
+  { href: "/analises", rotulo: "Análises", soAdmin: true },
+  { href: "/catalogos", rotulo: "Catálogo" },
+  { href: "/tickets", rotulo: "Tickets" },
+  { href: "/admin", rotulo: "⚙️ Administração", soAdmin: true },
+];
+
+// As "filas" da sidebar. No RD isto é o dropdown "Meus atendimentos" no alto da
+// lista; aqui são os mesmos quatro estados que os chips antigos filtravam — só
+// mudou a forma de escolher, não a regra (ver `filtradas`).
+type Fila = "pendentes" | "todas" | "resolvidas" | "fila";
+const FILAS: { k: Fila; icone: string; rotulo: string; dica: string }[] = [
+  { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
+  { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
+  { k: "fila", icone: "🚶", rotulo: "Fila de espera", dica: "sem dono — qualquer um pode pegar" },
+  { k: "resolvidas", icone: "✓", rotulo: "Encerradas", dica: "atendimentos já resolvidos" },
+];
+
+// Abas do contato — mesma posição das do RD (Perfil · Etiquetas · Atividades ·
+// Funis · Carteiras · Histórico), com o conteúdo que NÓS temos: o ERP.
+type AbaContato = "perfil" | "compras" | "ciclo" | "funil" | "notas";
+const ABAS: { k: AbaContato; rotulo: string }[] = [
+  { k: "perfil", rotulo: "Perfil" },
+  { k: "compras", rotulo: "Compras" },
+  { k: "ciclo", rotulo: "Ciclo" },
+  { k: "funil", rotulo: "Funil" },
+  { k: "notas", rotulo: "Notas fiscais" },
+];
 
 type Conversa = {
   cliente_id: string; cliente: string; vendedor: string | null; etapa: string | null;
@@ -68,11 +119,13 @@ type Transferencia = {
   por: string; observacao: string | null; criada_em: string;
 };
 type Vendedor = { slug: string; cor: string | null };
-// a thread mistura os três na ordem do relógio
+// a thread mistura tudo na ordem do relógio: mensagens, notas internas,
+// transferências e ligações (0087 — ligação NÃO é mensagem, ver a migration)
 type Item =
   | { k: "m"; em: string; m: Msg }
   | { k: "n"; em: string; n: Nota }
-  | { k: "t"; em: string; t: Transferencia };
+  | { k: "t"; em: string; t: Transferencia }
+  | { k: "l"; em: string; l: Ligacao };
 
 // cor da nota interna: papel de recado, deliberadamente fora da paleta das bolhas
 const NOTA = { bg: "#fdf6e3", borda: "#e8d9a8", ink: "#6b5a1f" };
@@ -178,17 +231,9 @@ function Trecho({ texto, termo }: { texto: string; termo: string }) {
 // Conversas nunca teve: o vendedor decide o que responder olhando o histórico de
 // compra, sem trocar de tela.
 // ---------------------------------------------------------------------------
-function PainelContato({ c }: { c: Contato | null }) {
+function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; extra?: any }) {
   if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
   const { compras, ciclo, funil, ultimas_notas } = c;
-
-  if (!compras && !funil?.venda_valor && !ultimas_notas.length) {
-    return (
-      <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.5 }}>
-        Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP.
-      </div>
-    );
-  }
 
   const Bloco = ({ titulo, children }: { titulo: string; children: any }) => (
     <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
@@ -207,26 +252,45 @@ function PainelContato({ c }: { c: Contato | null }) {
   const pct = ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
   const corCiclo = pct == null ? M.muted : pct >= 100 ? M.laranja : pct >= 75 ? "#b8860b" : "#1a6b3c";
 
+  // Aviso de "sem cadastro" só nas abas que dependem do ERP — a de Perfil ainda
+  // mostra telefone/carteira/linha, que existem mesmo sem vínculo no WinThor.
+  const semErp = !compras && !funil?.venda_valor && !ultimas_notas.length;
+  const Vazio = ({ t }: { t: string }) => (
+    <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.5 }}>{t}</div>
+  );
+
   return (
     <div style={{ fontSize: 12.5 }}>
-      {compras && (
-        <Bloco titulo="Cliente no WinThor">
-          <Linha r="Código" v={compras.codcli ?? "—"} />
-          {compras.cidade && <Linha r="Cidade" v={compras.cidade} />}
-          {compras.rca_oficial && <Linha r="RCA oficial" v={compras.rca_oficial} />}
-        </Bloco>
+      {aba === "perfil" && (
+        <>
+          <Bloco titulo="Contato">
+            <Linha r="Telefone" v={extra?.telefone ?? "—"} />
+            <Linha r="Carteira" v={extra?.carteira ? cap(extra.carteira) : "sem dono"} />
+            {extra?.linha && <Linha r="Linha" v={extra.linha} />}
+            <Linha r="Situação" v={extra?.status === "resolvida" ? "Encerrado" : "Em atendimento"} />
+          </Bloco>
+          {compras ? (
+            <Bloco titulo="Cliente no WinThor">
+              <Linha r="Código" v={compras.codcli ?? "—"} />
+              {compras.cidade && <Linha r="Cidade" v={compras.cidade} />}
+              {compras.rca_oficial && <Linha r="RCA oficial" v={compras.rca_oficial} />}
+            </Bloco>
+          ) : (
+            <Vazio t="Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP." />
+          )}
+        </>
       )}
 
-      {compras && (
+      {aba === "compras" && (compras ? (
         <Bloco titulo="Histórico de compra">
           <Linha r="Compras" v={compras.compras ?? 0} />
           <Linha r="Total líquido" v={moedaBR(compras.total_liquido)} forte />
           <Linha r="Última compra" v={dataBR(compras.ultima_compra)} />
           <Linha r="Sem comprar há" v={compras.dias_sem_comprar != null ? `${compras.dias_sem_comprar} dias` : "—"} />
         </Bloco>
-      )}
+      ) : <Vazio t={semErp ? "Sem cadastro no WinThor — nada a mostrar aqui." : "Sem histórico de compra."} />)}
 
-      {ciclo && (ciclo.ciclo_medio != null || ciclo.acao_recomendada) && (
+      {aba === "ciclo" && (ciclo && (ciclo.ciclo_medio != null || ciclo.acao_recomendada) ? (
         <Bloco titulo="Ciclo de recompra">
           {ciclo.ciclo_medio != null && <Linha r="Ciclo médio" v={`${Math.round(Number(ciclo.ciclo_medio))} dias`} />}
           {pct != null && (
@@ -245,16 +309,17 @@ function PainelContato({ c }: { c: Contato | null }) {
             </div>
           )}
         </Bloco>
-      )}
+      ) : <Vazio t="Ainda não dá para calcular o ciclo — o cliente precisa de mais de uma compra." />)}
 
-      {funil && (
+      {aba === "funil" && (funil ? (
         <Bloco titulo="No funil">
           <Linha r="Etapa" v={cap(String(funil.etapa ?? "—").replace(/_/g, " "))} />
           {funil.venda_valor != null && <Linha r="Faturado no mês" v={moedaBR(funil.venda_valor)} forte />}
+          {funil.venda_data && <Linha r="Data da venda" v={dataBR(funil.venda_data)} />}
         </Bloco>
-      )}
+      ) : <Vazio t="Este contato ainda não aparece no funil." />)}
 
-      {!!ultimas_notas.length && (
+      {aba === "notas" && (ultimas_notas.length ? (
         <Bloco titulo="Últimas notas">
           {ultimas_notas.map((n, i) => (
             <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0", fontVariantNumeric: "tabular-nums" }}>
@@ -263,7 +328,7 @@ function PainelContato({ c }: { c: Contato | null }) {
             </div>
           ))}
         </Bloco>
-      )}
+      ) : <Vazio t="Nenhuma nota fiscal faturada para este cliente." />)}
     </div>
   );
 }
@@ -291,7 +356,16 @@ export default function Chat() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [filtro, setFiltro] = useState<"pendentes" | "todas" | "resolvidas" | "fila">("todas");
+  const [filtro, setFiltro] = useState<Fila>("todas");
+  const [menuFila, setMenuFila] = useState(false);      // dropdown "Meus atendimentos"
+  const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
+  const [menuOrdem, setMenuOrdem] = useState(false);
+  const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
+  const [menuMobile, setMenuMobile] = useState(false);  // ☰ da barra de navegação
+  const [abaContato, setAbaContato] = useState<AbaContato>("perfil");
+  // estado do Realtime — ocupa no rodapé da lista a posição do "Online" do RD,
+  // mas dizendo algo verdadeiro: se caiu, o chat depende do poll de 60s
+  const [conectado, setConectado] = useState(false);
   const [puxando, setPuxando] = useState(false);
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
@@ -326,12 +400,15 @@ export default function Chat() {
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [transferindo, setTransferindo] = useState(false);  // painel de destino aberto
   const [obsTransf, setObsTransf] = useState("");
+  // --- ligações (0087): entram na thread como marco, ao lado das transferências
+  const [ligacoes, setLigacoes] = useState<Ligacao[]>([]);
   const [achados, setAchados] = useState<Conversa[] | null>(null);  // busca no conteúdo
   const [buscandoMsgs, setBuscandoMsgs] = useState(false);
   const [truncado, setTruncado] = useState(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const textoRef = useRef<HTMLTextAreaElement>(null);
   const fimRef = useRef<HTMLDivElement>(null);
+  const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
   // guarda de in-flight: nunca empilha recargas (mesmo padrão do board)
@@ -369,6 +446,7 @@ export default function Chat() {
     setMsgs(j?.mensagens ?? []);
     setNotas(j?.notas ?? []);
     setTransferencias(j?.transferencias ?? []);
+    setLigacoes(j?.ligacoes ?? []);
     setLinha(j?.linha ?? null);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
@@ -381,6 +459,18 @@ export default function Chat() {
       if (r.ok) setRespostas((await r.json())?.respostas ?? []);
     } catch { /* sem respostas rápidas o chat funciona igual */ }
   }, []);
+
+  // --- LIGAÇÃO (0087) -------------------------------------------------------
+  // Todo o estado de chamada (WebRTC, campainha, sinalização) mora em ./ligacao.
+  // Aqui só se diz o que fazer quando algo muda: recarregar a conversa aberta,
+  // para o marco da ligação aparecer na thread na hora.
+  const lig = useLigacao({
+    sessao: sessao ?? null,
+    aoMudar: useCallback(() => {
+      carregarLista();
+      if (selRef.current) carregarThread(selRef.current, false);
+    }, [carregarLista, carregarThread]),
+  });
 
   // carga inicial + poll lento (rede de proteção) + Realtime (mesmo canal do board)
   useEffect(() => {
@@ -411,7 +501,7 @@ export default function Chat() {
             carregarLista();
             if (selRef.current) carregarThread(selRef.current, false);
           })
-          .subscribe();
+          .subscribe((status: string) => setConectado(status === "SUBSCRIBED"));
 
         // ---- PRESENÇA (anti-colisão) ------------------------------------
         // Um canal só para todo o time: cada aba publica em qual conversa está,
@@ -455,6 +545,7 @@ export default function Chat() {
     return () => {
       cancelado = true;
       clearInterval(lento);
+      setConectado(false);
       try { canal?.unsubscribe(); } catch {}
       try { canalPresenca?.unsubscribe(); } catch {}
       presencaCanalRef.current = null;
@@ -580,6 +671,7 @@ export default function Chat() {
     setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
+    setMenuAcoes(false); setAbaContato("perfil");
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
@@ -884,10 +976,16 @@ export default function Chat() {
     const b = busca.toLowerCase();
     return (c.cliente ?? "").toLowerCase().includes(b) || String(c.telefone ?? "").includes(b.replace(/\D/g, "") || " ");
   });
+  // ordenação da lista — o "Mais recente ▾" do RD. Só reordena o que já veio do
+  // servidor; nenhum filtro muda com isso.
+  const ordenadas = [...filtradas].sort((a, b) => {
+    const x = a.ultima_atividade ?? "", y = b.ultima_atividade ?? "";
+    return ordem === "recente" ? (x < y ? 1 : x > y ? -1 : 0) : (x < y ? -1 : x > y ? 1 : 0);
+  });
   const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
   const contaFila = conversas.filter((c) => c.na_fila).length;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
-  const jaNaLista = new Set(filtradas.map((c) => c.cliente_id));
+  const jaNaLista = new Set(ordenadas.map((c) => c.cliente_id));
   const achadosNovos = (achados ?? []).filter((c) => !jaNaLista.has(c.cliente_id));
 
   const mostraLista = !isMobile || !sel;
@@ -900,6 +998,7 @@ export default function Chat() {
     ...(msgs ?? []).map((m) => ({ k: "m" as const, em: m.criada_em, m })),
     ...notas.map((n) => ({ k: "n" as const, em: n.criada_em, n })),
     ...transferencias.map((t) => ({ k: "t" as const, em: t.criada_em, t })),
+    ...ligacoes.map((l) => ({ k: "l" as const, em: l.iniciada_em, l })),
   ].sort((a, b) => (a.em < b.em ? -1 : a.em > b.em ? 1 : 0));
 
   const grupos: { dia: string; itens: Item[] }[] = [];
@@ -920,54 +1019,175 @@ export default function Chat() {
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
+      {/* ---- LIGAÇÃO (0087) — camadas flutuantes, fora do fluxo da tela --------
+          Ficam aqui, no topo do componente, e não dentro da thread: a chamada
+          sobrevive à troca de conversa e continua visível se o vendedor for
+          mexer em outro atendimento no meio dela. */}
+      {lig.recebida && (
+        <ChamadaRecebida c={lig.recebida} ocupado={lig.ocupado}
+          onAtender={lig.atender} onRecusar={lig.recusar} />
+      )}
+      {lig.chamada && (
+        <BarraChamada c={lig.chamada} estadoRtc={lig.estadoRtc} mudo={lig.mudo}
+          onMudo={lig.alternarMudo} onDesligar={lig.desligar} />
+      )}
+      {lig.desfechoDe && <DesfechoLigacao c={lig.desfechoDe} onSalvar={lig.salvarDesfecho} />}
+      {lig.erro && (
+        <div onClick={lig.limparErro} title="clique para fechar"
+          style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 75, maxWidth: 460,
+            background: "#fdeae3", color: "#8a2f12", border: "1px solid #f0c4b0", borderRadius: 10,
+            padding: "9px 14px", fontSize: 12.5, lineHeight: 1.45, cursor: "pointer",
+            boxShadow: "0 6px 20px rgba(28,14,27,0.18)" }}>
+          📞 {lig.erro}
+        </div>
+      )}
       <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
-      {/* top bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", background: M.surface, borderBottom: `1px solid ${M.border}` }}>
-        <Link href="/" style={{ color: M.gray, textDecoration: "none", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>← CRM</Link>
-        <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.3, color: M.wine }}>💬 Chat</div>
-        <div style={{ fontSize: 11.5, color: M.muted }}>mensagens em tempo real — envio livre dentro da janela de 24h</div>
+      {/* ---- barra de navegação do produto (posição do menu do RD Conversas) ----
+          Logo à esquerda, abas horizontais do CRM no meio, identidade à direita.
+          O Chat vira uma aba do produto, com a aba ativa sublinhada. */}
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "0 16px", minHeight: 52, background: M.surface, borderBottom: `1px solid ${M.border}`, flexShrink: 0 }}>
+        <Logo size={26} />
+        <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>CRM</b>
+        {!isMobile ? (
+          <nav style={{ display: "flex", alignItems: "center", alignSelf: "stretch", gap: 2, marginLeft: 8, minWidth: 0, overflowX: "auto" }}>
+            {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
+              const ativo = n.href === "/chat";
+              return (
+                <Link key={n.href} href={n.href}
+                  style={{ display: "inline-flex", alignItems: "center", whiteSpace: "nowrap", textDecoration: "none",
+                    fontSize: 14, fontWeight: ativo ? 800 : 600, color: ativo ? M.roxo : M.gray,
+                    padding: "0 10px", borderBottom: `2px solid ${ativo ? M.roxo : "transparent"}` }}>
+                  {n.rotulo}
+                </Link>
+              );
+            })}
+          </nav>
+        ) : (
+          <button onClick={() => setMenuMobile((v) => !v)} title="Menu"
+            style={{ width: 38, height: 32, borderRadius: 8, border: `1px solid ${M.border}`, background: M.surface, color: M.wine, fontSize: 17, cursor: "pointer", fontFamily: "inherit" }}>
+            ☰
+          </button>
+        )}
         <Link href="/chat/indicadores" title="Tempo de resposta e encerramentos por vendedor"
           style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: M.wine, textDecoration: "none",
-            background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap" }}>
+            background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 999, padding: "5px 12px", whiteSpace: "nowrap", flexShrink: 0 }}>
           📊 Indicadores
         </Link>
+        {/* identidade — mesma posição do avatar do RD, no canto direito */}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#f7eef4", border: "1px solid #e8d8e1", borderRadius: 20, padding: "4px 12px 4px 5px", flexShrink: 0 }}>
+          <span style={{ width: 22, height: 22, borderRadius: 20, background: M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>
+            {rotuloUsuario.charAt(0) || "?"}
+          </span>
+          {!isMobile && <b style={{ fontSize: 12.5, color: M.wine }}>{rotuloUsuario}</b>}
+        </span>
+        {menuMobile && isMobile && (
+          <>
+            <div onClick={() => setMenuMobile(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+            <div style={{ position: "absolute", top: "100%", left: 12, zIndex: 101, minWidth: 210, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
+              {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => (
+                <Link key={n.href} href={n.href} onClick={() => setMenuMobile(false)}
+                  style={{ display: "block", padding: "10px 13px", fontSize: 13.5, fontWeight: 600, color: n.href === "/chat" ? M.roxo : M.ink, textDecoration: "none", borderBottom: `1px solid ${M.bg}` }}>
+                  {n.rotulo}
+                </Link>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* ---- sidebar: lista de conversas ---- */}
         {mostraLista && (
           <div style={{ width: isMobile ? "100%" : 340, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
-            <div style={{ padding: 10, borderBottom: `1px solid ${M.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
-              <input
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="🔍  Buscar conversa…"
-                style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10, outline: "none" }}
-              />
-              {/* fila: pendentes = cliente falou e ninguém leu ainda */}
-              <div style={{ display: "flex", gap: 6 }}>
-                {([
-                  { k: "pendentes" as const, r: "Pendentes", n: naoLidas },
-                  { k: "todas" as const, r: "Abertas", n: conversas.filter((c) => !c.na_fila).length - contaResolvidas },
-                  { k: "fila" as const, r: "Fila", n: contaFila },
-                  { k: "resolvidas" as const, r: "Resolvidas", n: contaResolvidas },
-                ]).map((t) => {
-                  const on = filtro === t.k;
-                  return (
-                    <button key={t.k} onClick={() => setFiltro(t.k)}
-                      style={{ flex: 1, padding: "5px 6px", fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
-                        color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
-                        border: `1px solid ${on ? M.roxo : M.border}`, borderRadius: 8 }}>
-                      {t.r}{t.n > 0 ? ` ${t.n}` : ""}
-                    </button>
-                  );
-                })}
+            {/* ---- cabeçalho da lista, no arranjo do RD ----
+                1) título-dropdown com as filas e seus contadores
+                2) campo de busca (lupa à direita)
+                3) ordenação alinhada à direita ("Mais recente") */}
+            <div style={{ padding: "8px 10px 6px", borderBottom: `1px solid ${M.border}`, display: "flex", flexDirection: "column", gap: 7 }}>
+              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={() => setMenuFila((v) => !v)} title="Trocar de fila"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0", minWidth: 0 }}>
+                  <b style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.3, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {FILAS.find((f) => f.k === filtro)?.rotulo}
+                  </b>
+                  <span style={{ fontSize: 11, color: M.gray, opacity: 0.8 }}>▾</span>
+                </button>
+                {/* atalho da fila de espera, como o ícone com contador do RD */}
+                <button onClick={() => setFiltro("fila")} title="Fila de espera — conversas sem dono"
+                  style={{ marginLeft: "auto", position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
+                  🚶
+                  {contaFila > 0 && (
+                    <span style={{ position: "absolute", top: -3, right: -4, minWidth: 15, height: 15, padding: "0 3px", boxSizing: "border-box", borderRadius: 15, background: M.laranja, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {contaFila}
+                    </span>
+                  )}
+                </button>
+                {menuFila && (
+                  <>
+                    <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                    <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, zIndex: 101, minWidth: 262, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
+                      {FILAS.map((f) => {
+                        const n = f.k === "pendentes" ? naoLidas
+                          : f.k === "fila" ? contaFila
+                          : f.k === "resolvidas" ? contaResolvidas
+                          : conversas.filter((c) => !c.na_fila).length - contaResolvidas;
+                        const on = filtro === f.k;
+                        return (
+                          <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={f.dica}
+                            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
+                            <span style={{ fontSize: 14, width: 18, textAlign: "center" }}>{f.icone}</span>
+                            <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
+                            {n > 0 && (
+                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
+                                {n}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div style={{ position: "relative" }}>
+                <input
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder="Buscar conversa…"
+                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 32px 8px 12px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10, outline: "none" }}
+                />
+                <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: M.muted, pointerEvents: "none" }}>🔍</span>
+              </div>
+
+              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                <span style={{ fontSize: 10.5, color: M.muted }}>
+                  {ordenadas.length} conversa{ordenadas.length === 1 ? "" : "s"}
+                </span>
+                <button onClick={() => setMenuOrdem((v) => !v)} title="Ordenar a lista"
+                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: M.azul, padding: "2px 0" }}>
+                  {ordem === "recente" ? "Mais recente" : "Mais antiga"}
+                  <span style={{ fontSize: 9, opacity: 0.8 }}>▾</span>
+                </button>
+                {menuOrdem && (
+                  <>
+                    <div onClick={() => setMenuOrdem(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                    <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: 150, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 9, boxShadow: "0 10px 26px rgba(28,14,27,.18)", overflow: "hidden" }}>
+                      {([["recente", "Mais recente"], ["antiga", "Mais antiga"]] as const).map(([k, r]) => (
+                        <button key={k} onClick={() => { setOrdem(k); setMenuOrdem(false); }}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", fontSize: 12.5, fontWeight: ordem === k ? 800 : 600, color: ordem === k ? M.wine : M.ink, background: ordem === k ? M.roxoSoft : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div style={{ flex: 1, overflowY: "auto" }}>
               {erro && <div style={{ padding: 14, fontSize: 12.5, color: M.laranja }}>{erro}</div>}
               {!erro && !conversas.length && <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando conversas…</div>}
-              {filtradas.map((c) => {
+              {ordenadas.map((c) => {
                 const ativa = sel?.cliente_id === c.cliente_id;
                 const doCliente = c.ultima_enviada_por === "customer";
                 return (
@@ -1012,7 +1232,7 @@ export default function Chat() {
                   </button>
                 );
               })}
-              {busca && !filtradas.length && !buscandoMsgs && !achadosNovos.length && (
+              {busca && !ordenadas.length && !buscandoMsgs && !achadosNovos.length && (
                 <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Nada encontrado para “{busca}”.</div>
               )}
 
@@ -1057,6 +1277,21 @@ export default function Chat() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* ---- rodapé da lista: a posição do "Online ●" do RD. Lá é a
+                 disponibilidade do operador; aqui é o estado da conexão em tempo
+                 real, que é o que existe de verdade — e serve de diagnóstico
+                 quando o chat parece parado (sem Realtime, sobra o poll de 60s). ---- */}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderTop: `1px solid ${M.border}`, background: M.surface, flexShrink: 0 }}
+                 title={conectado
+                   ? "Tempo real ligado — mensagens novas chegam sozinhas"
+                   : "Sem tempo real — a lista ainda atualiza sozinha a cada 60 segundos"}>
+              <span style={{ width: 9, height: 9, borderRadius: 9, flexShrink: 0, background: conectado ? "#1a6b3c" : M.muted }} />
+              <b style={{ fontSize: 12, color: conectado ? "#1a6b3c" : M.gray }}>
+                {conectado ? "Online" : "Reconectando…"}
+              </b>
+              <span style={{ marginLeft: "auto", fontSize: 10.5, color: M.muted }}>{rotuloUsuario}</span>
             </div>
           </div>
         )}
@@ -1129,6 +1364,16 @@ export default function Chat() {
                       📊 Cliente
                     </button>
                   )}
+                  {/* ligar: só nas conversas do piloto (Cloud API). `linha.canal`
+                      vem do /api/chat/thread e já diz por onde a conversa corre —
+                      'rd' esconde o botão, porque o RD não tem API de voz. */}
+                  <BotaoLigar
+                    temTelefone={!!sel.telefone}
+                    naCloud={linha?.canal === "whatsapp"}
+                    ocupado={lig.ocupado}
+                    emChamada={!!lig.chamada}
+                    onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
+                  />
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
                     style={{ fontSize: 11.5, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -1151,6 +1396,34 @@ export default function Chat() {
                     </a>
                   )}
                 </div>
+
+                {/* ---- faixa de abas do contato — exatamente onde o RD a põe
+                     (lá é Perfil · Etiquetas · Atividades · Funis · Carteiras ·
+                     Histórico, logo abaixo do nome). Aqui elas trocam o conteúdo
+                     da coluna da direita, que continua visível: o ERP ao lado da
+                     conversa é justamente o que o RD não tem. ---- */}
+                {!isMobile && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, overflowX: "auto", flexShrink: 0 }}>
+                    {ABAS.map((a) => {
+                      const on = painelAberto && abaContato === a.k;
+                      return (
+                        <button key={a.k}
+                          onClick={() => { setAbaContato(a.k); setPainelAberto(true); }}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.roxo : M.gray,
+                            padding: "8px 11px", borderBottom: `2px solid ${on ? M.roxo : "transparent"}`, whiteSpace: "nowrap" }}>
+                          {a.rotulo}
+                        </button>
+                      );
+                    })}
+                    {painelAberto && (
+                      <button onClick={() => setPainelAberto(false)} title="Fechar o painel do cliente"
+                        style={{ marginLeft: "auto", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, color: M.muted, padding: "8px 4px", whiteSpace: "nowrap" }}>
+                        ocultar painel ✕
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* transferir: passa quem ATENDE o diálogo. A carteira do cliente
                     (dono comercial, vinda do RCA do WinThor) não muda — por isso o aviso. */}
@@ -1210,7 +1483,7 @@ export default function Chat() {
                 )}
 
                 {/* mensagens */}
-                <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div ref={rolagemRef} style={{ position: "relative", flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
                   {msgs?.length === 0 && !notas.length && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
                   {grupos.map((g) => (
@@ -1219,6 +1492,9 @@ export default function Chat() {
                         {g.dia.split("-").reverse().join("/")}
                       </div>
                       {g.itens.map((it) => {
+                        // ligação: mesmo tratamento de marco — o contato por voz
+                        // aparece na conversa, no ponto em que aconteceu (0087)
+                        if (it.k === "l") return <MarcoLigacao key={`l${it.l.id}`} l={it.l} />;
                         // transferência: marco no meio da conversa, o registro
                         // aparecendo no ponto exato em que o bastão passou
                         if (it.k === "t") {
@@ -1311,6 +1587,38 @@ export default function Chat() {
                     </div>
                   ))}
                   <div ref={fimRef} />
+                </div>
+
+                {/* ---- botões flutuantes de rolagem (⌃ ⌄), como os do RD, colados
+                     na borda direita da área de mensagens ---- */}
+                {!!msgs?.length && (
+                  <div style={{ position: "absolute", right: 16, bottom: 96, display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
+                    {([["⌃", "Ir para o começo", () => rolagemRef.current?.scrollTo({ top: 0, behavior: "smooth" })],
+                       ["⌄", "Ir para a última mensagem", () => fimRef.current?.scrollIntoView({ behavior: "smooth" })]] as const).map(([ic, t, fn]) => (
+                      <button key={ic} onClick={fn} title={t}
+                        style={{ width: 34, height: 34, borderRadius: 34, background: M.surface, border: `1px solid ${M.border}`,
+                          color: M.gray, fontSize: 15, lineHeight: 1, cursor: "pointer", fontFamily: "inherit",
+                          boxShadow: "0 2px 6px rgba(28,14,27,.14)" }}>
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* ---- faixa de rodapé da conversa: o "Nenhum setor | Luana" do RD.
+                     Aqui diz de quem é a carteira e por qual linha a conversa corre —
+                     a janela de 24h é por par número+cliente, então errar a linha é
+                     errar o envio. ---- */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0 }}>
+                  <span>{sel.vendedor ? `Carteira ${cap(sel.vendedor)}` : "Sem dono"}</span>
+                  <span style={{ opacity: 0.5 }}>|</span>
+                  <span>{linha ? linha.rotulo : "linha não identificada"}</span>
+                  {sel.transferida_de && (
+                    <>
+                      <span style={{ opacity: 0.5 }}>|</span>
+                      <span title={`recebida de ${cap(sel.transferida_de)}`}>↪ de {cap(sel.transferida_de)}</span>
+                    </>
+                  )}
                 </div>
 
                 {/* aviso (janela 24h / erro de envio) — o ÚNICO uso forte do laranja */}
@@ -1507,11 +1815,17 @@ export default function Chat() {
         {/* ---- painel do contato (desktop): o ERP ao lado da conversa ---- */}
         {mostraThread && sel && painelAberto && !isMobile && (
           <div style={{ width: 268, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
-            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft }}>
-              <b style={{ fontSize: 12.5, color: M.wine }}>Dados do cliente</b>
-              <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>direto do WinThor</div>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
+              <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaContato)?.rotulo}</b>
+              <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>
+                {abaContato === "perfil" ? "contato e cadastro" : "direto do WinThor"}
+              </div>
             </div>
-            <PainelContato c={contato} />
+            <PainelContato
+              c={contato}
+              aba={abaContato}
+              extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
+            />
           </div>
         )}
       </div>
