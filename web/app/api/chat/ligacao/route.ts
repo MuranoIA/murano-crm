@@ -174,8 +174,22 @@ export async function POST(req: Request) {
     await s.sb.from("chat_ligacao")
       .update({ status: "falhou", encerrada_em: new Date().toISOString(), erro: msg.slice(0, 500) })
       .eq("id", linhaLig.id);
-    const semPermissao = e instanceof GraphCallingError && e.semPermissao;
-    return Response.json({ error: msg, semPermissao }, { status: semPermissao ? 422 : 502 });
+    // Traduz os códigos que a Meta não documenta para o que a pessoa deve FAZER.
+    // Sem isto o vendedor recebe um número e nenhuma ação possível.
+    const g = e instanceof GraphCallingError ? e : null;
+    const recado =
+      g?.semPagamento
+        ? "A conta não está apta a faturar chamadas — falta meio de pagamento na WABA. " +
+          "Ligação é cobrada por minuto e não tem faixa gratuita. Isso é configuração da conta, não do chat."
+        : g?.callingDesligado
+          ? "A chamada de voz não está habilitada nesta linha. Um admin liga em /admin → Linhas → Chamadas de voz."
+          : msg;
+    return Response.json({
+      error: recado,
+      semPermissao: Boolean(g?.semPermissao),
+      semPagamento: Boolean(g?.semPagamento),
+      callingDesligado: Boolean(g?.callingDesligado),
+    }, { status: g?.semPermissao || g?.semPagamento || g?.callingDesligado ? 422 : 502 });
   }
 }
 
