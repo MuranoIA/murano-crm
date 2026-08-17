@@ -179,8 +179,11 @@ export async function POST(req: Request) {
     const g = e instanceof GraphCallingError ? e : null;
     const recado =
       g?.semPagamento
-        ? "A conta não está apta a faturar chamadas — falta meio de pagamento na WABA. " +
-          "Ligação é cobrada por minuto e não tem faixa gratuita. Isso é configuração da conta, não do chat."
+        // Ligação NOSSA é paga; a do cliente é gratuita (regra da Meta). Então o
+        // recado aponta a saída que funciona hoje, em vez de só informar o bloqueio.
+        ? "Ligar para o cliente é cobrado por minuto e a conta ainda não tem meio de pagamento. " +
+          "Enquanto isso: peça na conversa que ELE ligue para nós — chamada de entrada é " +
+          "gratuita, o ícone de telefone já aparece no WhatsApp dele, e ela toca aqui no chat."
         : g?.callingDesligado
           ? "A chamada de voz não está habilitada nesta linha. Um admin liga em /admin → Linhas → Chamadas de voz."
           : msg;

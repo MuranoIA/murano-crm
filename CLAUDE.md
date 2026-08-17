@@ -1762,6 +1762,27 @@ tem faixa gratuita — é a primeira coisa que exige meio de pagamento.
 custo** pela linha de teste, que só alcança números da allowlist. Serve para
 provar o fluxo; não serve para cliente real.
 
+#### Quem paga o quê — e o caminho gratuito
+
+Regra da Meta, confirmada na documentação de preços:
+
+| | custo |
+|---|---|
+| chamada **iniciada pelo cliente** (entrada) | **gratuita**, qualquer duração |
+| chamada **iniciada pelo negócio** (saída) | por minuto, cobrada **só se atendida**, em pulsos de 6s |
+
+Isso explica por que a entrada funcionou em 17/08 sem nenhum meio de pagamento
+na conta, e a saída não: **não há o que faturar na entrada.**
+
+**Consequência operacional, enquanto não houver cartão:** o CRM já tem voz útil.
+Com `call_icon_visibility: DEFAULT` (ligado junto com o calling), o ícone de
+telefone aparece no WhatsApp de todo cliente da linha, ele liga, e a chamada toca
+no chat com campainha. O recado do erro `131044` aponta esse caminho em vez de
+apenas informar o bloqueio.
+
+Não existe contorno para a chamada de SAÍDA a cliente real sem meio de pagamento
+— é regra de cobrança da plataforma, não limitação do nosso código.
+
 ### 22.7 Pré-requisitos na META — nada disso é código
 
 O código está pronto e o build passa. Para a chamada funcionar de fato:
