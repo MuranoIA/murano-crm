@@ -1686,6 +1686,43 @@ o pedido é um clique consciente, e o cartão enviado é espelhado em `mensagens
 para o vendedor ver que já pediu.
 
 
+### 22.6.1 `131044` — forma de pagamento (o bloqueio real, 17/08)
+
+Com a permissão já concedida, discar passou a devolver:
+
+```json
+{"message":"Business eligibility payment issue for calling",
+ "code":131044, "error_subcode":2593115,
+ "error_user_title":"Business eligibility payment issue"}
+```
+
+**Toda chamada é cobrada por minuto** (~US$ 0,0108 no Brasil). Diferente das
+mensagens, em que conversa de serviço é gratuita, a Meta exige meio de pagamento
+válido na conta e **recusa antes de discar** se não houver como faturar. Resolve-se
+no Gerenciador de Negócios → Configurações de pagamento, vinculando um cartão à
+WABA do piloto.
+
+Verificado que **não é versão do Graph**: `v23.0` e `v26.0` devolvem o erro
+idêntico. A hipótese foi levantada e descartada com teste, não com opinião.
+
+Lado bom do diagnóstico: o erro só aparece DEPOIS de permissão e validação de SDP,
+ou seja, todo o resto do caminho está correto.
+
+#### ⚠️ O bug que escondeu isso por horas — não repetir
+
+A tela mostrava `Graph 131044:` e parava no dois-pontos. Causa: a Meta manda
+`error_data.details` como **string VAZIA** nos erros de chamada, e o código fazia
+`e.error_data?.details ?? e.message`. O `??` só cai adiante em `null`/`undefined`
+— **string vazia vence** e a explicação real era descartada. Neste erro específico
+`error_user_msg` também vem vazio; o texto útil está em `message` e
+`error_user_title`.
+
+**Regra:** ao formatar erro do Graph, juntar `error_data.details`,
+`error_user_title`, `error_user_msg` e `message`, filtrando vazios — nunca `??`
+entre eles. Vale para `lib/whatsapp.ts` e `lib/whatsappCalling.ts`, corrigidos nos
+dois. Os códigos de chamada (1380xx) e alguns 131xxx **não estão na documentação
+pública** — o texto que a Meta manda é a única pista, e perdê-lo custa horas.
+
 ### 22.7 Pré-requisitos na META — nada disso é código
 
 O código está pronto e o build passa. Para a chamada funcionar de fato:
