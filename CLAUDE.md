@@ -1538,3 +1538,125 @@ O que separa o projeto do corte é operacional:
 3. Template de recontato aprovado na Meta
 4. **Time usando o chat em paralelo ao RD por alguns dias.** O que os vendedores
    reclamarem vale mais que qualquer item adivinhado numa lista.
+
+## 22. Ligação por dentro do chat (17/08/2026) — migration 0087
+
+Botão **📞 Ligar** no cabeçalho da conversa, chamada recebida com campainha, e o
+registro da ligação como marco na thread. Voz de verdade no navegador (WebRTC)
+pela **WhatsApp Business Calling API**.
+
+### 22.1 ESCOPO: só o piloto — e isso é decisão, não limitação temporária
+
+**Decisão do usuário em 17/08/2026: nada de ligação pelo RD ou amarrada a ele.**
+A ligação existe apenas onde a conversa **já corre na Cloud API** — hoje, a linha
+piloto. Em conversa do RD o botão **não aparece**, e a rota barra com 422
+(`foraDoPiloto`), porque a tela pode estar desatualizada mas o servidor não.
+
+Isso descarta explicitamente o desenho anterior, que oferecia um segundo canal
+(`tel`, discar pelo celular e só registrar) para cobrir as conversas do RD. Foi
+recusado. **Não propor de novo** sem o assunto ser reaberto pelo usuário.
+
+Consequência a ter em mente ao ler números: verificado em 17/08, **92.864
+mensagens vieram do RD contra 73 da Cloud**. Ou seja, hoje a ligação alcança uma
+fatia mínima da base de propósito — ela cresce sozinha na Fase C, quando o número
+oficial migrar. `conversaNaCloud()` já contempla isso: com
+`WHATSAPP_ENVIO_PADRAO=true` a ligação passa a valer para todo mundo, sem deploy.
+
+A coluna `chat_ligacao.canal` ainda aceita `'tel'` no CHECK, como reserva — **nada
+grava esse valor**. Se for descartado de vez, estreitar o CHECK numa migration
+própria.
+
+### 22.2 A assimetria que governa o desenho (não tem como contornar)
+
+**O SDP da outra ponta não volta na resposta HTTP do Graph — chega pelo webhook.**
+São processos diferentes, e nenhum dos dois é a aba do navegador que está com o
+microfone aberto. Não existe caminho `await` para isso. A ponte é:
+
+```
+navegador faz a oferta -> POST /api/chat/ligacao -> Graph
+                                                     |
+   webhook recebe o `answer`  ->  grava em chat_ligacao.sdp_remoto
+                                     |
+   trigger da 0087 -> realtime.send(topic 'ligacao', só o call_id)
+                                     |
+   navegador ouve -> GET /api/chat/ligacao/acao?call_id= -> aplica o SDP
+```
+
+**O broadcast NÃO leva `cliente_id`.** O canal é público (mesma razão do `board`,
+§15.4) e `cliente_id` pode ser `wa:<telefone>` — ou seja, PII. Vai só o `call_id`,
+que é id opaco da Meta; quem quiser saber de quem é passa pela rota, que autoriza
+no servidor. Mesma régua de escopo do resto do chat (`lib/ligacao.ts` reusa
+`donoEfetivo` de `chatEscopo.ts`).
+
+Duas armadilhas de WebRTC já pagas, em `lib/webrtcLigacao.ts`:
+- **ICE não-trickle.** O Graph aceita UM SDP completo, não candidatos avulsos —
+  não há endpoint para "mais um candidato". É preciso esperar a coleta terminar
+  antes de enviar. Sem isso a chamada conecta e fica **muda dos dois lados**.
+- **`track.stop()` no fim.** Sem ele a luz do microfone continua acesa depois de
+  desligar, e o usuário acha — com razão — que ainda está sendo ouvido.
+
+### 22.3 O que NÃO entrou em `mensagens`, e por quê
+
+Ligação tem tabela própria (`chat_ligacao`). Uma linha em `mensagens` viraria "a
+última mensagem" da conversa, **moveria o card de etapa no funil** (§11.1) e
+**abriria uma espera** no indicador de tempo de resposta (§21.1) — exatamente os
+dois bugs silenciosos que a reação causou e a 0086 corrigiu (§21.2). A regra
+daquela seção vale aqui: **antes de gravar um evento em `mensagens`, verificar se
+ele é mesmo uma mensagem.**
+
+### 22.4 Desfecho — a tabulação por voz
+
+Ao encerrar, a tela pergunta **no que deu** (venda / follow-up / sem interesse /
+não atendeu / caixa postal / outro) e aceita observação. Aparece também quando é
+**a cliente que desliga** — que é o caso mais comum numa ligação de saída; sem
+isso a ligação mais frequente ficaria sem registro. Mesma lógica do motivo ao
+resolver a conversa (§18 item 4), e pelo mesmo motivo: é o campo que transforma
+"liguei" em dado.
+
+### 22.5 Pré-requisitos na META — nada disso é código
+
+O código está pronto e o build passa. Para a chamada funcionar de fato:
+
+1. **Limite de mensagens ≥ 2.000/24h** na WABA. Exigência da Meta para calling.
+2. **Assinar o campo `calls`** no webhook. Assinar `messages` **não** assina
+   `calls` — é a mesma armadilha nº 3 da §16.4, agora para chamadas.
+3. **Ligar calling na linha**: `/admin` → aba Linhas → *Chamadas de voz*
+   (`/api/admin/ligacao`). **Não vem ligado.** A rota age somente sobre
+   `WHATSAPP_PHONE_NUMBER_ID` e nunca aceita a linha por parâmetro — mesmo
+   recorte da §20.3, para o número oficial não ser alcançável nem por engano.
+4. **App em modo Ativo** (§21.4 item 2): em Desenvolvimento só a allowlist toca.
+5. **Verificar a aba Parceiros da WABA** (§20.2): parceiro herdado bloqueou o
+   *envio* uma vez sem dar pista nenhuma; não há razão para supor que a voz
+   escape disso.
+
+**Limite de chamada iniciada pelo negócio: 1 por dia e 2 por semana por par
+(número, cliente)** — precisa de permissão do cliente. Cliente que **liga para
+nós** concede automaticamente (`callback_permission_status`, ligado junto com o
+interruptor). A rota consulta a permissão **antes** de discar e devolve 422 com
+recado, para o vendedor não descobrir a recusa depois de já ter aberto o
+microfone. Brasil permite chamada iniciada pelo negócio (EUA, Canadá, Egito,
+Vietnã e Nigéria, não).
+
+Custo: ~US$ 0,0108/min de conectividade Meta.
+
+**Graph v23.0 para chamada**, em constante separada (`lib/whatsappCalling.ts`):
+a Calling API não existe na v22.0 que as mensagens usam, e subir a versão do
+envio (§16.5 item 4) é mudança de risco próprio — não deve ser arrastada por esta.
+
+### 22.6 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `supabase/migrations/0087_chat_ligacao.sql` | tabela, `vw_chat_ligacao_ativa`, trigger de Realtime |
+| `web/lib/whatsappCalling.ts` | Graph: connect/pre_accept/accept/reject/terminate, permissão, settings |
+| `web/lib/webrtcLigacao.ts` | `RTCPeerConnection` no navegador (só o áudio) |
+| `web/lib/ligacao.ts` | escopo, telefone E.164, `conversaNaCloud`, cálculo de encerramento |
+| `web/app/api/chat/ligacao/route.ts` | listar / iniciar / encerrar |
+| `web/app/api/chat/ligacao/acao/route.ts` | sinalização: estado+SDP, atender, recusar, desligar |
+| `web/app/api/admin/ligacao/route.ts` | interruptor de calling na linha (admin) |
+| `web/app/chat/ligacao.tsx` | hook + telas (botão, barra, campainha, desfecho, marco) |
+| `web/app/api/whatsapp/webhook/route.ts` | passou a tratar o campo `calls` |
+
+`ligacao.tsx` mora fora de `page.tsx` de propósito: aquela tela passa de 1.500
+linhas e é mexida por mais de uma frente ao mesmo tempo — o chat encosta na
+ligação por três pontos apenas (o hook, as camadas flutuantes e o marco).

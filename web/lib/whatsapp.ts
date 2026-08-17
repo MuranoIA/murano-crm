@@ -50,13 +50,20 @@ export async function canalDeResposta(
 
 type EnvioOk = { wamid: string };
 
-function env(nome: string): string {
+/**
+ * Env obrigatória, já higienizada. Exportada porque a limpeza NÃO é detalhe: um
+ * caractere invisível colado no token na Vercel devolve Graph 190 com token
+ * válido — armadilha já paga uma vez (§16.4). Uma implementação só, usada
+ * também pelo cliente de ligação (lib/whatsappCalling.ts).
+ */
+export function envWa(nome: string): string {
   const v = process.env[nome];
   if (!v) throw new Error(`Config ausente: ${nome}`);
   // remove qualquer caractere fora do ASCII imprimível (espaço/quebra de linha
   // colados junto do valor na Vercel) — mesma limpeza que as rotas do RD fazem.
   return v.replace(/[^\x21-\x7E]/g, "");
 }
+const env = envWa;
 
 async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
   const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");

@@ -421,7 +421,72 @@ export default function Admin() {
           </div>
         </Bloco>
       )}
+
+      {aba === "linhas" && <ChamadasVoz />}
     </Moldura>
+  );
+}
+
+// --- chamadas de voz na linha de envio (migration 0087) ---------------------
+// Estado próprio, e não dentro do `dados` da aba: fala com a META, não com o
+// nosso banco — pode estar lenta ou fora do ar sem que isso derrube o cadastro
+// de linhas ao lado.
+function ChamadasVoz() {
+  const [cfg, setCfg] = useState<any>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+
+  const ler = useCallback(async () => {
+    setErro(null);
+    try {
+      const r = await fetch("/api/admin/ligacao", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); setCfg(j); return; }
+      setCfg(j);
+    } catch (e: any) { setErro(e?.message ?? String(e)); }
+  }, []);
+  useEffect(() => { ler(); }, [ler]);
+
+  const alternar = async (ligado: boolean) => {
+    setOcupado(true); setErro(null);
+    try {
+      const r = await fetch("/api/admin/ligacao", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ligado }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setErro(j?.error ?? `erro ${r.status}`);
+      else setCfg(j);
+    } finally { setOcupado(false); }
+  };
+
+  const ligado = String(cfg?.calling?.status ?? "").toUpperCase() === "ENABLED";
+
+  return (
+    <Bloco
+      titulo="Chamadas de voz (WhatsApp)"
+      ajuda={<>
+        Liga a <b>ligação por voz</b> na linha de envio — é o que permite o botão 📞 do chat.
+        A Meta <b>não</b> entrega isso ligado. Além deste interruptor, dois passos são feitos no
+        painel da Meta e não têm como ser feitos daqui: assinar o campo <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>calls</code>
+        no webhook, e ter limite de mensagens de 2.000/24h na conta.
+      </>}
+    >
+      {erro && <Recado tipo="erro">{erro}</Recado>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <Selo ok={ligado} sim="chamadas ligadas" nao="chamadas desligadas" />
+        <span style={{ fontSize: 12.5, color: M.gray }}>
+          linha <b style={{ fontVariantNumeric: "tabular-nums" }}>{cfg?.linha ?? "—"}</b>
+        </span>
+        <span style={{ flex: 1 }} />
+        <BotaoLeve onClick={ler}>Reconsultar</BotaoLeve>
+        <Botao onClick={() => alternar(!ligado)} disabled={ocupado || !cfg?.linha}
+          cor={ligado ? M.laranja : M.verde}
+          titulo={ligado ? "clientes deixam de conseguir ligar para esta linha" : "habilita ligação nos dois sentidos"}>
+          {ocupado ? "…" : ligado ? "Desligar chamadas" : "Ligar chamadas"}
+        </Botao>
+      </div>
+    </Bloco>
   );
 }
 
