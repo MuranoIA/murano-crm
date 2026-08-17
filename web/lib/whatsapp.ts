@@ -78,7 +78,12 @@ async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
   const body: any = await r.json().catch(() => ({}));
   if (!r.ok) {
     const code = body?.error?.code;
-    const detalhe = body?.error?.error_data?.details ?? body?.error?.message ?? `HTTP ${r.status}`;
+    // `||` e não `??`: a Meta manda `details` como string VAZIA em vários erros,
+    // e `??` só cai adiante em null/undefined — a string vazia venceria e a
+    // explicação real (`error_user_msg`) seria descartada. Custou horas uma vez.
+    const e = body?.error ?? {};
+    const detalhe = [e.error_data?.details, e.error_user_msg, e.message]
+      .map((p: unknown) => String(p ?? "").trim()).find(Boolean) ?? `HTTP ${r.status}`;
     // 131047 = fora da janela de 24h — erro de negócio, não de infra
     const err: any = new Error(`Graph ${code ?? r.status}: ${detalhe}`);
     err.foraDaJanela = code === 131047;
