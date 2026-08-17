@@ -117,6 +117,8 @@ export function useLigacao(opts: {
   const [mudo, setMudo] = useState(false);
   const [ocupado, setOcupado] = useState(false);                     // discando/atendendo
   const [erro, setErro] = useState<string | null>(null);
+  // conversa cujo cliente ainda nao autorizou ligacao: vira o botao "pedir"
+  const [pedirPara, setPedirPara] = useState<{ id: string; nome: string } | null>(null);
   const rtc = useRef<LigacaoRtc | null>(null);
   // desestruturado, e não `const campainha = usarCampainha()`: o objeto seria
   // novo a cada render e, como ele entra nas dependências do efeito de varredura,
@@ -129,6 +131,7 @@ export function useLigacao(opts: {
   // dependência — o `reagir` não pode se reinscrever no canal a cada render
   const chamadaRef = useRef<Chamada | null>(null); chamadaRef.current = chamada;
   const recebidaRef = useRef<Chamada | null>(null); recebidaRef.current = recebida;
+  const pedirParaRef = useRef<{ id: string; nome: string } | null>(null); pedirParaRef.current = pedirPara;
 
   const soltarRtc = useCallback(() => {
     try { rtc.current?.encerrar(); } catch { /* já encerrado */ }
@@ -283,12 +286,41 @@ export function useLigacao(opts: {
       if (!resp.ok) {
         soltarRtc();
         setErro(j?.error ?? `erro ${resp.status}`);
+        // sem autorização: o erro vira uma AÇÃO em vez de um beco sem saída.
+        // Guarda de qual cliente é, porque o vendedor pode trocar de conversa
+        // antes de clicar — pedir autorização para o contato errado seria pior
+        // que não pedir, e a cota é de 1 por dia.
+        setPedirPara(j?.semPermissao && j?.permissao?.pode_pedir ? { id: clienteId, nome } : null);
         return;
       }
       setChamada({ ...j.ligacao, cliente_id: clienteId, cliente_nome: nome });
       aoMudarRef.current();
     } finally { setOcupado(false); }
   }, [ocupado, chamada, soltarRtc]);
+
+  /**
+   * Envia o cartão de autorização. Caminho que a própria API indica quando não
+   * há permissão — e o único, já que ligar para a nossa linha, na prática, não
+   * concedeu (verificado em 17/08: três chamadas recebidas e atendidas, e a
+   * permissão seguiu `no_permission`).
+   */
+  const pedirPermissao = useCallback(async () => {
+    const alvo = pedirParaRef.current;
+    if (!alvo || ocupado) return;
+    setOcupado(true);
+    try {
+      const r = await fetch("/api/chat/ligacao", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: alvo.id, acao: "pedir_permissao" }),
+      });
+      const j = await r.json().catch(() => null);
+      setPedirPara(null);
+      setErro(r.ok
+        ? `Pedido enviado para ${alvo.nome}. Assim que ele autorizar, é só ligar.`
+        : (j?.error ?? `erro ${r.status}`));
+      aoMudarRef.current();   // o cartão enviado aparece na thread
+    } finally { setOcupado(false); }
+  }, [ocupado]);
 
   /** Atende a chamada que está tocando. */
   const atender = useCallback(async () => {
@@ -380,9 +412,9 @@ export function useLigacao(opts: {
   useEffect(() => () => { try { rtc.current?.encerrar(); } catch {} }, []);
 
   return {
-    chamada, recebida, desfechoDe, estadoRtc, mudo, ocupado, erro,
-    ligar, atender, recusar, desligar, salvarDesfecho, alternarMudo,
-    limparErro: () => setErro(null),
+    chamada, recebida, desfechoDe, estadoRtc, mudo, ocupado, erro, pedirPara,
+    ligar, atender, recusar, desligar, salvarDesfecho, alternarMudo, pedirPermissao,
+    limparErro: () => { setErro(null); setPedirPara(null); },
   };
 }
 

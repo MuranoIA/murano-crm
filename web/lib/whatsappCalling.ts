@@ -149,6 +149,10 @@ export type Permissao = {
   status: string;
   expira_em: string | null;
   pode_ligar: boolean;
+  /** dá para enviar um pedido de autorização agora (cota de 1/dia e 2/semana) */
+  pode_pedir: boolean;
+  /** quanto já foi usado da cota, para a tela dizer o motivo quando não puder */
+  cota: { periodo: string; usado: number; maximo: number }[];
 };
 
 /**
@@ -167,14 +171,56 @@ export async function consultarPermissao(waId: string): Promise<Permissao> {
     );
     const p = body?.permission ?? body?.data?.[0] ?? body ?? {};
     const status = String(p.status ?? p.permission_status ?? "desconhecido");
+    // a resposta traz as ações possíveis com a cota de cada uma — é a própria
+    // API dizendo qual é a saída quando não há permissão
+    const pedido = (body?.actions ?? []).find(
+      (a: any) => a?.action_name === "send_call_permission_request",
+    );
     return {
       status,
       expira_em: p.expiration_time ? new Date(Number(p.expiration_time) * 1000).toISOString() : null,
       pode_ligar: status !== "no_permission",
+      pode_pedir: Boolean(pedido?.can_perform_action),
+      cota: (pedido?.limits ?? []).map((l: any) => ({
+        periodo: String(l?.time_period ?? ""),
+        usado: Number(l?.current_usage ?? 0),
+        maximo: Number(l?.max_allowed ?? 0),
+      })),
     };
   } catch {
-    return { status: "indisponivel", expira_em: null, pode_ligar: true };
+    // consulta indisponível não pode travar o trabalho: deixa o Graph decidir
+    return { status: "indisponivel", expira_em: null, pode_ligar: true, pode_pedir: false, cota: [] };
   }
+}
+
+/**
+ * Envia à cliente o pedido de autorização para ligarmos — o caminho que a própria
+ * API indica quando `status = no_permission` (ação `send_call_permission_request`).
+ * Ela vê um cartão com Permitir / Não permitir; a resposta volta pelo webhook
+ * como `interactive.type = 'call_permission_reply'`.
+ *
+ * É MENSAGEM LIVRE: vale a janela de 24h como qualquer texto (Graph 131047 fora
+ * dela). E tem cota apertada — 1 por dia, 2 por semana por cliente —, então não
+ * é algo para disparar em loop.
+ */
+export async function pedirPermissaoDeChamada(to: string, texto: string): Promise<{ wamid: string }> {
+  const body = await graph(`${linhaDeLigacao()}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "call_permission_request",
+        action: { name: "call_permission_request" },
+        body: { text: texto.slice(0, 1024) },
+      },
+    }),
+  });
+  const wamid = body?.messages?.[0]?.id;
+  if (!wamid) throw new GraphCallingError("Graph aceitou o pedido mas não devolveu wamid", null, null);
+  return { wamid: String(wamid) };
 }
 
 // ---------------------------------------------------------------------------

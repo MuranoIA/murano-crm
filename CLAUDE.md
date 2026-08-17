@@ -1647,7 +1647,46 @@ existe no cadeado. Saída de emergência enquanto o hub não for corrigido: abri
 (microfone, câmera, notificação, área de transferência, geolocalização) precisa
 ser delegado no `allow` do iframe do hub. O CRM não tem como se autoconceder.
 
-### 22.6 Pré-requisitos na META — nada disso é código
+### 22.6 Chamada RECEBIDA funciona; a de SAÍDA exige pedir autorização (17/08)
+
+**Validado em produção no mesmo dia:** três chamadas de entrada foram recebidas,
+tocaram no navegador, foram atendidas e conectaram áudio (10s, 10s, 2s), com
+registro completo em `chat_ligacao`. A cadeia webhook → trigger → Realtime →
+WebRTC está de pé.
+
+**A de saída barra em permissão**, e aqui mora uma armadilha de documentação:
+
+> A doc da Meta diz que `callback_permission_status: ENABLED` faz o cliente
+> conceder permissão automaticamente **ao ligar para o negócio**.
+> **Não foi o que aconteceu.** Com o interruptor ligado e TRÊS chamadas do
+> cliente recebidas e atendidas, `GET /call_permissions` seguiu devolvendo
+> `no_permission`. A hipótese mais provável é que a concessão automática valha
+> para chamada **não atendida** (é permissão de *retorno*, para ligar de volta a
+> quem se perdeu) — mas isso não foi confirmado. **Não confie nesse caminho.**
+
+O caminho que funciona é o que a própria API aponta na resposta:
+
+```json
+{"permission":{"status":"no_permission"},
+ "actions":[{"action_name":"send_call_permission_request",
+             "can_perform_action":true,
+             "limits":[{"time_period":"PT24H","max_allowed":1},
+                       {"time_period":"P7D","max_allowed":2}]}]}
+```
+
+`pedirPermissaoDeChamada()` envia um cartão interativo
+(`interactive.type = call_permission_request`); a cliente toca em Permitir e a
+resposta volta pelo webhook como `interactive.call_permission_reply`. No chat,
+o erro de permissão vira um botão **Pedir autorização** em vez de um beco sem
+saída.
+
+Dois limites que moldam o uso: é **mensagem livre** (vale a janela de 24h, dá
+131047 fora dela) e a cota é **1 por dia, 2 por semana por cliente** — por isso
+o pedido é um clique consciente, e o cartão enviado é espelhado em `mensagens`
+para o vendedor ver que já pediu.
+
+
+### 22.7 Pré-requisitos na META — nada disso é código
 
 O código está pronto e o build passa. Para a chamada funcionar de fato:
 
@@ -1677,7 +1716,7 @@ Custo: ~US$ 0,0108/min de conectividade Meta.
 a Calling API não existe na v22.0 que as mensagens usam, e subir a versão do
 envio (§16.5 item 4) é mudança de risco próprio — não deve ser arrastada por esta.
 
-### 22.7 Arquivos
+### 22.8 Arquivos
 
 | Arquivo | Papel |
 |---|---|

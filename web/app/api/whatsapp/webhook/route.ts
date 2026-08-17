@@ -214,10 +214,22 @@ function extrairConteudo(msg: any): string {
       return String(msg.text?.body ?? "");
     case "button":
       return String(msg.button?.text ?? "[botão]");
-    case "interactive":
+    case "interactive": {
+      // Resposta ao pedido de autorização de ligação (Calling API): a cliente
+      // tocou em Permitir / Não permitir. É mensagem de verdade — aparece no
+      // WhatsApp dela —, então entra na thread como as outras respostas de botão
+      // que já tratamos aqui. A permissão em si quem guarda é a Meta; isto é só
+      // o registro visível para o vendedor saber o que aconteceu.
+      const perm = msg.interactive?.call_permission_reply?.response;
+      if (perm) {
+        return String(perm).toLowerCase() === "accept"
+          ? "✅ Autorizou receber nossas ligações"
+          : "🚫 Não autorizou receber ligações";
+      }
       return String(
         msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? "[interativo]",
       );
+    }
     case "reaction":
       return `[reação] ${msg.reaction?.emoji ?? ""}`.trim();
     case "image":

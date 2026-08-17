@@ -2,7 +2,9 @@ import {
   sessaoDeLigacao, falhou, donoDaConversa, telefoneE164, conversaNaCloud,
   COLS_LIGACAO, VIVOS, encerramento,
 } from "../../../../lib/ligacao";
-import { iniciarChamada, consultarPermissao, encerrar, GraphCallingError } from "../../../../lib/whatsappCalling";
+import {
+  iniciarChamada, consultarPermissao, pedirPermissaoDeChamada, encerrar, GraphCallingError,
+} from "../../../../lib/whatsappCalling";
 import { linhaDeEnvio } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
@@ -75,9 +77,41 @@ export async function POST(req: Request) {
   if (!pode) return Response.json({ error: "essa conversa não está com você" }, { status: 403 });
 
   const { data: cli } = await s.sb
-    .from("clientes").select("id,nome_completo,telefone").eq("id", cliente_id).maybeSingle();
+    .from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle();
   const telefone = telefoneE164(cli?.telefone, cliente_id);
   if (!telefone) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
+
+  // ---- pedir autorização para ligar --------------------------------------
+  // Caminho que a própria API indica quando não há permissão. Fica ANTES da
+  // trava de "chamada em andamento": pedir autorização não é discar.
+  if (String(b?.acao ?? "") === "pedir_permissao") {
+    if (!(await conversaNaCloud(s.sb, cliente_id))) {
+      return Response.json({ error: "conversa fora do piloto", foraDoPiloto: true }, { status: 422 });
+    }
+    const texto = String(b?.texto ?? "").trim() ||
+      "Podemos te ligar aqui pelo WhatsApp para falar sobre o seu pedido?";
+    try {
+      const { wamid } = await pedirPermissaoDeChamada(telefone, texto);
+      // espelha na conversa: a cliente VÊ este cartão, então ele tem de estar na
+      // thread como qualquer mensagem que enviamos — senão o vendedor não sabe
+      // que já pediu, e queima a cota de 1 por dia pedindo de novo
+      await s.sb.from("mensagens").upsert({
+        id: wamid, cliente_id, vendedor_carteira: cli?.carteira ?? dono ?? null,
+        enviada_por: "operator", tipo: "mensagem",
+        conteudo: `📞 ${texto}`,
+        status: "wait", criada_em: new Date().toISOString(), linha_id: linhaDeEnvio(),
+      }, { onConflict: "id" });
+      return Response.json({ ok: true, pedido: true, permissao: await consultarPermissao(telefone) });
+    } catch (e: any) {
+      const foraDaJanela = e?.graphCode === 131047 || /131047/.test(String(e?.message ?? ""));
+      return Response.json({
+        error: foraDaJanela
+          ? "Fora da janela de 24h — o pedido de autorização é mensagem livre. Envie um template primeiro."
+          : (e?.message ?? String(e)),
+        foraDaJanela,
+      }, { status: foraDaJanela ? 422 : 502 });
+    }
+  }
 
   // uma chamada viva por conversa: duas linhas 'em_curso' no mesmo cliente
   // deixariam a tela sem saber qual encerrar
@@ -109,8 +143,11 @@ export async function POST(req: Request) {
   const permissao = await consultarPermissao(telefone);
   if (!permissao.pode_ligar) {
     return Response.json({
-      error: "O cliente ainda não autorizou receber ligação nossa pelo WhatsApp. " +
-             "Ele autoriza ligando para a nossa linha, ou respondendo ao pedido de autorização.",
+      error: permissao.pode_pedir
+        ? "O cliente ainda não autorizou receber ligação nossa. Envie o pedido de autorização — " +
+          "ele responde com um toque e aí a ligação libera."
+        : "O cliente não autorizou receber ligação, e a cota de pedidos acabou " +
+          "(1 por dia, 2 por semana). Fale com ele pela conversa.",
       semPermissao: true, permissao,
     }, { status: 422 });
   }
