@@ -1729,6 +1729,9 @@ export default function Page() {
             <a href="/catalogos" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo</a>
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</a>
+            {sessao.role === "admin" && (
+              <a href="/admin" title="Usuários, vendedores, horário de atendimento e linhas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
+            )}
           </nav>
           )}
           {isMobile && (
@@ -1902,6 +1905,9 @@ export default function Page() {
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
+              {sessao.role === "admin" && (
+                <a href="/admin" onClick={fecha} style={row}>⚙️ Administração</a>
+              )}
               <button onClick={() => { alternarTema(); }} style={row}>🎨 Tema: {TEMA_ROTULO[tema]} <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>trocar ↻</span></button>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
