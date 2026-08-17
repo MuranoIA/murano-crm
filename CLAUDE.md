@@ -1613,7 +1613,41 @@ isso a ligação mais frequente ficaria sem registro. Mesma lógica do motivo ao
 resolver a conversa (§18 item 4), e pelo mesmo motivo: é o campo que transforma
 "liguei" em dado.
 
-### 22.5 Pré-requisitos na META — nada disso é código
+### 22.5 O CRM roda em IFRAME — e isso bloqueia o microfone (17/08/2026)
+
+Sintoma: clicar em 📞 Ligar devolvia na hora "permissão de microfone negada",
+**sem o navegador nunca ter perguntado**. A pista que fecha o caso está no painel
+de permissões do site: havia Som, Cookies e Configurações — e **nenhuma entrada
+de Microfone**. Permissão negada pelo usuário apareceria ali.
+
+Causa: em **iframe cross-origin** o padrão do navegador para `microphone` é
+`self`, ou seja, só o site do topo. O CRM é embutido pelo hub (§17), então sem o
+pai delegar a permissão o `getUserMedia` é recusado com **`NotAllowedError` e sem
+prompt**. O erro é idêntico ao de "o usuário clicou em bloquear", mas a solução é
+o oposto: **não há nada que o usuário possa liberar no cadeado.**
+
+Correção — é no **hub** (`murano-app`), não aqui, em
+`packages/feature-crm-externo/src/CrmExternoFrame.tsx`:
+
+```diff
+-      allow="clipboard-write"
++      allow="clipboard-write; microphone; autoplay"
+```
+
+`autoplay` junto porque o áudio da outra ponta toca num `<audio>` criado por
+script, e dentro de iframe isso também é política delegada.
+
+Do nosso lado, `microfoneBloqueadoPeloQuadro()` (em `lib/webrtcLigacao.ts`)
+distingue os dois casos por `document.permissionsPolicy.allowsFeature` e troca a
+mensagem — senão a próxima pessoa perde a mesma hora caçando uma opção que não
+existe no cadeado. Saída de emergência enquanto o hub não for corrigido: abrir
+`crm.muranoprofessional.com.br` direto, fora do hub.
+
+**Regra geral que fica:** qualquer recurso que dependa de permissão do navegador
+(microfone, câmera, notificação, área de transferência, geolocalização) precisa
+ser delegado no `allow` do iframe do hub. O CRM não tem como se autoconceder.
+
+### 22.6 Pré-requisitos na META — nada disso é código
 
 O código está pronto e o build passa. Para a chamada funcionar de fato:
 
@@ -1643,7 +1677,7 @@ Custo: ~US$ 0,0108/min de conectividade Meta.
 a Calling API não existe na v22.0 que as mensagens usam, e subir a versão do
 envio (§16.5 item 4) é mudança de risco próprio — não deve ser arrastada por esta.
 
-### 22.6 Arquivos
+### 22.7 Arquivos
 
 | Arquivo | Papel |
 |---|---|
