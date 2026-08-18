@@ -120,8 +120,51 @@ export async function GET() {
     c.motivo = e?.motivo ?? null;
   }
 
+  // ---- por qual NÚMERO cada conversa corre (migration 0089) ----------------
+  // Operamos dois números ao mesmo tempo de propósito: o oficial (Murano Pro,
+  // atendido pelo RD) e a linha piloto (Murano Shop, Cloud API). Sem esta
+  // marcação a sidebar mistura os dois e o vendedor não sabe por onde está
+  // falando até abrir a conversa.
+  //
+  // A view só conhece quem tem `linha_id` — conversa do RD não tem, porque o
+  // conceito nasceu no webhook da Meta. Ausente da view = linha 'rd'.
+  const [{ data: linhasCad }, daLinha] = await Promise.all([
+    sb.from("chat_linha").select("phone_number_id,rotulo,numero").eq("ativo", true).order("rotulo"),
+    (async () => {
+      const m = new Map<string, string>();
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await sb.from("vw_chat_linha_cliente")
+          .select("cliente_id,linha_id").range(from, from + PAGE - 1);
+        for (const l of data ?? []) m.set((l as any).cliente_id, (l as any).linha_id);
+        if (!data || data.length < PAGE) break;
+      }
+      return m;
+    })(),
+  ]);
+
+  const porLinha = new Map<string, number>();
+  for (const c of conversas) {
+    c.linha_id = daLinha.get(c.cliente_id) ?? "rd";
+    porLinha.set(c.linha_id, (porLinha.get(c.linha_id) ?? 0) + 1);
+  }
+
+  // Linha que aparece nas conversas mas não está cadastrada entra assim mesmo,
+  // com o id cru: some da tela seria pior — a conversa existiria sem lugar
+  // nenhum no filtro, e ninguém descobriria que falta cadastrar a linha.
+  const cadastradas = new Map((linhasCad ?? []).map((l: any) => [l.phone_number_id, l]));
+  const linhas = [...new Set([...cadastradas.keys(), ...porLinha.keys()])]
+    .map((id) => ({
+      id,
+      rotulo: cadastradas.get(id)?.rotulo ?? `linha ${id} (não cadastrada)`,
+      numero: cadastradas.get(id)?.numero ?? null,
+      total: porLinha.get(id) ?? 0,
+    }))
+    .filter((l) => l.total > 0)
+    .sort((a, b) => b.total - a.total);
+
   return Response.json({
     conversas,
+    linhas,
     vendedores: vendedores ?? [],
     nao_lidas: conversas.filter((c: any) => c.nao_lida && !c.na_fila).length,
     na_fila: conversas.filter((c: any) => c.na_fila).length,

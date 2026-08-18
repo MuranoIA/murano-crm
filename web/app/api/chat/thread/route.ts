@@ -63,7 +63,10 @@ export async function GET(req: Request) {
   const ultimaComLinha = [...mensagens].reverse().find((m: any) => m.linha_id);
   const linha = ultimaComLinha
     ? { id: ultimaComLinha.linha_id, rotulo: rotulos.get(ultimaComLinha.linha_id) ?? "linha nova", canal: "whatsapp" }
-    : { id: null, rotulo: "RD Conversas", canal: "rd" };
+    // o número oficial também tem cadastro desde a 0089 (id sintético 'rd'), e o
+    // rótulo vem de lá — assim o cabeçalho da conversa e o filtro da sidebar
+    // chamam o mesmo número pelo mesmo nome
+    : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
 
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
