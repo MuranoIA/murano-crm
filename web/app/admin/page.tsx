@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
@@ -19,12 +19,13 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "paginas-legais";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
   { id: "horario", rotulo: "🕗 Horário" },
   { id: "linhas", rotulo: "📞 Linhas" },
+  { id: "templates-whatsapp", rotulo: "📨 Templates" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -425,6 +426,15 @@ export default function Admin() {
 
       {aba === "linhas" && <ChamadasVoz />}
 
+      {aba === "templates-whatsapp" && dados?.["templates-whatsapp"] && (
+        <TemplatesAba
+          templates={dados["templates-whatsapp"]}
+          avisoMeta={dados.aviso ?? null}
+          recarregar={() => carregar("templates-whatsapp")}
+          avisar={(t, m) => (t === "erro" ? setErro(m) : setOk(m))}
+        />
+      )}
+
       {aba === "paginas-legais" && dados?.["paginas-legais"] && (
         // `key` força o formulário a recarregar o que foi salvo: sem ela, o
         // estado local continuaria com o que estava digitado antes, e uma
@@ -591,6 +601,217 @@ function HorarioAba({ cfg, foraAgora, salvar }: {
     </Bloco>
   );
 }
+
+// --- templates do WhatsApp (migration 0090) --------------------------------
+// Cria o template NA META, com texto e imagem opcional. Não confundir com a
+// aba de templates do board (/api/templates): aquela cadastra um ponteiro para
+// um template que vive no RD Conversas, cujo texto nunca esteve conosco.
+//
+// Estado próprio (não usa o `enviar` genérico da página) porque a criação vai
+// em multipart — tem arquivo junto.
+function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
+  templates: any[]; avisoMeta: string | null;
+  recarregar: () => Promise<void>; avisar: (t: "erro" | "ok", m: string) => void;
+}) {
+  const [f, setF] = useState<any>({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
+  const [imagem, setImagem] = useState<File | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+  const corpoRef = useRef<HTMLTextAreaElement>(null);
+
+  const daCloud = templates.filter((t) => t.canal === "cloud");
+  const doRd = templates.filter((t) => t.canal !== "cloud");
+
+  const corDoStatus = (s: string | null) => {
+    const v = String(s ?? "").toUpperCase();
+    if (v === "APPROVED") return M.verde;
+    if (v === "PENDING" || v === "IN_APPEAL") return "#8a6100";
+    if (!v) return M.muted;
+    return M.laranja;
+  };
+
+  async function criar() {
+    if (!f.nome.trim() || !f.corpo.trim()) { avisar("erro", "Nome e texto são obrigatórios."); return; }
+    setEnviando(true);
+    try {
+      const fd = new FormData();
+      for (const k of ["nome", "categoria", "corpo", "rodape", "cabecalho_texto"]) fd.append(k, f[k] ?? "");
+      if (imagem) fd.append("imagem", imagem);
+      const r = await fetch("/api/admin/templates-whatsapp", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      avisar("ok", j?.aviso ?? "Template criado.");
+      setF({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
+      setImagem(null);
+      if (arquivoRef.current) arquivoRef.current.value = "";
+      await recarregar();
+    } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
+    finally { setEnviando(false); }
+  }
+
+  async function mexer(metodo: "PATCH" | "DELETE", corpo: any, sucesso: string) {
+    try {
+      const url = metodo === "DELETE"
+        ? `/api/admin/templates-whatsapp?id=${corpo.id}`
+        : "/api/admin/templates-whatsapp";
+      const r = await fetch(url, {
+        method: metodo,
+        ...(metodo === "PATCH" ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) } : {}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      avisar("ok", sucesso);
+      await recarregar();
+    } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
+  }
+
+  const inserirNome = () => {
+    const el = corpoRef.current;
+    const pos = el?.selectionStart ?? f.corpo.length;
+    const novo = `${f.corpo.slice(0, pos)}{{1}}${f.corpo.slice(pos)}`;
+    setF({ ...f, corpo: novo });
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos + 5, pos + 5); }, 0);
+  };
+
+  return (
+    <>
+      <Bloco
+        titulo="Criar template"
+        ajuda={<>
+          Template é a única forma de <b>começar uma conversa</b> ou de responder depois de 24 h sem
+          mensagem do cliente — regra do WhatsApp, não nossa. Ele vai para <b>análise da Meta</b>, que
+          costuma levar de minutos a algumas horas. Enquanto não for aprovado, não dá para enviar.
+        </>}
+      >
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Nome</label>
+            <input value={f.nome} placeholder="ex.: Recontato de clientes" onChange={(e) => setF({ ...f, nome: e.target.value })}
+              style={{ ...inputBase, width: 300 }} />
+            <span style={{ fontSize: 11.5, color: M.muted }}>vira o identificador na Meta, sem acento nem espaço</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Tipo</label>
+            <select value={f.categoria} onChange={(e) => setF({ ...f, categoria: e.target.value })} style={{ ...inputBase, width: 250 }}>
+              <option value="MARKETING">Marketing — oferta, novidade, reativação</option>
+              <option value="UTILITY">Utilidade — aviso sobre pedido em andamento</option>
+            </select>
+            <span style={{ fontSize: 11.5, color: M.muted }}>a Meta cobra preços diferentes por tipo</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <label style={rotuloCampo}>Texto da mensagem</label>
+          <button onClick={inserirNome} title="Insere o primeiro nome do cliente no ponto do cursor"
+            style={{ padding: "3px 9px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+              borderRadius: 999, color: M.roxo, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
+            + nome do cliente
+          </button>
+        </div>
+        <textarea ref={corpoRef} value={f.corpo} rows={5} onChange={(e) => setF({ ...f, corpo: e.target.value })}
+          placeholder="Oi {{1}}, tudo bem? Chegaram novidades na Murano e separei algumas que combinam com o seu salão."
+          style={{ ...inputBase, width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 }} />
+        <div style={{ fontSize: 11.5, color: M.muted, margin: "5px 0 16px" }}>
+          {f.corpo.length}/1024 caracteres · sem link encurtado e sem promessa que a marca não cumpre — é o que mais causa recusa
+        </div>
+
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Imagem (opcional)</label>
+            <input ref={arquivoRef} type="file" accept="image/jpeg,image/png"
+              onChange={(e) => setImagem(e.target.files?.[0] ?? null)}
+              style={{ ...inputBase, width: 300, padding: "5px 7px" }} />
+            <span style={{ fontSize: 11.5, color: M.muted }}>JPEG ou PNG, até 5 MB — aparece acima do texto</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Ou título de texto</label>
+            <input value={f.cabecalho_texto} disabled={!!imagem} maxLength={60}
+              onChange={(e) => setF({ ...f, cabecalho_texto: e.target.value })}
+              style={{ ...inputBase, width: 260, opacity: imagem ? 0.5 : 1 }} />
+            <span style={{ fontSize: 11.5, color: M.muted }}>a Meta aceita um cabeçalho só</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Rodapé (opcional)</label>
+            <input value={f.rodape} maxLength={60} onChange={(e) => setF({ ...f, rodape: e.target.value })}
+              placeholder="Murano Professional" style={{ ...inputBase, width: 240 }} />
+            <span style={{ fontSize: 11.5, color: M.muted }}>linha pequena no fim, até 60 caracteres</span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <Botao cor={M.wine} onClick={criar} disabled={enviando}>
+            {enviando ? "Enviando para a Meta…" : "Criar e enviar para análise"}
+          </Botao>
+        </div>
+      </Bloco>
+
+      <Bloco
+        titulo="Templates desta linha"
+        ajuda="Criados por nós na Meta. O status é reconsultado toda vez que esta tela abre — a Meta não avisa quando aprova."
+      >
+        {avisoMeta && <Recado tipo="aviso">{avisoMeta}</Recado>}
+        {!daCloud.length && <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Nenhum template criado ainda.</p>}
+        {daCloud.map((t) => (
+          <div key={t.id} style={{ padding: "12px 0", borderBottom: `1px solid ${M.bg}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <b style={{ fontSize: 14 }}>{t.nome}</b>
+              <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,
+                color: corDoStatus(t.status), background: M.bg, border: `1px solid ${M.border}` }}>
+                {t.status_legivel ?? "sem status"}
+              </span>
+              {t.padrao && <Selo ok sim="padrão" nao="" />}
+              {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11.5, color: M.gray }}>🖼️ com imagem</span>}
+              {t.usa_nome && <span style={{ fontSize: 11.5, color: M.gray }}>usa o nome do cliente</span>}
+              <span style={{ flex: 1 }} />
+              {!t.padrao && String(t.status).toUpperCase() === "APPROVED" && (
+                <BotaoLeve onClick={() => mexer("PATCH", { id: t.id, padrao: true }, "Padrão atualizado.")}
+                  titulo="Passa a ser o template usado quando ninguém escolhe outro">tornar padrão</BotaoLeve>
+              )}
+              <BotaoLeve cor={t.ativo ? M.laranja : M.verde}
+                onClick={() => mexer("PATCH", { id: t.id, ativo: !t.ativo }, t.ativo ? "Template desativado." : "Template reativado.")}>
+                {t.ativo ? "Desativar" : "Reativar"}
+              </BotaoLeve>
+              <BotaoLeve cor={M.laranja}
+                titulo="Apaga também na Meta — o nome fica bloqueado por 30 dias"
+                onClick={() => {
+                  if (!confirm(`Apagar "${t.nome}" também na Meta?\n\nIsso é irreversível, e o identificador "${t.meta_nome}" fica bloqueado por 30 dias.`)) return;
+                  mexer("DELETE", { id: t.id }, "Template apagado.");
+                }}>
+                Apagar
+              </BotaoLeve>
+            </div>
+            <div style={{ fontSize: 13, color: M.gray, marginTop: 6, whiteSpace: "pre-wrap" }}>{t.corpo}</div>
+            {t.motivo_recusa && (
+              <div style={{ fontSize: 12.5, color: M.laranja, marginTop: 5 }}>Motivo da recusa: {t.motivo_recusa}</div>
+            )}
+          </div>
+        ))}
+      </Bloco>
+
+      {doRd.length > 0 && (
+        <Bloco
+          titulo="Templates do RD Conversas"
+          ajuda="Cadastrados antes, apontando para o painel do RD. Não temos o texto deles — só o nome e o identificador — e por isso não dá para editar aqui."
+        >
+          {doRd.map((t) => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13.5, borderBottom: `1px solid ${M.bg}` }}>
+              <b>{t.nome}</b>
+              <code style={{ fontSize: 11.5, color: M.muted }}>{t.rd_template_id ?? "sem id"}</code>
+              {t.padrao && <Selo ok sim="padrão" nao="" />}
+              <span style={{ flex: 1 }} />
+              <Selo ok={t.ativo} sim="ativo" nao="inativo" />
+            </div>
+          ))}
+        </Bloco>
+      )}
+    </>
+  );
+}
+
+const rotuloCampo = {
+  fontSize: 11, fontWeight: 800, color: M.muted,
+  textTransform: "uppercase" as const, letterSpacing: 0.6,
+};
 
 // --- páginas legais (migration 0088) ---------------------------------------
 // Preenche as variáveis de /privacidade e /termos. O TEXTO das páginas mora no

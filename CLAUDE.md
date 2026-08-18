@@ -1962,3 +1962,78 @@ A busca no conteúdo respeita o filtro de vendedor (o servidor devolve o dono
 efetivo) e **não** respeita o de número: aquele resultado vem de `mensagens` sem
 passar pela view de linha, e um palpite ali seria pior que trazer a conversa e
 deixar o cabeçalho dizer por qual número ela corre.
+
+## 24. Criar template do WhatsApp por dentro do sistema (18/08/2026) — migration 0090
+
+**Pergunta que originou isto: "como o RD faz?" A resposta é que não dá para
+espelhar.** A API do RD Conversas **não tem endpoint de template** (404 em nove
+variantes, §2) — lá o template só nasce pelo painel deles, que por baixo faz o
+que qualquer parceiro faz: submete à Meta e espera aprovação. Consequência que
+estava no nosso banco sem ninguém notar: `crm_templates` guardava `nome` +
+`rd_template_id`, ou seja, **um ponteiro** — o texto nunca esteve conosco.
+
+Na Cloud API o cadastro é NOSSO, então a criação passou a ser possível aqui.
+
+### 24.1 Verificado ao vivo antes de construir
+
+- **A WABA Murano Shop está com ZERO templates.** Às 14h de 18/08 havia quatro
+  (`saida_do_john` + três de shop, herdados do BSP Suri); horas depois, nenhum.
+  Confirmado que não é token nem conta: a WABA responde e a conta de teste ainda
+  lista o `hello_world`. Provavelmente foram embora com o parceiro removido
+  (§20.2). **Corrige a afirmação da §23.1.**
+- **Resumable Upload funciona com o nosso token de system user.** É o caminho da
+  imagem de cabeçalho, e é o que costuma travar: `POST /<app_id>/uploads` abre a
+  sessão, um segundo POST manda os bytes e devolve o `header_handle`.
+  ⚠️ A primeira chamada **tem que ser POST** — com GET o Graph responde
+  `(#100) Tried accessing nonexisting field (uploads)`, que parece falta de
+  permissão e não é.
+
+### 24.2 O desenho
+
+| Peça | Papel |
+|---|---|
+| `supabase/migrations/0090_templates_cloud.sql` | estende `crm_templates`: `canal`, `meta_nome`, `corpo`, `cabecalho_*`, `imagem_path`, `usa_nome`, `status`, `motivo_recusa` |
+| `web/lib/whatsappTemplates.ts` | upload da imagem, criação, status e remoção na Meta |
+| `web/app/api/admin/templates-whatsapp/route.ts` | GET (lista + sincroniza status) · POST (multipart) · PATCH (ativo/padrão) · DELETE |
+| `/admin` → aba **📨 Templates** | criar com texto e imagem opcional; lista com status e motivo de recusa |
+| `web/app/api/send-template/route.ts` | ramo Cloud passou a ler o cadastro em vez da env |
+
+**Duas coisas convivem e não podem ser confundidas:** linhas `canal='rd'` são
+ponteiros para o painel do RD (sem texto, sem status — `status` fica NULO de
+propósito: preencher "aprovado" seria inventar); linhas `canal='cloud'` são
+cadastro completo nosso. Mesma regra dos dois números (§23).
+
+### 24.3 Decisões que evitam bug silencioso
+
+- **A imagem vai para DOIS lugares, e os dois são necessários.** O `header_handle`
+  da Meta serve para **aprovar** (é o exemplo que o revisor vê); o arquivo no
+  bucket privado `wa-midia` é o que será **enviado** a cada disparo, por URL
+  assinada gerada na hora. Handle não envia, link não aprova — trocar um pelo
+  outro quebra em momentos diferentes, e o segundo só falha em produção.
+- **`usa_nome` é coluna, não palpite.** Mandar parâmetro de corpo para template
+  sem variável — ou o contrário — é erro 132000 na Meta. O envio monta os
+  componentes a partir do cadastro.
+- **Só `{{1}}` (primeiro nome) é aceito.** É a única variável que o envio sabe
+  preencher; permitir `{{2}}` produziria template aprovado e inenviável.
+- **Grava no banco só depois que a Meta aceita.** O contrário deixaria template
+  fantasma na lista, e alguém tentaria enviá-lo.
+- **O status é reconsultado a cada abertura da tela.** A Meta não avisa quando
+  aprova; sem isso o admin olharia "em análise" para sempre. Falha na consulta
+  não derruba a listagem — mostra aviso de que o status pode estar velho.
+- **`WHATSAPP_TEMPLATE_RECONTATO` virou fallback legado.** A fonte é a tabela;
+  o erro 501 agora distingue três casos com ações opostas: nenhum template,
+  em análise, ou vários aprovados sem padrão.
+
+### 24.4 Limites da Meta que a tela já cobra
+
+Corpo 1024 · rodapé 60 · cabeçalho de texto 60 · imagem JPEG/PNG até 5 MB ·
+**um cabeçalho por template** (imagem OU texto — deixar os dois passarem faria a
+recusa acontecer lá, minutos depois, sem explicação). Apagar é irreversível e o
+nome fica **bloqueado por 30 dias**, por isso a tela pede confirmação.
+
+### 24.5 Pré-requisito
+
+`WHATSAPP_WABA_ID` precisa existir na Vercel (§16.3 diz que sim; **não
+reconferido**). Sem ela a rota responde erro claro em vez de criar em conta
+errada. O token do CRM não enxerga a WABA de produção desde 15/08 (§20.4), então
+o raio de escrita é a linha piloto por construção.

@@ -40,9 +40,9 @@ export async function POST(req: Request) {
         .from("crm_templates").select("rd_template_id").eq("padrao", true).eq("ativo", true).maybeSingle();
       tplId = padrao?.rd_template_id || process.env.TEMPLATE_RECONTATO_ID || undefined;
     }
-    if (!tplId) {
-      return Response.json({ error: "Nenhum template padrão configurado — marque um em Automáticos → editar." }, { status: 500 });
-    }
+    // Sem template do RD NÃO é erro aqui: a conversa pode correr na Cloud API,
+    // que tem cadastro próprio (crm_templates.canal='cloud', migration 0090).
+    // O erro é cobrado adiante, dentro do ramo do RD, que é quem precisa dele.
 
     // busca o contato (telefone/nome/carteira) server-side (não expõe telefone ao browser)
     const { data: cli, error: cliErr } = await sb
@@ -62,17 +62,58 @@ export async function POST(req: Request) {
     // não o id do RD). Enquanto WHATSAPP_TEMPLATE_RECONTATO não existir na Vercel,
     // este desvio responde 501 com instrução clara. O fluxo RD abaixo segue intocado.
     if ((await canalDeResposta(sb, cliente_id)) === "whatsapp") {
-      const nomeTemplate = process.env.WHATSAPP_TEMPLATE_RECONTATO;
+      // Qual template da Cloud usar. Desde a 0090 o cadastro é NOSSO, então a
+      // fonte é a tabela — a env WHATSAPP_TEMPLATE_RECONTATO fica só como
+      // fallback de quem já a configurou, e some quando ninguém depender dela.
+      const { data: cloudTpls } = await sb
+        .from("crm_templates")
+        .select("id,nome,meta_nome,idioma,corpo,cabecalho_tipo,imagem_path,usa_nome,status,padrao")
+        .eq("canal", "cloud").eq("ativo", true).order("id");
+
+      const aprovados = (cloudTpls ?? []).filter((t: any) => String(t.status ?? "").toUpperCase() === "APPROVED");
+      const escolhido =
+        (template_id && aprovados.find((t: any) => t.meta_nome === template_id)) ||
+        aprovados.find((t: any) => t.padrao) ||
+        (aprovados.length === 1 ? aprovados[0] : null);
+
+      const nomeTemplate = escolhido?.meta_nome ?? process.env.WHATSAPP_TEMPLATE_RECONTATO;
       if (!nomeTemplate) {
+        // Mensagem diferente conforme a causa: "não existe" e "existe mas ainda
+        // não foi aprovado" pedem ações opostas de quem está na tela.
+        const emAnalise = (cloudTpls ?? []).some((t: any) => String(t.status ?? "").toUpperCase() === "PENDING");
         return Response.json({
-          error: "Template da Cloud API não configurado — criar o template no Gerenciador da Meta e definir WHATSAPP_TEMPLATE_RECONTATO na Vercel.",
+          error: emAnalise
+            ? "O template desta linha ainda está em análise na Meta. Assim que for aprovado, o envio funciona sozinho."
+            : aprovados.length > 1
+              ? "Há mais de um template aprovado e nenhum marcado como padrão — escolha o padrão em Administração → Templates."
+              : "Nenhum template criado para esta linha. Crie um em Administração → Templates.",
         }, { status: 501 });
       }
+
       try {
         const to = String(cli.telefone).replace(/\D/g, "");
-        const { wamid } = await sendTemplate(to, nomeTemplate, "pt_BR", [
-          { type: "body", parameters: [{ type: "text", text: primeiroNome || "cliente" }] },
-        ]);
+
+        // Componentes montados a partir do cadastro, não fixos. Mandar parâmetro
+        // de corpo para template SEM variável (ou o contrário) é erro 132000 na
+        // Meta — por isso `usa_nome` é coluna, e não palpite na hora do envio.
+        const componentes: unknown[] = [];
+        if (escolhido?.cabecalho_tipo === "imagem" && escolhido?.imagem_path) {
+          // A Meta baixa a imagem AGORA. URL assinada de 1h, do bucket privado —
+          // link público fixo exporia o arquivo a quem descobrisse o endereço.
+          const { data: assinada } = await sb.storage.from("wa-midia")
+            .createSignedUrl(escolhido.imagem_path as string, 3600);
+          if (!assinada?.signedUrl) {
+            return Response.json({ error: "não consegui preparar a imagem do template" }, { status: 500 });
+          }
+          componentes.push({ type: "header", parameters: [{ type: "image", image: { link: assinada.signedUrl } }] });
+        }
+        // sem cadastro (fallback da env antiga) mantemos o comportamento de
+        // antes, que era sempre mandar o primeiro nome
+        if (!escolhido || escolhido.usa_nome) {
+          componentes.push({ type: "body", parameters: [{ type: "text", text: primeiroNome || "cliente" }] });
+        }
+
+        const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes);
         await sb.from("disparos_template").insert({
           id: wamid, cliente_id: cli.id, telefone: cli.telefone, vendedor: cli.carteira,
           operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
@@ -88,6 +129,13 @@ export async function POST(req: Request) {
       } catch (e: any) {
         return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
       }
+    }
+
+    // ---- fluxo RD Conversas (intocado) ---------------------------------------
+    // A cobrança do template padrão mora AQUI, e não lá em cima, porque só este
+    // ramo precisa de um id do RD — a conversa da Cloud já foi atendida acima.
+    if (!tplId) {
+      return Response.json({ error: "Nenhum template padrão configurado — marque um em Automáticos → editar." }, { status: 500 });
     }
 
     const recipient = cli.telefone.startsWith("+") ? cli.telefone : `+${cli.telefone}`;
