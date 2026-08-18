@@ -1830,3 +1830,135 @@ envio (§16.5 item 4) é mudança de risco próprio — não deve ser arrastada 
 `ligacao.tsx` mora fora de `page.tsx` de propósito: aquela tela passa de 1.500
 linhas e é mexida por mais de uma frente ao mesmo tempo — o chat encosta na
 ligação por três pontos apenas (o hook, as camadas flutuantes e o marco).
+
+## 23. Dois números em paralelo — o que trava, o que não trava (18/08/2026)
+
+> Objetivo declarado pelo usuário nesta data, corrigindo o plano anterior:
+> **manter RD e Cloud API rodando ao mesmo tempo, dois números, por tempo
+> indeterminado.** A Fase C (§16.5) continua sendo o futuro, mas **não é o alvo
+> agora** — não propor corte do RD como próximo passo.
+
+### 23.1 Estado real da linha piloto, medido na Graph API (não é do painel)
+
+Consultado com o token do system user Murano Pulse (`whatsapp_business_management`):
+
+| Checagem | Resultado |
+|---|---|
+| WABA Murano Shop `1384896129703324` | `account_review_status: APPROVED`, negócio verificado |
+| Número `973434089176828` (+55 91 9806-0032) | `status: CONNECTED`, **`account_mode: LIVE`** |
+| Nome de exibição | **"Murano Professional" — `name_status: APPROVED`** |
+| `health_status.can_send_message` | **AVAILABLE** em PHONE_NUMBER, WABA, BUSINESS **e APP** |
+| `subscribed_apps` | só Murano Pulse (o BSP Suri saiu mesmo, §20.2) |
+| `/settings` | calling `ENABLED`, `callback_permission_status: ENABLED` |
+| Templates aprovados na WABA | 4, herdados do chatbot (`saida_do_john`, 3 de shop) — **nenhum serve de recontato** |
+
+⚠️ **Correção do §21.4 item 2.** Aquele item dizia que sem o app em modo Ativo
+"o piloto só funciona com a allowlist". Isso vale para o número **de teste** da
+Meta (`+1 555 671 6653`, `account_mode: SANDBOX`). A linha piloto é número real
+em WABA real, `LIVE`, e a própria Meta reporta o **APP** como apto a enviar.
+**O teste com um número fora da allowlist foi feito pelo usuário em 18/08 e
+funcionou** — o modo Desenvolvimento não está bloqueando mensagem.
+
+O único `BLOCKED` do `health_status` é `can_receive_call_sip` (138024/138025):
+irrelevante, a ligação usa WebRTC, não SIP.
+
+**Diagnóstico que fecha isso em um comando** — vale mais que qualquer print:
+`GET /v23.0/<phone_number_id>?fields=health_status,account_mode` diz, em uma
+resposta, se o bloqueio é do número, da conta, do negócio ou do app.
+
+### 23.2 O que de fato falta (ordem real, sem o "modo Ativo" na frente)
+
+1. **Meio de pagamento na WABA Murano Shop.** É o bloqueio comprovado — é ele
+   que devolve `131044` na ligação de saída (§22.6.1). Mensagem de serviço
+   (iniciada pelo cliente) é gratuita, então o piloto funciona **reativo** sem
+   cartão; iniciar por template e ligar para fora, não. Os 4 templates já
+   aprovados eram faturados pelo BSP que saiu — a conta agora é nossa.
+2. **Template de recontato** + `WHATSAPP_TEMPLATE_RECONTATO` na Vercel. Sem ele
+   o botão TEMPLATE responde **501** em conversa do canal Cloud.
+3. **Modo Ativo** — higiene, não bloqueio: política de privacidade, termos,
+   ícone, categoria e exclusão de dados (§16.6). As duas URLs já existem (23.3).
+
+**Não ligar `WHATSAPP_ENVIO_PADRAO=true`**: esse é o interruptor da Fase C e
+jogaria TODA conversa para o Cloud, quebrando o atendimento do número oficial.
+O roteamento por conversa (`canalDeResposta`) já sustenta os dois números.
+
+### 23.3 Páginas legais públicas (migration 0088)
+
+`/privacidade` e `/termos` — as **únicas telas sem login** do sistema (a Meta
+precisa lê-las; o cliente também). O **texto mora no código**, versionado; as
+**variáveis moram no banco** (`paginas_legais`, linha única id=1), editáveis em
+**/admin → 📄 Páginas legais**. A separação não é preciosismo: quem sabe o CNPJ
+certo é o financeiro, não quem faz deploy — se exigisse commit, ficaria errado
+por meses.
+
+| Arquivo | Papel |
+|---|---|
+| `supabase/migrations/0088_paginas_legais.sql` | tabela de linha única, RLS ligado sem policy |
+| `web/lib/paginasLegais.ts` | leitura (service_role), padrões, `pendencias()` |
+| `web/app/legal.tsx` | moldura compartilhada (não é rota: só `page.tsx`/`route.ts` viram rota) |
+| `web/app/privacidade/page.tsx` · `web/app/termos/page.tsx` | o texto, `force-dynamic` |
+| `web/app/api/admin/paginas-legais/route.ts` | GET/PUT + as URLs para colar na Meta |
+
+Duas decisões que valem manter:
+- **Campo vazio some da página**, não vira "CNPJ: —". Publicar traço numa
+  política é pior que omitir a linha; a cobrança do que falta aparece no
+  /admin, onde só nós vemos (`pendencias()`).
+- **Exclusão de dados é seção da política** (`/privacidade#exclusao-de-dados`),
+  não página separada: instrução solta envelhece e passa a contradizer o
+  documento principal.
+
+`force-dynamic` porque correção de CNPJ tem que aparecer na hora — cache
+estático faria o admin salvar e a página seguir mentindo.
+
+### 23.4 Filtro por NÚMERO no chat (migration 0089)
+
+A sidebar misturava os dois números; agora tem seletor **📱 Todos · Murano Pro ·
+Murano Shop**, com contador, que **cruza** com as filas (Pendentes/Abertas/…) em
+vez de substituí-las — "pendentes do Murano Shop" é pergunta frequente.
+
+**O número do RD virou linha de verdade no cadastro.** `chat_linha` só conhecia
+linhas da Cloud (o `linha_id` nasce do webhook da Meta; conversa do RD tem
+`linha_id` nulo) — então o número oficial não tinha rótulo e ficava implícito no
+"resto". Recebeu o id sintético **`'rd'`**, no mesmo espírito de `wa:<numero>` e
+`winthor:<codcli>` (§16.3).
+
+⚠️ **`'rd'` não é phone_number_id** — nada que fale com a Graph API pode
+recebê-lo. Envio segue decidido por `canalDeResposta` + `WHATSAPP_PHONE_NUMBER_ID`;
+a 0089 não toca nisso.
+
+`vw_chat_linha_cliente` só olha mensagens **com** `linha_id`, usando o índice
+parcial `idx_msg_linha` que já existia — custa proporcional ao volume da Cloud
+(39 mensagens hoje), não às 94 mil do RD. Ausente da view = conversa do RD.
+Regra: a conversa pertence à **última linha que carimbou** uma mensagem dela;
+como a migração de número é de mão única, "teve linha" e "está na linha" não
+divergem na prática.
+
+### 23.5 Filtro por VENDEDOR no chat
+
+O board já deixava admin/home verem uma carteira por vez; o chat não. Agora tem
+a mesma coisa: chips 🧑‍💼 na sidebar, com a bolinha de cor de `carteira_config` e
+o contador de cada carteira.
+
+Três decisões que evitam número mentiroso na tela:
+
+1. **Os dois seletores cruzam entre si e com as filas.** "Pendentes do Murano
+   Shop da Kamilly" é uma pergunta legítima. Cada chip conta **dentro** do que o
+   outro já escolheu (`baseVend` / `baseLinha`), senão o chip promete 12 e a
+   lista mostra 3.
+2. **Os contadores das filas passaram a seguir os seletores** (`noEscopo`).
+   **O badge do título da aba (`naoLidas`) continua global de propósito** — ele
+   avisa que chegou mensagem e não pode calar porque alguém filtrou a tela.
+3. **A fila de espera escapa do filtro por vendedor.** Conversa sem dono não
+   pertence a carteira nenhuma; escondê-la ao escolher um vendedor faria sumir
+   justamente o que qualquer um pode pegar.
+
+Os chips não aparecem para quem tem papel `vendedor`: a lista dele já vem
+filtrada no **servidor** (`/api/chat`), então "Todos" e o próprio nome seriam a
+mesma lista. Só são desenhados quando há mais de uma carteira com conversa —
+e a lista de carteiras vem das conversas, não de `carteira_config`, para não
+oferecer chip que filtra para o vazio.
+
+A busca no conteúdo respeita o filtro de vendedor (o servidor devolve o dono
+efetivo) e **não** respeita o de número: aquele resultado vem de `mensagens` sem
+passar pela view de linha, e um palpite ali seria pior que trazer a conversa e
+deixar o cabeçalho dizer por qual número ela corre.

@@ -87,12 +87,20 @@ type Conversa = {
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
   na_fila?: boolean;   // sem dono: qualquer um pode puxar
+  // por qual NÚMERO a conversa corre (migration 0089): phone_number_id da Cloud
+  // API, ou 'rd' para o número oficial, que é atendido pelo RD Conversas
+  linha_id?: string;
   // `vendedor` já vem como o dono EFETIVO (depois da transferência); isto diz de
   // qual carteira ela veio, para o selo "recebida de fulano" (migration 0081)
   transferida_de?: string | null;
   // só nos resultados da busca por conteúdo
   trecho?: string; trecho_em?: string; de?: string; n?: number;
 };
+
+// Um número de WhatsApp e quantas conversas correm por ele. Vem pronto do
+// servidor (/api/chat) já com o rótulo de `chat_linha`, para a sidebar e o
+// cabeçalho da conversa chamarem o mesmo número pelo mesmo nome.
+type LinhaResumo = { id: string; rotulo: string; numero: string | null; total: number };
 
 // motivos de encerramento = a nossa tabulação (CLAUDE.md §6 e §18)
 const MOTIVOS: { v: string; rotulo: string }[] = [
@@ -402,6 +410,13 @@ export default function Chat() {
   const [obsTransf, setObsTransf] = useState("");
   // --- ligações (0087): entram na thread como marco, ao lado das transferências
   const [ligacoes, setLigacoes] = useState<Ligacao[]>([]);
+  // --- filtro por NÚMERO (migration 0089): operamos Murano Pro e Murano Shop
+  // ao mesmo tempo, e a sidebar precisa saber separar um do outro
+  const [linhas, setLinhas] = useState<LinhaResumo[]>([]);
+  const [linhaSel, setLinhaSel] = useState<string | null>(null);   // null = todos os números
+  // filtro por VENDEDOR, como no board: só para quem enxerga mais de uma
+  // carteira (admin/home). Vendedor já vê só a própria — chip seria redundante.
+  const [vendFiltro, setVendFiltro] = useState<string | null>(null);
   const [achados, setAchados] = useState<Conversa[] | null>(null);  // busca no conteúdo
   const [buscandoMsgs, setBuscandoMsgs] = useState(false);
   const [truncado, setTruncado] = useState(false);
@@ -433,7 +448,12 @@ export default function Chat() {
     try {
       const r = await fetch("/api/chat", { cache: "no-store" });
       const j = await r.json().catch(() => null);
-      if (r.ok) { setConversas(j?.conversas ?? []); setVendedores(j?.vendedores ?? []); setErro(null); }
+      if (r.ok) {
+        setConversas(j?.conversas ?? []);
+        setVendedores(j?.vendedores ?? []);
+        setLinhas(j?.linhas ?? []);
+        setErro(null);
+      }
       else if (r.status === 401) setSessao(null);
       else setErro(j?.error ?? `erro ${r.status}`);
     } finally { carregandoLista.current = false; }
@@ -965,7 +985,37 @@ export default function Chat() {
     );
   }
 
-  const filtradas = conversas.filter((c) => {
+  // ---- os dois seletores do topo da sidebar: número e vendedor -------------
+  // Eles CRUZAM com as filas em vez de substituí-las ("pendentes do Murano Shop",
+  // "encerradas da Kamilly" são perguntas legítimas), e cruzam entre si.
+  //
+  // A fila de espera escapa do filtro por vendedor de propósito: conversa sem
+  // dono não pertence a carteira nenhuma — escondê-la ao escolher um vendedor
+  // faria sumir justamente o que qualquer um pode pegar.
+  const daLinha = (c: Conversa) => !linhaSel || (c.linha_id ?? "rd") === linhaSel;
+  const doVendedor = (c: Conversa) => !vendFiltro || c.na_fila || c.vendedor === vendFiltro;
+
+  // bases cruzadas: cada seletor conta DENTRO do que o outro já escolheu, senão
+  // o chip promete 12 e a lista mostra 3
+  const baseVend = conversas.filter(doVendedor);
+  const baseLinha = conversas.filter(daLinha);
+  const noEscopo = conversas.filter((c) => daLinha(c) && doVendedor(c));
+
+  const contaPorLinha = new Map<string, number>();
+  for (const c of baseVend) contaPorLinha.set(c.linha_id ?? "rd", (contaPorLinha.get(c.linha_id ?? "rd") ?? 0) + 1);
+
+  // vendedores que REALMENTE têm conversa aqui — a lista de carteira_config
+  // traz gente sem nenhuma, e chip que filtra para o vazio só atrapalha
+  const coresVend = new Map(vendedores.map((v) => [v.slug, v.cor]));
+  const vendedoresComConversa = [...new Set(baseLinha.filter((c) => !c.na_fila && c.vendedor).map((c) => c.vendedor as string))]
+    .sort()
+    .map((slug) => ({
+      slug,
+      cor: coresVend.get(slug) ?? null,
+      total: baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length,
+    }));
+
+  const filtradas = noEscopo.filter((c) => {
     const st = c.status ?? "aberta";
     // a fila é uma aba própria: sem dono, não polui as listas de quem tem dono
     if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
@@ -982,11 +1032,21 @@ export default function Chat() {
     const x = a.ultima_atividade ?? "", y = b.ultima_atividade ?? "";
     return ordem === "recente" ? (x < y ? 1 : x > y ? -1 : 0) : (x < y ? -1 : x > y ? 1 : 0);
   });
-  const contaResolvidas = conversas.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
-  const contaFila = conversas.filter((c) => c.na_fila).length;
+  // contadores das filas seguem os seletores (`noEscopo`), não o total geral.
+  // O badge do TÍTULO da aba (`naoLidas`) continua global de propósito: ele
+  // avisa que chegou mensagem, e não pode calar por causa de um filtro na tela.
+  const contaResolvidas = noEscopo.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
+  const contaFila = noEscopo.filter((c) => c.na_fila).length;
+  const contaPendentes = noEscopo.filter((c) => c.nao_lida && !c.na_fila).length;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
   const jaNaLista = new Set(ordenadas.map((c) => c.cliente_id));
-  const achadosNovos = (achados ?? []).filter((c) => !jaNaLista.has(c.cliente_id));
+  // a busca no conteúdo respeita o filtro por vendedor (o servidor devolve o
+  // dono efetivo). Não respeita o de número: o resultado vem de `mensagens` sem
+  // passar pela view de linha, e inventar um palpite aqui seria pior que trazer
+  // a conversa e deixar o cabeçalho dela dizer por qual número ela corre.
+  const achadosNovos = (achados ?? [])
+    .filter((c) => !jaNaLista.has(c.cliente_id))
+    .filter((c) => !vendFiltro || c.vendedor === vendFiltro);
 
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
@@ -1143,10 +1203,10 @@ export default function Chat() {
                     <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
                     <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, zIndex: 101, minWidth: 262, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
                       {FILAS.map((f) => {
-                        const n = f.k === "pendentes" ? naoLidas
+                        const n = f.k === "pendentes" ? contaPendentes
                           : f.k === "fila" ? contaFila
                           : f.k === "resolvidas" ? contaResolvidas
-                          : conversas.filter((c) => !c.na_fila).length - contaResolvidas;
+                          : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
                         return (
                           <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={f.dica}
@@ -1175,6 +1235,73 @@ export default function Chat() {
                 />
                 <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: M.muted, pointerEvents: "none" }}>🔍</span>
               </div>
+
+              {/* ---- seletor de NÚMERO (migration 0089) ----
+                  Só aparece quando existe mais de um número com conversa: numa
+                  operação de linha única ele seria ruído puro. Cruza com as
+                  filas acima em vez de substituí-las. */}
+              {linhas.length > 1 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                  <span title="Filtrar por número de WhatsApp" style={{ fontSize: 12, color: M.muted }}>📱</span>
+                  {[{ id: null as string | null, rotulo: "Todos", numero: null, total: baseVend.length },
+                    ...linhas.map((l) => ({ ...l, total: contaPorLinha.get(l.id) ?? 0 }))].map((l) => {
+                    const on = linhaSel === l.id;
+                    return (
+                      <button
+                        key={l.id ?? "todos"}
+                        onClick={() => setLinhaSel(l.id)}
+                        title={l.numero ? `${l.rotulo} · ${l.numero}` : l.rotulo}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px",
+                          fontSize: 11.5, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
+                          borderRadius: 999, whiteSpace: "nowrap",
+                          color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                          border: `1px solid ${on ? M.roxo : M.border}`,
+                        }}
+                      >
+                        {/* o parêntese explicativo do cadastro ("Murano Pro (RD
+                            Conversas)") não cabe num chip de 340px — fica no
+                            title, junto com o número */}
+                        {l.rotulo.replace(/\s*\([^)]*\)\s*/g, " ").trim()}
+                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.85 : 0.6 }}>{l.total}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ---- seletor de VENDEDOR ----
+                  Mesmo recurso que o board tem para admin/home: ver a operação
+                  de uma carteira por vez. Vendedor não vê estes chips — ele já
+                  recebe só a própria carteira, filtrada no SERVIDOR (/api/chat),
+                  então "Todos" e o próprio nome seriam a mesma lista. */}
+              {sessao.role !== "vendedor" && vendedoresComConversa.length > 1 && (
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                  <span title="Filtrar por vendedor" style={{ fontSize: 12, color: M.muted }}>🧑‍💼</span>
+                  {[{ slug: null as string | null, cor: null, total: baseLinha.filter((c) => !c.na_fila).length },
+                    ...vendedoresComConversa].map((v) => {
+                    const on = vendFiltro === v.slug;
+                    return (
+                      <button
+                        key={v.slug ?? "todos"}
+                        onClick={() => setVendFiltro(v.slug)}
+                        title={v.slug ? `Só as conversas de ${cap(v.slug)}` : "Todas as carteiras"}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px",
+                          fontSize: 11.5, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
+                          borderRadius: 999, whiteSpace: "nowrap",
+                          color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                          border: `1px solid ${on ? M.roxo : M.border}`,
+                        }}
+                      >
+                        {v.cor && <span style={{ width: 7, height: 7, borderRadius: 7, background: v.cor }} />}
+                        {v.slug ? cap(v.slug) : "Todos"}
+                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.85 : 0.6 }}>{v.total}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
                 <span style={{ fontSize: 10.5, color: M.muted }}>
