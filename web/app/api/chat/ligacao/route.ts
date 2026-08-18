@@ -174,8 +174,25 @@ export async function POST(req: Request) {
     await s.sb.from("chat_ligacao")
       .update({ status: "falhou", encerrada_em: new Date().toISOString(), erro: msg.slice(0, 500) })
       .eq("id", linhaLig.id);
-    const semPermissao = e instanceof GraphCallingError && e.semPermissao;
-    return Response.json({ error: msg, semPermissao }, { status: semPermissao ? 422 : 502 });
+    // Traduz os códigos que a Meta não documenta para o que a pessoa deve FAZER.
+    // Sem isto o vendedor recebe um número e nenhuma ação possível.
+    const g = e instanceof GraphCallingError ? e : null;
+    const recado =
+      g?.semPagamento
+        // Ligação NOSSA é paga; a do cliente é gratuita (regra da Meta). Então o
+        // recado aponta a saída que funciona hoje, em vez de só informar o bloqueio.
+        ? "Ligar para o cliente é cobrado por minuto e a conta ainda não tem meio de pagamento. " +
+          "Enquanto isso: peça na conversa que ELE ligue para nós — chamada de entrada é " +
+          "gratuita, o ícone de telefone já aparece no WhatsApp dele, e ela toca aqui no chat."
+        : g?.callingDesligado
+          ? "A chamada de voz não está habilitada nesta linha. Um admin liga em /admin → Linhas → Chamadas de voz."
+          : msg;
+    return Response.json({
+      error: recado,
+      semPermissao: Boolean(g?.semPermissao),
+      semPagamento: Boolean(g?.semPagamento),
+      callingDesligado: Boolean(g?.callingDesligado),
+    }, { status: g?.semPermissao || g?.semPagamento || g?.callingDesligado ? 422 : 502 });
   }
 }
 

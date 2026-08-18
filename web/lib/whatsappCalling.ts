@@ -19,10 +19,18 @@
 //   4. o app tem de assinar o campo `calls` no webhook (assinar `messages` não
 //      basta — é a mesma armadilha nº 3 da §16.4, agora para chamadas).
 //
-// LIMITE DE CHAMADA INICIADA PELO NEGÓCIO: exige permissão do cliente — 1 por
-// dia e 2 por semana por par (número, cliente). Cliente que liga para nós
-// concede a permissão automaticamente. Brasil permite chamada iniciada pelo
-// negócio (EUA, Canadá, Egito, Vietnã e Nigéria não).
+// LIMITE DE CHAMADA INICIADA PELO NEGÓCIO: exige permissão do cliente — 1 pedido
+// por dia e 2 por semana por par (número, cliente); 25 e 100 numa linha sandbox.
+// ⚠️ A doc diz que quem liga para nós concede permissão automaticamente. NÃO foi
+// o que observamos: três chamadas recebidas e atendidas, com
+// `callback_permission_status: ENABLED`, e a permissão seguiu `no_permission`.
+// O caminho confiável é o pedido explícito (pedirPermissaoDeChamada).
+// Brasil permite chamada iniciada pelo negócio (EUA, Canadá, Egito, Vietnã e
+// Nigéria não).
+//
+// FATURAMENTO: chamada é cobrada por MINUTO e não tem faixa gratuita — ao
+// contrário da mensagem de serviço. Conta sem meio de pagamento válido recebe
+// 131044 ANTES de discar. Linha sandbox da Meta não passa por essa checagem.
 import { envWa } from "./whatsapp";
 
 // A Calling API não existe na v22.0 que o envio de mensagens usa. Constante
@@ -36,15 +44,26 @@ export type AcaoLigacao = "connect" | "pre_accept" | "accept" | "reject" | "term
 export class GraphCallingError extends Error {
   codigo: number | null;
   subcodigo: number | null;
-  /** true quando o cliente não autorizou (ou já gastou) a permissão de receber ligação nossa */
+  /** o cliente não autorizou receber ligação nossa (138006) */
   semPermissao: boolean;
+  /** calling não está habilitado NESTA linha — é interruptor de admin, não do cliente (138000) */
+  callingDesligado: boolean;
+  /** a conta não está apta a faturar chamadas: falta meio de pagamento (131044) */
+  semPagamento: boolean;
   constructor(mensagem: string, codigo: number | null, subcodigo: number | null) {
     super(mensagem);
     this.name = "GraphCallingError";
     this.codigo = codigo;
     this.subcodigo = subcodigo;
-    // 138000/138002 = permissão ausente ou esgotada no par negócio↔cliente
-    this.semPermissao = codigo === 138000 || codigo === 138002;
+    // Códigos OBSERVADOS ao vivo em 17/08 — a faixa 138xxx não está na
+    // documentação pública, então cada um destes custou uma reprodução.
+    // ⚠️ Uma versão anterior tratava 138000 como "cliente não autorizou". É
+    // FALSO: 138000 é "Calling API not enabled for this phone number", ou seja,
+    // problema NOSSO de configuração. Confundir os dois manda o vendedor pedir
+    // autorização ao cliente quando o que falta é um interruptor no /admin.
+    this.semPermissao = codigo === 138006;
+    this.callingDesligado = codigo === 138000;
+    this.semPagamento = codigo === 131044;
   }
 }
 
@@ -57,13 +76,36 @@ async function graph(caminho: string, init: RequestInit): Promise<any> {
   const body: any = await r.json().catch(() => ({}));
   if (!r.ok) {
     const e = body?.error ?? {};
-    throw new GraphCallingError(
-      `Graph ${e.code ?? r.status}: ${e.error_data?.details ?? e.message ?? `HTTP ${r.status}`}`,
+    throw new GraphCallingError(`Graph ${e.code ?? r.status}: ${detalharErro(e, r.status)}`,
       typeof e.code === "number" ? e.code : null,
       typeof e.error_subcode === "number" ? e.error_subcode : null,
     );
   }
   return body;
+}
+
+/**
+ * Texto legível de um erro do Graph.
+ *
+ * ⚠️ NÃO usar `??` aqui. A Meta manda `error_data.details` como **string vazia**
+ * em vários erros de chamada, e `??` só cai para o próximo quando o valor é
+ * null/undefined — a string vazia venceria e a explicação real seria descartada.
+ * Foi exatamente o que aconteceu com o 131044: a tela mostrou "Graph 131044:" e
+ * parou no dois-pontos, enquanto a Meta explicava o problema em `error_user_msg`.
+ *
+ * Ordem: o detalhe técnico primeiro (quando existe de verdade), depois a mensagem
+ * ao usuário, depois a interna. Códigos de chamada (1380xx) e alguns 131xxx não
+ * estão na documentação pública, então o texto da Meta é a ÚNICA pista — perdê-lo
+ * custa horas.
+ */
+function detalharErro(e: any, status: number): string {
+  const partes = [e?.error_data?.details, e?.error_user_title, e?.error_user_msg, e?.message]
+    .map((p) => String(p ?? "").trim())
+    .filter(Boolean);
+  // remove repetição (title costuma ser prefixo do msg) preservando a ordem
+  const vistas = new Set<string>();
+  const texto = partes.filter((p) => !vistas.has(p) && vistas.add(p)).join(" — ");
+  return texto || `HTTP ${status}`;
 }
 
 /** phone_number_id da linha que origina/atende chamadas hoje (mesma env do envio). */
