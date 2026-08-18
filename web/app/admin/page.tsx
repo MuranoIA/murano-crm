@@ -19,12 +19,13 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "paginas-legais";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
   { id: "horario", rotulo: "🕗 Horário" },
   { id: "linhas", rotulo: "📞 Linhas" },
+  { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
 const PAPEIS = ["admin", "home", "vendedor"] as const;
@@ -423,6 +424,21 @@ export default function Admin() {
       )}
 
       {aba === "linhas" && <ChamadasVoz />}
+
+      {aba === "paginas-legais" && dados?.["paginas-legais"] && (
+        // `key` força o formulário a recarregar o que foi salvo: sem ela, o
+        // estado local continuaria com o que estava digitado antes, e uma
+        // correção feita pelo servidor (trim, por exemplo) ficaria invisível
+        <PaginasLegaisAba
+          key={dados.atualizado_em ?? "novo"}
+          dados={dados["paginas-legais"]}
+          urls={dados.urls}
+          pendencias={dados.pendencias ?? []}
+          atualizado={dados.atualizado_em}
+          por={dados.atualizado_por}
+          salvar={(c) => enviar("paginas-legais", "PUT", c, "Páginas atualizadas.")}
+        />
+      )}
     </Moldura>
   );
 }
@@ -575,6 +591,142 @@ function HorarioAba({ cfg, foraAgora, salvar }: {
     </Bloco>
   );
 }
+
+// --- páginas legais (migration 0088) ---------------------------------------
+// Preenche as variáveis de /privacidade e /termos. O TEXTO das páginas mora no
+// código, versionado; aqui ficam só os dados que mudam sem deploy — quem sabe o
+// CNPJ certo é o financeiro, não quem faz deploy.
+function PaginasLegaisAba({ dados, urls, pendencias, atualizado, por, salvar }: {
+  dados: any; urls: any; pendencias: string[]; atualizado?: string | null; por?: string | null;
+  salvar: (c: any) => Promise<boolean | undefined>;
+}) {
+  const [f, setF] = useState<any>({
+    ...dados,
+    vigencia: String(dados.vigencia ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10),
+  });
+  const set = (k: string, v: any) => setF((x: any) => ({ ...x, [k]: v }));
+
+  const Campo = ({ k, rotulo, dica, largura = 250, placeholder }: {
+    k: string; rotulo: string; dica?: string; largura?: number; placeholder?: string;
+  }) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: 11, fontWeight: 800, color: M.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>
+        {rotulo}
+        {pendencias.length > 0 && !String(f[k] ?? "").trim() && OBRIGATORIOS_ROTULO[k] && (
+          <span style={{ color: M.laranja, marginLeft: 6 }}>• falta</span>
+        )}
+      </label>
+      <input value={f[k] ?? ""} placeholder={placeholder} onChange={(e) => set(k, e.target.value)}
+        style={{ ...inputBase, width: largura }} />
+      {dica && <span style={{ fontSize: 11.5, color: M.muted }}>{dica}</span>}
+    </div>
+  );
+
+  return (
+    <>
+      <Bloco
+        titulo="Dados que preenchem as páginas públicas"
+        ajuda={<>
+          As páginas <b>/privacidade</b> e <b>/termos</b> abrem sem login — são elas que a Meta lê
+          para tirar o app do modo Desenvolvimento. O texto delas está no código; aqui ficam as
+          variáveis. <b>Campo em branco não vira traço na página: a linha simplesmente não aparece</b>,
+          para não publicar "CNPJ: —" para cliente e revisor lerem.
+        </>}
+      >
+        {pendencias.length > 0 && (
+          <Recado tipo="aviso">
+            Faltam dados que a Meta e a LGPD cobram: <b>{pendencias.join(", ")}</b>. Dá para salvar
+            assim mesmo e completar depois, mas não mande as URLs para revisão antes de preencher.
+          </Recado>
+        )}
+
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 20 }}>
+          <Campo k="nome_fantasia" rotulo="Nome fantasia" largura={230} />
+          <Campo k="razao_social" rotulo="Razão social" largura={330} placeholder="como está no CNPJ" />
+          <Campo k="cnpj" rotulo="CNPJ" largura={180} placeholder="00.000.000/0001-00" />
+        </div>
+
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 20 }}>
+          <Campo k="endereco" rotulo="Endereço" largura={340} placeholder="rua, número, bairro" />
+          <Campo k="cidade_uf" rotulo="Cidade / UF" largura={210}
+            dica="também é o foro citado nos Termos" placeholder="Belém/PA" />
+          <Campo k="cep" rotulo="CEP" largura={130} />
+        </div>
+
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 20 }}>
+          <Campo k="telefone" rotulo="Telefone" largura={190} />
+          <Campo k="whatsapp" rotulo="WhatsApp do atendimento" largura={220}
+            dica="o número que o cliente vê publicado" />
+          <Campo k="email_contato" rotulo="E-mail de contato" largura={280} />
+        </div>
+
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <Campo k="encarregado" rotulo="Encarregado (LGPD)" largura={250}
+            dica="pessoa ou setor responsável — art. 41" />
+          <Campo k="email_privacidade" rotulo="E-mail de privacidade" largura={280}
+            dica="para onde vão os pedidos de exclusão" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 11, fontWeight: 800, color: M.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              Retenção
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <input type="number" min={1} max={240} value={f.retencao_meses ?? 60}
+                onChange={(e) => set("retencao_meses", Number(e.target.value))} style={{ ...inputBase, width: 80 }} />
+              <span style={{ fontSize: 13, color: M.gray }}>meses</span>
+            </div>
+            <span style={{ fontSize: 11.5, color: M.muted }}>tempo de guarda após o último contato</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={{ fontSize: 11, fontWeight: 800, color: M.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>
+              Vigente desde
+            </label>
+            <input type="date" value={f.vigencia} onChange={(e) => set("vigencia", e.target.value)}
+              style={{ ...inputBase, width: 165 }} />
+            <span style={{ fontSize: 11.5, color: M.muted }}>data no topo das duas páginas</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 22 }}>
+          <Botao cor={M.wine} onClick={() => salvar(f)}>Salvar e publicar</Botao>
+          <span style={{ fontSize: 12, color: M.muted }}>
+            {atualizado
+              ? `última alteração ${new Date(atualizado).toLocaleString("pt-BR")}${por ? ` por ${por}` : ""}`
+              : "nunca editado"}
+          </span>
+        </div>
+      </Bloco>
+
+      <Bloco
+        titulo="Endereços para colar no painel da Meta"
+        ajuda="App Murano Pulse → Configurações → Básico. São estes três campos que faltam para sair do modo Desenvolvimento; a alteração feita acima aparece nas páginas na hora, sem deploy."
+      >
+        {[
+          ["URL da Política de Privacidade", urls?.privacidade],
+          ["URL dos Termos de Serviço", urls?.termos],
+          ["Instruções de exclusão de dados", urls?.exclusao],
+        ].map(([rotulo, url]) => (
+          <div key={rotulo as string} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 9 }}>
+            <span style={{ minWidth: 230, fontSize: 12.5, fontWeight: 700, color: M.ink }}>{rotulo}</span>
+            <code style={{ fontSize: 12, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 6, padding: "4px 8px", color: M.gray }}>
+              {url ?? "—"}
+            </code>
+            {url && (
+              <a href={url as string} target="_blank" rel="noreferrer"
+                style={{ fontSize: 12.5, fontWeight: 700, color: M.azul, textDecoration: "none" }}>
+                abrir ↗
+              </a>
+            )}
+          </div>
+        ))}
+      </Bloco>
+    </>
+  );
+}
+
+// rótulos dos campos que a Meta/LGPD cobram — espelha OBRIGATORIOS de lib/paginasLegais
+const OBRIGATORIOS_ROTULO: Record<string, boolean> = {
+  razao_social: true, cnpj: true, endereco: true, cidade_uf: true, email_privacidade: true,
+};
 
 // --- moldura ---------------------------------------------------------------
 function Moldura({ aba, setAba, esconderAbas, children }: {
