@@ -466,9 +466,31 @@ async function atualizarStatus(sb: any, st: any): Promise<void> {
     read: "read",
     failed: "failed",
   };
+  // O motivo da falha vai para o BANCO, não só para o log (migration 0091).
+  // Ficava em console.error: a explicação da Meta vivia na Vercel, some com o
+  // tempo, e na tela sobrava "falhou" sem causa. Em erro fora da documentação
+  // pública — a maioria destes — o texto da Meta é a única pista que existe.
+  //
+  // Junta todos os campos que a Meta manda, filtrando vazios: `title` costuma
+  // ser genérico, `details` é onde mora a causa, e às vezes um deles vem como
+  // string VAZIA (§22.6.1) — por isso concatenar, nunca `??`.
+  const e0 = (st.errors ?? [])[0] ?? null;
+  const explicacao = e0
+    ? [e0.code ? `Meta ${e0.code}` : "", e0.title, e0.message, e0.error_data?.details]
+        .map((p: unknown) => String(p ?? "").trim())
+        .filter(Boolean)
+        .join(" — ")
+        .slice(0, 500)
+    : null;
+
   const { error } = await sb
     .from("mensagens")
-    .update({ status: mapa[status] ?? status })
+    .update({
+      status: mapa[status] ?? status,
+      // limpa o erro anterior quando a mensagem volta a andar (reenvio bem
+      // sucedido não pode continuar exibindo a falha de antes)
+      ...(status === "failed" ? { erro: explicacao ?? "falha sem detalhe da Meta" } : { erro: null }),
+    })
     .eq("id", wamid);
   if (error) throw new Error(`update status: ${error.message}`);
   if (status === "failed") {

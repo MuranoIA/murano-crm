@@ -115,6 +115,7 @@ type Msg = {
   midia_tipo?: string | null; midia_mime?: string | null; midia_nome?: string | null; midia_path?: string | null;
   reacao?: string | null;      // emoji com que a cliente reagiu A ESTA mensagem
   resposta_a?: string | null;  // wamid da mensagem citada
+  erro?: string | null;        // motivo da falha, como a Meta explicou (0091)
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -342,8 +343,15 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
 }
 
 // ticks estilo WhatsApp: wait ✓ · success ✓✓ · read/checked ✓✓ azul · failed !
-function Ticks({ status }: { status: string | null }) {
-  if (status === "failed") return <span style={{ color: M.laranja, fontWeight: 800 }}>!</span>;
+// No "!" o motivo entra como `title`: até a 0091 a explicação da Meta só existia
+// no log da Vercel, e quem estava na tela via a falha sem a causa.
+function Ticks({ status, erro }: { status: string | null; erro?: string | null }) {
+  if (status === "failed") {
+    return (
+      <span title={erro ?? "a Meta não explicou o motivo"}
+        style={{ color: M.laranja, fontWeight: 800, cursor: erro ? "help" : "default" }}>!</span>
+    );
+  }
   const lida = status === "read" || status === "checked";
   const duplo = lida || status === "success";
   return (
@@ -1712,7 +1720,7 @@ export default function Chat() {
                               )}
                               <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                                 {horaBR(m.criada_em)}
-                                {fora && <Ticks status={m.status} />}
+                                {fora && <Ticks erro={m.erro} status={m.status} />}
                               </div>
                               {/* reação: pendurada na borda da bolha, como no WhatsApp */}
                               {m.reacao && (
