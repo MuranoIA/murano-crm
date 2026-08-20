@@ -67,9 +67,14 @@ que recebe.
   (os stats já vêm **dentro** de `/v1/campaigns/{id}`).
 - **Campanhas em outras versões:** `/v2/campaigns`, `/v4/campaigns`, `/v1/analytics/campaigns`.
 - **Contatos / carteiras:** `/v2/contacts` (lista), `/v4/contacts`, `/v2/contacts/{id}`,
-  `/v1/wallets`, `/v2/wallets/{nome}`, `/v2/wallets/{nome}/contacts`,
+  `/v1/wallets`, `/v2/wallets/{nome}/contacts`,
   `/v2/employees/{id}/contacts`, `/v2/employees/{id}/wallet`, `/v1/segmentation/contacts`.
   → **Não existe endpoint para listar contatos por tag/carteira.**
+  ⚠️ **Duas correções desta lista, medidas em 19/08/2026 — ver §25.** `/v2/customers`
+  (lista) **existe** e responde 200: o que foi testado em jul/2026 e deu 404 foi
+  `/v2/contacts`, nome diferente. E **`POST /v2/wallets` escreve** — é a atribuição
+  de carteira. `PATCH /v2/wallets/{nome}` também existe (403), mas nenhuma chave de
+  contato foi aceita nela.
 - `/v1/analytics/attendances/reviews-average` — path da doc está incorreto; o
   `explore.ts` chama mas não gera arquivo (falha silenciosa). Não confirmado.
 - **Webhooks: API não oferece (confirmado jul/2026).** Testado ao vivo contra a
@@ -2037,3 +2042,128 @@ nome fica **bloqueado por 30 dias**, por isso a tela pede confirmação.
 reconferido**). Sem ela a rota responde erro claro em vez de criar em conta
 errada. O token do CRM não enxerga a WABA de produção desde 15/08 (§20.4), então
 o raio de escrita é a linha piloto por construção.
+
+## 25. Gestão de Carteira — transferir contato entre carteiras pela API (19–20/08/2026)
+
+Tela `/carteira` (admin), migration 0092. Move contatos entre carteiras **no RD
+Conversas**, em massa, sem abrir o painel deles.
+
+### 25.1 O contrato — descoberto por sondagem, não por documentação
+
+```
+POST /v2/wallets  { customer: "<_id do contato>", wallet: "<nome de exibição>" }  -> 204
+```
+
+Cada linha abaixo custou uma medição ao vivo. O caminho "óbvio" está errado
+inteiro — inclusive num spec que chegou pronto e teria sido implementado como veio:
+
+| Tentativa | Resposta | Leitura |
+|---|---|---|
+| `PATCH /v2/customers/{id}` | 404 **texto cru** | rota inexistente (era o que o spec mandava usar) |
+| `PATCH /v2/contacts/{_id}` | 404 `{"error":"Customer not found"}` | rota existe, mas a chave **não** é o `_id` |
+| `PATCH /v2/contacts/{telefone}` | **200** `{"customerId":...}` | edita o contato de verdade (o `email` mudou e reverteu)… |
+| ↳ com 9 nomes de campo de carteira | 200, **nenhum efeito** | …e **ignora carteira em silêncio** |
+| `POST /v2/wallets {}` | 403 `{"message":"Contato Inválido"}` | **a rota certa** |
+| ↳ `{customer:"<telefone>"}` | 403 Contato Inválido | a chave é o `_id`, não o telefone |
+| ↳ `{customer:"<_id>"}` | 404 `Carteira não localizada` | validação em 2 etapas: contato, depois carteira |
+| `DELETE /v2/wallets[/{nome}]` | 404 texto cru | **não há remoção** |
+
+**A distinção que resolve o diagnóstico:** rota inexistente devolve `Not Found`
+em **texto cru**; rota que existe devolve **JSON**. Foi isso que separou
+`/v2/customers` (morto) de `/v2/contacts` (vivo) e achou o `/v2/wallets`.
+
+Quatro regras que caem daí:
+
+1. **`employee_id` não é carteira.** `employee` é quem atendeu; a carteira é
+   `current_wallet` (§4, §10.3). Mandar `employee_id` mudaria a coisa errada.
+2. **`customer` é o `_id`** do contato — que é o mesmo `clientes.id` do Supabase,
+   então não há lookup extra.
+3. **`wallet` é o nome de exibição** (`"Milene Pamplona"`), não o slug. O slug sai
+   da primeira palavra em minúscula, **regra idêntica à do ETL** — se divergir, o
+   slug não casa com `clientes.carteira` e a tela mostra vazio. Os 7 casaram.
+4. **Não existe "sem carteira".** Dá para mover entre carteiras, nunca para nulo.
+   `wallet` nulo ou ausente devolve `Carteira não localizada`. A tela avisa antes
+   de confirmar, porque é decisão sem volta pela API.
+
+### 25.2 O espelho local TEM de ser escrito aqui — e isso contraria a regra geral
+
+O §10.11 diz para não escrever em `clientes` porque o ETL sobrescreve. **Para
+`carteira`, o ETL não sobrescreve — ele nunca reescreve.** Verificado em
+19/08/2026: `clientes.set(...)` em `src/etl/run.ts` mora dentro do laço dos
+**`novos`**; contato já conhecido é filtrado antes por `carteirasConhecidas()` e
+pula a checagem que traria o `current_wallet` atual. Vale no incremental **e** no
+full.
+
+Consequência que vale para muito além desta tela: **mudança de carteira feita no
+RD — pela API ou pelo painel, por qualquer pessoa — nunca chega ao nosso banco.**
+O board, o chat e o funil seguem mostrando o vendedor antigo indefinidamente. Por
+isso a rota faz *dual write*: RD primeiro (fonte da verdade), espelho depois.
+
+Fica em aberto o inverso: trocas feitas **direto no painel do RD** continuam
+invisíveis. A correção seria um job de reconciliação relendo `current_wallet` —
+1 chamada por cliente, ~1h40 para os 4.842 na cota atual, então job próprio e
+esparso, não dentro do ETL.
+
+### 25.3 Carteira ≠ RCA — a tela mexe em dois dos três lugares
+
+| Onde | O que é | Esta tela |
+|---|---|---|
+| `current_wallet` no RD | dono comercial no atendimento | **escreve** |
+| `clientes.carteira` | espelho do CRM | **escreve** |
+| RCA do WinThor (`wth_carteira`) | dono comercial no ERP | **não toca** |
+
+O ERP está fora de alcance por decisão, não por esquecimento: o
+`murano-clientes-v2` é somente leitura (§10.1) e `wth_carteira` é reescrita por
+upsert a cada 10 min pelo `wth-sync-tudo` — edição local ali dura no máximo dez
+minutos. Logo, **cada transferência acende uma linha em
+`vw_divergencia_carteira`** até alguém ajustar o WinThor. A confirmação diz isso
+em texto, para ninguém usar o botão achando que trocou o RCA.
+
+⚠️ `vw_divergencia_carteira` está com **432 linhas** (20/08/2026) contra 23 em
+julho (§10.7). O salto é anterior a esta tela e **não foi investigado**.
+
+### 25.4 Lote: o limite é a cota, e ela é dividida
+
+~48 chamadas/min (§14.5), compartilhadas com ETL e envios do board. Uma carteira
+de 800 contatos leva ~17 min — não há como acelerar, só como não mentir sobre isso:
+
+- a rota processa o que couber em **60s** e devolve `restantes`; o front reenvia
+  até esvaziar, com barra de progresso. Mesmo padrão de orçamento do ETL.
+- **retentativa em 429 e 5xx** dentro da chamada: com a cota dividida, 429 no meio
+  do lote é esperado, não excepcional — sem isso um pico do ETL marcaria dezenas
+  de clientes como "falha" quando faltava só esperar.
+- a lista de carteiras é **cacheada 5 min**: sem isso, cada bloco gastaria uma
+  chamada só para reler oito nomes.
+- falha por dado errado (403 contato, 404 carteira) **não** é repetida — não
+  melhora com espera. O front oferece repetir só as falhas, e repetir é seguro:
+  reatribuir à mesma carteira devolve 204.
+
+### 25.5 `carteira_transferencia` ≠ `chat_transferencia`
+
+Colunas quase idênticas, significados opostos. `chat_transferencia` (0081) é
+**quem atende a conversa** e alimenta o dono efetivo em `/api/chat` — gravar
+carteira ali faria conversas sumirem da caixa de um vendedor e brotarem na de
+outro, e mexeria na fila de não atribuídos (§21). A tabela nova registra a
+escrita que aconteceu **lá fora**, na API do RD.
+
+Ela tem `sucesso`/`erro`, que a 0081 não tem: aqui cada linha é uma chamada de
+rede a terceiro dentro de um lote que pode falhar no meio, e registrar só o que
+deu certo esconderia justamente o que o supervisor precisa ver.
+
+### 25.6 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `supabase/migrations/0092_carteira_transferencia.sql` | tabela + índices + RLS |
+| `web/lib/carteiraRd.ts` | contrato do RD, slug↔nome, retentativa, cache |
+| `web/app/api/carteira/route.ts` | GET (carteiras + clientes) · POST (lote com orçamento) |
+| `web/app/api/carteira/historico/route.ts` | histórico dos últimos 7/30 dias |
+| `web/app/carteira/page.tsx` | tela (seleção, busca, progresso, histórico) |
+
+### 25.7 Pendências
+
+- **Sondas descartáveis a apagar** quando o assunto fechar: `src/etl/probe_carteira_*.ts`.
+- O contato de teste **"TESTE MARKETING"** ficou em `Romulo` (era sem carteira).
+  Sem remoção pela API — tirar pelo painel do RD, se incomodar.
+- Reconciliação das trocas feitas direto no painel (§25.2).
+- Investigar o salto de 23 → 432 divergências de carteira (§25.3).
