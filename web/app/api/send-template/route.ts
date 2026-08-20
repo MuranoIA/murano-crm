@@ -119,11 +119,29 @@ export async function POST(req: Request) {
           operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
         });
         // espelha em mensagens como template (o funil usa isso p/ a etapa tentativa_contato)
+        //
+        // O CONTEÚDO é o texto que a cliente vai ler, com {{1}} já trocado pelo
+        // nome — não mais "[template] promocao". O vendedor precisa ver na
+        // thread o que foi dito em nome dele; um rótulo com o identificador
+        // técnico não responde a isso, e era o que havia até aqui.
+        const textoEnviado = escolhido?.corpo
+          ? String(escolhido.corpo).replace(/\{\{\s*1\s*\}\}/g, primeiroNome || "cliente")
+          : `[template] ${nomeTemplate}`;
+
         await sb.from("mensagens").upsert({
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
-          enviada_por: "operator", tipo: "template", conteudo: `[template] ${nomeTemplate}`,
+          enviada_por: "operator", tipo: "template", conteudo: textoEnviado,
           status: "wait", criada_em: new Date().toISOString(),
           linha_id: linhaDeEnvio(),
+          // template com imagem reaproveita a bolha de mídia que já existe: o
+          // arquivo é o mesmo do cadastro, servido do bucket por URL assinada
+          ...(escolhido?.cabecalho_tipo === "imagem" && escolhido?.imagem_path
+            ? {
+                midia_tipo: "image",
+                midia_path: escolhido.imagem_path,
+                midia_mime: String(escolhido.imagem_path).endsWith(".png") ? "image/png" : "image/jpeg",
+              }
+            : {}),
         }, { onConflict: "id" });
         return Response.json({ ok: true, id: wamid, cliente: cli.nome_completo, canal: "whatsapp" });
       } catch (e: any) {

@@ -16,7 +16,10 @@ function sb() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-const COLS = "id,nome,rd_template_id,padrao";
+// Além do ponteiro do RD, agora vai o cadastro da Cloud (migration 0090): o
+// seletor do chat mostra o TEXTO antes de enviar, como o RD Conversas faz —
+// quem dispara precisa ver o que a cliente vai ler.
+const COLS = "id,nome,rd_template_id,padrao,canal,meta_nome,corpo,cabecalho_tipo,status,usa_nome";
 const COLS_CATALOGO = "id,nome,rd_template_id,ativo,padrao,criado_em";
 
 // GET: sem ?catalogo=1 -> lista enxuta dos ATIVOS (o que qualquer sessão usa pra ESCOLHER
@@ -34,7 +37,15 @@ export async function GET(req: Request) {
   if (!catalogo) q = q.eq("ativo", true);
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ templates: data ?? [] });
+
+  // Template da Cloud que a Meta ainda não aprovou NÃO entra na lista de
+  // escolha: oferecê-lo seria oferecer um botão que falha depois do clique,
+  // com a falha chegando minutos mais tarde pelo webhook. O catálogo do admin
+  // continua mostrando todos, com o status — lá o ponto é justamente esse.
+  const lista = (data ?? []).filter((t: any) =>
+    catalogo || t.canal !== "cloud" || String(t.status ?? "").toUpperCase() === "APPROVED");
+
+  return Response.json({ templates: lista });
 }
 
 export async function POST(req: Request) {
