@@ -102,6 +102,14 @@ type Conversa = {
 // cabeçalho da conversa chamarem o mesmo número pelo mesmo nome.
 type LinhaResumo = { id: string; rotulo: string; numero: string | null; total: number };
 
+// Template que pode ser disparado. `corpo` só existe nos da Cloud (0090); os do
+// RD são ponteiros para o painel deles e não têm texto do nosso lado.
+type TemplateEscolha = {
+  id: number; nome: string; padrao: boolean; canal: string;
+  meta_nome: string | null; rd_template_id: string | null;
+  corpo: string | null; cabecalho_tipo: string | null; usa_nome: boolean;
+};
+
 // motivos de encerramento = a nossa tabulação (CLAUDE.md §6 e §18)
 const MOTIVOS: { v: string; rotulo: string }[] = [
   { v: "venda_realizada", rotulo: "✅ Venda realizada" },
@@ -422,6 +430,11 @@ export default function Chat() {
   // ao mesmo tempo, e a sidebar precisa saber separar um do outro
   const [linhas, setLinhas] = useState<LinhaResumo[]>([]);
   const [linhaSel, setLinhaSel] = useState<string | null>(null);   // null = todos os números
+  // catálogo de templates para o seletor do botão TEMPLATE (migration 0090):
+  // o vendedor escolhe vendo o TEXTO, como no RD Conversas, em vez de disparar
+  // um "template padrão" que ele não sabe qual é
+  const [templates, setTemplates] = useState<TemplateEscolha[]>([]);
+  const [menuTemplate, setMenuTemplate] = useState(false);
   // filtro por VENDEDOR, como no board: só para quem enxerga mais de uma
   // carteira (admin/home). Vendedor já vê só a própria — chip seria redundante.
   const [vendFiltro, setVendFiltro] = useState<string | null>(null);
@@ -465,6 +478,14 @@ export default function Chat() {
       else if (r.status === 401) setSessao(null);
       else setErro(j?.error ?? `erro ${r.status}`);
     } finally { carregandoLista.current = false; }
+  }, []);
+
+  // catálogo carregado uma vez: muda com deploy de admin, não durante o turno
+  useEffect(() => {
+    fetch("/api/templates", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setTemplates(j?.templates ?? []))
+      .catch(() => {});
   }, []);
 
   const carregarThread = useCallback(async (c: Conversa, scroll = true) => {
@@ -849,13 +870,17 @@ export default function Chat() {
   }
 
   // template de recontato — reabre conversa fora da janela sem sair do chat
-  async function enviarTemplate() {
+  async function enviarTemplate(t?: TemplateEscolha) {
     if (!sel || enviando) return;
+    setMenuTemplate(false);
     setEnviando(true); setAviso(null);
     try {
+      // o id que o servidor entende difere por canal: na Cloud é o nome
+      // aprovado na Meta; no RD é o id do painel deles
+      const escolha = t ? (t.canal === "cloud" ? t.meta_nome : t.rd_template_id) : null;
       const r = await fetch("/api/send-template", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: sel.cliente_id }),
+        body: JSON.stringify({ cliente_id: sel.cliente_id, ...(escolha ? { template_id: escolha } : {}) }),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
@@ -1918,16 +1943,54 @@ export default function Chat() {
                   >
                     🗒️
                   </button>
-                  {!modoNota && (
-                    <button
-                      onClick={enviarTemplate}
-                      disabled={enviando}
-                      title="Enviar template de recontato (reabre conversa fora da janela de 24h)"
-                      style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
-                    >
-                      TEMPLATE
-                    </button>
-                  )}
+                  {!modoNota && (() => {
+                    // Só os templates do canal DESTA conversa: oferecer um da
+                    // Cloud numa conversa do RD (ou o contrário) manda um id que
+                    // o outro lado não conhece, e a falha só apareceria depois.
+                    const canalAqui = linha?.canal === "rd" ? "rd" : "cloud";
+                    const doCanal = templates.filter((t) => (t.canal === "cloud" ? "cloud" : "rd") === canalAqui);
+                    const primeiroNome = String(sel?.cliente ?? "").trim().split(/\s+/)[0] || "cliente";
+                    return (
+                      <div style={{ position: "relative", flexShrink: 0 }}>
+                        <button
+                          onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
+                          disabled={enviando}
+                          title="Escolher um template — reabre a conversa fora da janela de 24h"
+                          style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${menuTemplate ? M.roxo : M.border}`, background: menuTemplate ? M.roxo : M.bg, color: menuTemplate ? "#fff" : M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit" }}
+                        >
+                          TEMPLATE{doCanal.length > 0 && <span style={{ fontSize: 9, marginLeft: 4, opacity: .8 }}>▾</span>}
+                        </button>
+
+                        {menuTemplate && doCanal.length > 0 && (
+                          <>
+                            <div onClick={() => setMenuTemplate(false)} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
+                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201, width: 340, maxHeight: 380, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
+                              <div style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, letterSpacing: .5, textTransform: "uppercase", color: M.muted, borderBottom: `1px solid ${M.bg}` }}>
+                                Escolha o template
+                              </div>
+                              {doCanal.map((t) => (
+                                <button key={t.id} onClick={() => enviarTemplate(t)}
+                                  style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                                    <b style={{ fontSize: 13, color: M.ink }}>{t.nome}</b>
+                                    {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11 }} title="tem imagem">🖼️</span>}
+                                    {t.padrao && <span style={{ fontSize: 10, fontWeight: 800, color: M.roxo }}>padrão</span>}
+                                  </div>
+                                  {/* pré-visualização com o nome REAL de quem vai
+                                      receber: é o que a cliente vai ler */}
+                                  <div style={{ fontSize: 12, color: M.gray, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                    {t.corpo
+                                      ? t.corpo.replace(/\{\{\s*1\s*\}\}/g, primeiroNome)
+                                      : "O texto deste template mora no painel do RD Conversas — não temos como mostrar aqui."}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <textarea
                     ref={textoRef}
                     value={texto}

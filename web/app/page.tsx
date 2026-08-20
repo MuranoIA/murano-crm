@@ -1730,6 +1730,9 @@ export default function Page() {
             <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</a>
             {sessao.role === "admin" && (
+              <a href="/carteira" title="Transferir clientes entre carteiras no RD Conversas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>🗂️ Carteira</a>
+            )}
+            {sessao.role === "admin" && (
               <a href="/admin" title="Usuários, vendedores, horário de atendimento e linhas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
             )}
           </nav>
@@ -1905,6 +1908,9 @@ export default function Page() {
               <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
               <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
+              {sessao.role === "admin" && (
+                <a href="/carteira" onClick={fecha} style={row}>🗂️ Gestão de Carteira</a>
+              )}
               {sessao.role === "admin" && (
                 <a href="/admin" onClick={fecha} style={row}>⚙️ Administração</a>
               )}

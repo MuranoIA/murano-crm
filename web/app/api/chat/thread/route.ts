@@ -57,6 +57,28 @@ export async function GET(req: Request) {
     .filter((m: any) => m.tipo !== "evento_sistema")
     .reverse(); // cronológico (mais antiga em cima)
 
+  // ---- template antigo: mostrar o TEXTO, não o identificador ---------------
+  // Disparos anteriores gravaram "[template] promocao" no conteúdo — o vendedor
+  // via o nome técnico e não o que a cliente leu. Os novos já gravam o texto
+  // (send-template), mas o histórico não se reescreve sozinho: aqui a troca é
+  // só de EXIBIÇÃO, buscando o corpo no cadastro pelo identificador.
+  const pendentes = mensagens
+    .map((m: any) => /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1])
+    .filter(Boolean) as string[];
+  if (pendentes.length) {
+    const { data: tpls } = await sb
+      .from("crm_templates")
+      .select("meta_nome,corpo")
+      .in("meta_nome", [...new Set(pendentes)]);
+    const corpoDe = new Map((tpls ?? []).map((t: any) => [t.meta_nome, t.corpo]));
+    const primeiroNome = String(cli?.nome_completo ?? "").trim().split(/\s+/)[0] || "cliente";
+    for (const m of mensagens as any[]) {
+      const nome = /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1];
+      const corpo = nome ? corpoDe.get(nome) : null;
+      if (corpo) m.conteudo = String(corpo).replace(/\{\{\s*1\s*\}\}/g, primeiroNome);
+    }
+  }
+
   // por qual linha esta conversa corre: a da última mensagem que tem linha.
   // Sem linha = conversa do RD Conversas (o ETL não tem esse conceito).
   const rotulos = new Map((linhas ?? []).map((l: any) => [l.phone_number_id, l.rotulo]));

@@ -13,7 +13,9 @@
     "probe:janela": "ts-node src/etl/probe_janela.ts",
     "probe:endpoints": "ts-node src/etl/probe_endpoints.ts",
     "probe:type": "ts-node src/etl/probe_type.ts",
-    "probe:dump": "ts-node src/etl/probe_dump.ts"
+    "probe:dump": "ts-node src/etl/probe_dump.ts",
+    "probe:midia": "ts-node src/etl/probe_midia.ts",
+    "probe:funil": "ts-node src/etl/probe_funil_impacto.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
