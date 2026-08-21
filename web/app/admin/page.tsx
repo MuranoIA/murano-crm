@@ -665,12 +665,17 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
     } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
   }
 
-  const inserirNome = () => {
+  // Insere o PRÓXIMO campo livre. Cada {{n}} é preenchido pelo consultor na hora
+  // de enviar, no chat; o {{1}} chega lá com o primeiro nome da cliente já
+  // dentro, por ser o uso mais comum — e pode ser trocado antes do envio.
+  // A numeração tem de ser seguida a partir de {{1}}: a Meta recusa {{1}}+{{3}}.
+  const inserirCampo = () => {
     const el = corpoRef.current;
     const pos = el?.selectionStart ?? f.corpo.length;
-    const novo = `${f.corpo.slice(0, pos)}{{1}}${f.corpo.slice(pos)}`;
-    setF({ ...f, corpo: novo });
-    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos + 5, pos + 5); }, 0);
+    const jaTem = (f.corpo.match(/\{\{\s*\d+\s*\}\}/g) ?? []).length;
+    const marca = `{{${jaTem + 1}}}`;
+    setF({ ...f, corpo: `${f.corpo.slice(0, pos)}${marca}${f.corpo.slice(pos)}` });
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos + marca.length, pos + marca.length); }, 0);
   };
 
   return (
@@ -702,11 +707,14 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
           <label style={rotuloCampo}>Texto da mensagem</label>
-          <button onClick={inserirNome} title="Insere o primeiro nome do cliente no ponto do cursor"
+          <button onClick={inserirCampo} title="Insere um campo que o consultor preenche na hora de enviar"
             style={{ padding: "3px 9px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
               borderRadius: 999, color: M.roxo, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
-            + nome do cliente
+            + campo a preencher
           </button>
+          <span style={{ fontSize: 11.5, color: M.muted }}>
+            o consultor digita cada campo no chat; o primeiro já vem com o nome da cliente
+          </span>
         </div>
         <textarea ref={corpoRef} value={f.corpo} rows={5} onChange={(e) => setF({ ...f, corpo: e.target.value })}
           placeholder="Oi {{1}}, tudo bem? Chegaram novidades na Murano e separei algumas que combinam com o seu salão."

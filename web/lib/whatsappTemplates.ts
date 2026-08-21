@@ -88,11 +88,16 @@ export type NovoTemplate = {
   categoria: "MARKETING" | "UTILITY" | "AUTHENTICATION";
   idioma: string;               // pt_BR
   corpo: string;
-  usaNome: boolean;             // corpo contém {{1}} = primeiro nome do cliente
+  qtdVariaveis: number;         // quantos {{n}} o corpo tem — o consultor preenche cada um no envio
   rodape?: string | null;
   cabecalhoTexto?: string | null;
   imagemHandle?: string | null; // vindo de subirImagemDeCabecalho
 };
+
+// Valores de exemplo mandados à Meta na hora de aprovar, um por variável. O
+// primeiro é um nome porque {{1}} chega pré-preenchido com o da cliente no
+// compositor do chat — é o uso mais comum, não uma regra.
+const EXEMPLOS = ["Maria", "chegou a reposição do reparador", "a tabela nova", "esta semana"];
 
 /** Monta os componentes no formato da Meta. Separado para poder ser lido e conferido. */
 export function componentesDe(t: NovoTemplate): unknown[] {
@@ -104,12 +109,17 @@ export function componentesDe(t: NovoTemplate): unknown[] {
     comps.push({ type: "HEADER", format: "TEXT", text: t.cabecalhoTexto });
   }
 
-  // A Meta EXIGE exemplo para cada variável. Sem `example`, a criação é recusada
-  // com uma mensagem que não diz isso claramente.
+  // A Meta EXIGE um exemplo para CADA variável — um `example.body_text` com uma
+  // lista de tamanho igual ao número de `{{n}}`. Sem isso, ou com a contagem
+  // errada, a criação é recusada com uma mensagem que não diz isso claramente.
+  // O exemplo é só o que o revisor da Meta lê; o valor real é digitado na hora
+  // do envio, e por isso ele precisa ser plausível, não bonito.
   comps.push({
     type: "BODY",
     text: t.corpo,
-    ...(t.usaNome ? { example: { body_text: [["Maria"]] } } : {}),
+    ...(t.qtdVariaveis > 0
+      ? { example: { body_text: [Array.from({ length: t.qtdVariaveis }, (_, i) => EXEMPLOS[i] ?? "exemplo")] } }
+      : {}),
   });
 
   if (t.rodape) comps.push({ type: "FOOTER", text: t.rodape });
