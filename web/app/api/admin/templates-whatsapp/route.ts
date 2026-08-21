@@ -2,6 +2,7 @@ import { sbAdmin, guardaAdmin, texto } from "../../../../lib/adminApi";
 import {
   subirImagemDeCabecalho, criarTemplate, statusNaMeta, apagarNaMeta, metaNomeDe,
 } from "../../../../lib/whatsappTemplates";
+import { variaveisDe, erroDeNumeracao } from "../../../../lib/templateVars";
 
 export const dynamic = "force-dynamic";
 
@@ -107,13 +108,13 @@ export async function POST(req: Request) {
     return Response.json({ error: "escolha imagem OU cabeçalho de texto — a Meta aceita só um" }, { status: 400 });
   }
 
-  // {{1}} é o primeiro nome do cliente. É a única variável que o envio sabe
-  // preencher hoje; qualquer outra viraria template aprovado e inenviável.
-  const variaveis = corpo.match(/\{\{\s*\d+\s*\}\}/g) ?? [];
-  const usaNome = variaveis.length > 0;
-  if (variaveis.some((v) => !/\{\{\s*1\s*\}\}/.test(v))) {
-    return Response.json({ error: "por enquanto só {{1}} (o primeiro nome do cliente) é aceito no texto" }, { status: 400 });
-  }
+  // Cada {{n}} é um campo que o CONSULTOR preenche na hora de enviar, no
+  // compositor do chat — o de {{1}} chega pré-preenchido com o primeiro nome da
+  // cliente, que era o único valor possível antes desta tela aceitar mais de um.
+  // A única regra da Meta aqui é a numeração seguida a partir de {{1}}.
+  const numeros = variaveisDe(corpo);
+  const erroNum = erroDeNumeracao(corpo);
+  if (erroNum) return Response.json({ error: erroNum }, { status: 400 });
 
   const db = sbAdmin();
   const metaNome = metaNomeDe(nome);
@@ -155,7 +156,7 @@ export async function POST(req: Request) {
   let criado: { id: string; status: string };
   try {
     criado = await criarTemplate({
-      metaNome, categoria: categoria as any, idioma: "pt_BR", corpo, usaNome,
+      metaNome, categoria: categoria as any, idioma: "pt_BR", corpo, qtdVariaveis: numeros.length,
       rodape: rodape || null,
       cabecalhoTexto: cabecalhoTexto || null,
       imagemHandle: handle,
@@ -178,7 +179,10 @@ export async function POST(req: Request) {
     cabecalho_tipo: handle ? "imagem" : cabecalhoTexto ? "texto" : "nenhum",
     cabecalho_texto: cabecalhoTexto || null,
     imagem_path: imagemPath,
-    usa_nome: usaNome,
+    // `usa_nome` nasceu significando "o corpo tem {{1}}, preenchido com o nome".
+    // Desde que o consultor digita cada campo, o que ela guarda é "tem campo a
+    // preencher" — quantos e quais saem do próprio corpo, sem coluna nova.
+    usa_nome: numeros.length > 0,
     status: criado.status || "PENDING",
     ativo: true,
     padrao: false,

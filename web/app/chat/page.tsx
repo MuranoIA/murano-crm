@@ -6,6 +6,9 @@ import {
   useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
   type Ligacao,
 } from "./ligacao";
+// mesma régua das variáveis do template usada pela rota de envio — a tela avisa
+// cedo, o servidor confere de novo (lib/templateVars.ts)
+import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
@@ -369,6 +372,87 @@ function Ticks({ status, erro }: { status: string | null; erro?: string | null }
   );
 }
 
+/**
+ * Compositor do template: um campo por `{{n}}` do texto aprovado, e a prévia do
+ * que a cliente vai ler montada enquanto se digita.
+ *
+ * Por que existe: até aqui, escolher um template ERA enviá-lo, e o `{{1}}` era
+ * preenchido pelo servidor com o primeiro nome — o consultor não tinha como
+ * dizer nada. O campo do nome continua chegando pronto (é o uso mais comum),
+ * só que agora dá para trocar por qualquer coisa antes de enviar.
+ *
+ * A régua de validação é a mesma de `lib/templateVars.ts` que a rota aplica: a
+ * tela desabilita o botão cedo, o servidor confere de novo — a Meta recusa o
+ * disparo inteiro por um parâmetro vazio, e essa recusa chegaria minutos depois,
+ * pelo webhook, longe do clique que a causou.
+ */
+function CompositorTemplate({
+  t, campos, valores, enviando, onMudar, onVoltar, onEnviar,
+}: {
+  t: TemplateEscolha; campos: number[]; valores: string[]; enviando: boolean;
+  onMudar: (i: number, v: string) => void; onVoltar: () => void; onEnviar: () => void;
+}) {
+  const erro = conferirVariaveis(t.corpo, valores);
+  const previa = t.corpo ? aplicarVariaveis(t.corpo, valores) : null;
+  // o cursor vai para o primeiro campo AINDA VAZIO: com o nome já preenchido,
+  // o que interessa a quem abriu isto é o campo seguinte
+  const foco = Math.max(0, valores.findIndex((v) => !v.trim()));
+
+  return (
+    <div style={{ padding: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <button onClick={onVoltar} title="Escolher outro template"
+          style={{ border: "none", background: "transparent", color: M.roxo, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+          ‹ templates
+        </button>
+        <b style={{ fontSize: 13, color: M.ink, marginLeft: "auto" }}>{t.nome}</b>
+        {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11 }} title="este template vai com imagem">🖼️</span>}
+      </div>
+
+      {campos.map((n, i) => (
+        <div key={n} style={{ marginBottom: 8 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: .4, textTransform: "uppercase", color: M.muted }}>
+            {i === 0 && t.corpo ? "Campo 1 · veio com o nome da cliente" : `Campo ${n}`}
+          </label>
+          <input
+            autoFocus={i === foco}
+            value={valores[i] ?? ""}
+            onChange={(e) => onMudar(i, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !erro && !enviando) { e.preventDefault(); onEnviar(); }
+              if (e.key === "Escape") { e.preventDefault(); onVoltar(); }
+            }}
+            placeholder="digite o texto deste campo"
+            style={{ width: "100%", boxSizing: "border-box", marginTop: 3, padding: "8px 10px", borderRadius: 9, border: `1px solid ${M.border}`, background: M.bg, color: M.ink, fontSize: 13, fontFamily: "inherit", outline: "none" }}
+          />
+        </div>
+      ))}
+
+      {previa !== null ? (
+        <div style={{ marginTop: 10, padding: "9px 11px", borderRadius: 10, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: .5, textTransform: "uppercase", color: M.muted, marginBottom: 4 }}>
+            o que a cliente vai ler
+          </div>
+          <div style={{ fontSize: 12.5, color: M.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{previa}</div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: M.gray, lineHeight: 1.5 }}>
+          O texto deste template mora no painel do RD Conversas — o que você escrever aqui
+          entra no campo dele, mas não temos como mostrar a frase inteira daqui.
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11 }}>
+        <span style={{ fontSize: 11, color: M.laranja, flex: 1, lineHeight: 1.4 }}>{erro ?? ""}</span>
+        <button onClick={onEnviar} disabled={!!erro || enviando}
+          style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: erro || enviando ? M.border : M.roxo, color: "#fff", fontSize: 12, fontWeight: 800, letterSpacing: .3, cursor: erro || enviando ? "default" : "pointer", fontFamily: "inherit" }}>
+          {enviando ? "enviando…" : "Enviar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Chat() {
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null } | null | undefined>(undefined);
   const [conversas, setConversas] = useState<Conversa[]>([]);
@@ -435,6 +519,10 @@ export default function Chat() {
   // um "template padrão" que ele não sabe qual é
   const [templates, setTemplates] = useState<TemplateEscolha[]>([]);
   const [menuTemplate, setMenuTemplate] = useState(false);
+  // Template escolhido e o que o consultor está digitando nos {{n}} dele.
+  // Enquanto isto existe, o menu mostra o compositor no lugar da lista —
+  // escolher um template deixou de ser o mesmo gesto que disparar um.
+  const [compondo, setCompondo] = useState<{ t: TemplateEscolha; valores: string[] } | null>(null);
   // filtro por VENDEDOR, como no board: só para quem enxerga mais de uma
   // carteira (admin/home). Vendedor já vê só a própria — chip seria redundante.
   const [vendFiltro, setVendFiltro] = useState<string | null>(null);
@@ -720,6 +808,9 @@ export default function Chat() {
     setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
+    // o compositor guarda o nome da cliente ANTERIOR nos campos: deixá-lo aberto
+    // ao trocar de conversa mandaria o texto de uma para outra
+    setMenuTemplate(false); setCompondo(null);
     setMenuAcoes(false); setAbaContato("perfil");
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
@@ -869,10 +960,33 @@ export default function Chat() {
     }
   }
 
+  /**
+   * Quantos campos este template pede. Com o texto (cadastro nosso, 0090) a
+   * conta sai dele; nos do RD o texto mora no painel deles e o envio sempre
+   * mandou UMA variável — então é uma, com o rótulo dizendo que não dá para
+   * mostrar o texto daqui.
+   */
+  function camposDe(t: TemplateEscolha): number[] {
+    return t.corpo ? variaveisDe(t.corpo) : [1];
+  }
+
+  // Escolher um template não envia mais: abre o compositor, com um campo por
+  // {{n}}. O primeiro chega com o nome da cliente já dentro — era o valor fixo
+  // de antes, agora é só o ponto de partida. Template SEM campo não tem o que
+  // compor: segue indo direto, num clique, como sempre foi.
+  function escolherTemplate(t: TemplateEscolha) {
+    const campos = camposDe(t);
+    if (!campos.length) { void enviarTemplate(t); return; }
+    const primeiroNome = String(sel?.cliente ?? "").trim().split(/\s+/)[0] || "";
+    setCompondo({ t, valores: campos.map((_, i) => (i === 0 ? primeiroNome : "")) });
+  }
+
+  function fecharTemplate() { setMenuTemplate(false); setCompondo(null); }
+
   // template de recontato — reabre conversa fora da janela sem sair do chat
-  async function enviarTemplate(t?: TemplateEscolha) {
+  async function enviarTemplate(t?: TemplateEscolha, valores?: string[]) {
     if (!sel || enviando) return;
-    setMenuTemplate(false);
+    fecharTemplate();
     setEnviando(true); setAviso(null);
     try {
       // o id que o servidor entende difere por canal: na Cloud é o nome
@@ -880,7 +994,13 @@ export default function Chat() {
       const escolha = t ? (t.canal === "cloud" ? t.meta_nome : t.rd_template_id) : null;
       const r = await fetch("/api/send-template", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: sel.cliente_id, ...(escolha ? { template_id: escolha } : {}) }),
+        body: JSON.stringify({
+          cliente_id: sel.cliente_id,
+          ...(escolha ? { template_id: escolha } : {}),
+          // o servidor revalida tudo isto: a tela avisa cedo, mas não é ela
+          // quem autoriza o envio
+          ...(valores?.length ? { variaveis: valores } : {}),
+        }),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
@@ -1963,28 +2083,51 @@ export default function Chat() {
 
                         {menuTemplate && doCanal.length > 0 && (
                           <>
-                            <div onClick={() => setMenuTemplate(false)} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
-                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201, width: 340, maxHeight: 380, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
-                              <div style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, letterSpacing: .5, textTransform: "uppercase", color: M.muted, borderBottom: `1px solid ${M.bg}` }}>
-                                Escolha o template
-                              </div>
-                              {doCanal.map((t) => (
-                                <button key={t.id} onClick={() => enviarTemplate(t)}
-                                  style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                                    <b style={{ fontSize: 13, color: M.ink }}>{t.nome}</b>
-                                    {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11 }} title="tem imagem">🖼️</span>}
-                                    {t.padrao && <span style={{ fontSize: 10, fontWeight: 800, color: M.roxo }}>padrão</span>}
+                            <div onClick={fecharTemplate} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
+                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201, width: 360, maxHeight: 440, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
+                              {compondo ? (
+                                <CompositorTemplate
+                                  t={compondo.t}
+                                  campos={camposDe(compondo.t)}
+                                  valores={compondo.valores}
+                                  enviando={enviando}
+                                  onMudar={(i, v) => setCompondo((c) => c && { ...c, valores: c.valores.map((x, k) => (k === i ? v : x)) })}
+                                  onVoltar={() => setCompondo(null)}
+                                  onEnviar={() => enviarTemplate(compondo.t, compondo.valores)}
+                                />
+                              ) : (
+                                <>
+                                  <div style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, letterSpacing: .5, textTransform: "uppercase", color: M.muted, borderBottom: `1px solid ${M.bg}` }}>
+                                    Escolha o template
                                   </div>
-                                  {/* pré-visualização com o nome REAL de quem vai
-                                      receber: é o que a cliente vai ler */}
-                                  <div style={{ fontSize: 12, color: M.gray, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
-                                    {t.corpo
-                                      ? t.corpo.replace(/\{\{\s*1\s*\}\}/g, primeiroNome)
-                                      : "O texto deste template mora no painel do RD Conversas — não temos como mostrar aqui."}
-                                  </div>
-                                </button>
-                              ))}
+                                  {doCanal.map((t) => {
+                                    const campos = camposDe(t);
+                                    return (
+                                      <button key={t.id} onClick={() => escolherTemplate(t)}
+                                        style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                                          <b style={{ fontSize: 13, color: M.ink }}>{t.nome}</b>
+                                          {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11 }} title="tem imagem">🖼️</span>}
+                                          {t.padrao && <span style={{ fontSize: 10, fontWeight: 800, color: M.roxo }}>padrão</span>}
+                                          {campos.length > 0 && (
+                                            <span style={{ fontSize: 10, fontWeight: 700, color: M.muted, marginLeft: "auto" }}>
+                                              {campos.length} campo{campos.length === 1 ? "" : "s"} a preencher
+                                            </span>
+                                          )}
+                                        </div>
+                                        {/* prévia com o nome REAL de quem vai receber no
+                                            {{1}}; os demais campos ficam como traço, que é
+                                            o que ainda falta escrever */}
+                                        <div style={{ fontSize: 12, color: M.gray, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                          {t.corpo
+                                            ? aplicarVariaveis(t.corpo, [primeiroNome]).replace(/\{\{\s*\d+\s*\}\}/g, "———")
+                                            : "O texto deste template mora no painel do RD Conversas — não temos como mostrar aqui."}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </>
+                              )}
                             </div>
                           </>
                         )}
