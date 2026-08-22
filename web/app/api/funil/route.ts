@@ -18,7 +18,9 @@ export async function GET() {
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
   // vendedores do funil (fonte única: carteira_config) — slugs p/ filtrar vendas + cores p/ o board
-  const { data: vendCfg } = await sb.from("carteira_config").select("slug,cor").eq("ativo", true);
+  // rca_num e time entram junto: o card precisa deles para classificar a divergência
+  // entre quem ATENDE (carteira do RD) e quem FATURA (RCA do WinThor) — migration 0093.
+  const { data: vendCfg } = await sb.from("carteira_config").select('slug,cor,rca_num,"time"').eq("ativo", true);
   const slugs = (vendCfg ?? []).map((v: any) => v.slug);
   const vendedores = vendCfg ?? [];
 
@@ -30,7 +32,7 @@ export async function GET() {
   // Degraus de colunas: tenta o mais completo; se uma coluna nova ainda não existe
   // (migration pendente), cai pro degrau anterior sem quebrar o board (o front tem
   // fallback). FULL = com nota fiscal (0006); MSGS = com 3 mensagens (0005); BASE = mínimo.
-  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data,sem_cadastro,rd_cliente_id,codcli";
+  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data,sem_cadastro,rd_cliente_id,codcli,rca_num,carteira_rd";
   const COLS_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
   const COLS_BASE = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone";
 
@@ -73,7 +75,7 @@ export async function GET() {
       if (carteira) q = q.eq("vendedor", carteira);
       const { data, error } = await q;
       if (error) {
-        if (cols === COLS_FULL && /venda_valor|venda_data|sem_cadastro|rd_cliente_id|codcli/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
+        if (cols === COLS_FULL && /venda_valor|venda_data|sem_cadastro|rd_cliente_id|codcli|rca_num|carteira_rd/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
         if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) { cols = COLS_BASE; from -= PAGE; continue; }
         throw new Error(error.message);
       }

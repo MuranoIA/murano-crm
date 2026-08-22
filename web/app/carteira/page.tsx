@@ -26,6 +26,21 @@ const LOTE_RENDER = 200; // linhas desenhadas por vez (a maior carteira passa de
 type Carteira = { slug: string; cor: string | null; time: string | null; nome_rd: string | null; total: number };
 type Cliente = { id: string; nome_completo: string | null; telefone: string | null; canal: string | null; carteira: string | null };
 type Falha = { id: string; erro: string; recuperavel: boolean };
+type Aba = "transferir" | "historico" | "conflitos";
+
+// Conflito de atribuição: quem ATENDE (carteira no RD) x quem FATURA (RCA do WinThor).
+// `classe` vem da view vw_carteira_conflito (migration 0093) e é o que separa o que
+// precisa de correção do que é o negócio funcionando normalmente.
+type Conflito = {
+  cliente_id: string; nome_completo: string | null; codcli: number | null;
+  carteira_rd: string | null; carteira_do_rca: string | null;
+  rca_num: number | null; rca_nome: string | null;
+  time_rd: string | null; time_rca: string | null;
+  classe: "mesmo_time" | "entre_times" | "rca_fora_do_crm";
+  no_board: boolean; ultima_atividade: string | null; telefone: string | null;
+};
+type ResumoConf = { total: number; mesmo_time: number; entre_times: number; rca_fora_do_crm: number; invisiveis: number };
+
 type Historico = {
   id: number; cliente_id: string; nome: string | null; de_carteira: string | null; para_carteira: string;
   por: string; observacao: string | null; sucesso: boolean; erro: string | null; criada_em: string;
@@ -60,7 +75,7 @@ const telefoneBonito = (t: string | null) => {
 };
 
 export default function Page() {
-  const [aba, setAba] = useState<"transferir" | "historico">("transferir");
+  const [aba, setAba] = useState<Aba>("transferir");
   const [carteiras, setCarteiras] = useState<Carteira[]>([]);
   const [avisoRd, setAvisoRd] = useState<string | null>(null);
   const [slug, setSlug] = useState<string>("");
@@ -81,6 +96,10 @@ export default function Page() {
   const rodando = useRef(false);
 
   const [historico, setHistorico] = useState<Historico[]>([]);
+  const [conflitos, setConflitos] = useState<Conflito[]>([]);
+  const [resumoConf, setResumoConf] = useState<ResumoConf | null>(null);
+  const [classeConf, setClasseConf] = useState<"mesmo_time" | "entre_times" | "rca_fora_do_crm" | "todos">("mesmo_time");
+  const [carregandoConf, setCarregandoConf] = useState(false);
   const [dias, setDias] = useState(30);
   const [histTruncado, setHistTruncado] = useState(false);
 
@@ -117,6 +136,26 @@ export default function Page() {
   }, []);
 
   useEffect(() => { if (aba === "historico") carregarHistorico(dias); }, [aba, dias, carregarHistorico]);
+
+  // A lista inteira cabe numa resposta (445 linhas hoje), então busca tudo uma vez e
+  // filtra no cliente: trocar de classe não vale uma ida ao servidor.
+  const carregarConflitos = useCallback(async () => {
+    setCarregandoConf(true);
+    try {
+      const r = await fetch("/api/carteira/conflitos", { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.erro ?? "falhou");
+      setConflitos(j.linhas ?? []);
+      setResumoConf(j.resumo ?? null);
+    } catch { setConflitos([]); setResumoConf(null); }
+    finally { setCarregandoConf(false); }
+  }, []);
+  useEffect(() => { if (aba === "conflitos") carregarConflitos(); }, [aba, carregarConflitos]);
+
+  const conflitosVisiveis = useMemo(
+    () => (classeConf === "todos" ? conflitos : conflitos.filter((c) => c.classe === classeConf)),
+    [conflitos, classeConf]
+  );
 
   // --- filtro local (sem nova query, como pede o desenho) ---------------------
   const filtrados = useMemo(() => {
@@ -414,6 +453,95 @@ export default function Page() {
         </Cartao>
       )}
 
+      {aba === "conflitos" && (
+        <Cartao titulo="Conflitos de atribuição">
+          <div style={{ fontSize: 13, color: M.gray, lineHeight: 1.55, marginBottom: 12 }}>
+            Duas atribuições convivem e podem discordar: <b>quem atende</b> (carteira no RD
+            Conversas) e <b>quem fatura</b> (RCA oficial no WinThor). Discordar nem sempre é erro —
+            o IS e o ISR atendem muito cliente cujo RCA pertence a outra equipe. Por isso a lista
+            vem separada: só o primeiro grupo pede correção.
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+            {([
+              ["mesmo_time", `Precisa corrigir (${resumoConf?.mesmo_time ?? 0})`, "Quem atende e quem fatura são do MESMO time e mesmo assim discordam — quase sempre transferência feita de um lado só."],
+              ["entre_times", `Entre times (${resumoConf?.entre_times ?? 0})`, "Times diferentes, ambos no CRM. Pode ser legítimo."],
+              ["rca_fora_do_crm", `RCA fora do CRM (${resumoConf?.rca_fora_do_crm ?? 0})`, "O RCA oficial não é de nenhuma carteira ativa (GC ou vendedor de fora). Normal — mas estes clientes NÃO aparecem no board nem no chat."],
+              ["todos", `Todos (${resumoConf?.total ?? 0})`, "A lista inteira."],
+            ] as const).map(([id, rotulo, dica]) => (
+              <button key={id} onClick={() => setClasseConf(id as any)} title={dica}
+                style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", borderRadius: 8, cursor: "pointer",
+                  color: classeConf === id ? "#fff" : M.gray,
+                  background: classeConf === id ? (id === "mesmo_time" ? M.laranja : M.roxo) : M.surface,
+                  border: `1px solid ${classeConf === id ? (id === "mesmo_time" ? M.laranja : M.roxo) : M.border}` }}>
+                {rotulo}
+              </button>
+            ))}
+          </div>
+
+          {!!resumoConf?.invisiveis && (
+            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: M.ink, background: "#fff7ed", border: `1px solid #f0c987`, borderRadius: 8, padding: "9px 12px", marginBottom: 12 }}>
+              <b>{resumoConf.invisiveis} clientes com conversa não aparecem no board nem no chat.</b>{" "}
+              O board só mostra quem tem vínculo com um RCA de carteira ativa; quando o RCA oficial é
+              de outra equipe, o cliente some da tela mesmo estando em atendimento. Corrigir exige
+              decidir de quem é o cliente — não é ajuste de tela.
+            </div>
+          )}
+
+          {carregandoConf ? (
+            <div style={{ fontSize: 14, color: M.gray }}>Carregando…</div>
+          ) : conflitosVisiveis.length === 0 ? (
+            <div style={{ fontSize: 14, color: M.gray }}>Nenhum conflito neste grupo.</div>
+          ) : (
+            <div style={{ maxHeight: 560, overflowY: "auto", border: `1px solid ${M.border}`, borderRadius: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Cliente</th><th style={th}>Atende (RD)</th>
+                    <th style={th}>Fatura (RCA)</th><th style={th}>Última atividade</th><th style={th}>No board</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conflitosVisiveis.slice(0, LOTE_RENDER).map((c) => (
+                    <tr key={c.cliente_id}>
+                      <td style={{ ...td, fontWeight: 600 }}>
+                        {c.nome_completo ?? c.cliente_id}
+                        <div style={{ fontSize: 11, color: M.muted }}>
+                          {telefoneBonito(c.telefone)}{c.codcli ? ` · cod ${c.codcli}` : ""}
+                        </div>
+                      </td>
+                      <td style={{ ...td, color: M.roxo, fontWeight: 700 }}>
+                        {c.carteira_rd ?? "—"}
+                        {c.time_rd && <span style={{ color: M.muted, fontWeight: 600, fontSize: 11 }}> · {c.time_rd}</span>}
+                      </td>
+                      <td style={td}>
+                        <span style={{ fontWeight: 700 }}>{c.carteira_do_rca ?? "fora do CRM"}</span>
+                        <div style={{ fontSize: 11, color: M.muted }}>{c.rca_nome ?? `RCA ${c.rca_num ?? "—"}`}</div>
+                      </td>
+                      <td style={{ ...td, color: M.gray, whiteSpace: "nowrap", fontSize: 12 }}>
+                        {c.ultima_atividade
+                          ? new Date(c.ultima_atividade).toLocaleDateString("pt-BR", { timeZone: "America/Belem" })
+                          : "sem conversa"}
+                      </td>
+                      <td style={td}>
+                        {c.no_board
+                          ? <span style={{ color: M.verde, fontWeight: 700, fontSize: 12 }}>✓ sim</span>
+                          : <span style={{ color: M.laranja, fontWeight: 700, fontSize: 12 }} title="Invisível no board e no chat">✕ não</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {conflitosVisiveis.length > LOTE_RENDER && (
+                <div style={{ fontSize: 12, color: M.gray, padding: "8px 10px" }}>
+                  Mostrando {LOTE_RENDER} de {conflitosVisiveis.length}.
+                </div>
+              )}
+            </div>
+          )}
+        </Cartao>
+      )}
+
       {confirmando && (
         <Confirmacao
           quantos={selecionados.size}
@@ -511,12 +639,13 @@ function Cartao({ titulo, ajuda, children }: { titulo?: string; ajuda?: string; 
 }
 
 function Moldura({ aba, setAba, esconder, children }: {
-  aba: "transferir" | "historico"; setAba: (a: "transferir" | "historico") => void;
+  aba: Aba; setAba: (a: Aba) => void;
   esconder?: boolean; children: React.ReactNode;
 }) {
   const abas = [
     { id: "transferir" as const, rotulo: "↪ Transferir" },
     { id: "historico" as const, rotulo: "🕘 Histórico" },
+    { id: "conflitos" as const, rotulo: "⚠️ Conflitos" },
   ];
   return (
     <div style={{ minHeight: "100vh", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
