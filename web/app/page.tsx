@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
@@ -23,6 +23,8 @@ type Card = {
   sem_cadastro?: boolean;          // só existe no RD Conversas, sem cadastro no WinThor (lead de marketing)
   rd_cliente_id?: string | null;   // (prospecção) id do contato no RD, se já existir lá — abre o RD em vez do WhatsApp
   codcli?: number | null;          // código do cliente no WinThor — abre a Consulta Clientes (botão "C")
+  rca_num?: number | null;         // quem FATURA: RCA oficial no WinThor (migration 0093)
+  carteira_rd?: string | null;     // quem ATENDE: carteira no RD Conversas (migration 0093)
   ciclo?: {                            // motor preditivo (análise de ciclo de compra)
     tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
     pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
@@ -37,6 +39,50 @@ type Card = {
 function moedaBR(v: number | null): string {
   if (v == null) return "";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 });
+}
+
+// --- Selo de atribuição: quem ATENDE x quem FATURA -------------------------------
+// São conceitos distintos (§25.3) e podem divergir de forma legítima: o IS/ISR atende
+// cliente cujo RCA pertence ao GC ou a um vendedor de fora. Medido em 22/08/2026: das
+// 445 divergências, só 116 são entre pessoas do MESMO time — essas sim quase sempre
+// são transferência feita de um lado só. Alarmar nas 445 treinaria a equipe a ignorar
+// o selo, então o vermelho é reservado ao caso acionável.
+// O card já é posicionado pelo RCA (a vw_funil é RCA-first); o selo não move nada,
+// só torna visível a discordância que antes só existia numa view que ninguém abria.
+type SeloAtrib = { texto: string; title: string; cor: string; bg: string; borda: string };
+type VendMeta = Record<string, { rca: number | null; time: string | null }>;
+
+function seloAtribuicao(c: Card, vendMeta: VendMeta): SeloAtrib | null {
+  const rca = c.rca_num ?? null;
+  const rd = c.carteira_rd ?? null;
+  if (rca == null && !rd) return null; // nada a comparar (ex.: card de venda pura)
+
+  const NEUTRO = { cor: "#64748b", bg: "#f1f5f9", borda: "#dbe3ec" };
+  const AVISO = { cor: "#b45309", bg: "#fff7ed", borda: "#f0c987" };
+  const ALERTA = { cor: "#b91c1c", bg: "#fef2f2", borda: "#f3b4b4" };
+  const texto = `RCA ${rca ?? "—"} · RD ${rd ?? "—"}`;
+
+  // sem vínculo com o WinThor: a compra deste cliente não credita RCA nenhum
+  if (rca == null) {
+    return { texto, ...AVISO, title: `Atendido por ${rd} no RD Conversas, mas sem vínculo com o WinThor (sem CPF ou sem cadastro). A compra dele não credita RCA nenhum — pedir o CPF na conversa resolve.` };
+  }
+  // sem carteira no RD: contato de prospecção, nunca atendido
+  if (!rd) {
+    return { texto, ...NEUTRO, title: `RCA ${rca} no WinThor. Ainda sem carteira no RD Conversas — este contato nunca teve atendimento.` };
+  }
+
+  const donoDoRca = Object.entries(vendMeta).find(([, m]) => m.rca === rca);
+  const slugRca = donoDoRca?.[0] ?? null;
+  if (slugRca === rd) {
+    return { texto, ...NEUTRO, title: `Quem atende no RD (${rd}) e quem fatura no WinThor (RCA ${rca}) são a mesma pessoa.` };
+  }
+
+  const timeRd = vendMeta[rd]?.time ?? null;
+  const timeRca = donoDoRca?.[1].time ?? null;
+  if (timeRd && timeRca && timeRd === timeRca) {
+    return { texto, ...ALERTA, title: `DIVERGÊNCIA A CORRIGIR — ${rd} atende no RD Conversas, mas o RCA oficial é ${slugRca} (${rca}). Os dois são do mesmo time (${timeRd}), então quase sempre é transferência feita de um lado só. Avisar a supervisão.` };
+  }
+  return { texto, ...NEUTRO, title: `${rd} atende no RD Conversas; quem fatura é o RCA ${rca}${slugRca ? ` (${slugRca})` : " — de outro time ou de fora do CRM"}. Comum quando o cliente pertence a outra equipe; não exige correção.` };
 }
 
 // cards sintéticos da fila de prospecção (WinThor) — nunca tiveram conversa no RD
@@ -274,6 +320,9 @@ export default function Page() {
   const [disparos, setDisparos] = useState<Record<string, string>>({});
   // cores dos vendedores vindas da carteira_config (via API) — pra vendedor novo não exigir código
   const [vendCores, setVendCores] = useState<Record<string, string>>({});
+  // rca_num + time por carteira: o selo de atribuição precisa saber de quem é cada RCA
+  // e se as duas pontas são do mesmo time (migration 0093)
+  const [vendMeta, setVendMeta] = useState<VendMeta>({});
   // totais do cabeçalho de Pedido Emitido: por carteira -> por período -> {total, vendas}
   const [vendasTotais, setVendasTotais] = useState<Record<string, Record<string, { total: number; vendas: number }>>>({});
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
@@ -406,6 +455,10 @@ export default function Page() {
   const [cicloPainel, setCicloPainel] = useState(false);
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
+  // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
+  // AÇÕES (disparo em massa, Excel), que não filtram nada — misturar as duas coisas
+  // numa barra só era o que deixava o cabeçalho ilegível.
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [paradoPainel, setParadoPainel] = useState(false);
   // disparo em massa
   const [massaAberto, setMassaAberto] = useState(false);
@@ -451,6 +504,7 @@ export default function Page() {
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
       setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
+      setVendMeta(Object.fromEntries((j.vendedores ?? []).filter((v: any) => v?.slug).map((v: any) => [v.slug, { rca: v.rca_num ?? null, time: v.time ?? null }])));
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -1596,6 +1650,35 @@ export default function Page() {
     return vals.every((v) => v === vals[0]) ? vals[0] : "misto";
   }, [periodoPorColuna]);
 
+  // Resumo do que está ligado. Existe porque esconder os filtros num dropdown cria um
+  // risco novo: alguém deixa um filtro ativo, fecha o painel e depois estranha o board
+  // vazio. O botão carrega a contagem e o painel lista os filtros pelo nome, então o
+  // estado nunca fica invisível.
+  const filtrosLigados = useMemo(() => {
+    const l: string[] = [];
+    if (periodoGlobal !== "todos") l.push(`período: ${periodoGlobal}`);
+    if (prodFiltro) l.push("comprou produto");
+    if (ncFiltro) l.push("ainda não comprou");
+    if (melhoresFiltro) l.push("melhores clientes");
+    if (cidFiltro) l.push("cidade");
+    if (cicloSel.length) l.push(`ciclo (${cicloSel.length})`);
+    if (paradoSel.length) l.push(`parado (${paradoSel.length})`);
+    if (semCadFiltro) l.push("sem cadastro");
+    return l;
+  }, [periodoGlobal, prodFiltro, ncFiltro, melhoresFiltro, cidFiltro, cicloSel, paradoSel, semCadFiltro]);
+
+  // Limpa tudo de uma vez. Zera também as SELEÇÕES dos painéis (prodSel/cidSel), não só
+  // os filtros aplicados: senão o painel reabre com as caixas marcadas de um filtro que
+  // já não vale mais.
+  const limparFiltros = useCallback(() => {
+    setPeriodoPorColuna({});
+    setProdFiltro(null); setProdSel([]);
+    setNcFiltro(null); setNcAlvo(null); setNcLinhaSel(null);
+    setMelhoresFiltro(null);
+    setCidFiltro(null); setCidSel([]);
+    setCicloSel([]); setParadoSel([]); setSemCadFiltro(false);
+  }, []);
+
   // scroll infinito: perto do fim da coluna, libera mais um lote
   function aoRolarColuna(e: React.UIEvent<HTMLDivElement>, colKey: string, total: number) {
     const el = e.currentTarget;
@@ -1958,6 +2041,60 @@ export default function Page() {
               style={{ width: 150, height: 30, boxSizing: "border-box", padding: "0 10px", fontSize: 12, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}
             />
           )}
+          {/* TODOS OS FILTROS moram aqui dentro. Cada um mantém o próprio painel e a
+              própria lógica — o dropdown só deixou de espalhá-los pelo cabeçalho. As
+              AÇÕES (disparo em massa, Excel) ficam FORA de propósito: elas agem sobre
+              o resultado dos filtros, não são filtros. */}
+          <div style={{ position: "relative", display: "inline-flex" }}>
+            <button
+              onClick={() => setFiltrosAbertos((v) => !v)}
+              title={filtrosLigados.length ? `Filtros ativos: ${filtrosLigados.join(" · ")}` : "Abrir os filtros do board"}
+              style={{
+                padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
+                color: filtrosLigados.length ? "#fff" : RD.gray,
+                background: filtrosLigados.length ? RD.wine : RD.surface,
+                border: `1px solid ${filtrosLigados.length ? RD.wine : RD.border}`,
+                borderRadius: 8, cursor: "pointer", outline: "none",
+                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+              }}
+            >
+              Filtros{filtrosLigados.length ? ` (${filtrosLigados.length})` : ""}
+              <span style={{ fontSize: 10, opacity: 0.8 }}>▾</span>
+            </button>
+            {filtrosAbertos && (
+              <div style={{
+                position: "absolute", top: 34, left: 0, zIndex: 60, minWidth: 268,
+                background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10,
+                boxShadow: "0 8px 24px rgba(16,32,64,0.14)", padding: 12,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: RD.grayLight }}>Filtros do board</span>
+                  <div style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+                    {!!filtrosLigados.length && (
+                      <button
+                        onClick={limparFiltros}
+                        title="Desliga todos os filtros de uma vez"
+                        style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: RD.wine, background: "#fbeef4", border: `1px solid #e2c7d3`, borderRadius: 7, cursor: "pointer" }}
+                      >
+                        Limpar tudo
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setFiltrosAbertos(false)}
+                      style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 700, color: "#fff", background: "#475569", border: "1px solid #475569", borderRadius: 7, cursor: "pointer" }}
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+                {!!filtrosLigados.length && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+                    {filtrosLigados.map((f) => (
+                      <span key={f} style={{ fontSize: 10.5, fontWeight: 700, color: RD.wine, background: "#fbeef4", border: "1px solid #e2c7d3", borderRadius: 6, padding: "1px 7px", whiteSpace: "nowrap" }}>{f}</span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
           {(() => {
             // Dropdown de período: FECHADO mostra "Período: X" (curto); ABERTO tem o cabeçalho
             // "Mensagens a partir de:" + as opções. (select nativo não separa fechado x aberto.)
@@ -2493,6 +2630,10 @@ export default function Page() {
           >
             Sem cadastro{semCadTotal ? ` (${semCadTotal})` : ""}
           </button>
+                </div>
+              </div>
+            )}
+          </div>
           {sessao.role === "admin" && (
             <button
               onClick={() => { setMassaAberto(true); setMassaConfirmar(false); setMassaProg(null); }}
@@ -2839,6 +2980,7 @@ export default function Page() {
                         (p) => !msgsRaw.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim())
                       );
                       const msgsChrono = [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
+                      const selo = seloAtribuicao(c, vendMeta);
                       return (
                         <article
                           key={c.cliente_id}
@@ -2935,7 +3077,7 @@ export default function Page() {
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={c.cliente}>
                             {c.cliente}
                           </div>
-                          {((c.venda_valor != null || col.key === "pedido_emitido") || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo])) && (
+                          {((c.venda_valor != null || col.key === "pedido_emitido") || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo]) || selo) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
                               {(c.venda_valor != null || col.key === "pedido_emitido") && (
                                 <span
@@ -2955,6 +3097,14 @@ export default function Page() {
                                   style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, background: CICLO_LABEL[c.ciclo.tipo].bg, color: CICLO_LABEL[c.ciclo.tipo].cor, border: `1px solid ${CICLO_LABEL[c.ciclo.tipo].cor}44`, borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 800, letterSpacing: 0.2, cursor: "help" }}
                                 >
                                   {CICLO_LABEL[c.ciclo.tipo].label}{c.ciclo.acao === "LIGAR HOJE" ? " ·hoje" : ""}
+                                </span>
+                              )}
+                              {selo && (
+                                <span
+                                  title={selo.title}
+                                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", background: selo.bg, color: selo.cor, border: `1px solid ${selo.borda}`, borderRadius: 6, padding: "1px 6px", fontSize: 9.5, fontWeight: 700, letterSpacing: 0.2, cursor: "help", whiteSpace: "nowrap" }}
+                                >
+                                  {selo.texto}
                                 </span>
                               )}
                             </div>
