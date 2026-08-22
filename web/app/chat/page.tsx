@@ -477,6 +477,8 @@ export default function Chat() {
   const [puxando, setPuxando] = useState(false);
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
+  // progresso do envio em lote (várias fotos de uma vez)
+  const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
   const [contato, setContato] = useState<Contato | null>(null);
   const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
   // presença: cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta
@@ -932,33 +934,81 @@ export default function Chat() {
     pedacosRef.current = [];
   }
 
-  // envio de arquivo (foto, áudio, documento) pelo canal WhatsApp direto
-  async function enviarArquivo(file: File) {
-    if (!sel || enviandoArquivo) return;
+  // envio de arquivo (foto, áudio, documento) pelo canal WhatsApp direto.
+  //
+  // Vários de uma vez: a Cloud API manda UMA mídia por requisição, então a fila é
+  // nossa. SEQUENCIAL de propósito — em paralelo os arquivos chegariam fora de
+  // ordem no celular da cliente, que é justamente o que se espera preservado ao
+  // mandar cinco fotos do mesmo produto. Também mantém o consumo de cota previsível.
+  async function enviarArquivos(files: File[]) {
+    if (!sel || enviandoArquivo || !files.length) return;
+    const LIMITE_FILA = 30;
+    if (files.length > LIMITE_FILA) {
+      setAviso(`Máximo de ${LIMITE_FILA} arquivos por vez — selecione menos.`);
+      if (arquivoRef.current) arquivoRef.current.value = "";
+      return;
+    }
+    // guarda a conversa do começo: o lote demora, e trocar de conversa no meio
+    // não pode fazer o resto das fotos irem para outra pessoa.
+    const alvo = sel;
+    // a legenda digitada acompanha só o PRIMEIRO arquivo — repetir o mesmo texto
+    // em cada foto faria a cliente ler cinco vezes a mesma coisa.
+    const legenda = texto.trim();
     setEnviandoArquivo(true); setAviso(null);
+    setFila({ feito: 0, total: files.length });
+    const falhas: string[] = [];
+    let enviados = 0;
     try {
-      const fd = new FormData();
-      fd.set("cliente_id", sel.cliente_id);
-      fd.set("arquivo", file);
-      if (texto.trim()) fd.set("legenda", texto.trim());
-      const r = await fetch("/api/chat/enviar-midia", { method: "POST", body: fd });
-      const j = await r.json().catch(() => null);
-      if (!r.ok) {
-        setAviso(j?.foraDaJanela
-          ? "Fora da janela de 24h — envie um TEMPLATE para reabrir a conversa."
-          : (j?.error ?? `erro ${r.status}`));
-      } else {
-        setTexto("");
-        carregarThread(sel, true);
-        carregarLista();
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setFila({ feito: i, total: files.length });
+        try {
+          const fd = new FormData();
+          fd.set("cliente_id", alvo.cliente_id);
+          fd.set("arquivo", file);
+          if (i === 0 && legenda) fd.set("legenda", legenda);
+          const r = await fetch("/api/chat/enviar-midia", { method: "POST", body: fd });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) {
+            // janela fechada (422) e conversa ainda no RD (501) valem para a
+            // conversa inteira, não para este arquivo: insistir nos seguintes só
+            // repetiria o mesmo erro e gastaria cota à toa.
+            if (j?.foraDaJanela || r.status === 501) {
+              const restam = files.length - i;
+              setAviso((j?.foraDaJanela
+                ? "Fora da janela de 24h — envie um TEMPLATE para reabrir a conversa."
+                : (j?.error ?? `erro ${r.status}`)) + (restam > 1 ? ` (${restam} arquivos não enviados)` : ""));
+              break;
+            }
+            falhas.push(`${file.name}: ${j?.error ?? `erro ${r.status}`}`);
+          } else {
+            enviados++;
+            if (i === 0 && legenda) setTexto("");
+          }
+        } catch (e: any) {
+          falhas.push(`${file.name}: ${e?.message ?? e}`);
+        }
+        setFila({ feito: i + 1, total: files.length });
       }
-    } catch (e: any) {
-      setAviso(`Falha ao enviar arquivo: ${e?.message ?? e}`);
+      // falha de um arquivo não cala os outros: o aviso diz quantos ficaram para
+      // trás. Com um arquivo só (inclusive o áudio gravado) vale o erro cru — o
+      // nome do arquivo na frente seria ruído.
+      if (falhas.length) {
+        setAviso((atual) => atual ?? (files.length === 1
+          ? falhas[0].replace(/^[^:]*: /, "")
+          : `Não enviei ${falhas.length} de ${files.length}: ${falhas.slice(0, 3).join(" · ")}` +
+            (falhas.length > 3 ? " …" : "")));
+      }
     } finally {
       setEnviandoArquivo(false);
+      setFila(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
+      if (enviados) { carregarThread(alvo, true); carregarLista(); }
     }
   }
+
+  // um arquivo só (a gravação de áudio) — mesma fila, com um item
+  function enviarArquivo(file: File) { return enviarArquivos([file]); }
 
   /**
    * Quantos campos este template pede. Com o texto (cadastro nosso, 0090) a
@@ -2006,21 +2056,23 @@ export default function Chat() {
 
                 {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
                 <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
-                  {/* anexo: foto, áudio, documento — o texto digitado vira legenda */}
+                  {/* anexo: foto, áudio, documento — o texto digitado vira legenda
+                      da PRIMEIRA. `multiple`: dá para escolher várias fotos de uma vez */}
                   <input
                     ref={arquivoRef}
                     type="file"
+                    multiple
                     accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx"
                     style={{ display: "none" }}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarArquivo(f); }}
+                    onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) enviarArquivos(fs); }}
                   />
                   <button
                     onClick={() => arquivoRef.current?.click()}
                     disabled={enviandoArquivo || modoNota}
-                    title={modoNota ? "Nota interna não leva anexo" : "Anexar foto, áudio ou documento"}
-                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 17, opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
+                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    {enviandoArquivo ? "…" : "📎"}
+                    {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
                   {/* 🎤 gravar áudio — clica pra gravar, clica de novo pra enviar */}
                   <button
@@ -2044,6 +2096,16 @@ export default function Chat() {
                         style={{ background: "transparent", border: "none", color: M.gray, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
                         descartar
                       </button>
+                    </span>
+                  )}
+                  {/* lote em andamento: o número na tela é o que a cliente já
+                      recebeu, para ninguém achar que travou nem mandar de novo */}
+                  {fila && fila.total > 1 && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 7, alignSelf: "center", whiteSpace: "nowrap" }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 8, background: M.roxo }} />
+                      <b style={{ fontSize: 12.5, color: M.roxo, fontVariantNumeric: "tabular-nums" }}>
+                        enviando {Math.min(fila.feito + 1, fila.total)} de {fila.total}…
+                      </b>
                     </span>
                   )}
                   {/* ⚡ respostas rápidas — o mesmo que digitar `/` */}
