@@ -2330,9 +2330,23 @@ isso aqui espalharia aquela chave para mais um projeto sem ganho nenhum. Sem
 login no hub a rota devolve `307 → /login?proximo=/gestao-carteira`, então quem
 já está logado cai direto no módulo.
 
-Abre em aba nova (`target="_blank"`). Dentro do iframe do hub (§17), `_top`
-levaria o hub inteiro para lá; aba nova não custa o que o usuário estava fazendo
-no CRM e se comporta igual nos dois contextos.
+**Navega com `target="_top"`, não abre aba nova** (corrigido no mesmo dia, a
+pedido: o item tinha de se comportar como os demais do menu). Dentro do iframe
+do hub (§17) isso troca a aba interna do hub pela de carteira — que é
+exatamente o comportamento de qualquer outro item. Fora do iframe, navega a
+própria aba. Funciona porque o iframe do hub **não tem `sandbox`**
+(`packages/feature-crm-externo/src/CrmExternoFrame.tsx` traz só `allow=`); se um
+dia ganhar um, o link para de navegar **em silêncio** — sem erro no console.
+
+**Embutir o app dentro do CRM não é possível hoje**, e a razão é medida, não
+suposta: ele responde
+`Content-Security-Policy: frame-ancestors 'self' https://app.muranoprofessional.com.br`
+(`next.config.ts` do repo `gestao-de-carteira`, a partir de `NEXT_PUBLIC_HUB_ORIGIN`,
+que aceita **uma** origem). Para uma tela `/visoes-carteira` nossa seriam
+necessárias três coisas, nesta ordem: (1) aquele repo aceitar a origem do CRM;
+(2) a service_role do **murano-clientes-v2** na Vercel do CRM; (3) refazer aqui a
+ponte de SSO de token de uso único. O item (2) é o que pesa — espalha a chave do
+ERP para um terceiro projeto (a mesma preocupação da §10.7, item 5).
 
 ### 27.5 Arquivos
 

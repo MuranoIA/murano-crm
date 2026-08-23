@@ -1551,8 +1551,18 @@ export default function Page() {
                 PÁGINA DO HUB, não para o app: é o hub que tem a ponte de SSO — um token de uso
                 único emitido com a service_role da v2. Reimplementar isso aqui espalharia aquela
                 chave para mais um projeto sem ganho nenhum. Não confundir com Administração →
-                Gestão de carteira, que é OUTRA coisa: transferir contato de carteira no RD. */}
-            <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_blank" rel="noopener noreferrer" title="Segmentação da carteira do time IS — Top 30, recorrentes, consolidação e reativação (abre o módulo no murano-app)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Visões da Carteira<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
+                Gestão de carteira, que é OUTRA coisa: transferir contato de carteira no RD.
+
+                `_top` e não `_blank`: o CRM roda dentro do iframe do hub (§17), então navegação
+                de topo troca a aba interna do hub pela de carteira — que é como qualquer outro
+                item do menu se comporta, sem abrir janela. Fora do iframe, navega a própria aba.
+                Funciona porque o iframe do hub NÃO tem `sandbox`; se um dia ganhar, isto para
+                de navegar em silêncio.
+
+                Embutir o app aqui dentro não é opção hoje: ele responde
+                `frame-ancestors 'self' https://app.muranoprofessional.com.br`, ou seja, recusa
+                ser enquadrado por qualquer origem que não seja o hub. */}
+            <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" title="Segmentação da carteira do time IS — Top 30, recorrentes, consolidação e reativação (módulo do murano-app)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Visões da Carteira</a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
@@ -1769,7 +1779,7 @@ export default function Page() {
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
               <a href="/chat" onClick={fecha} style={row}>💬 Chat</a>
               <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
-              <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Visões da Carteira ↗</a>
+              <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" onClick={fecha} style={row}>Visões da Carteira</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
                 <a href="/analises" onClick={fecha} style={row}>Análises</a>
