@@ -2255,3 +2255,90 @@ nada é enviado e o servidor põe o nome sozinho, exatamente como antes.
 | `web/app/api/admin/disparo-massa/route.ts` | GET (templates, carteiras, extrato) · POST `previa` (público + motivos de corte) |
 | `web/app/admin/page.tsx` | `DisparoMassaAba` (montar → confirmar → enviar), dentro do `TemplatesAba` |
 | `web/app/page.tsx` | **removido**: botão, modal, estado e `enviarMassa` (só deleções) |
+
+## 27. Limpeza do menu do board (23/08/2026)
+
+Pedido do usuário, item a item, na mesma sessão da §26. Nada disso é migration —
+é só onde as coisas ficam.
+
+### 27.1 O que saiu do board
+
+| Saiu | Era | Foi para |
+|---|---|---|
+| pastilha **Templates 2733** | `vw_templates_diario` | /admin → Templates → **📊 Envios** |
+| pastilha **Automáticos 94 ▾** | `vw_templates_auto_diario` + menu de catálogo | idem (o número) |
+| **Visões** | `/visoes` | — obsoleto |
+| **Consulta Clientes** | link externo | — obsoleto |
+| **Catálogo** | `/catalogos` | — obsoleto |
+| **Base de Conhecimento** | link externo | — obsoleto |
+| **🗂️ Carteira** | `/carteira` | /admin, na barra de abas |
+| — | — | entrou **Visões da Carteira** (§27.4) |
+
+**As rotas `/visoes` e `/catalogos` continuam existindo**, só não têm mais link.
+Apagá-las é outra decisão, não tomada aqui. O botão **"C"** dos cards, que abre
+a Consulta Clientes por `codcli`, também continua: o pedido foi sobre o menu.
+
+### 27.2 Os dois números enganavam, e agora têm nome
+
+Ficavam no cabeçalho sem nada que dissesse o que eram, e o rótulo mentia —
+**nada ali é "automático"**:
+
+| pastilha | view | o que É |
+|---|---|---|
+| Templates | `vw_templates_diario` | mensagens `tipo='template'` de operador: **todo** template entregue, tenha saído daqui ou do painel do RD |
+| Automáticos | `vw_templates_auto_diario` | linhas de `disparos_template`: só os que **saíram do CRM** |
+
+A tela nova mostra os dois **e a diferença**, que é o número mais útil e o que
+ninguém calculava: quanto a equipe ainda dispara **pelo painel do RD**. Medido
+em 23/08, no mês: 2.733 chegaram · 94 pelo CRM · **2.639 pelo painel**. Por
+consultora, milene 846/22 e thiago 268/0 — ou seja, a adoção do CRM para
+template ainda é marginal, e isso não estava visível em lugar nenhum.
+
+A diferença é chão zero de propósito: as duas contagens vêm de fontes distintas
+(espelho de mensagens × log de disparos) e o ETL pode não ter trazido ainda a
+mensagem de um disparo recente. "−3 pelo painel do RD" seria pior que zero.
+
+### 27.3 O que morreu junto com o menu **Automáticos** — e por que tudo bem
+
+Aquele dropdown não era só um número. Levava embora:
+
+1. **A escolha "por navegador" do template do botão do card.** Era **inerte**:
+   só valia para template com `rd_template_id`, e não há nenhum cadastrado
+   (§26.3) — a chamada sempre caía no padrão do sistema. O botão do card agora
+   manda `cliente_id` e mais nada, que é literalmente o que já acontecia.
+2. **O CRUD dos ponteiros do RD em `crm_templates`** (cadastrar, editar, ★
+   padrão, ativar/desativar). O `/api/templates` continua no ar e o admin
+   continua marcando ★ e desativando **templates da Cloud** em Administração →
+   Templates. O que ficou sem tela é **criar ponteiro do RD** — caminho do canal
+   que está sendo aposentado. Se voltar a ser preciso, é um formulário na aba
+   Templates, não uma volta do dropdown.
+
+### 27.4 "Visões da Carteira" ≠ "Gestão de carteira" — dois módulos, nomes quase iguais
+
+Isto é a armadilha desta seção:
+
+| No menu | O que é | Onde vive |
+|---|---|---|
+| **Visões da Carteira** (menu do board) | segmentação da carteira do time IS — Top 30, recorrentes, consolidação, reativação | app externo `MuranoIA/gestao-de-carteira`, sobre o **murano-clientes-v2** |
+| **🗂️ Gestão de carteira** (/admin) | transferir contato de carteira **no RD Conversas**, em massa (§25) | este repo, `/carteira` |
+
+O link do menu aponta para **a página do hub** (`app.muranoprofessional.com.br/gestao-carteira`),
+**não** para o app. Motivo: quem tem a ponte de SSO é o hub — ele emite um token
+de uso único com a **service_role do murano-clientes-v2**
+(`packages/feature-carteira/src/carteiraSso.ts` no `murano-app`). Reimplementar
+isso aqui espalharia aquela chave para mais um projeto sem ganho nenhum. Sem
+login no hub a rota devolve `307 → /login?proximo=/gestao-carteira`, então quem
+já está logado cai direto no módulo.
+
+Abre em aba nova (`target="_blank"`). Dentro do iframe do hub (§17), `_top`
+levaria o hub inteiro para lá; aba nova não custa o que o usuário estava fazendo
+no CRM e se comporta igual nos dois contextos.
+
+### 27.5 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `web/app/api/admin/envios-template/route.ts` | os dois contadores, por carteira e por período |
+| `web/app/admin/page.tsx` | `EnviosAba`, terceira posição da chave; link 🗂️ Gestão de carteira na barra |
+| `web/app/page.tsx` | menos as duas pastilhas, o dropdown e 4 itens de menu; mais Visões da Carteira |
+| `web/app/carteira/page.tsx` | o "voltar" aponta para /admin, não mais para o board |

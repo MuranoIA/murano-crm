@@ -651,7 +651,7 @@ function Moldura({ aba, setAba, esconder, children }: {
     <div style={{ minHeight: "100vh", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "wrap" }}>
-        <Link href="/" style={{ color: M.gray, textDecoration: "none", fontSize: 13, fontWeight: 600 }}>← Board</Link>
+        <Link href="/admin" style={{ color: M.gray, textDecoration: "none", fontSize: 13, fontWeight: 600 }}>← Administração</Link>
         <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.3, color: M.wine }}>🗂️ Gestão de Carteira</div>
         {!esconder && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
