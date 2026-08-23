@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { aplicarVariaveis } from "../../lib/templateVars";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
 // Supabase: quem entra no sistema, quais são os vendedores, o horário de
-// atendimento e as linhas de WhatsApp.
+// atendimento e as linhas de WhatsApp. Também o cadastro de templates do
+// WhatsApp e o disparo em massa, que é onde uma campanha é montada.
 //
-// O que NÃO entra aqui, de propósito: templates, metas, música dos parabéns e
-// respostas rápidas já têm tela onde são usados (board e chat). Trazer tudo
-// para cá afastaria a configuração do lugar onde ela faz sentido — o admin que
-// quer trocar o template está olhando o board, não este painel.
+// O que NÃO entra aqui, de propósito: metas, música dos parabéns e respostas
+// rápidas já têm tela onde são usadas (board e chat). Trazer tudo para cá
+// afastaria a configuração do lugar onde ela faz sentido.
 //
 // Identidade Murano, mesma paleta de /chat e /chat/indicadores.
 const M = {
@@ -19,13 +20,14 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "disparo-massa" | "paginas-legais";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
   { id: "horario", rotulo: "🕗 Horário" },
   { id: "linhas", rotulo: "📞 Linhas" },
   { id: "templates-whatsapp", rotulo: "📨 Templates" },
+  { id: "disparo-massa", rotulo: "📣 Disparo em massa" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -432,6 +434,14 @@ export default function Admin() {
           avisoMeta={dados.aviso ?? null}
           recarregar={() => carregar("templates-whatsapp")}
           avisar={(t, m) => (t === "erro" ? setErro(m) : setOk(m))}
+        />
+      )}
+
+      {aba === "disparo-massa" && dados?.["disparo-massa"] && (
+        <DisparoMassaAba
+          cfg={dados["disparo-massa"]}
+          avisar={(t, m) => (t === "erro" ? setErro(m) : setOk(m))}
+          recarregar={() => carregar("disparo-massa")}
         />
       )}
 
@@ -958,6 +968,455 @@ const OBRIGATORIOS_ROTULO: Record<string, boolean> = {
 };
 
 // --- moldura ---------------------------------------------------------------
+// --- disparo em massa (campanha) -------------------------------------------
+// O público é DECLARADO aqui — carteira, etapa, tempo parado — e conferido no
+// servidor antes de qualquer envio (/api/admin/disparo-massa). Antes disto era
+// um botão no board, e o público saía dos filtros que estivessem ligados na
+// tela naquele momento: ação cara e irreversível amarrada ao estado de uma tela
+// de trabalho, sem extrato do que tinha sido feito.
+//
+// O laço de envio mora no NAVEGADOR de propósito: a cota do RD é de ~48
+// chamadas/min e é compartilhada com o ETL (§14.5), então centenas de envios
+// não cabem no tempo de uma rota da Vercel. O ETL é pausado antes e retomado no
+// fim, como o board já fazia.
+const CUSTO_TEMPLATE = 0.43; // R$ por template disparado
+const moedaBR = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+const ETAPAS: { key: string; rotulo: string; ajuda: string }[] = [
+  { key: "ociosos", rotulo: "Ociosos", ajuda: "cliente falou por último há +24h — só um template reabre a conversa" },
+  { key: "tentativa_contato", rotulo: "Tentativa de contato", ajuda: "template enviado, ainda sem resposta" },
+  { key: "prospeccao", rotulo: "Lista de prospecção", ajuda: "da carteira no WinThor, nunca teve conversa" },
+  { key: "negociacao", rotulo: "Negociação", ajuda: "conversa ativa nas últimas 24h — normalmente NÃO se dispara aqui" },
+  { key: "pedido_emitido", rotulo: "Pedido emitido", ajuda: "comprou no mês corrente" },
+];
+const CORTE_ROTULO: Record<string, string> = {
+  sem_contato: "sem contato no RD Conversas",
+  sem_telefone: "sem telefone",
+  descartado: "na lixeira",
+  disparo_recente: "receberam template há pouco",
+  ativo_demais: "parados há menos dias que o pedido",
+  canal: "atendem pelo RD (o template é da Cloud)",
+};
+
+function DisparoMassaAba({ cfg, avisar, recarregar }: {
+  cfg: any; avisar: (t: "erro" | "ok", m: string) => void; recarregar: () => Promise<void>;
+}) {
+  const templates: any[] = cfg.templates ?? [];
+  // Começa no "Padrão do sistema" quando ele existe: era o default do modal do
+  // board e é o único que alcança a base do RD. O ★ padrão da tabela vale para o
+  // botão do card e para o chat, não para uma campanha.
+  const padrao = templates.find((t) => t.id === 0) ?? templates.find((t) => t.padrao) ?? templates[0] ?? null;
+
+  const [tplId, setTplId] = useState<number | null>(padrao?.id ?? null);
+  const [extras, setExtras] = useState<string[]>([]);
+  const [carteiras, setCarteiras] = useState<string[]>([]);
+  const [etapas, setEtapas] = useState<string[]>(["ociosos", "tentativa_contato"]);
+  const [diasMin, setDiasMin] = useState(0);
+  const [diasRecontato, setDiasRecontato] = useState(4);
+  const [limite, setLimite] = useState(20);
+
+  const [previa, setPrevia] = useState<any>(null);
+  const [carregandoPrevia, setCarregandoPrevia] = useState(false);
+  const [fase, setFase] = useState<"montar" | "confirmar" | "enviando" | "fim">("montar");
+  const [prog, setProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
+  const [falhas, setFalhas] = useState<{ cliente: string; erro: string }[]>([]);
+
+  const tpl = templates.find((t) => t.id === tplId) ?? null;
+  // {{1}} é sempre o primeiro nome da cliente; do {{2}} em diante quem preenche
+  // é o admin, e o valor vale para a campanha inteira (é o que a tela do RD faz)
+  const canalTpl: string | null = tpl?.canal ?? null;
+  const camposExtras: number[] = (tpl?.campos ?? []).filter((n: number) => n > 1);
+  const faltaPreencher = camposExtras.some((_, i) => !String(extras[i] ?? "").trim());
+
+  // a prévia é recalculada sozinha a cada mudança de filtro, com respiro: são
+  // ~4 mil linhas da vw_funil por chamada, não é para disparar a cada tecla
+  useEffect(() => {
+    let vivo = true;
+    const t = setTimeout(async () => {
+      setCarregandoPrevia(true);
+      try {
+        const r = await fetch("/api/admin/disparo-massa", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            acao: "previa",
+            filtros: { carteiras, etapas, diasMin, diasRecontato, limite, canal: canalTpl },
+          }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!vivo) return;
+        if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); setPrevia(null); return; }
+        setPrevia(j);
+      } catch (e: any) {
+        if (vivo) avisar("erro", e?.message ?? String(e));
+      } finally {
+        if (vivo) setCarregandoPrevia(false);
+      }
+    }, 400);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [carteiras, etapas, diasMin, diasRecontato, limite, canalTpl, avisar]);
+
+  const alternar = (lista: string[], set: (v: string[]) => void, v: string) =>
+    set(lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v]);
+
+  const selecionados: any[] = previa?.selecionados ?? [];
+  const custo = selecionados.length * CUSTO_TEMPLATE;
+
+  async function enviar() {
+    setFase("enviando");
+    setFalhas([]);
+    // PAUSA o sync de fundo para liberar a cota do RD durante o envio; retoma no
+    // finally, com retry — para nunca deixar pausado à toa.
+    let pausei = false;
+    try {
+      const rp = await fetch("/api/sync-etl", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "pausar" }),
+      });
+      pausei = rp.ok;
+      if (pausei) {
+        // o servidor já espera os runners pararem (~18s). Se a cota ainda não
+        // liberou, dá mais um respiro — enviar contra um run ativo é 429 na certa.
+        const jp = await rp.json().catch(() => null);
+        if (jp && jp.cotaLivre === false) await new Promise((res) => setTimeout(res, 12_000));
+      }
+    } catch {}
+
+    let ok = 0, ruins = 0;
+    const detalhe: { cliente: string; erro: string }[] = [];
+    const total = selecionados.length;
+    setProg({ feitos: 0, ok: 0, falhas: 0, total });
+    try {
+      for (let i = 0; i < total; i++) {
+        const alvo = selecionados[i];
+        let erro = "";
+        try {
+          const r = await fetch("/api/send-template", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cliente_id: alvo.envio_id,
+              ...(tpl?.envio_id ? { template_id: tpl.envio_id } : {}),
+              // só quando o template pede mais de um campo: com um campo só, o
+              // servidor põe o primeiro nome sozinho — que é o de sempre
+              ...(camposExtras.length
+                ? { variaveis: [alvo.primeiro_nome, ...camposExtras.map((_, k) => extras[k])] }
+                : {}),
+            }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && !j.error) ok++;
+          else { ruins++; erro = j.error || `HTTP ${r.status}`; }
+        } catch (e: any) { ruins++; erro = e?.message || "erro de rede"; }
+        if (erro) detalhe.push({ cliente: alvo.cliente, erro });
+        setProg({ feitos: i + 1, ok, falhas: ruins, total });
+        if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
+      }
+    } finally {
+      if (pausei) {
+        for (let t = 0; t < 4; t++) {
+          try {
+            const rr = await fetch("/api/sync-etl", {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "retomar" }),
+            });
+            if (rr.ok) break;
+          } catch {}
+          await new Promise((res) => setTimeout(res, 1500));
+        }
+      }
+      setFalhas(detalhe);
+      setFase("fim");
+      await recarregar();
+    }
+  }
+
+  // --- envio em andamento / concluído ---------------------------------------
+  if (fase === "enviando" || fase === "fim") {
+    const p = prog ?? { feitos: 0, ok: 0, falhas: 0, total: 0 };
+    return (
+      <Bloco titulo={fase === "enviando" ? "Enviando…" : p.falhas ? "Concluído com falhas" : "Concluído"}>
+        <div style={{ fontSize: 13, color: M.gray, marginBottom: 10, fontWeight: 600 }}>
+          {p.feitos}/{p.total} · ✔ {p.ok} enviados · ✖ {p.falhas} falharam
+        </div>
+        <div style={{ height: 10, background: M.bg, borderRadius: 6, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${p.total ? (p.feitos / p.total) * 100 : 0}%`, background: M.roxo, transition: "width .2s" }} />
+        </div>
+        {fase === "enviando" && (
+          <div style={{ fontSize: 12, color: M.muted, marginTop: 10, lineHeight: 1.5 }}>
+            Não feche esta aba até terminar. A sincronização de fundo está pausada (libera a cota do RD)
+            e volta sozinha no fim.
+          </div>
+        )}
+        {fase === "fim" && falhas.length > 0 && (
+          <div style={{ marginTop: 12, background: "rgba(179,38,30,.06)", border: "1px solid rgba(179,38,30,.25)", borderRadius: 8, padding: "9px 12px", maxHeight: 190, overflow: "auto" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#b3261e", marginBottom: 6 }}>Motivos das falhas</div>
+            {Object.entries(falhas.reduce((acc, f) => { acc[f.erro] = (acc[f.erro] ?? 0) + 1; return acc; }, {} as Record<string, number>))
+              .sort((a, b) => b[1] - a[1])
+              .map(([erro, n]) => (
+                <div key={erro} style={{ fontSize: 12.5, color: M.ink, lineHeight: 1.55 }}><b>{n}×</b> {erro}</div>
+              ))}
+          </div>
+        )}
+        {fase === "fim" && (
+          <div style={{ marginTop: 16 }}>
+            <Botao cor={M.wine} onClick={() => { setFase("montar"); setProg(null); setFalhas([]); }}>
+              Montar outro disparo
+            </Botao>
+          </div>
+        )}
+      </Bloco>
+    );
+  }
+
+  // --- confirmação -----------------------------------------------------------
+  if (fase === "confirmar") {
+    return (
+      <Bloco titulo="Confirmar disparo">
+        <div style={{ fontSize: 13.5, color: M.ink, lineHeight: 1.6 }}>
+          Vai enviar <b>{selecionados.length}</b> templates <b>reais no WhatsApp</b> — custo aproximado{" "}
+          <b style={{ color: M.verde }}>{moedaBR(custo)}</b>. Isso é <b>irreversível</b>.
+        </div>
+        <div style={{ fontSize: 12.5, color: M.gray, marginTop: 8 }}>
+          Template: <b>{tpl?.nome ?? "padrão do sistema"}</b>
+          {tpl?.canal === "cloud" ? " · WhatsApp Cloud" : " · RD Conversas"}
+        </div>
+        {tpl?.corpo && (
+          <div style={{ marginTop: 10, padding: "10px 12px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, fontSize: 13, color: M.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+            {aplicarVariaveis(tpl.corpo, [selecionados[0]?.primeiro_nome ?? "Maria", ...extras])}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: M.muted, marginTop: 10, maxHeight: 90, overflow: "auto", lineHeight: 1.55 }}>
+          {selecionados.slice(0, 12).map((s) => s.cliente).join(" · ")}
+          {selecionados.length > 12 ? ` +${selecionados.length - 12}` : ""}
+        </div>
+        <div style={{ display: "flex", gap: 9, marginTop: 18 }}>
+          <BotaoLeve onClick={() => setFase("montar")}>Voltar</BotaoLeve>
+          <Botao cor={M.wine} onClick={enviar}>Confirmar e enviar {selecionados.length}</Botao>
+        </div>
+      </Bloco>
+    );
+  }
+
+  // --- montagem --------------------------------------------------------------
+  return (
+    <>
+      <Bloco
+        titulo="1. Template"
+        ajuda={<>
+          O texto vem do cadastro da aba <b>Templates</b> — é o que a cliente vai ler. Template da Cloud
+          só entra nesta lista depois de <b>aprovado pela Meta</b>.
+        </>}
+      >
+        {templates.length === 0 ? (
+          <Recado tipo="aviso">
+            Nenhum template disponível. Cadastre um na aba <b>📨 Templates</b> e espere a aprovação da Meta.
+          </Recado>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {templates.map((t) => (
+              <label key={t.id}
+                style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", cursor: "pointer",
+                  borderRadius: 10, background: tplId === t.id ? M.roxoSoft : M.surface,
+                  border: `1px solid ${tplId === t.id ? M.roxo : M.border}` }}>
+                <input type="radio" name="tpl" checked={tplId === t.id}
+                  onChange={() => { setTplId(t.id); setExtras([]); }} style={{ marginTop: 3 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: M.ink }}>
+                    {t.nome}
+                    {t.padrao && <span style={{ fontSize: 11, color: M.roxo, marginLeft: 6 }}>★ padrão</span>}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: M.muted, marginLeft: 8 }}>
+                      {t.canal === "cloud" ? "WhatsApp Cloud" : "RD Conversas"}
+                    </span>
+                    {t.tem_imagem && <span style={{ fontSize: 11, color: M.muted, marginLeft: 6 }}>· com imagem</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: M.gray, marginTop: 3, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {t.corpo ?? <i>{t.nota ?? "o texto deste template mora no painel do RD Conversas"}</i>}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {camposExtras.length > 0 && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${M.bg}` }}>
+            <div style={{ fontSize: 12.5, color: M.gray, marginBottom: 10, lineHeight: 1.55 }}>
+              Este template tem campos a preencher. O primeiro é sempre o <b>primeiro nome da cliente</b>;
+              os demais valem para <b>a campanha inteira</b>.
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {camposExtras.map((n, i) => (
+                <div key={n} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>{`campo ${n}`}</label>
+                  <input value={extras[i] ?? ""} onChange={(e) => {
+                    const v = [...extras]; v[i] = e.target.value; setExtras(v);
+                  }} style={{ ...inputBase, width: 260 }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Bloco>
+
+      <Bloco
+        titulo="2. Quem recebe"
+        ajuda="O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."
+      >
+        <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Carteiras</span></div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+          {(cfg.carteiras ?? []).map((c: any) => {
+            const on = carteiras.includes(c.slug);
+            return (
+              <button key={c.slug} onClick={() => alternar(carteiras, setCarteiras, c.slug)}
+                style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? (c.cor ?? M.roxo) : M.bg,
+                  border: `1px solid ${on ? (c.cor ?? M.roxo) : M.border}` }}>
+                {c.slug}
+              </button>
+            );
+          })}
+          {carteiras.length > 0 && <BotaoLeve onClick={() => setCarteiras([])}>limpar</BotaoLeve>}
+        </div>
+
+        <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Etapas do funil</span></div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16 }}>
+          {ETAPAS.map((e) => {
+            const on = etapas.includes(e.key);
+            return (
+              <button key={e.key} onClick={() => alternar(etapas, setEtapas, e.key)} title={e.ajuda}
+                style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                  border: `1px solid ${on ? M.roxo : M.border}` }}>
+                {e.rotulo}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Parado há pelo menos</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <input type="number" min={0} max={365} value={diasMin}
+                onChange={(e) => setDiasMin(Math.max(0, Number(e.target.value) || 0))}
+                style={{ ...inputBase, width: 80 }} />
+              <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Não repetir template por</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <input type="number" min={0} max={60} value={diasRecontato}
+                onChange={(e) => setDiasRecontato(Math.min(60, Math.max(0, Number(e.target.value) || 0)))}
+                style={{ ...inputBase, width: 80 }} />
+              <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Quantidade a enviar</label>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {[10, 20, 30, 50, 100, 200].map((n) => (
+                <button key={n} onClick={() => setLimite(n)}
+                  style={{ minWidth: 42, padding: "6px 0", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                    borderRadius: 7, color: limite === n ? "#fff" : M.gray, background: limite === n ? M.roxo : M.bg,
+                    border: `1px solid ${limite === n ? M.roxo : M.border}` }}>{n}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Bloco>
+
+      <Bloco
+        titulo="3. Prévia"
+        ajuda="Havendo mais elegíveis que a quantidade pedida, vão os mais prioritários — urgência do ciclo de compra, tempo parado e ticket."
+      >
+        {carregandoPrevia && <p style={{ fontSize: 13, color: M.gray }}>Conferindo o público…</p>}
+        {!carregandoPrevia && previa && (
+          <>
+            <div style={{ fontSize: 14.5, color: M.ink, lineHeight: 1.6 }}>
+              <b>{previa.total}</b> clientes elegíveis · vão receber <b>{selecionados.length}</b> ·{" "}
+              <b style={{ color: M.verde }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total{" "}
+              <b style={{ color: M.verde }}>{moedaBR(custo)}</b>
+            </div>
+
+            {tpl?.canal === "cloud" && !cfg.envioPadraoCloud && (
+              <div style={{ marginTop: 12 }}>
+                <Recado tipo="aviso">
+                  Este template é da <b>WhatsApp Cloud</b>, então só alcança conversas que já correm por lá —
+                  {" "}<b>{previa.cortes?.canal ?? 0}</b> contato(s) ficaram de fora por atenderem pelo RD
+                  Conversas. Para falar com a base do RD, escolha um template do RD.
+                </Recado>
+              </div>
+            )}
+
+            {Object.entries(previa.cortes ?? {}).filter(([, n]) => Number(n) > 0).length > 0 && (
+              <div style={{ fontSize: 12, color: M.muted, marginTop: 8, lineHeight: 1.6 }}>
+                Ficaram de fora:{" "}
+                {Object.entries(previa.cortes)
+                  .filter(([, n]) => Number(n) > 0)
+                  .map(([k, n]) => `${n} ${CORTE_ROTULO[k] ?? k}`)
+                  .join(" · ")}
+              </div>
+            )}
+
+            {selecionados.length > 0 && (
+              <div style={{ marginTop: 14, maxHeight: 260, overflow: "auto", border: `1px solid ${M.border}`, borderRadius: 10 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>
+                    <th style={th}>Cliente</th><th style={th}>Carteira</th>
+                    <th style={th}>Etapa</th><th style={th}>Parado</th><th style={th}>Canal</th>
+                  </tr></thead>
+                  <tbody>
+                    {selecionados.map((s: any) => (
+                      <tr key={s.envio_id}>
+                        <td style={{ ...td, fontWeight: 600 }}>{s.cliente}</td>
+                        <td style={td}>{s.vendedor ?? "—"}</td>
+                        <td style={td}>{ETAPAS.find((e) => e.key === s.etapa)?.rotulo ?? s.etapa}</td>
+                        <td style={td}>{s.dias == null ? "nunca falou" : `${s.dias} d`}</td>
+                        <td style={td}>{s.canal === "whatsapp" ? "Cloud" : "RD"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18, flexWrap: "wrap" }}>
+              <Botao cor={M.wine} disabled={!selecionados.length || !tpl || faltaPreencher}
+                onClick={() => setFase("confirmar")}>
+                Revisar ({selecionados.length})
+              </Botao>
+              {faltaPreencher && <span style={{ fontSize: 12.5, color: "#8a6100" }}>preencha os campos do template acima</span>}
+              {!tpl && <span style={{ fontSize: 12.5, color: "#8a6100" }}>escolha um template</span>}
+            </div>
+          </>
+        )}
+      </Bloco>
+
+      <Bloco titulo="Disparos dos últimos 30 dias" ajuda="Cada linha é um dia e um template — o extrato que o board não guardava.">
+        {(cfg.historico ?? []).length === 0 ? (
+          <p style={{ fontSize: 13, color: M.gray }}>Nenhum disparo registrado no período.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+              <thead><tr>
+                <th style={th}>Dia</th><th style={th}>Template</th><th style={th}>Carteiras</th><th style={th}>Enviados</th>
+              </tr></thead>
+              <tbody>
+                {cfg.historico.map((h: any) => (
+                  <tr key={`${h.dia}|${h.template_id}`}>
+                    <td style={td}>{h.dia.split("-").reverse().join("/")}</td>
+                    <td style={{ ...td, fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{h.template_id}</td>
+                    <td style={td}>{h.vendedores.join(", ") || "—"}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{h.enviados}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Bloco>
+    </>
+  );
+}
+
 function Moldura({ aba, setAba, esconderAbas, children }: {
   aba: Aba; setAba: (a: Aba) => void; esconderAbas?: boolean; children: React.ReactNode;
 }) {

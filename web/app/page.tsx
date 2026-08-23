@@ -328,7 +328,7 @@ export default function Page() {
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
   const [pedidoCards, setPedidoCards] = useState<Card[]>([]);
   const [enviando, setEnviando] = useState<string | null>(null);
-  // templates do botão do card / disparo em massa (crm_templates). O "padrão do momento"
+  // templates do botão do card (crm_templates). O "padrão do momento"
   // (qual o botão do card usa por escolha rápida) é local ao navegador (localStorage); já o
   // "padrão do sistema" (t.padrao, usado quando ninguém escolheu nada — disparo em massa e
   // fallback do servidor) é da tabela, editável por qualquer admin, sem redeploy.
@@ -456,18 +456,11 @@ export default function Page() {
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
   // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
-  // AÇÕES (disparo em massa, Excel), que não filtram nada — misturar as duas coisas
-  // numa barra só era o que deixava o cabeçalho ilegível.
+  // AÇÕES (baixar o Excel), que não filtram nada — misturar as duas coisas numa
+  // barra só era o que deixava o cabeçalho ilegível. O disparo em massa saiu do
+  // board: virou uma campanha declarada em Administração → Disparo em massa.
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [paradoPainel, setParadoPainel] = useState(false);
-  // disparo em massa
-  const [massaAberto, setMassaAberto] = useState(false);
-  const [massaQtd, setMassaQtd] = useState(20);
-  const [massaTemplate, setMassaTemplate] = useState(""); // "" = template de recontato (padrão do server)
-  const [massaEnviando, setMassaEnviando] = useState(false);
-  const [massaConfirmar, setMassaConfirmar] = useState(false);
-  const [massaProg, setMassaProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
-  const [massaFalhas, setMassaFalhas] = useState<{ cliente: string; erro: string }[]>([]);
   // lixeira (descartar cliente final arrastando o card)
   const [arrastando, setArrastando] = useState<Card | null>(null);
   const [sobreLixeira, setSobreLixeira] = useState(false);
@@ -1323,33 +1316,6 @@ export default function Page() {
   const paradoTotal = useMemo(() => baseVend.filter(matchParado).length, [baseVend, paradoSel, disparos]);
   const cicloTotal = useMemo(() => baseVend.filter(matchCiclo).length, [baseVend, cicloSel]);
 
-  // === DISPARO EM MASSA: elegíveis vêm dos filtros ATUAIS do board (visiveis), ranqueados
-  // por score (ciclo urgente + tempo parado + ticket), excluindo quem recebeu template nos
-  // últimos DIAS_RECONTATO (anti-spam) e quem não tem contato no RD/telefone.
-  const rdIdEnvio = (c: Card): string | null => {
-    if (c.rd_cliente_id) return c.rd_cliente_id;
-    const id = c.cliente_id;
-    return typeof id === "string" && !id.includes(":") ? id : null;
-  };
-  const scoreMassa = (c: Card): number => {
-    const dias = diasInativo(maisRecenteISO(c.ultima_atividade, disparos[c.cliente_id]));
-    const parado = dias === Infinity ? 40 : Math.min(dias, 60);
-    return (c.ciclo?.score ?? 0) + parado * 0.6 + Math.min((c.venda_valor ?? 0) / 100, 30);
-  };
-  const massaElegiveis = useMemo(() => {
-    const out: { c: Card; rd: string; score: number }[] = [];
-    for (const c of visiveis) {
-      const rd = rdIdEnvio(c);
-      if (!rd || !c.telefone) continue;
-      const ud = disparos[rd] ?? disparos[c.cliente_id];
-      if (ud && diasInativo(ud) < DIAS_RECONTATO) continue; // já disparado há pouco
-      out.push({ c, rd, score: scoreMassa(c) });
-    }
-    return out.sort((a, b) => b.score - a.score);
-  }, [visiveis, disparos]);
-  const massaSel = useMemo(() => massaElegiveis.slice(0, massaQtd), [massaElegiveis, massaQtd]);
-  const CUSTO_TEMPLATE = 0.43; // R$ por template disparado
-  const massaCusto = massaSel.length * CUSTO_TEMPLATE;
   // descrição detalhada dos filtros ativos (pro modal explicar exatamente o que está aplicado)
   const filtrosAtivosTxt = useMemo(() => {
     const parts: string[] = [];
@@ -1381,60 +1347,6 @@ export default function Page() {
     if (melhoresFiltro) parts.push(`Melhores clientes: top ${melhoresFiltro.qtd} (ticket médio 3 meses)`);
     return parts;
   }, [filtro, busca, cicloSel, paradoSel, prodFiltro, ncFiltro, produtos, cidFiltro, cidades, melhoresFiltro]);
-  async function enviarMassa() {
-    setMassaEnviando(true);
-    setMassaFalhas([]);
-    // PAUSA o sync de fundo pra liberar a cota do RD durante o envio (best-effort; só admin
-    // consegue — vendedor cai no 403 e segue com o throttle). Retoma no finally, com retry.
-    let pausei = false;
-    try {
-      const rp = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "pausar" }) });
-      pausei = rp.ok;
-      if (pausei) {
-        setSyncPausado(true);
-        // o servidor já espera os runners pararem (até ~18s). Se a cota ainda não
-        // liberou, dá mais um respiro — enviar contra um run ativo é 429 na certa.
-        const jp = await rp.json().catch(() => null);
-        if (jp && jp.cotaLivre === false) await new Promise((res) => setTimeout(res, 12_000));
-      }
-    } catch {}
-    let ok = 0, falhas = 0;
-    const detalhe: { cliente: string; erro: string }[] = [];
-    const total = massaSel.length;
-    setMassaProg({ feitos: 0, ok: 0, falhas: 0, total });
-    try {
-      for (let i = 0; i < total; i++) {
-        let erro = "";
-        try {
-          const r = await fetch("/api/send-template", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cliente_id: massaSel[i].rd, ...(massaTemplate ? { template_id: massaTemplate } : {}) }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (r.ok && !j.error) ok++;
-          else { falhas++; erro = j.error || `HTTP ${r.status}`; }
-        } catch (e: any) { falhas++; erro = e?.message || "erro de rede"; }
-        if (erro) detalhe.push({ cliente: massaSel[i].c.cliente, erro });
-        setMassaProg({ feitos: i + 1, ok, falhas, total });
-        if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
-      }
-    } finally {
-      // RETOMA o sync (só se fomos nós que pausamos), com retry — pra nunca deixar pausado à toa
-      if (pausei) {
-        for (let t = 0; t < 4; t++) {
-          try {
-            const rr = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "retomar" }) });
-            if (rr.ok) { setSyncPausado(false); break; }
-          } catch {}
-          await new Promise((res) => setTimeout(res, 1500));
-        }
-      }
-      setMassaFalhas(detalhe);
-      setMassaEnviando(false);
-      await load();
-    }
-  }
-
   // === LIXEIRA: descartar (arrastar pra lixeira), listar, restaurar ===
   async function descartarCard(c: Card) {
     setArrastando(null); setSobreLixeira(false);
@@ -2043,8 +1955,8 @@ export default function Page() {
           )}
           {/* TODOS OS FILTROS moram aqui dentro. Cada um mantém o próprio painel e a
               própria lógica — o dropdown só deixou de espalhá-los pelo cabeçalho. As
-              AÇÕES (disparo em massa, Excel) ficam FORA de propósito: elas agem sobre
-              o resultado dos filtros, não são filtros. */}
+              AÇÕES (baixar o Excel) ficam FORA de propósito: elas agem sobre o
+              resultado dos filtros, não são filtros. */}
           <div style={{ position: "relative", display: "inline-flex" }}>
             <button
               onClick={() => setFiltrosAbertos((v) => !v)}
@@ -2634,20 +2546,6 @@ export default function Page() {
               </div>
             )}
           </div>
-          {sessao.role === "admin" && (
-            <button
-              onClick={() => { setMassaAberto(true); setMassaConfirmar(false); setMassaProg(null); }}
-              title="Disparar template em massa para os clientes que casam com os filtros atuais do board"
-              style={{
-                padding: "0 12px", height: 30, boxSizing: "border-box", fontSize: 11.5, fontWeight: 700,
-                color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`,
-                borderRadius: 8, cursor: "pointer", outline: "none",
-                display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-              }}
-            >
-              📣 Disparo massa
-            </button>
-          )}
           <button
             onClick={baixarRelatorio}
             disabled={baixando}
@@ -3511,99 +3409,6 @@ export default function Page() {
                 <button onClick={() => removerMusica()} disabled={!!musicaEnviando} title="Apaga a música e volta ao som sintetizado" style={{ padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#b3261e", background: "transparent", border: "1px solid rgba(179,38,30,.35)", borderRadius: 8, cursor: musicaEnviando ? "wait" : "pointer" }}>Voltar ao som padrão</button>
               )}
               <button onClick={() => setMusicaModal(false)} disabled={!!musicaEnviando} style={{ marginLeft: "auto", padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: `1px solid ${RD.wine}`, borderRadius: 8, cursor: "pointer" }}>Fechar</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {massaAberto && (
-        <div
-          onClick={() => !massaEnviando && setMassaAberto(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(16,32,64,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-        >
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 470, maxWidth: "100%", background: RD.surface, borderRadius: 14, boxShadow: "0 20px 60px rgba(16,32,64,.35)", overflow: "hidden" }}>
-            <div style={{ padding: "15px 20px", borderBottom: `1px solid ${RD.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 15, fontWeight: 800, color: RD.wine }}>📣 Disparo em massa</span>
-              {!massaEnviando && <span onClick={() => setMassaAberto(false)} title="Fechar" style={{ cursor: "pointer", color: RD.gray, fontSize: 22, lineHeight: 1 }}>×</span>}
-            </div>
-            <div style={{ padding: 20 }}>
-              {massaProg && massaProg.feitos >= massaProg.total && !massaEnviando ? (
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: massaProg.falhas ? "#b45309" : "#15803d", marginBottom: 8 }}>{massaProg.falhas ? "⚠️ Concluído com falhas" : "✅ Concluído"}</div>
-                  <div style={{ fontSize: 13, color: RD.navy }}>{massaProg.ok} enviados{massaProg.falhas ? `, ${massaProg.falhas} falharam` : ""} de {massaProg.total}.</div>
-                  {massaFalhas.length > 0 && (
-                    <div style={{ marginTop: 10, background: "#fdecec", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 10px", maxHeight: 150, overflow: "auto" }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: "#b91c1c", marginBottom: 6 }}>Motivos das falhas:</div>
-                      {Object.entries(massaFalhas.reduce((acc, f) => { acc[f.erro] = (acc[f.erro] ?? 0) + 1; return acc; }, {} as Record<string, number>))
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([erro, n]) => (
-                          <div key={erro} style={{ fontSize: 11.5, color: RD.navy, lineHeight: 1.5 }}><b>{n}×</b> {erro}</div>
-                        ))}
-                    </div>
-                  )}
-                  <button onClick={() => setMassaAberto(false)} style={{ marginTop: 16, padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: "pointer" }}>Fechar</button>
-                </div>
-              ) : massaEnviando ? (
-                <div>
-                  <div style={{ fontSize: 13, color: RD.navy, marginBottom: 10, fontWeight: 600 }}>Enviando… {massaProg?.feitos ?? 0}/{massaProg?.total ?? 0} &nbsp;(✔ {massaProg?.ok ?? 0} · ✖ {massaProg?.falhas ?? 0})</div>
-                  <div style={{ height: 10, background: RD.bg, borderRadius: 6, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${massaProg && massaProg.total ? (massaProg.feitos / massaProg.total) * 100 : 0}%`, background: RD.wine, transition: "width .2s" }} />
-                  </div>
-                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8 }}>Não feche esta aba até terminar. A sincronização de fundo é pausada durante o envio (libera a cota do RD) e retomada no fim.</div>
-                </div>
-              ) : massaConfirmar ? (
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: RD.navy, marginBottom: 8 }}>Confirmar disparo</div>
-                  <div style={{ fontSize: 13, color: RD.navy, lineHeight: 1.5 }}>
-                    Vai enviar <b>{massaSel.length}</b> templates <b>reais no WhatsApp</b> — custo <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>. Isso é irreversível.
-                  </div>
-                  <div style={{ fontSize: 11.5, color: RD.grayLight, marginTop: 8, maxHeight: 84, overflow: "auto", lineHeight: 1.5 }}>
-                    {massaSel.slice(0, 10).map((s) => s.c.cliente).join(" · ")}{massaSel.length > 10 ? ` +${massaSel.length - 10}` : ""}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-                    <button onClick={() => setMassaConfirmar(false)} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Voltar</button>
-                    <button onClick={enviarMassa} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: "pointer" }}>Confirmar e enviar {massaSel.length}</button>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontSize: 12.5, color: RD.gray, marginBottom: 14, lineHeight: 1.5 }}>
-                    <b>{massaElegiveis.length}</b> clientes elegíveis, com base nos <b>filtros ativos</b> do board:
-                    {filtrosAtivosTxt.length === 0 ? (
-                      <div style={{ color: RD.grayLight, marginTop: 3 }}>Nenhum filtro específico — toda a carteira visível.</div>
-                    ) : (
-                      <ul style={{ margin: "5px 0 0", paddingLeft: 18 }}>
-                        {filtrosAtivosTxt.map((f, i) => <li key={i} style={{ color: RD.navy, marginBottom: 1 }}>{f}</li>)}
-                      </ul>
-                    )}
-                    <div style={{ color: RD.grayLight, marginTop: 6, fontSize: 11.5 }}>Elegível = com contato no RD, com telefone e sem template nos últimos {DIAS_RECONTATO} dias.</div>
-                  </div>
-                  <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Template</label>
-                  <select value={massaTemplate} onChange={(e) => setMassaTemplate(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", margin: "6px 0 14px", fontSize: 12.5, color: RD.navy, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none" }}>
-                    {templates.length === 0 && <option value="">Template padrão do sistema</option>}
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.rd_template_id ?? ""}>
-                        {t.nome} — ID {t.rd_template_id || "(usa o padrão do sistema)"}{t.padrao ? " ★" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <label style={{ fontSize: 11.5, fontWeight: 700, color: RD.gray }}>Quantidade</label>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 12px" }}>
-                    {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((n) => (
-                      <button key={n} onClick={() => setMassaQtd(n)} style={{ minWidth: 38, padding: "6px 0", fontSize: 12.5, fontWeight: 700, cursor: "pointer", borderRadius: 7, border: `1px solid ${massaQtd === n ? RD.wine : RD.border}`, background: massaQtd === n ? RD.wine : RD.surface, color: massaQtd === n ? "#fff" : RD.navy }}>{n}</button>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 13.5, color: RD.navy }}>
-                    Enviará <b>{massaSel.length}</b>{massaSel.length < massaQtd ? <span style={{ color: RD.grayLight, fontSize: 12 }}> (só há {massaElegiveis.length} elegíveis)</span> : ""} · <b style={{ color: "#15803d" }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total <b style={{ color: "#15803d" }}>{moedaBR(massaCusto)}</b>
-                  </div>
-                  <div style={{ fontSize: 11, color: RD.grayLight, marginTop: 8, lineHeight: 1.5 }}>
-                    Havendo mais elegíveis que a quantidade, escolhemos os <b>mais prioritários</b> (ciclo urgente + tempo parado + ticket).
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-                    <button onClick={() => setMassaAberto(false)} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: RD.gray, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 8, cursor: "pointer" }}>Cancelar</button>
-                    <button disabled={massaSel.length === 0} onClick={() => setMassaConfirmar(true)} style={{ padding: "8px 18px", fontSize: 13, fontWeight: 700, color: "#fff", background: RD.wine, border: "none", borderRadius: 8, cursor: massaSel.length === 0 ? "default" : "pointer", opacity: massaSel.length === 0 ? 0.5 : 1 }}>Revisar ({massaSel.length})</button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
