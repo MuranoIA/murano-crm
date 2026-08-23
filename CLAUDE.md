@@ -2167,3 +2167,91 @@ deu certo esconderia justamente o que o supervisor precisa ver.
   Sem remoção pela API — tirar pelo painel do RD, se incomodar.
 - Reconciliação das trocas feitas direto no painel (§25.2).
 - Investigar o salto de 23 → 432 divergências de carteira (§25.3).
+
+## 26. Disparo em massa saiu do board e virou campanha em /admin (23/08/2026)
+
+O botão **📣 Disparo massa** do cabeçalho do board foi removido. No lugar,
+`/admin` → aba **📨 Templates** → chave **📣 Disparo em massa**, com rota
+`/api/admin/disparo-massa`. Nenhuma migration: o público sai das views que já
+existem.
+
+**Não é aba de topo, e isso foi pedido explicitamente.** Cadastrar template e
+disparar em massa são o mesmo assunto visto de dois lados — quem monta uma
+campanha está escolhendo entre os templates que acabou de cadastrar. Duas abas
+no topo obrigariam a ir e voltar só para comparar o texto. A chave fica dentro
+da aba Templates, e a config do disparo (templates prontos, carteiras, extrato)
+só é buscada quando alguém abre a seção: quem veio cadastrar não paga por ela.
+
+### 26.1 O que mudou de fato
+
+O botão do board não era só um botão: o público **saía dos filtros ligados na
+tela naquele momento** (`visiveis`). Isso amarrava uma ação cara e irreversível
+ao estado de uma tela de trabalho — montava-se um público de 500 pessoas mexendo
+em filtro de card, e depois não havia como repetir nem explicar o que tinha sido
+feito. Agora o público é **declarado**: carteira, etapa do funil, tempo parado,
+janela de anti-repetição e quantidade.
+
+| | antes (board) | agora (/admin) |
+|---|---|---|
+| público | filtros ligados na tela | declarado em campos, conferido no servidor |
+| quem é atingido | contagem, sem nomes | tabela com nome, carteira, etapa, dias parado e canal |
+| por que alguém ficou de fora | não dizia | contagem por motivo (sem contato no RD, sem telefone, lixeira, template recente, ativo demais, canal) |
+| texto que a cliente lê | não aparecia | corpo do template na tela, com as variáveis preenchidas |
+| histórico | nenhum | extrato de 30 dias por dia+template a partir de `disparos_template` |
+
+### 26.2 O que NÃO mudou, de propósito
+
+- **O laço de envio continua no navegador**, um `POST /api/send-template` por
+  cliente, com pausa do ETL antes, `1800 ms` entre um e outro e retomada com
+  retry no fim. Mover para o servidor era tentador e está errado: a cota do RD é
+  de ~48 chamadas/min e **compartilhada com o ETL** (§14.5), então centenas de
+  envios não cabem no tempo de uma rota da Vercel. A rota nova escolhe e explica
+  o público; quem manda é a tela, mostrando a falha de cada cliente.
+- `/api/send-template` **não foi tocado**. O ranqueamento (urgência do ciclo +
+  tempo parado + ticket), o corte de anti-repetição e o `CUSTO_TEMPLATE = 0,43`
+  são os mesmos — só mudaram de lugar.
+- A régua de permissão continua sendo `podeAdmin` (via `guardaAdmin`).
+
+### 26.3 A opção "Padrão do sistema" tem de existir — e quase ficou de fora
+
+`crm_templates` hoje só tem linhas `canal='cloud'`; **nenhum template do RD está
+cadastrado**. A lista de escolha, montada só da tabela, deixaria a tela incapaz
+de fazer o que o board fazia: as campanhas reais de julho (517 num dia) saíram
+com o id `6a5fa7dd77ea3f90cdfc28de`, que vem da env `TEMPLATE_RECONTATO_ID` —
+é o caminho do `select value=""` do modal antigo, que mandava **nenhum**
+`template_id` e deixava o servidor resolver.
+
+Por isso a rota injeta uma entrada sintética `id: 0` — "Padrão do sistema",
+canal `rd`, `envio_id: null` — e ela é a **seleção inicial**. O `★ padrão` da
+tabela vale para o botão do card e para o chat, não para uma campanha.
+
+### 26.4 Template da Cloud não alcança a base do RD — a tela recorta e diz
+
+Medido em 23/08/2026: **3.838 contatos elegíveis, 1 na Cloud**. Escolher um
+template da Cloud e disparar para a base do RD cairia no ramo do RD com um nome
+que o painel deles não conhece — falha certa, **uma por cliente**. Então, quando
+o template escolhido é da Cloud, o público é recortado para quem já conversa por
+lá, e a tela diz quantos ficaram de fora e por quê.
+
+O canal sai de `vw_chat_linha_cliente` (§23.4), que é barata: só mensagem da
+Cloud carrega `linha_id`. Quem **não** está nela não tem mensagem `wamid`
+nenhuma, então `canalDeResposta` dá `rd` com certeza — o erro possível é só para
+o lado conservador. Com `WHATSAPP_ENVIO_PADRAO=true` (Fase C) o recorte some
+sozinho.
+
+### 26.5 Campos do template ({{2}} em diante) valem para a campanha
+
+O template padrão de hoje (`tudo_bem_com_voce`) tem `{{1}}` e `{{2}}`, e
+`/api/send-template` **recusa** chamador sem `variaveis` quando há mais de um
+campo — o disparo em massa do board bateria nisso. A tela pede os campos de
+`{{2}}` em diante **uma vez, para a campanha inteira** (é o que a tela do RD
+faz); `{{1}}` continua sendo o primeiro nome de cada cliente. Com um campo só,
+nada é enviado e o servidor põe o nome sozinho, exatamente como antes.
+
+### 26.6 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `web/app/api/admin/disparo-massa/route.ts` | GET (templates, carteiras, extrato) · POST `previa` (público + motivos de corte) |
+| `web/app/admin/page.tsx` | `DisparoMassaAba` (montar → confirmar → enviar), dentro do `TemplatesAba` |
+| `web/app/page.tsx` | **removido**: botão, modal, estado e `enviarMassa` (só deleções) |
