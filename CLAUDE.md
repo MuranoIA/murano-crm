@@ -2171,8 +2171,16 @@ deu certo esconderia justamente o que o supervisor precisa ver.
 ## 26. Disparo em massa saiu do board e virou campanha em /admin (23/08/2026)
 
 O botão **📣 Disparo massa** do cabeçalho do board foi removido. No lugar,
-`/admin` → aba **📣 Disparo em massa**, com rota `/api/admin/disparo-massa`.
-Nenhuma migration: o público sai das views que já existem.
+`/admin` → aba **📨 Templates** → chave **📣 Disparo em massa**, com rota
+`/api/admin/disparo-massa`. Nenhuma migration: o público sai das views que já
+existem.
+
+**Não é aba de topo, e isso foi pedido explicitamente.** Cadastrar template e
+disparar em massa são o mesmo assunto visto de dois lados — quem monta uma
+campanha está escolhendo entre os templates que acabou de cadastrar. Duas abas
+no topo obrigariam a ir e voltar só para comparar o texto. A chave fica dentro
+da aba Templates, e a config do disparo (templates prontos, carteiras, extrato)
+só é buscada quando alguém abre a seção: quem veio cadastrar não paga por ela.
 
 ### 26.1 O que mudou de fato
 
@@ -2245,5 +2253,5 @@ nada é enviado e o servidor põe o nome sozinho, exatamente como antes.
 | Arquivo | Papel |
 |---|---|
 | `web/app/api/admin/disparo-massa/route.ts` | GET (templates, carteiras, extrato) · POST `previa` (público + motivos de corte) |
-| `web/app/admin/page.tsx` | aba `disparo-massa` e `DisparoMassaAba` (montar → confirmar → enviar) |
+| `web/app/admin/page.tsx` | `DisparoMassaAba` (montar → confirmar → enviar), dentro do `TemplatesAba` |
 | `web/app/page.tsx` | **removido**: botão, modal, estado e `enviarMassa` (só deleções) |

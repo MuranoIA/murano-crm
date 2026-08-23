@@ -20,14 +20,13 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "disparo-massa" | "paginas-legais";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
   { id: "horario", rotulo: "🕗 Horário" },
   { id: "linhas", rotulo: "📞 Linhas" },
   { id: "templates-whatsapp", rotulo: "📨 Templates" },
-  { id: "disparo-massa", rotulo: "📣 Disparo em massa" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -134,6 +133,13 @@ export default function Admin() {
   }, []);
 
   useEffect(() => { carregar(aba); }, [aba, carregar]);
+
+  // Identidade estável de propósito: `avisar` entra nas dependências do efeito
+  // que busca a prévia do disparo, que varre a vw_funil inteira. Recriado a
+  // cada render, faria a prévia ser refeita sem nada ter mudado.
+  const avisar = useCallback((t: "erro" | "ok", m: string) => {
+    if (t === "erro") setErro(m); else setOk(m);
+  }, []);
 
   async function enviar(qual: Aba, metodo: "POST" | "PATCH" | "PUT", corpo: any, sucesso: string) {
     setErro(null); setOk(null);
@@ -433,15 +439,7 @@ export default function Admin() {
           templates={dados["templates-whatsapp"]}
           avisoMeta={dados.aviso ?? null}
           recarregar={() => carregar("templates-whatsapp")}
-          avisar={(t, m) => (t === "erro" ? setErro(m) : setOk(m))}
-        />
-      )}
-
-      {aba === "disparo-massa" && dados?.["disparo-massa"] && (
-        <DisparoMassaAba
-          cfg={dados["disparo-massa"]}
-          avisar={(t, m) => (t === "erro" ? setErro(m) : setOk(m))}
-          recarregar={() => carregar("disparo-massa")}
+          avisar={avisar}
         />
       )}
 
@@ -623,6 +621,16 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   templates: any[]; avisoMeta: string | null;
   recarregar: () => Promise<void>; avisar: (t: "erro" | "ok", m: string) => void;
 }) {
+  // Cadastrar template e disparar em massa são o mesmo assunto visto de dois
+  // lados — quem monta uma campanha está escolhendo entre os templates que
+  // acabou de cadastrar. Por isso dividem uma aba só, com esta chavinha, em vez
+  // de duas abas no topo que obrigariam a ir e voltar para comparar o texto.
+  const [vista, setVista] = useState<"cadastro" | "disparo">("cadastro");
+  // a config do disparo (templates prontos p/ envio, carteiras, extrato) só é
+  // buscada quando alguém abre a seção — não custa nada a quem veio cadastrar
+  const [cfgDisparo, setCfgDisparo] = useState<any>(null);
+  const [carregandoDisparo, setCarregandoDisparo] = useState(false);
+
   const [f, setF] = useState<any>({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
   const [imagem, setImagem] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -688,8 +696,47 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
     setTimeout(() => { el?.focus(); el?.setSelectionRange(pos + marca.length, pos + marca.length); }, 0);
   };
 
+  const carregarDisparo = useCallback(async () => {
+    setCarregandoDisparo(true);
+    try {
+      const r = await fetch("/api/admin/disparo-massa", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      setCfgDisparo(j["disparo-massa"]);
+    } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
+    finally { setCarregandoDisparo(false); }
+  }, [avisar]);
+
+  useEffect(() => { if (vista === "disparo" && !cfgDisparo) carregarDisparo(); }, [vista, cfgDisparo, carregarDisparo]);
+
+  const chave = (
+    <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
+      {([["cadastro", "📨 Templates cadastrados"], ["disparo", "📣 Disparo em massa"]] as const).map(([v, r]) => (
+        <button key={v} onClick={() => setVista(v)}
+          style={{ padding: "7px 15px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
+            color: vista === v ? "#fff" : M.gray, background: vista === v ? M.wine : M.surface,
+            border: `1px solid ${vista === v ? M.wine : M.border}` }}>
+          {r}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (vista === "disparo") {
+    return (
+      <>
+        {chave}
+        {carregandoDisparo && !cfgDisparo && <p style={{ fontSize: 13, color: M.gray }}>Carregando…</p>}
+        {cfgDisparo && (
+          <DisparoMassaAba cfg={cfgDisparo} avisar={avisar} recarregar={carregarDisparo} />
+        )}
+      </>
+    );
+  }
+
   return (
     <>
+      {chave}
       <Bloco
         titulo="Criar template"
         ajuda={<>
@@ -969,6 +1016,10 @@ const OBRIGATORIOS_ROTULO: Record<string, boolean> = {
 
 // --- moldura ---------------------------------------------------------------
 // --- disparo em massa (campanha) -------------------------------------------
+// Mora DENTRO da aba Templates, na chave lá de cima: quem monta uma campanha
+// está escolhendo entre os templates que acabou de cadastrar, e separar as duas
+// coisas em abas de topo obrigaria a ir e voltar só para comparar o texto.
+//
 // O público é DECLARADO aqui — carteira, etapa, tempo parado — e conferido no
 // servidor antes de qualquer envio (/api/admin/disparo-massa). Antes disto era
 // um botão no board, e o público saía dos filtros que estivessem ligados na
@@ -1200,13 +1251,14 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       <Bloco
         titulo="1. Template"
         ajuda={<>
-          O texto vem do cadastro da aba <b>Templates</b> — é o que a cliente vai ler. Template da Cloud
-          só entra nesta lista depois de <b>aprovado pela Meta</b>.
+          O texto vem do cadastro ao lado, em <b>Templates cadastrados</b> — é o que a cliente vai
+          ler. Template da Cloud só entra nesta lista depois de <b>aprovado pela Meta</b>.
         </>}
       >
         {templates.length === 0 ? (
           <Recado tipo="aviso">
-            Nenhum template disponível. Cadastre um na aba <b>📨 Templates</b> e espere a aprovação da Meta.
+            Nenhum template disponível. Cadastre um em <b>📨 Templates cadastrados</b>, aqui ao lado,
+            e espere a aprovação da Meta.
           </Recado>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
