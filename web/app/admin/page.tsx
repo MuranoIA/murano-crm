@@ -625,11 +625,12 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   // lados — quem monta uma campanha está escolhendo entre os templates que
   // acabou de cadastrar. Por isso dividem uma aba só, com esta chavinha, em vez
   // de duas abas no topo que obrigariam a ir e voltar para comparar o texto.
-  const [vista, setVista] = useState<"cadastro" | "disparo">("cadastro");
+  const [vista, setVista] = useState<"cadastro" | "disparo" | "envios">("cadastro");
   // a config do disparo (templates prontos p/ envio, carteiras, extrato) só é
   // buscada quando alguém abre a seção — não custa nada a quem veio cadastrar
   const [cfgDisparo, setCfgDisparo] = useState<any>(null);
   const [carregandoDisparo, setCarregandoDisparo] = useState(false);
+  const [cfgEnvios, setCfgEnvios] = useState<any>(null);
 
   const [f, setF] = useState<any>({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
   const [imagem, setImagem] = useState<File | null>(null);
@@ -709,9 +710,20 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
 
   useEffect(() => { if (vista === "disparo" && !cfgDisparo) carregarDisparo(); }, [vista, cfgDisparo, carregarDisparo]);
 
+  const carregarEnvios = useCallback(async () => {
+    try {
+      const r = await fetch("/api/admin/envios-template", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      setCfgEnvios(j["envios-template"]);
+    } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
+  }, [avisar]);
+
+  useEffect(() => { if (vista === "envios" && !cfgEnvios) carregarEnvios(); }, [vista, cfgEnvios, carregarEnvios]);
+
   const chave = (
     <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
-      {([["cadastro", "📨 Templates cadastrados"], ["disparo", "📣 Disparo em massa"]] as const).map(([v, r]) => (
+      {([["cadastro", "📨 Templates cadastrados"], ["disparo", "📣 Disparo em massa"], ["envios", "📊 Envios"]] as const).map(([v, r]) => (
         <button key={v} onClick={() => setVista(v)}
           style={{ padding: "7px 15px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
             color: vista === v ? "#fff" : M.gray, background: vista === v ? M.wine : M.surface,
@@ -721,6 +733,16 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
       ))}
     </div>
   );
+
+  if (vista === "envios") {
+    return (
+      <>
+        {chave}
+        {!cfgEnvios && <p style={{ fontSize: 13, color: M.gray }}>Carregando…</p>}
+        {cfgEnvios && <EnviosAba dados={cfgEnvios} />}
+      </>
+    );
+  }
 
   if (vista === "disparo") {
     return (
@@ -1469,6 +1491,117 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   );
 }
 
+// --- envios de template (as duas pastilhas que viviam no board) -------------
+// "Templates 2733" e "Automáticos 94" ficavam no cabeçalho do board sem nada
+// que dissesse o que eram — e os rótulos enganavam: nada ali é automático.
+// Aqui os dois números aparecem com nome próprio, lado a lado, e a diferença
+// entre eles (o que a equipe disparou pelo painel do RD, fora do CRM) deixa de
+// ser uma subtração que ninguém fazia.
+const PERIODOS = [
+  { k: "hoje", r: "Hoje" }, { k: "ontem", r: "Ontem" }, { k: "semana", r: "7 dias" },
+  { k: "quinzena", r: "15 dias" }, { k: "mes", r: "Mês" },
+] as const;
+
+function EnviosAba({ dados }: { dados: any }) {
+  const [per, setPer] = useState<(typeof PERIODOS)[number]["k"]>("mes");
+  const linhas: any[] = dados.linhas ?? [];
+  const tot = dados.total ?? { saiu: {}, crm: {} };
+  const saiuTot = Number(tot.saiu?.[per] ?? 0);
+  const crmTot = Number(tot.crm?.[per] ?? 0);
+  // Pode dar negativo: as duas contagens vêm de fontes diferentes (o espelho de
+  // mensagens e o nosso log de disparos), e o ETL pode ainda não ter trazido a
+  // mensagem de um disparo recém-feito. Mostrar "-3 pelo painel do RD" seria
+  // pior que mostrar zero e dizer que os números se encontram com o tempo.
+  const fora = Math.max(0, saiuTot - crmTot);
+
+  const num = (v: number, cor: string) => (
+    <b style={{ fontSize: 27, fontWeight: 800, color: cor, lineHeight: 1.1 }}>{v.toLocaleString("pt-BR")}</b>
+  );
+
+  return (
+    <>
+      <Bloco
+        titulo="Templates que saíram"
+        ajuda={<>
+          Template é a mensagem que <b>reabre uma conversa</b> passadas as 24 h — a única forma de
+          falar com quem parou de responder, e a única que tem <b>custo por envio</b>. Estes números
+          existem para responder duas perguntas: <i>quantos saíram</i> e <i>por onde</i>.
+        </>}
+      >
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
+          {PERIODOS.map((p) => (
+            <button key={p.k} onClick={() => setPer(p.k)}
+              style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
+                color: per === p.k ? "#fff" : M.gray, background: per === p.k ? M.roxo : M.bg,
+                border: `1px solid ${per === p.k ? M.roxo : M.border}` }}>
+              {p.r}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
+            {num(saiuTot, M.wine)}
+            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>chegaram à cliente</div>
+            <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
+              Todo template entregue na conversa, tenha saído daqui ou do painel do RD. Contado nas
+              mensagens que o sistema tem espelhadas.
+            </div>
+          </div>
+          <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
+            {num(crmTot, M.roxo)}
+            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>saíram por este CRM</div>
+            <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
+              Botão do card, chat e disparo em massa. É a parte que este sistema registra por
+              cliente, e a única que aparece no extrato do disparo em massa.
+            </div>
+          </div>
+          <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
+            {num(fora, M.laranja)}
+            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>pelo painel do RD</div>
+            <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
+              A diferença entre os dois: o que a equipe disparou fora daqui. Quanto menor, mais a
+              operação já está acontecendo dentro do CRM.
+            </div>
+          </div>
+        </div>
+      </Bloco>
+
+      <Bloco titulo="Por consultora" ajuda="Mesmo período escolhido acima. A carteira é a do contato, não quem clicou.">
+        {linhas.length === 0 ? (
+          <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Nenhum template no período.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 460 }}>
+              <thead><tr>
+                <th style={th}>Carteira</th>
+                <th style={th}>Chegaram</th>
+                <th style={th}>Por este CRM</th>
+                <th style={th}>Pelo painel do RD</th>
+              </tr></thead>
+              <tbody>
+                {[...linhas]
+                  .sort((a, b) => Number(b.saiu?.[per] ?? 0) - Number(a.saiu?.[per] ?? 0))
+                  .map((l) => {
+                    const s = Number(l.saiu?.[per] ?? 0), c = Number(l.crm?.[per] ?? 0);
+                    return (
+                      <tr key={l.vendedor}>
+                        <td style={{ ...td, fontWeight: 600 }}>{l.vendedor}</td>
+                        <td style={td}>{s}</td>
+                        <td style={td}>{c}</td>
+                        <td style={{ ...td, color: s - c > 0 ? M.laranja : M.muted }}>{Math.max(0, s - c)}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Bloco>
+    </>
+  );
+}
+
 function Moldura({ aba, setAba, esconderAbas, children }: {
   aba: Aba; setAba: (a: Aba) => void; esconderAbas?: boolean; children: React.ReactNode;
 }) {
@@ -1488,6 +1621,15 @@ function Moldura({ aba, setAba, esconderAbas, children }: {
                 {a.rotulo}
               </button>
             ))}
+            {/* Gestão de carteira saiu do menu do board e passou a morar aqui. É LINK, não
+                aba: /carteira é uma tela própria de 700 linhas que já funciona, e transformá-la
+                em aba seria desmontá-la sem nenhum ganho para quem usa. */}
+            <Link href="/carteira"
+              title="Transferir contatos entre carteiras no RD Conversas, em massa"
+              style={{ padding: "6px 13px", fontSize: 12.5, fontWeight: 700, borderRadius: 8, textDecoration: "none",
+                color: M.gray, background: M.bg, border: `1px solid ${M.border}` }}>
+              🗂️ Gestão de carteira
+            </Link>
           </div>
         )}
       </div>

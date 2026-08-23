@@ -314,9 +314,6 @@ export default function Page() {
   };
 
   const [cards, setCards] = useState<Card[]>([]);
-  type TplTot = { hoje: number; ontem: number; semana: number; quinzena: number; mes: number };
-  const [templatesTotais, setTemplatesTotais] = useState<Record<string, TplTot>>({});
-  const [templatesAutoTotais, setTemplatesAutoTotais] = useState<Record<string, TplTot>>({});
   const [disparos, setDisparos] = useState<Record<string, string>>({});
   // cores dos vendedores vindas da carteira_config (via API) — pra vendedor novo não exigir código
   const [vendCores, setVendCores] = useState<Record<string, string>>({});
@@ -328,24 +325,6 @@ export default function Page() {
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
   const [pedidoCards, setPedidoCards] = useState<Card[]>([]);
   const [enviando, setEnviando] = useState<string | null>(null);
-  // templates do botão do card (crm_templates). O "padrão do momento"
-  // (qual o botão do card usa por escolha rápida) é local ao navegador (localStorage); já o
-  // "padrão do sistema" (t.padrao, usado quando ninguém escolheu nada — disparo em massa e
-  // fallback do servidor) é da tabela, editável por qualquer admin, sem redeploy.
-  const [templates, setTemplates] = useState<{ id: number; nome: string; rd_template_id: string | null; padrao: boolean }[]>([]);
-  // catálogo completo (admin, inclui inativos) — id/nome/rd_template_id/ativo/padrao/criado_em
-  // direto da crm_templates, carregado ao abrir o menu Automáticos.
-  const [templatesCatalogo, setTemplatesCatalogo] = useState<{ id: number; nome: string; rd_template_id: string | null; ativo: boolean; padrao: boolean; criado_em: string }[] | null>(null);
-  const [templatePadraoId, setTemplatePadraoId] = useState<number | null>(null);
-  const [tplMenuAberto, setTplMenuAberto] = useState(false);
-  const [addTplAberto, setAddTplAberto] = useState(false);
-  const [novoTplNome, setNovoTplNome] = useState("");
-  const [novoTplRd, setNovoTplRd] = useState("");
-  const [salvandoTpl, setSalvandoTpl] = useState(false);
-  const [editandoTplId, setEditandoTplId] = useState<number | null>(null);
-  const [editTplNome, setEditTplNome] = useState("");
-  const [editTplRd, setEditTplRd] = useState("");
-  const [salvandoEdicaoTpl, setSalvandoEdicaoTpl] = useState(false);
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
@@ -491,8 +470,6 @@ export default function Page() {
       if (j.error) { setErro(j.error); return; }
       setErro("");
       setCards(j.cards ?? []);
-      setTemplatesTotais(j.templatesTotais ?? {});
-      setTemplatesAutoTotais(j.templatesAutoTotais ?? {});
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
@@ -512,12 +489,15 @@ export default function Page() {
     // dispara direto ao clicar (sem confirmação); o botão já desativa após enviar
     setEnviando(clienteId);
     try {
-      // usa o template padrão escolhido (se tiver rd_template_id; senão o server usa o default)
-      const tpl = templates.find((t) => t.id === templatePadraoId);
+      // Sem template_id: o servidor resolve pelo padrão do sistema (crm_templates.padrao
+      // e, no ramo do RD, o TEMPLATE_RECONTATO_ID). A escolha "por navegador" que existia
+      // no menu Automáticos saiu junto com ele — e já era inerte, porque só valia para
+      // template com rd_template_id, e não há nenhum cadastrado. Quem quiser trocar o
+      // padrão faz em Administração → Templates, que vale para todo mundo.
       const r = await fetch("/api/send-template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: clienteId, ...(tpl?.rd_template_id ? { template_id: tpl.rd_template_id } : {}) }),
+        body: JSON.stringify({ cliente_id: clienteId }),
       });
       // lê como texto e tenta JSON — evita "Unexpected end of JSON input" em corpo vazio
       const txt = await r.text();
@@ -743,77 +723,6 @@ export default function Page() {
     } catch (e: any) {
       setMusicaMsg({ ok: false, texto: "Falha: " + (e?.message ?? e) });
     } finally { setMusicaEnviando(""); }
-  }
-
-  // escolhe o template padrão do momento (por navegador do vendedor)
-  const escolherTemplate = (id: number) => {
-    setTemplatePadraoId(id);
-    try { localStorage.setItem("crm_template_padrao", String(id)); } catch {}
-  };
-  // admin cadastra um novo template (nome + rd_template_id da API do RD; vazio = padrão do server)
-  async function salvarTemplate() {
-    const nome = novoTplNome.trim();
-    if (!nome) return;
-    setSalvandoTpl(true);
-    try {
-      const r = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome, rd_template_id: novoTplRd.trim() }) });
-      const j = await r.json();
-      if (!r.ok) { alert("Não foi possível cadastrar o template: " + (j?.error ?? r.status)); return; }
-      escolherTemplate(j.template.id);
-      setNovoTplNome(""); setNovoTplRd(""); setAddTplAberto(false);
-      await recarregarTemplates();
-    } catch (e: any) { alert("Erro ao cadastrar: " + (e?.message ?? e)); }
-    finally { setSalvandoTpl(false); }
-  }
-  function iniciarEdicaoTemplate(t: { id: number; nome: string; rd_template_id: string | null }) {
-    setEditandoTplId(t.id); setEditTplNome(t.nome); setEditTplRd(t.rd_template_id ?? "");
-  }
-  // recarrega a lista enxuta (ativos, usada pra ESCOLHER template pra enviar) e, se admin, o
-  // catálogo completo (inclui inativos + ativo/criado_em, usado só na tela de gerenciar).
-  async function recarregarTemplates() {
-    try {
-      const r = await fetch("/api/templates");
-      const j = await r.json();
-      if (j?.templates) setTemplates(j.templates);
-    } catch {}
-    if (sessao?.role === "admin") {
-      try {
-        const r2 = await fetch("/api/templates?catalogo=1");
-        const j2 = await r2.json();
-        if (j2?.templates) setTemplatesCatalogo(j2.templates);
-      } catch {}
-    }
-  }
-  // corrige nome/id de um template já cadastrado (ex.: id do RD desatualizado) sem apagar e recriar
-  async function salvarEdicaoTemplate(id: number) {
-    setSalvandoEdicaoTpl(true);
-    try {
-      const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, nome: editTplNome.trim(), rd_template_id: editTplRd.trim() }) });
-      const j = await r.json();
-      if (!r.ok) { alert("Não foi possível salvar: " + (j?.error ?? r.status)); return; }
-      setEditandoTplId(null);
-      await recarregarTemplates();
-    } catch (e: any) { alert("Erro ao salvar: " + (e?.message ?? e)); }
-    finally { setSalvandoEdicaoTpl(false); }
-  }
-  // marca qual template é usado quando ninguém escolhe nenhum (disparo em massa "padrão" e
-  // fallback do /api/send-template) — grava em crm_templates.padrao, não em env var
-  async function marcarTemplatePadrao(id: number) {
-    try {
-      const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, padrao: true }) });
-      const j = await r.json();
-      if (!r.ok) { alert("Não foi possível marcar como padrão: " + (j?.error ?? r.status)); return; }
-      await recarregarTemplates();
-    } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
-  }
-  // desativa/reativa (não apaga — mantém histórico de disparos_template íntegro e reversível)
-  async function alternarAtivoTemplate(id: number, ativo: boolean) {
-    try {
-      const r = await fetch("/api/templates", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ativo }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { alert("Não foi possível atualizar: " + (j?.error ?? r.status)); return; }
-      await recarregarTemplates();
-    } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
   }
 
   // abre o card ampliado (lupa) e carrega o histórico recente
@@ -1107,18 +1016,6 @@ export default function Page() {
   useEffect(() => {
     if (sessao?.role !== "admin") return;
     fetch("/api/meta").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setMetaAtual(Number(j.meta ?? 0) || 0); }).catch(() => {});
-  }, [sessao]);
-
-  // carrega os templates disponíveis e restaura o "padrão do momento" do navegador
-  useEffect(() => {
-    if (!sessao) return;
-    fetch("/api/templates").then((r) => (r.ok ? r.json() : null)).then((j) => {
-      if (!j?.templates) return;
-      setTemplates(j.templates);
-      const saved = Number(localStorage.getItem("crm_template_padrao") || "");
-      const valido = j.templates.some((t: any) => t.id === saved);
-      setTemplatePadraoId(valido ? saved : (j.templates[0]?.id ?? null));
-    }).catch(() => {});
   }, [sessao]);
 
   // card ampliado aberto: atualiza o histórico a cada 5s (novas msgs do cliente aparecem)
@@ -1603,16 +1500,6 @@ export default function Page() {
       return { ...prev, [colKey]: Math.min(atual + LOTE_INCREMENTO, total) };
     });
   }
-  // período dos contadores de template = o do dropdown global; "misto"/"todos" -> mês
-  const perTpl: keyof TplTot = (periodoGlobal === "misto" || periodoGlobal === "todos") ? "mes" : periodoGlobal;
-  const rotuloTpl = perTpl === "mes" ? "mês" : perTpl;
-  const somaTpl = (m: Record<string, TplTot>) =>
-    filtro === "todos"
-      ? Object.values(m).reduce((a, v) => a + (v[perTpl] ?? 0), 0)
-      : (m[filtro]?.[perTpl] ?? 0);
-  const tplHoje = somaTpl(templatesTotais);
-  const tplAutoHoje = somaTpl(templatesAutoTotais);
-
   const chip = (label: string, val: string, cor?: string) => {
     const ativo = filtro === val;
     return (
@@ -1659,7 +1546,13 @@ export default function Page() {
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
             <a href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</a>
             <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
-            <a href="/visoes" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Visões</a>
+            {/* Visões da Carteira = o módulo "Gestão de Carteira" do murano-app (app externo
+                MuranoIA/gestao-de-carteira, que roda sobre o murano-clientes-v2). Apontamos para a
+                PÁGINA DO HUB, não para o app: é o hub que tem a ponte de SSO — um token de uso
+                único emitido com a service_role da v2. Reimplementar isso aqui espalharia aquela
+                chave para mais um projeto sem ganho nenhum. Não confundir com Administração →
+                Gestão de carteira, que é OUTRA coisa: transferir contato de carteira no RD. */}
+            <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_blank" rel="noopener noreferrer" title="Segmentação da carteira do time IS — Top 30, recorrentes, consolidação e reativação (abre o módulo no murano-app)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Visões da Carteira<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
@@ -1720,15 +1613,9 @@ export default function Page() {
                     </div>
                   );
                 })()}
-            <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Consulta Clientes<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
-            <a href="/catalogos" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Catálogo</a>
-            <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Base de Conhecimento<span style={{ fontSize: 11, opacity: 0.7 }}>↗</span></a>
             <a href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</a>
             {sessao.role === "admin" && (
-              <a href="/carteira" title="Transferir clientes entre carteiras no RD Conversas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>🗂️ Carteira</a>
-            )}
-            {sessao.role === "admin" && (
-              <a href="/admin" title="Usuários, vendedores, horário de atendimento e linhas" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
+              <a href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
             )}
           </nav>
           )}
@@ -1882,7 +1769,7 @@ export default function Page() {
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
               <a href="/chat" onClick={fecha} style={row}>💬 Chat</a>
               <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
-              <a href="/visoes" onClick={fecha} style={row}>Visões</a>
+              <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Visões da Carteira ↗</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
                 <a href="/analises" onClick={fecha} style={row}>Análises</a>
@@ -1899,13 +1786,7 @@ export default function Page() {
                   <button onClick={() => { fecha(); abrirMusica(); }} style={row}>🎵 Música dos parabéns{musica ? <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{musica.nome}</span> : null}</button>
                 </>
               )}
-              <a href="https://consultaclientes.muranoprofessional.com.br/" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Consulta Clientes ↗</a>
-              <a href="/catalogos" onClick={fecha} style={row}>Catálogo</a>
-              <a href="https://murano-catalogo.vercel.app/base-de-conhecimento" target="_blank" rel="noopener noreferrer" onClick={fecha} style={row}>Base de Conhecimento ↗</a>
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
-              {sessao.role === "admin" && (
-                <a href="/carteira" onClick={fecha} style={row}>🗂️ Gestão de Carteira</a>
-              )}
               {sessao.role === "admin" && (
                 <a href="/admin" onClick={fecha} style={row}>⚙️ Administração</a>
               )}
@@ -2560,94 +2441,6 @@ export default function Page() {
             {baixando ? "Gerando…" : "⬇ .xls"}
           </button>
           <div style={{ marginLeft: isMobile ? 0 : "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: isMobile ? "wrap" : "nowrap" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: RD.cyanSoft, border: "1px solid #bfe6f8", borderRadius: 8, whiteSpace: "nowrap" }}>
-              <span style={{ fontSize: 11.5, color: "#0b7fb0", fontWeight: 600 }}>Templates</span>
-              <b style={{ fontSize: 12.5, color: "#0b7fb0", lineHeight: 1 }}>{tplHoje}</b>
-            </div>
-            <div style={{ position: "relative", display: "inline-flex" }}>
-              <button
-                onClick={() => { setTplMenuAberto((v) => !v); if (sessao.role === "admin") recarregarTemplates(); }}
-                title="Escolher o template padrão que o botão dos cards envia"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#f8e6ec", border: "1px solid #ecc6d2", borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", outline: "none" }}
-              >
-                <span style={{ fontSize: 11.5, color: "#9c1f47", fontWeight: 600 }}>Automáticos</span>
-                <b style={{ fontSize: 12.5, color: "#9c1f47", lineHeight: 1 }}>{tplAutoHoje}</b>
-                <span style={{ fontSize: 10, color: "#9c1f47", opacity: 0.7 }}>▾</span>
-              </button>
-              {tplMenuAberto && (
-                <>
-                  <div onClick={() => { setTplMenuAberto(false); setAddTplAberto(false); }} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
-                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 101, minWidth: sessao.role === "admin" ? 340 : 250, maxWidth: 380, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
-                    <div style={{ fontSize: 10.5, color: RD.grayLight, fontWeight: 700, padding: "9px 12px 5px" }}>
-                      {sessao.role === "admin" ? "Catálogo de templates (crm_templates)" : "Template padrão do botão do card"}
-                    </div>
-                    {(sessao.role === "admin" && templatesCatalogo ? templatesCatalogo : templates).map((t) => {
-                      const escolhido = t.id === templatePadraoId;
-                      const inativo = "ativo" in t && !t.ativo;
-                      if (editandoTplId === t.id) {
-                        return (
-                          <div key={t.id} style={{ borderTop: `1px solid ${RD.border}`, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                            <input autoFocus value={editTplNome} onChange={(e) => setEditTplNome(e.target.value)} placeholder="Nome do template" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
-                            <input value={editTplRd} onChange={(e) => setEditTplRd(e.target.value)} placeholder="ID do template no RD" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy, fontFamily: "monospace" }} />
-                            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                              <button onClick={() => setEditandoTplId(null)} style={{ fontSize: 12, padding: "5px 10px", background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 6, color: RD.gray, cursor: "pointer" }}>Cancelar</button>
-                              <button onClick={() => salvarEdicaoTemplate(t.id)} disabled={salvandoEdicaoTpl || !editTplNome.trim()} style={{ fontSize: 12, fontWeight: 700, padding: "5px 12px", background: RD.wine, border: "none", borderRadius: 6, color: "#fff", cursor: salvandoEdicaoTpl ? "wait" : "pointer" }}>{salvandoEdicaoTpl ? "…" : "Salvar"}</button>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 4, background: escolhido ? "#f8e6ec" : "transparent", padding: "3px 6px 3px 0", opacity: inativo ? 0.55 : 1 }}>
-                          <button
-                            onClick={() => { if (!inativo) { escolherTemplate(t.id); setTplMenuAberto(false); } }}
-                            disabled={inativo}
-                            title={inativo ? "Inativo — reative pra poder escolher" : "Usar como padrão do botão do card (só neste navegador)"}
-                            style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, textAlign: "left", background: "transparent", border: "none", padding: "5px 6px 5px 12px", cursor: inativo ? "default" : "pointer", minWidth: 0 }}
-                          >
-                            <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", fontSize: 12.5, fontWeight: escolhido ? 800 : 600, color: "#9c1f47" }}>
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>#{t.id} {t.nome}</span>
-                              {t.padrao && <span title="Padrão do sistema" style={{ fontSize: 10, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>★</span>}
-                              {inativo && <span style={{ fontSize: 9.5, color: RD.gray, fontWeight: 700, flexShrink: 0 }}>INATIVO</span>}
-                              {escolhido && <span style={{ marginLeft: "auto", fontSize: 11, flexShrink: 0 }}>✓</span>}
-                            </span>
-                            {sessao.role === "admin" && (
-                              <span style={{ fontSize: 10, color: RD.grayLight, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                                {t.rd_template_id || "(sem rd_template_id)"}
-                                {"criado_em" in t && t.criado_em ? ` · ${new Date(t.criado_em as string).toLocaleDateString("pt-BR")}` : ""}
-                              </span>
-                            )}
-                          </button>
-                          {sessao.role === "admin" && (
-                            <>
-                              {!t.padrao && !inativo && (
-                                <span onClick={() => marcarTemplatePadrao(t.id)} title="Marcar como padrão do sistema (usado quando ninguém escolhe nenhum — disparo em massa e botão automático)" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>☆</span>
-                              )}
-                              <span onClick={() => iniciarEdicaoTemplate(t)} title="Editar nome/ID" style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>✎</span>
-                              {"ativo" in t && (
-                                <span onClick={() => alternarAtivoTemplate(t.id, !!inativo)} title={inativo ? "Reativar" : "Desativar (mantém histórico; some das listas de envio)"} style={{ cursor: "pointer", fontSize: 12, color: RD.grayLight, padding: 4, flexShrink: 0 }}>{inativo ? "↺" : "🗑"}</span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {(sessao.role === "admin" && templatesCatalogo ? templatesCatalogo : templates).length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: RD.grayLight }}>Nenhum template cadastrado.</div>}
-                    {sessao.role === "admin" && (addTplAberto ? (
-                      <div style={{ borderTop: `1px solid ${RD.border}`, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                        <input autoFocus value={novoTplNome} onChange={(e) => setNovoTplNome(e.target.value)} placeholder="Nome do template" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
-                        <input value={novoTplRd} onChange={(e) => setNovoTplRd(e.target.value)} placeholder="ID do template no RD (opcional)" style={{ fontSize: 12, padding: "6px 8px", border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy }} />
-                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <button onClick={() => { setAddTplAberto(false); setNovoTplNome(""); setNovoTplRd(""); }} style={{ fontSize: 12, padding: "5px 10px", background: "transparent", border: `1px solid ${RD.border}`, borderRadius: 6, color: RD.gray, cursor: "pointer" }}>Cancelar</button>
-                          <button onClick={salvarTemplate} disabled={salvandoTpl || !novoTplNome.trim()} style={{ fontSize: 12, fontWeight: 700, padding: "5px 12px", background: RD.wine, border: "none", borderRadius: 6, color: "#fff", cursor: salvandoTpl ? "wait" : "pointer" }}>{salvandoTpl ? "…" : "Salvar"}</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button onClick={() => setAddTplAberto(true)} style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left", background: "transparent", border: "none", borderTop: `1px solid ${RD.border}`, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: RD.wine, cursor: "pointer" }}>+ Adicionar template</button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
             <div
               title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
               style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, whiteSpace: "nowrap", marginLeft: 12 }}
