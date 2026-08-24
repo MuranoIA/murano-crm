@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
+import { layoutEfetivo } from "../../../lib/chatLayout";
 
 export const dynamic = "force-dynamic";
 
@@ -102,11 +103,20 @@ export async function GET() {
   // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
-  const [{ data: leituras }, { data: estados }, { data: vendedores }] = await Promise.all([
+  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
+    // desenho da tela em vigor para todos (0095) e o piloto desta pessoa.
+    // Entram NESTE Promise.all de propósito: o /chat faz um load único, e duas
+    // consultas em série aqui custariam round-trip a cada abertura da tela.
+    sb.from("chat_layout").select("layout").eq("id", 1).maybeSingle(),
+    // `usuario` é o e-mail no login Google e o valor da sessão no login por
+    // senha ("admin"). Consultar sem ramo é de propósito: um valor que não é
+    // e-mail simplesmente não acha linha, e a pessoa cai no desenho global —
+    // que é o comportamento certo, já que o piloto é por e-mail.
+    sb.from("acesso").select("chat_layout").eq("email", usuario ?? "").maybeSingle(),
   ]);
   const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e]));
@@ -168,6 +178,12 @@ export async function GET() {
     vendedores: vendedores ?? [],
     nao_lidas: conversas.filter((c: any) => c.nao_lida && !c.na_fila).length,
     na_fila: conversas.filter((c: any) => c.na_fila).length,
+    // qual desenho da tela esta pessoa deve ver (0095). O piloto ganha do
+    // global; valor desconhecido cai no padrão em vez de deixar a tela sem
+    // desenho. Hoje só 'original' tem implementação, então este campo sempre
+    // vem 'original' — está aqui para a tela nova poder ler no dia em que
+    // existir, sem mexer nesta rota outra vez.
+    layout: layoutEfetivo(cfgLayout.data?.layout, meuAcesso.data?.chat_layout),
     atualizado_em: new Date().toISOString(),
   });
 }

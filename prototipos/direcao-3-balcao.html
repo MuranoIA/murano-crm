@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="escuro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Direção 3 — Balcão · Chat Murano</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   DIREÇÃO 3 — BALCÃO
+   Tese: isto não é uma caixa de entrada de suporte, é um balcão de venda.
+   A unidade de trabalho não é a conversa — é a CLIENTE. Então o ERP para de
+   morar numa coluna lateral estável e passa a ser (a) uma faixa fixa com os
+   quatro números que decidem o que dizer e (b) um dossiê que TROCA de
+   conteúdo conforme o momento da conversa.
+   Nasce no ESCURO, como o hub murano-app (globals.css: color-scheme dark).
+   ===================================================================== */
+:root{
+  --purple:#621244; --purple-deep:#3d0b2a; --purple-soft:#8a2a63; --purple-btn:#7a1755;
+  --blue:#2f7fd4; --blue-deep:#1a5fa8; --blue-soft:#8ec2f5;
+  --orange:#dd4222; --orange-deep:#a83015;
+  --pearl:#ded3d6; --gray:#9a9aa5; --gray-deep:#55555f;
+  --r-card:14px;
+}
+[data-tema="escuro"]{
+  --page:#140a13; --surface:#1c0e1b; --raised:#241327; --alta:#2c1830; --sunken:#0d050c;
+  --line:rgba(222,211,214,.11); --line-strong:rgba(222,211,214,.22);
+  --ink:#ded3d6; --ink-2:#9a9aa5; --ink-3:#7d7b86;
+  --acao:#8ec2f5; --acao-fill:#2f7fd4; --acao-wash:rgba(47,127,212,.15);
+  --marca:#c07aa4; --marca-wash:rgba(138,42,99,.22);
+  --bolha-in:#241327; --bolha-in-line:rgba(222,211,214,.10);
+  --bolha-out:rgba(47,127,212,.18); --bolha-out-line:rgba(47,127,212,.38);
+  --alerta:#ff9d78; --alerta-bg:rgba(221,66,34,.16); --alerta-line:rgba(221,66,34,.42);
+  --atencao:#f0c36b; --atencao-bg:rgba(240,195,107,.13); --atencao-line:rgba(240,195,107,.34);
+  --ok:#6fd39b; --ok-bg:rgba(31,122,77,.20); --ok-line:rgba(31,122,77,.45);
+  --nota:rgba(232,217,168,.12); --nota-line:rgba(232,217,168,.30); --nota-ink:#e4d3a0;
+  --sombra:0 2px 14px rgba(0,0,0,.42);
+  --sombra-flutua:0 20px 50px rgba(0,0,0,.62);
+}
+[data-tema="claro"]{
+  --page:#f4f4f6; --surface:#ffffff; --raised:#fbfafc; --alta:#f2f0f5; --sunken:#eceaf0;
+  --line:#e3e1e8; --line-strong:#cdcad5;
+  --ink:#241327; --ink-2:#55555f; --ink-3:#7c7986;
+  --acao:#1a5fa8; --acao-fill:#2f7fd4; --acao-wash:#e9f1fb;
+  --marca:#621244; --marca-wash:#f3ecf1;
+  --bolha-in:#ffffff; --bolha-in-line:#e3e1e8;
+  --bolha-out:#e9f1fb; --bolha-out-line:#c9dff5;
+  --alerta:#a83015; --alerta-bg:#fdeee9; --alerta-line:#f2cabb;
+  --atencao:#8a5a00; --atencao-bg:#fdf3dd; --atencao-line:#ecd9a4;
+  --ok:#1f7a4d; --ok-bg:#e9f5ee; --ok-line:#bfe0cb;
+  --nota:#fdf6e3; --nota-line:#e8d9a8; --nota-ink:#6b5a1f;
+  --sombra:0 1px 2px rgba(36,19,39,.05), 0 10px 28px rgba(36,19,39,.07);
+  --sombra-flutua:0 18px 46px rgba(36,19,39,.26);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:Inter,'Inter Variable',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+ font-optical-sizing:auto;background:var(--page);color:var(--ink);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button,input,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--acao-fill);outline-offset:2px;border-radius:6px}
+.num{font-variant-numeric:tabular-nums}
+.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.i.sm{width:13px;height:13px}.i.lg{width:20px;height:20px}
+
+.chrome{position:sticky;top:0;z-index:400;background:var(--surface);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;box-shadow:var(--sombra)}
+.chrome h1{font-size:15px;font-weight:800;letter-spacing:-.02em;margin:0;display:flex;align-items:center;gap:9px}
+.tag{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border:1px solid var(--line-strong);border-radius:100px;padding:3px 9px;color:var(--ink-2)}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:100px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--ink-2);font-size:12px;font-weight:700;padding:5px 13px}
+.seg button[aria-pressed="true"]{background:var(--purple-btn);color:#fff}
+.cenarios{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.cenarios .lbl{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.chip{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);border-radius:100px;padding:4px 11px;font-size:11.5px;font-weight:600}
+.chip[aria-pressed="true"]{background:var(--acao-wash);border-color:var(--acao-fill);color:var(--acao)}
+.palco{padding:20px 16px 10px;display:flex;justify-content:center}
+.logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(160deg,var(--purple-btn),var(--purple-deep));display:grid;place-items:center;flex:none}
+
+.desktop{width:100%;max-width:1360px;height:772px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--sombra)}
+.faixa{height:3px;background:linear-gradient(90deg,var(--blue),var(--purple-soft),var(--purple-deep))}
+.nav{display:flex;align-items:center;gap:10px;padding:0 14px;min-height:48px;border-bottom:1px solid var(--line);flex:none}
+.nav nav{display:flex;align-self:stretch;gap:2px;margin-left:6px}
+.nav nav a{display:inline-flex;align-items:center;padding:0 10px;font-size:13.5px;font-weight:600;color:var(--ink-2);text-decoration:none;border-bottom:2px solid transparent}
+.nav nav a.on{color:var(--marca);font-weight:800;border-bottom-color:var(--marca)}
+.av{width:24px;height:24px;border-radius:100px;background:var(--purple-btn);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800}
+.corpo{flex:1;display:flex;min-height:0}
+
+/* ---------- coluna de clientes ---------- */
+.clientes{width:326px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface)}
+.clientes .topo{padding:10px 12px 8px;border-bottom:1px solid var(--line)}
+.clientes h2{margin:0;font-size:17px;font-weight:800;letter-spacing:-.03em}
+.clientes .sub{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+.busca{position:relative;margin-top:9px}
+.busca input{width:100%;padding:9px 34px 9px 12px;background:var(--raised);border:1px solid var(--line);border-radius:10px;min-height:38px}
+.busca .i{position:absolute;right:11px;top:11px;color:var(--ink-3)}
+.abas-fila{display:flex;gap:5px;margin-top:9px}
+.abas-fila button{flex:1;border:1px solid var(--line);background:var(--raised);border-radius:9px;padding:6px 4px;font-size:11px;font-weight:700;color:var(--ink-2);min-height:38px;display:flex;flex-direction:column;align-items:center;gap:1px}
+.abas-fila button[aria-pressed="true"]{border-color:var(--acao-fill);background:var(--acao-wash);color:var(--acao)}
+.abas-fila .n{font-size:14px;font-weight:800}
+.rolagem{flex:1;overflow-y:auto}
+/* o cartão de CLIENTE: estado comercial primeiro, prévia da conversa depois */
+.cli{display:flex;gap:10px;width:100%;text-align:left;padding:10px 12px;background:transparent;border:0;border-bottom:1px solid var(--line);position:relative;align-items:center;height:82px}
+.cli:hover{background:var(--raised)}
+.cli.on{background:var(--acao-wash)}
+.cli.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--acao-fill)}
+.anel{width:44px;height:44px;flex:none;position:relative;display:grid;place-items:center}
+.anel svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.anel b{font-size:13px;font-weight:800}
+.cli .meio{flex:1;min-width:0}
+.cli .nome{font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.cli .dados{display:flex;gap:6px;align-items:center;margin-top:2px;font-size:10.5px;font-weight:700;color:var(--ink-3)}
+.cli .prev{font-size:11.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.pt{width:9px;height:9px;border-radius:100px;background:var(--acao-fill);flex:none}
+.pill{font-size:9.5px;font-weight:800;border-radius:100px;padding:1px 7px;border:1px solid;white-space:nowrap}
+.pill.quente{color:var(--alerta);border-color:var(--alerta-line);background:var(--alerta-bg)}
+.pill.ok{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg)}
+.pill.calmo{color:var(--ink-3);border-color:var(--line-strong)}
+
+/* ---------- conversa ---------- */
+.thread{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--page);position:relative}
+.cab{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.cab .ava{width:36px;height:36px;border-radius:100px;background:var(--purple-btn);color:#fff;display:grid;place-items:center;font-weight:800;flex:none}
+.cab b{font-size:15px;font-weight:800;letter-spacing:-.02em}
+.cab .sub{font-size:11px;color:var(--ink-3)}
+.acao{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-strong);background:var(--raised);color:var(--ink-2);border-radius:100px;padding:6px 11px;font-size:11.5px;font-weight:700;white-space:nowrap;min-height:34px}
+.acao:hover{border-color:var(--acao-fill);color:var(--acao)}
+.acao.pri{background:var(--purple-btn);border-color:transparent;color:#fff}
+
+/* A FAIXA DA CLIENTE — o coração desta direção */
+.faixa-cli{display:flex;align-items:stretch;gap:0;background:var(--raised);border-bottom:1px solid var(--line);flex:none}
+.faixa-cli .n{flex:1;padding:9px 13px;border-right:1px solid var(--line);min-width:0}
+.faixa-cli .n .v{font-size:18px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.15;white-space:nowrap}
+.faixa-cli .n .k{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-top:1px}
+.faixa-cli .n.alerta .v{color:var(--alerta)}
+.faixa-cli .n.bom .v{color:var(--ok)}
+.faixa-cli .sug{flex:1.6;padding:8px 12px;display:flex;align-items:center;gap:10px;background:var(--acao-wash)}
+.faixa-cli .sug .txt{flex:1;font-size:11.5px;line-height:1.4;min-width:0}
+.faixa-cli .sug button{border:0;background:var(--purple-btn);color:#fff;border-radius:100px;padding:7px 13px;font-size:11.5px;font-weight:800;white-space:nowrap;min-height:34px}
+
+.msgs{flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:5px}
+.dia{align-self:center;font-size:10.5px;font-weight:700;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-radius:100px;padding:3px 12px;margin:8px 0 4px}
+.linha{display:flex}.linha.out{justify-content:flex-end}
+.bolha{max-width:66%;padding:7px 11px;border-radius:12px 12px 12px 3px;background:var(--bolha-in);border:1px solid var(--bolha-in-line)}
+.out .bolha{background:var(--bolha-out);border-color:var(--bolha-out-line);border-radius:12px 12px 3px 12px}
+.bolha .txt{font-size:13.5px;line-height:1.45;white-space:pre-wrap}
+.bolha .pe{display:flex;justify-content:flex-end;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:var(--ink-3)}
+.tick.lida{color:var(--acao)}
+.falhou{border-color:var(--alerta-line)!important;background:var(--alerta-bg)!important}
+.falhou .porque{font-size:11px;color:var(--alerta);margin-top:5px;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.reenviar{border:1px solid var(--alerta-line);background:transparent;color:var(--alerta);border-radius:100px;padding:3px 10px;font-size:11px;font-weight:700}
+.foto{border-radius:9px;display:block;margin-bottom:4px;width:220px;height:145px;background:linear-gradient(135deg,#7d5c72,#4a2b45)}
+[data-tema="claro"] .foto{background:linear-gradient(135deg,#d8c9d4,#b79bb0)}
+.audio{display:flex;align-items:center;gap:9px;width:236px;padding:5px 3px}
+.audio .play{width:32px;height:32px;border-radius:100px;background:var(--acao-fill);color:#fff;border:0;display:grid;place-items:center;flex:none}
+.onda{flex:1;height:22px;display:flex;align-items:center;gap:2px}.onda i{width:2px;background:var(--acao-fill);opacity:.6;border-radius:2px}
+.marco{display:flex;justify-content:center;margin:6px 0}
+.marco .cx{max-width:80%;text-align:center;font-size:11px;color:var(--ink-2);background:var(--surface);border:1px dashed var(--line-strong);border-radius:100px;padding:4px 14px}
+.notinha{display:flex;justify-content:center;margin:4px 0}
+.notinha .cx{max-width:80%;background:var(--nota);border:1px solid var(--nota-line);color:var(--nota-ink);border-radius:10px;padding:7px 11px;font-size:12.5px}
+.notinha .cab2{font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:3px;display:flex;gap:6px;align-items:center}
+
+.janela{display:flex;align-items:center;gap:9px;padding:8px 14px;font-size:12px;border-top:1px solid var(--line);background:var(--acao-wash);color:var(--acao);flex:none}
+.janela.fechada{background:var(--alerta-bg);color:var(--alerta);border-top-color:var(--alerta-line)}
+.compor{display:flex;gap:8px;padding:10px 14px;background:var(--surface);border-top:1px solid var(--line);align-items:flex-end;flex:none}
+.ferr{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);background:var(--raised);color:var(--ink-2);display:grid;place-items:center;flex:none}
+.ferr:hover{color:var(--acao);border-color:var(--acao-fill)}
+.compor textarea{flex:1;resize:none;padding:10px 13px;background:var(--raised);border:1px solid var(--line);border-radius:11px;min-height:40px;max-height:110px}
+.enviar{width:44px;height:40px;border-radius:11px;border:0;background:var(--purple-btn);color:#fff;display:grid;place-items:center;flex:none}
+
+/* ---------- DOSSIÊ DO MOMENTO ---------- */
+.dossie{width:306px;flex:none;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--line)}
+.dossie .tp{padding:10px 13px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;background:var(--marca-wash)}
+.dossie .tp b{font-size:12.5px;color:var(--marca)}
+.dossie .tp .porque{font-size:10px;color:var(--ink-3);margin-left:auto;text-align:right;max-width:120px;line-height:1.3}
+.dossie .corpo2{flex:1;overflow-y:auto}
+.bloco{padding:12px 13px;border-bottom:1px solid var(--line)}
+.rotulo{font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:8px}
+.par{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:2px 0}
+.par span{color:var(--ink-2)}.par b{font-variant-numeric:tabular-nums}
+.prod{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.prod .im{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--purple-soft),var(--purple-deep));flex:none}
+.prod .nm{flex:1;min-width:0;font-size:12.5px;font-weight:700;line-height:1.25}
+.prod .pr{font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.prod button{border:1px solid var(--line-strong);background:transparent;color:var(--acao);border-radius:100px;padding:4px 10px;font-size:10.5px;font-weight:800;min-height:32px}
+.tplcard{padding:11px 13px;border-bottom:1px solid var(--line)}
+.tplcard .nm{font-size:13px;font-weight:800;display:flex;align-items:center;gap:7px}
+.tplcard .cp{font-size:12px;color:var(--ink-2);margin-top:4px;line-height:1.45;background:var(--raised);border:1px solid var(--line);border-radius:9px;padding:8px 10px;white-space:pre-wrap}
+.tplcard .pe{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:10.5px;color:var(--ink-3)}
+.tplcard .pe button{margin-left:auto;border:0;background:var(--purple-btn);color:#fff;border-radius:100px;padding:7px 14px;font-size:11.5px;font-weight:800;min-height:34px}
+.motivos{display:flex;flex-wrap:wrap;gap:6px}
+.motivo{background:var(--raised);border:1px solid var(--line);border-radius:100px;padding:7px 12px;font-size:12px;min-height:36px}
+.motivo.venda{border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok);font-weight:800}
+.chamada-cx{padding:14px 13px;text-align:center}
+.chamada-cx .pulso{width:64px;height:64px;border-radius:100px;margin:0 auto 10px;background:var(--ok-bg);border:2px solid var(--ok);display:grid;place-items:center;color:var(--ok)}
+.chamada-cx .bt{width:100%;border:0;border-radius:100px;padding:11px;font-size:13px;font-weight:800;margin-top:7px;min-height:44px}
+
+/* ---------- MOBILE ---------- */
+.mob-wrap{display:flex;gap:26px;flex-wrap:wrap;justify-content:center}
+.fone{width:390px;height:844px;background:var(--surface);border:10px solid #15070f;border-radius:44px;overflow:hidden;position:relative;box-shadow:var(--sombra-flutua);display:flex;flex-direction:column}
+.notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:126px;height:26px;background:#15070f;border-radius:0 0 16px 16px;z-index:30}
+.safe-top{height:36px;flex:none}.safe-bot{height:20px;flex:none}
+.mlegenda{text-align:center;font-size:11.5px;color:var(--ink-3);margin-top:8px;font-weight:600}
+.m-cab{display:flex;align-items:center;gap:10px;padding:6px 14px 8px;flex:none}
+.m-cab .tt{font-size:21px;font-weight:800;letter-spacing:-.03em;flex:1}
+.m-lista{flex:1;overflow-y:auto}
+.m-tabs{display:flex;border-top:1px solid var(--line);background:var(--surface);flex:none}
+.m-tabs button{flex:1;border:0;background:transparent;padding:8px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--ink-3);font-size:10px;font-weight:700;min-height:58px;justify-content:center;position:relative}
+.m-tabs button.on{color:var(--acao)}
+.m-tabs .bad{position:absolute;top:4px;right:50%;transform:translateX(22px);min-width:18px;height:18px;border-radius:100px;background:var(--orange);color:#fff;font-size:10px;font-weight:800;display:grid;place-items:center;padding:0 4px}
+.m-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:5px;background:var(--page)}
+/* carrossel de contexto: o dossiê do desktop virado de lado, acima do polegar */
+.carro{display:flex;gap:8px;padding:8px 12px;overflow-x:auto;flex:none;background:var(--surface);border-top:1px solid var(--line)}
+.ctx{flex:none;width:172px;border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:var(--raised)}
+.ctx.destaque{border-color:var(--acao-fill);background:var(--acao-wash)}
+.ctx .k{font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.ctx .v{font-size:15px;font-weight:800;letter-spacing:-.02em;margin-top:2px}
+.ctx .d{font-size:11px;color:var(--ink-2);line-height:1.35;margin-top:3px}
+.ctx button{margin-top:7px;width:100%;border:0;border-radius:9px;background:var(--purple-btn);color:#fff;font-size:11px;font-weight:800;padding:8px;min-height:38px}
+.m-compor{display:flex;gap:7px;padding:8px 10px;background:var(--surface);border-top:1px solid var(--line);align-items:flex-end;flex:none}
+.m-compor .ferr{width:44px;height:44px}.m-compor textarea{min-height:44px}.m-compor .enviar{width:48px;height:44px}
+
+.tese{max-width:1360px;margin:6px auto 40px;padding:20px 22px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);position:relative;overflow:hidden;box-shadow:var(--sombra)}
+.tese .stripe{position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(to bottom,var(--blue),var(--purple-soft),var(--purple-deep))}
+.tese h2{font-size:19px;font-weight:800;letter-spacing:-.022em;margin:0 0 8px 8px}
+.tese .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-left:8px}
+.tese h3{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 6px}
+.tese p,.tese li{font-size:13.5px;line-height:1.62;color:var(--ink-2);margin:0 0 7px}
+.tese ul{padding-left:18px;margin:0}.tese b{color:var(--ink)}
+@media (max-width:900px){.tese .cols{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-busca" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="i-volta" viewBox="0 0 24 24"><path d="M19 12H5m7-7-7 7 7 7"/></symbol>
+<symbol id="i-clipe" viewBox="0 0 24 24"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L10 17.9a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18.5V22"/></symbol>
+<symbol id="i-raio" viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></symbol>
+<symbol id="i-nota" viewBox="0 0 24 24"><path d="M5 3.5h14v13l-4.5 4.5H5z"/><path d="M19 16.5h-4.5V21"/></symbol>
+<symbol id="i-envia" viewBox="0 0 24 24"><path d="M4 12 21 4l-6 8 6 8z"/></symbol>
+<symbol id="i-tel" viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6L16.5 13l4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2Z"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5 19 12 7 19.5z" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12.5 5 5L20 6.5"/></symbol>
+<symbol id="i-check2" viewBox="0 0 24 24"><path d="m1.5 12.5 5 5L17.5 6.5"/><path d="m10 15.5 2 2L22.5 6.5"/></symbol>
+<symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 3.5 22 20H2z"/><path d="M12 10v4.5M12 17.4v.1"/></symbol>
+<symbol id="i-relogio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.3l3.2 2"/></symbol>
+<symbol id="i-transf" viewBox="0 0 24 24"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+<symbol id="i-fila" viewBox="0 0 24 24"><circle cx="12" cy="6" r="3"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></symbol>
+<symbol id="i-sino" viewBox="0 0 24 24"><path d="M6 10a6 6 0 1 1 12 0c0 4 1.5 5.5 1.5 5.5h-15S6 14 6 10Z"/><path d="M10 19a2 2 0 0 0 4 0"/></symbol>
+<symbol id="i-balao" viewBox="0 0 24 24"><path d="M20.5 12A8.5 8.5 0 1 1 7 5.1 8.5 8.5 0 0 1 20.5 12ZM3.5 20.5l1.3-3.6"/></symbol>
+<symbol id="i-cliente" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 9.5h18M7 14h5"/></symbol>
+<symbol id="i-caixa" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3.5l8.5 4v9L12 20.5l-8.5-4z"/><path d="M3.5 7.5 12 11.5l8.5-4M12 11.5v9"/></symbol>
+<symbol id="i-mais" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-grafico" viewBox="0 0 24 24"><path d="M4 19.5V10M10 19.5V4.5M16 19.5v-6M22 19.5H2"/></symbol>
+</defs></svg>
+
+<div class="chrome">
+  <h1><span class="logo"><svg width="16" height="16" viewBox="0 0 100 100"><path d="M31 74C31 48 33 36 47 28" fill="none" stroke="#e7d7dc" stroke-width="11" stroke-linecap="round"/><path d="M53 74C53 48 55 36 69 28" fill="none" stroke="#e7d7dc" stroke-width="11" stroke-linecap="round"/></svg></span>
+  Direção 3 · <span style="color:var(--marca)">Balcão</span></h1>
+  <span class="tag">a unidade de trabalho é a cliente, não a conversa</span>
+  <span class="seg"><button id="bDesk" aria-pressed="true" onclick="setDisp('desk')">Desktop</button>
+    <button id="bMob" aria-pressed="false" onclick="setDisp('mob')">Mobile</button></span>
+  <span class="seg"><button id="bClaro" aria-pressed="false" onclick="setTema('claro')">Claro</button>
+    <button id="bEsc" aria-pressed="true" onclick="setTema('escuro')">Escuro</button></span>
+  <span class="cenarios">
+    <span class="lbl">O momento manda no dossiê</span>
+    <button class="chip" id="mFicha" aria-pressed="true" onclick="setMom('ficha')">Normal · ficha</button>
+    <button class="chip" id="mFoto" aria-pressed="false" onclick="setMom('foto')">Chegou foto · catálogo</button>
+    <button class="chip" id="mJanela" aria-pressed="false" onclick="setMom('janela')">Janela fechada · template</button>
+    <button class="chip" id="mParou" aria-pressed="false" onclick="setMom('parou')">Conversa parou · tabulação</button>
+    <button class="chip" id="mLig" aria-pressed="false" onclick="setMom('lig')">Ligação recebida</button>
+    <span class="lbl" style="margin-left:8px">Outros</span>
+    <button class="chip" id="cFalha" aria-pressed="false" onclick="tog('falha')">Falha de envio</button>
+  </span>
+</div>
+
+<div class="palco" id="palco"></div>
+
+<div class="tese">
+  <div class="stripe"></div>
+  <h2>A tese desta direção</h2>
+  <div class="cols">
+    <div>
+      <h3>O que ela defende</h3>
+      <p><b>Isto não é um help desk. É um balcão de venda.</b> O que a vendedora precisa saber para responder não está na conversa — está no ERP: quanto essa cliente gasta, há quanto tempo sumiu, o que ela compra sempre. Hoje isso mora numa coluna lateral, atrás de uma aba que abre no telefone. Aqui muda de status:</p>
+      <ul>
+        <li><b>A faixa da cliente</b> fica fixa sob o cabeçalho, com os quatro números que decidem o que dizer — e a ação recomendada como um botão que <b>escreve a mensagem</b>, em vez de um conselho para ler.</li>
+        <li><b>A coluna da direita deixa de ser estável e passa a responder ao momento</b>: janela fechada mostra os templates com o texto; chegou foto, mostra o catálogo com preço e o botão de mandar; a conversa esfriou, mostra a tabulação; tocou o telefone, vira o painel da chamada.</li>
+        <li><b>A lista é de clientes, não de conversas</b>: anel de ciclo de recompra, dias sem comprar e ticket vêm antes da prévia da mensagem. Triagem passa a ser comercial.</li>
+        <li>O painel <b>age</b>, não só informa — mandar preço, mandar catálogo, disparar o template do ciclo (padrão que Gorgias usa com o Shopify no atendimento de e-commerce).</li>
+        <li><b>Nasce no escuro</b>, como o hub que embute este CRM num iframe. Hoje o chat é um retângulo rosa claro dentro de um app quase preto.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>O que ela sacrifica</h3>
+      <p><b>É a maior ruptura com o RD Conversas.</b> A coluna da direita deixa de ter um lugar previsível: quem procura “a aba Compras” vai encontrar um catálogo, porque a cliente mandou uma foto. Painel que se move é o padrão que mais divide opinião — parte da equipe vai chamar de mágica, parte de instabilidade.</p>
+      <p><b>Uma regra errada vira mentira convincente.</b> “Ação recomendada” tem autoridade visual: se a sugestão estiver defasada — cliente que comprou ontem por outro canal —, o vendedor manda a mensagem errada com confiança. Toda sugestão precisa dizer <i>de onde veio</i> e ser fácil de ignorar.</p>
+      <p><b>Custa mais dados por conversa.</b> Ciclo, ticket e catálogo em cada cartão da lista significam consultas mais pesadas; sem cache, a lista fica lenta justamente onde hoje é instantânea.</p>
+      <p><b>Automatiza julgamento.</b> Botão que escreve a mensagem tende a padronizar a fala — o oposto do que faz a vendedora boa. Precisa entrar no rascunho, nunca enviar direto.</p>
+      <h3 style="margin-top:14px">Para quem é</h3>
+      <p>Para quando a aposta for <b>vender mais por conversa</b>, e não atender mais conversas. É a única das três que usa a vantagem que o RD nunca teve.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const CLI=[
+ {id:'c1',nome:'Ana Karla — Studio Bella Hair',ini:'A',pct:139,dias:53,ticket:'R$ 1.316',total:'R$ 18.420',ped:14,cid:'Ananindeua',cod:24817,
+  prev:'Vou querer 2 selagem e 1 botox, fecha pra mim?',hora:'14:32',nova:true,estado:'quente',rot:'fora do ciclo'},
+ {id:'c2',nome:'Rosângela — Espaço Vip Cabelo',ini:'R',pct:41,dias:12,ticket:'R$ 1.586',total:'R$ 34.905',ped:22,cid:'Belém',cod:31204,
+  prev:'🎤 Áudio · 0:34',hora:'14:19',nova:true,estado:'ok',rot:'em dia'},
+ {id:'c9',nome:'Fabiana — Bella Donna Cabelos',ini:'F',pct:151,dias:64,ticket:'R$ 740',total:'R$ 7.180',ped:9,cid:'Castanhal',cod:19922,
+  prev:'Ainda tem o matizador platinum?',hora:'14:38',nova:true,estado:'quente',rot:'fora do ciclo'},
+ {id:'c4',nome:'Sirlene — Hair Point Castanhal',ini:'S',pct:212,dias:96,ticket:'R$ 2.050',total:'R$ 41.300',ped:19,cid:'Castanhal',cod:20871,
+  prev:'Você: Chegou o matizador que você pediu…',hora:'11:47',estado:'quente',rot:'sumiu'},
+ {id:'c3',nome:'Débora — Salão Nara Beauty',ini:'D',pct:8,dias:3,ticket:'R$ 1.980',total:'R$ 23.740',ped:12,cid:'Belém',cod:27655,
+  prev:'Você: Fechado! Vou faturar hoje ainda 💜',hora:'13:04',estado:'ok',rot:'comprou agora'},
+ {id:'c8',nome:'Cléo — Ateliê da Beleza Icoaraci',ini:'C',pct:255,dias:120,ticket:'R$ 610',total:'R$ 5.240',ped:8,cid:'Belém',cod:30188,
+  prev:'Você: Segue a tabela atualizada 📎',hora:'21/08',estado:'quente',rot:'sumiu'},
+ {id:'c6',nome:'Elaine — Studio W Marituba',ini:'E',pct:null,dias:null,ticket:null,total:null,ped:null,cid:null,cod:null,
+  prev:'Boa tarde, vocês vendem para salão?',hora:'ontem',nova:true,estado:'novo',rot:'contato novo'}
+];
+const CATALOGO=[
+ ['Selagem Térmica 1L','R$ 189,90'],['Botox Capilar 950g','R$ 134,50'],
+ ['Matizador Platinum 500ml','R$ 88,00'],['Óleo de Argan 60ml','R$ 42,90']
+];
+const S={disp:'desk',sel:'c1',mom:'ficha',falha:false,mobThread:false};
+function setDisp(d){S.disp=d;S.mobThread=false;bDesk.setAttribute('aria-pressed',d==='desk');bMob.setAttribute('aria-pressed',d==='mob');render()}
+function setTema(t){document.documentElement.dataset.tema=t;bClaro.setAttribute('aria-pressed',t==='claro');bEsc.setAttribute('aria-pressed',t==='escuro')}
+function setMom(m){S.mom=m;['ficha','foto','janela','parou','lig'].forEach(k=>document.getElementById('m'+k[0].toUpperCase()+k.slice(1)).setAttribute('aria-pressed',k===m));render()}
+function tog(k){S[k]=!S[k];document.getElementById('c'+k[0].toUpperCase()+k.slice(1)).setAttribute('aria-pressed',S[k]);render()}
+function abrir(id){S.sel=id;S.mobThread=true;render()}
+const svg=(n,c)=>`<svg class="i ${c||''}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const cli=()=>CLI.find(c=>c.id===S.sel)||CLI[0];
+
+function anel(pct,estado){
+  const p=pct==null?0:Math.min(100,pct);
+  const cor=estado==='quente'?'var(--alerta)':estado==='ok'?'var(--ok)':'var(--ink-3)';
+  const c=2*Math.PI*19;
+  return `<span class="anel">
+    <svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">
+      <circle cx="22" cy="22" r="19" fill="none" stroke="var(--line-strong)" stroke-width="3"/>
+      <circle cx="22" cy="22" r="19" fill="none" stroke="${cor}" stroke-width="3" stroke-linecap="round"
+        stroke-dasharray="${(c*p/100).toFixed(1)} ${c.toFixed(1)}"/></svg>
+    <b style="color:${cor}">${pct==null?'—':pct+'%'}</b></span>`;
+}
+
+function cartao(c){
+  return `<button class="cli ${c.id===S.sel?'on':''}" onclick="abrir('${c.id}')">
+    ${anel(c.pct,c.estado)}
+    <span class="meio">
+      <span class="nome">${c.nome}</span>
+      <span class="dados">
+        <span class="pill ${c.estado==='quente'?'quente':c.estado==='ok'?'ok':'calmo'}">${c.rot}</span>
+        ${c.dias!=null?`<span class="num">${c.dias}d</span> · <span class="num">${c.ticket}</span>`:''}
+      </span>
+      <span class="prev">${c.prev}</span>
+    </span>
+    ${c.nova?'<span class="pt"></span>':`<span class="num" style="font-size:10.5px;color:var(--ink-3)">${c.hora}</span>`}
+  </button>`;
+}
+
+function bolhas(){
+  const o=[];
+  o.push(`<div class="dia">ontem</div>`);
+  o.push(msg('in','Bom dia! Vocês têm a selagem térmica de 1 litro? Aquela que eu comprei em maio','09:14'));
+  o.push(msg('out','Bom dia, Ana Karla! Temos sim 💜 Selagem Térmica 1L — R$ 189,90 na tabela de salão','09:20','lida'));
+  o.push(`<div class="notinha"><div class="cx"><div class="cab2">${svg('nota','sm')} nota interna · Kamilly</div>Cliente sempre pede boleto 15 dias. Conferir limite antes de fechar.</div></div>`);
+  o.push(`<div class="dia">hoje</div>`);
+  o.push(msg('in','<img class="foto" alt="foto do produto na bancada do salão">','14:26',null,true));
+  o.push(msg('in','É essa daqui que eu uso, ainda tem?','14:26'));
+  o.push(audio('in','14:28'));
+  o.push(msg('in','Vou querer 2 selagem e 1 botox, fecha pra mim?','14:32'));
+  if(S.falha) o.push(`<div class="linha out"><div class="bolha falhou"><div class="txt">Fechado! 2x Selagem 1L + 1x Botox 950g = R$ 612,70</div>
+    <div class="porque">${svg('alerta','sm')} Não entregue — a janela de 24h fechou às 14:30
+      <button class="reenviar">Reenviar como template</button></div>
+    <div class="pe"><span class="num">14:33</span></div></div></div>`);
+  return o.join('');
+}
+function msg(l,t,h,tick,cru){return `<div class="linha ${l==='out'?'out':''}"><div class="bolha">${cru?t:`<div class="txt">${t}</div>`}
+ <div class="pe"><span class="num">${h}</span>${l==='out'?`<span class="tick ${tick==='lida'?'lida':''}">${svg(tick?'check2':'check','sm')}</span>`:''}</div></div></div>`}
+function audio(l,h){const b=[...Array(26)].map((_,i)=>`<i style="height:${4+((i*7)%16)}px"></i>`).join('');
+ return `<div class="linha ${l==='out'?'out':''}"><div class="bolha"><div class="audio">
+ <button class="play" aria-label="Ouvir áudio de 34 segundos">${svg('play','sm')}</button><span class="onda">${b}</span>
+ <span class="num" style="font-size:11px;color:var(--ink-3)">0:34</span></div><div class="pe"><span class="num">${h}</span></div></div></div>`}
+
+/* ---- o dossiê muda com o momento ---- */
+function dossie(){
+  const c=cli();
+  const tp=(t,porque)=>`<div class="tp">${svg('cliente','sm')}<b>${t}</b><span class="porque">${porque}</span></div>`;
+
+  if(S.mom==='lig') return `<div class="dossie">${tp('Chamada recebida','o telefone está tocando')}
+    <div class="corpo2"><div class="chamada-cx">
+      <div class="pulso">${svg('tel','lg')}</div>
+      <b style="font-size:15px;display:block">${c.nome.split(' —')[0]}</b>
+      <div style="font-size:11.5px;color:var(--ink-3);margin-top:2px">está ligando pelo WhatsApp</div>
+      <div style="display:flex;gap:8px;margin:12px 0 4px;justify-content:center">
+        <span class="pill quente">${c.dias}d sem comprar</span><span class="pill calmo">${c.ticket}</span></div>
+      <button class="bt" style="background:var(--ok);color:#0b2418">Atender</button>
+      <button class="bt" style="background:transparent;border:1px solid var(--line-strong);color:var(--ink-2)">Recusar</button>
+      <div style="font-size:10.5px;color:var(--ink-3);margin-top:10px;line-height:1.4">
+        Chamada recebida é gratuita e <b>reabre a janela de 24h</b>.</div>
+    </div></div></div>`;
+
+  if(S.mom==='janela') return `<div class="dossie">${tp('Reabrir a conversa','a janela de 24h fechou')}
+    <div class="corpo2">
+      <div class="bloco" style="background:var(--alerta-bg);border-bottom-color:var(--alerta-line)">
+        <div style="font-size:12px;color:var(--alerta);line-height:1.45">
+          ${svg('alerta','sm')} A cliente falou por último há <b>2 dias</b>. Só um template aprovado reabre — mensagem livre não sai.</div></div>
+      ${[['recontato_de_clientes','Oi Ana Karla, tudo bem? Aqui é a Kamilly da Murano 💜\nChegou reposição da Selagem Térmica 1L que você usa. Quer que eu separe?','padrão · usado há 21 dias'],
+         ['tudo_bem','Oi Ana Karla, tudo bem por aí? Posso te mandar as novidades da semana?','nunca usado']]
+        .map(t=>`<div class="tplcard"><div class="nm">${t[0]}
+          ${t[2].includes('padrão')?'<span class="pill calmo">padrão</span>':''}</div>
+          <div class="cp">${t[1]}</div>
+          <div class="pe">${t[2]} · custa <b style="color:var(--ink)">R$ 0,43</b><button>Enviar</button></div></div>`).join('')}
+      <div class="bloco" style="font-size:11px;color:var(--ink-3);line-height:1.5">
+        Ligar também reabre a janela, e chamada recebida não é cobrada.</div>
+    </div></div>`;
+
+  if(S.mom==='parou') return `<div class="dossie">${tp('No que deu?','a conversa parou há 3 dias')}
+    <div class="corpo2">
+      <div class="bloco">
+        <div style="font-size:12.5px;line-height:1.5;margin-bottom:10px">
+          Sem esta resposta a venda não entra no número da equipe. É a única fonte confiável de <b>“quantas vendas hoje”</b>.</div>
+        <div class="motivos">
+          <button class="motivo venda">${svg('check','sm')} Venda realizada</button>
+          <button class="motivo">Follow-up</button><button class="motivo">Tentativa de contato</button>
+          <button class="motivo">Sem interesse</button><button class="motivo">Outro</button></div>
+      </div>
+      <div class="bloco"><div class="rotulo">Se foi venda</div>
+        <div class="par"><span>Nota fiscal encontrada</span><b>—</b></div>
+        <div style="font-size:11px;color:var(--ink-3);line-height:1.45;margin-top:5px">
+          Nenhuma nota no WinThor para o código ${c.cod} nos últimos 3 dias. Registrar como venda aqui deixa a diferença visível para a supervisão.</div></div>
+    </div></div>`;
+
+  if(S.mom==='foto') return `<div class="dossie">${tp('Catálogo','a cliente mandou uma foto de produto')}
+    <div class="corpo2">
+      <div class="bloco" style="padding-bottom:4px">
+        <div class="rotulo">O que ela costuma comprar</div>
+        ${CATALOGO.map((p,i)=>`<div class="prod"><span class="im"></span>
+          <span class="nm">${p[0]}${i===0?'<span style="display:block;font-size:10px;color:var(--ok);font-weight:700">comprou nas 3 últimas notas</span>':''}</span>
+          <span class="pr">${p[1]}</span><button>enviar</button></div>`).join('')}
+      </div>
+      <div class="bloco">
+        <button style="width:100%;border:0;border-radius:10px;background:var(--purple-btn);color:#fff;font-weight:800;font-size:12px;padding:10px;min-height:42px">
+          ${svg('caixa','sm')} Montar orçamento com 3 itens</button>
+        <div style="font-size:10.5px;color:var(--ink-3);margin-top:7px;line-height:1.45">
+          Monta a mensagem com produto, valor unitário e total — o formato que a equipe já usa para fechar.</div></div>
+    </div></div>`;
+
+  return `<div class="dossie">${tp('Ficha da cliente','nada urgente acontecendo')}
+    <div class="corpo2">
+      <div class="bloco"><div class="rotulo">Compra</div>
+        <div class="par"><span>Total em 12 meses</span><b>${c.total}</b></div>
+        <div class="par"><span>Pedidos</span><b>${c.ped}</b></div>
+        <div class="par"><span>Ticket médio</span><b>${c.ticket}</b></div>
+        <div class="par"><span>Última compra</span><b>02/07/2026</b></div></div>
+      <div class="bloco"><div class="rotulo">Últimas notas</div>
+        <div class="par"><span>02/07/2026</span><b>R$ 1.480</b></div>
+        <div class="par"><span>21/05/2026</span><b>R$ 980</b></div>
+        <div class="par"><span>08/04/2026</span><b>R$ 2.130</b></div></div>
+      <div class="bloco"><div class="rotulo">Cadastro</div>
+        <div class="par"><span>Código</span><b>${c.cod}</b></div>
+        <div class="par"><span>Cidade</span><b>${c.cid}</b></div>
+        <div class="par"><span>RCA oficial</span><b>51 — Kamilly</b></div>
+        <div class="par"><span>Linha</span><b>Murano Professional</b></div></div>
+      <div class="bloco"><div class="rotulo">Ações</div>
+        <button style="width:100%;border:1px solid var(--line-strong);background:var(--raised);border-radius:9px;padding:9px;font-size:11.5px;font-weight:700;text-align:left;display:flex;gap:8px;align-items:center;min-height:40px">${svg('grafico','sm')} Ver histórico completo</button>
+        <button style="width:100%;margin-top:6px;border:1px solid var(--line-strong);background:var(--raised);border-radius:9px;padding:9px;font-size:11.5px;font-weight:700;text-align:left;display:flex;gap:8px;align-items:center;min-height:40px">${svg('transf','sm')} Transferir atendimento</button></div>
+    </div></div>`;
+}
+
+function desktop(){
+  const c=cli();
+  return `<div class="desktop">
+  <div class="faixa"></div>
+  <div class="nav"><span class="logo"><svg width="16" height="16" viewBox="0 0 100 100"><path d="M31 74C31 48 33 36 47 28" fill="none" stroke="#e7d7dc" stroke-width="11" stroke-linecap="round"/><path d="M53 74C53 48 55 36 69 28" fill="none" stroke="#e7d7dc" stroke-width="11" stroke-linecap="round"/></svg></span>
+    <b style="font-size:15px;color:var(--marca);letter-spacing:-.02em">CRM</b>
+    <nav><a href="#">Negociações</a><a href="#" class="on">Balcão</a><a href="#">Relatórios</a><a href="#">Visões da Carteira</a><a href="#">Tickets</a></nav>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:9px">
+      <span style="font-size:11.5px;color:var(--ink-3)">hoje: <b class="num" style="color:var(--ink)">R$ 4.180</b> faturado · <b class="num" style="color:var(--ink)">3</b> fechadas</span>
+      <span class="av">K</span></span></div>
+  <div class="corpo">
+
+    <div class="clientes">
+      <div class="topo">
+        <h2>Carteira Kamilly</h2>
+        <div class="sub">241 clientes · <b style="color:var(--alerta)">86 fora do ciclo</b> · 3 esperando resposta</div>
+        <div class="busca"><input placeholder="Buscar cliente, produto ou o que foi dito…">${svg('busca')}</div>
+        <div class="abas-fila">
+          <button aria-pressed="true"><span class="n num">3</span>esperando</button>
+          <button aria-pressed="false"><span class="n num">86</span>fora do ciclo</button>
+          <button aria-pressed="false"><span class="n num">1</span>sem dono</button>
+          <button aria-pressed="false"><span class="n num">241</span>tudo</button>
+        </div>
+      </div>
+      <div class="rolagem">${CLI.map(cartao).join('')}</div>
+    </div>
+
+    <div class="thread">
+      <div class="cab">
+        <span class="ava">${c.ini}</span>
+        <span style="flex:1;min-width:0"><b>${c.nome}</b>
+          <span class="sub num" style="display:block">${c.cod?`cód. ${c.cod} · ${c.cid} · RCA 51`:'contato novo — sem cadastro'} · Murano Professional</span></span>
+        <button class="acao">${svg('tel','sm')} Ligar</button>
+        <button class="acao">${svg('transf','sm')} Transferir</button>
+        <button class="acao pri">${svg('check','sm')} Encerrar</button>
+      </div>
+
+      <!-- FAIXA DA CLIENTE: os quatro números e a ação, sempre visíveis -->
+      <div class="faixa-cli">
+        <div class="n ${c.pct>=100?'alerta':'bom'}"><div class="v num">${c.dias!=null?c.dias+' dias':'—'}</div><div class="k">sem comprar</div></div>
+        <div class="n"><div class="v num">${c.ticket??'—'}</div><div class="k">ticket médio</div></div>
+        <div class="n"><div class="v num">${c.total??'—'}</div><div class="k">em 12 meses</div></div>
+        <div class="sug">
+          <span class="txt">${c.pct>=100
+            ? `Passou <b>${c.pct-100}%</b> do ciclo. Comprou <b>Selagem Térmica</b> nas 3 últimas notas.`
+            : `Está dentro do ciclo. Última compra em 02/07 — <b>não force reativação</b>.`}
+            <span style="display:block;color:var(--ink-3);font-size:10px;margin-top:2px">calculado do WinThor · nota mais recente 02/07/2026</span></span>
+          <button>Escrever a oferta</button>
+        </div>
+      </div>
+
+      <div class="msgs">${bolhas()}</div>
+
+      ${S.mom==='janela'
+        ? `<div class="janela fechada">${svg('alerta','sm')}<b>Janela fechada há 2 dias</b> — a caixa está travada; o template está aberto ao lado
+             <span style="margin-left:auto;font-size:11px;opacity:.8">→</span></div>`
+        : `<div class="janela">${svg('relogio','sm')}<b>Janela aberta</b> · fecha em 3h06, às 17:38
+             <span style="margin-left:auto;font-size:11px;opacity:.8">cada mensagem dela reinicia a contagem</span></div>`}
+
+      <div class="compor">
+        <button class="ferr">${svg('clipe')}</button>
+        <button class="ferr">${svg('mic')}</button>
+        <button class="ferr">${svg('raio')}</button>
+        <button class="ferr">${svg('nota')}</button>
+        <textarea rows="1" placeholder="${S.mom==='janela'?'Janela fechada — escolha um template ao lado':'Escreva…  ( / respostas rápidas · Enter envia )'}"></textarea>
+        <button class="enviar">${svg('envia')}</button>
+      </div>
+    </div>
+
+    ${dossie()}
+  </div></div>`;
+}
+
+function mobile(){
+  const c=cli();
+  const lista=`
+    <div class="m-cab"><span class="tt">Carteira</span>
+      <button class="ferr" style="width:40px;height:40px">${svg('busca')}</button><span class="av" style="width:32px;height:32px">K</span></div>
+    <div style="padding:0 14px 8px;font-size:12px;color:var(--ink-3);flex:none">241 clientes · <b style="color:var(--alerta)">86 fora do ciclo</b></div>
+    <div class="m-lista">
+      ${CLI.map(x=>`<button class="cli" style="height:auto;padding:12px 14px" onclick="abrir('${x.id}')">
+        ${anel(x.pct,x.estado)}
+        <span class="meio"><span class="nome" style="font-size:14.5px">${x.nome.split(' —')[0]}</span>
+          <span class="dados"><span class="pill ${x.estado==='quente'?'quente':x.estado==='ok'?'ok':'calmo'}">${x.rot}</span>
+            ${x.dias!=null?`<span class="num">${x.dias}d</span> · <span class="num">${x.ticket}</span>`:''}</span>
+          <span class="prev" style="font-size:12.5px">${x.prev}</span></span>
+        ${x.nova?'<span class="pt"></span>':`<span class="num" style="font-size:10.5px;color:var(--ink-3)">${x.hora}</span>`}
+      </button>`).join('')}
+    </div>
+    <div class="m-tabs">
+      <button class="on">${svg('sino','lg')}<span>Esperando</span><span class="bad num">3</span></button>
+      <button>${svg('relogio','lg')}<span>Fora do ciclo</span><span class="bad num">86</span></button>
+      <button>${svg('fila','lg')}<span>Sem dono</span></button>
+      <button>${svg('balao','lg')}<span>Tudo</span></button>
+    </div>`;
+
+  const thread=`
+    <div class="m-cab" style="padding-bottom:8px;border-bottom:1px solid var(--line)">
+      <button class="ferr" style="width:40px;height:40px;border:0;background:transparent" onclick="S.mobThread=false;render()">${svg('volta','lg')}</button>
+      <span style="width:36px;height:36px;border-radius:100px;background:var(--purple-btn);color:#fff;display:grid;place-items:center;font-weight:800;flex:none">${c.ini}</span>
+      <span style="flex:1;min-width:0"><b style="display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.nome.split(' —')[0]}</b>
+        <span class="num" style="font-size:11px;color:var(--ink-3)">cód. ${c.cod} · ${c.cid}</span></span>
+      <button class="ferr" style="width:40px;height:40px">${svg('tel')}</button></div>
+    <!-- a mesma faixa do desktop, em duas linhas -->
+    <div class="faixa-cli" style="flex-wrap:wrap">
+      <div class="n alerta" style="flex:1 1 33%"><div class="v num">${c.dias}d</div><div class="k">sem comprar</div></div>
+      <div class="n" style="flex:1 1 33%"><div class="v num">${c.ticket}</div><div class="k">ticket</div></div>
+      <div class="n" style="flex:1 1 33%;border-right:0"><div class="v num">${c.ped}</div><div class="k">pedidos</div></div>
+    </div>
+    <div class="m-msgs">${bolhas()}</div>
+    <!-- carrossel de contexto: o dossiê virado de lado, no alcance do polegar -->
+    <div class="carro">
+      ${S.mom==='janela'?`<div class="ctx destaque"><div class="k">janela fechada</div><div class="v">só template</div>
+        <div class="d">recontato_de_clientes · R$ 0,43</div><button>Ver texto e enviar</button></div>`:''}
+      ${S.mom==='foto'?`<div class="ctx destaque"><div class="k">catálogo</div><div class="v">Selagem 1L</div>
+        <div class="d">R$ 189,90 · comprou 3× seguidas</div><button>Mandar preço</button></div>`:''}
+      ${S.mom==='parou'?`<div class="ctx destaque"><div class="k">no que deu?</div><div class="v">parou há 3 dias</div>
+        <div class="d">registrar fecha o número da equipe</div><button>Venda realizada</button></div>`:''}
+      <div class="ctx"><div class="k">ciclo</div><div class="v" style="color:var(--alerta)">${c.pct}%</div>
+        <div class="d">${c.dias} dias sem comprar · ciclo de 38</div><button>Escrever a oferta</button></div>
+      <div class="ctx"><div class="k">últimas notas</div><div class="v">R$ 1.480</div>
+        <div class="d">02/07 · 21/05 · 08/04</div></div>
+      <div class="ctx"><div class="k">ficha</div><div class="v">${c.total}</div><div class="d">${c.ped} pedidos em 12 meses</div></div>
+    </div>
+    <div class="m-compor">
+      <button class="ferr">${svg('mais','lg')}</button>
+      <textarea rows="1" placeholder="Mensagem…"></textarea>
+      <button class="ferr" style="border-color:var(--acao-fill);color:var(--acao)">${svg('mic','lg')}</button>
+      <button class="enviar">${svg('envia')}</button></div>`;
+
+  return `<div class="mob-wrap">
+    <div><div class="fone"><div class="notch"></div><div class="safe-top"></div>${S.mobThread?thread:lista}<div class="safe-bot"></div></div>
+      <div class="mlegenda">${S.mobThread?'faixa fixa + carrossel de contexto':'lista de CLIENTES, com anel de ciclo'}</div></div>
+    <div><div class="fone"><div class="notch"></div><div class="safe-top"></div>${S.mobThread?lista:thread}<div class="safe-bot"></div></div>
+      <div class="mlegenda">a outra tela</div></div>
+  </div>`;
+}
+function render(){palco.innerHTML=S.disp==='desk'?desktop():mobile()}
+render();
+</script>
+</body>
+</html>

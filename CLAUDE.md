@@ -2356,3 +2356,266 @@ ERP para um terceiro projeto (a mesma preocupação da §10.7, item 5).
 | `web/app/admin/page.tsx` | `EnviosAba`, terceira posição da chave; link 🗂️ Gestão de carteira na barra |
 | `web/app/page.tsx` | menos as duas pastilhas, o dropdown e 4 itens de menu; mais Visões da Carteira |
 | `web/app/carteira/page.tsx` | o "voltar" aponta para /admin, não mais para o board |
+
+## 28. Segundo número real na Cloud API — "Murano Professional" (23–24/08/2026)
+
+Número próprio registrado direto na Cloud API e colocado como **a linha de envio
+do app**. Recebimento, envio de texto, recibos de entrega, template e ligação
+validados ponta a ponta no mesmo dia. O RD segue intocado atendendo o número
+oficial — continua valendo a §23: dois números em paralelo, sem corte à vista.
+
+### 28.1 Os ids (verificados na Graph API, não no painel)
+
+| | valor |
+|---|---|
+| `phone_number_id` | `1264458800091787` |
+| número | **+55 91 8166-0019** |
+| `verified_name` | Murano Professional · `account_mode: LIVE` · `CLOUD_API` |
+| **WABA** | `1568370048121307` (conta "Murano Professional") |
+| token | o **`WHATSAPP_TOKEN` que já existia** — system user Murano Pulse, `expires_at: 0` |
+
+Migration **0094** cadastra a linha em `chat_linha`; `WHATSAPP_PHONE_NUMBER_ID` e
+`WHATSAPP_WABA_ID` na Vercel apontam para os dois ids acima.
+
+**Como achar o WABA id sem adivinhar:** a coluna "Identificação" da tela
+*Cobrança → Contas do WhatsApp Business* É o WABA id — conferido porque duas
+linhas dela batem com ids já conhecidos daqui (Test `28189344217325382`, Murano
+Pro `1441580480587007`). O token do CRM **não** lista WABAs
+(`assigned_whatsapp_business_accounts` volta vazio, `owned_…` dá #200), mas
+depois de conhecido o id ele lê a conta inteira.
+
+### 28.2 TEMPLATE É POR WABA, NÃO POR NÚMERO — a armadilha central
+
+Trocar o número trocou de **conta**, e com isso os quatro templates aprovados
+viraram pó: `crm_templates` continuou apontando para nomes que só existiam na
+WABA anterior. Sintoma no chat, com o cadastro impecável e o código correto:
+
+```
+Graph 132001: template name (recontato_de_clientes) does not exist in pt_BR
+```
+
+A WABA nova nasce só com o `hello_world` de fábrica — por isso um teste com
+`hello_world` passa e todo o resto falha, o que engana o diagnóstico.
+
+Recriados na conta nova, aprovados em minutos: **`recontato_de_clientes`** (o ★
+padrão, `{{1}}` + `{{2}}`) e **`tudo_bem`**. Ficaram de fora de propósito
+`promo` (corpo "teste asdfasdf…") e `tudo_bem_com_voce` (duplicata truncada do
+padrão) — **os dois seguem `ativo: true` no cadastro e dão 132001 se alguém
+escolher**; ver pendências.
+
+**Isto vai se repetir na Fase C**, quando o número oficial migrar: recriar os
+templates na WABA de destino faz parte do corte, não é acabamento posterior.
+
+### 28.3 `subscribed_apps` vazio — a falha mais silenciosa que este projeto já teve
+
+Por horas o envio funcionou e **nada voltava**: nenhuma mensagem recebida,
+nenhum tique, nenhum evento de chamada. Inscrever o app é passo separado de
+tudo o mais e não dá erro em lugar nenhum quando falta.
+
+```
+GET  /<waba_id>/subscribed_apps  -> {"data":[]}      <- o diagnóstico
+POST /<waba_id>/subscribed_apps  -> {"success":true} <- a correção
+```
+
+**O sintoma que denuncia isso no nosso banco** (e vale como régua permanente):
+mensagem enviada parada em **`status: "wait"`** para sempre, porque quem
+promove `wait → success → read` é o webhook (§16.3). Some-se a isso zero linhas
+`enviada_por='customer'` com id `wamid.*` na linha nova.
+
+⚠️ Assinar a WABA **não** assina os campos: `messages` já vinha assinado no
+nível do app (herdado), mas **`calls` precisa ser marcado à mão** no App
+Dashboard — é a armadilha nº 3 da §16.4 outra vez, agora para voz. Ler quais
+campos estão assinados exige **app token** (`#190 Application Secret required`),
+então é conferência visual no painel: o `WHATSAPP_APP_SECRET` só existe na
+Vercel.
+
+⚠️ A rota `/api/whatsapp/diag` faz esse POST, mas a allowlist dela (§20.3) só
+permite Murano Shop e a conta de teste — **a lista está desatualizada** e não
+alcança a conta em uso.
+
+### 28.4 `132001` tem TRÊS causas e o texto da Meta só nomeia uma
+
+`template name (X) does not exist in pt_BR` sai igual para: **nome** errado,
+**idioma** errado, ou **conta** errada. O `pt_BR` no fim é só o que ela
+procurou, não uma reclamação sobre a língua do texto — e foi exatamente isso que
+despistou o diagnóstico aqui, onde a causa era a terceira.
+
+A rota não usa `pt_BR` fixo: lê `crm_templates.idioma` e só cai em `pt_BR` se
+estiver vazio (`send-template`, ~linha 156). Um `pt-BR` ou `pt` guardado ali
+reproduz o mesmo erro com a conta certa.
+
+### 28.5 Cobrança: saldo R$ 0,00 NÃO é bloqueio
+
+O "Saldo atual" da tela de contas é **valor acumulado a pagar**, não crédito
+pré-pago — a cobrança do Cloud API é pós-paga. O que bloqueia é **WABA sem forma
+de pagamento vinculada**, e o vínculo é por conta: o mesmo cartão do portfólio
+serve para várias WABAs (a Test e a Murano Professional dividem o mesmo Visa).
+
+Efeito prático, e a razão de a ligação ter sido o último item a cair:
+
+| | precisa de cartão na WABA? |
+|---|---|
+| conversa de serviço / texto na janela de 24h | não (franquia gratuita) |
+| template de marketing | só depois de esgotada a franquia — falha tarde e sem aviso |
+| **chamada de saída** | **sim, desde a primeira** — é o `131044` da §22.6.1 |
+
+Vínculo por interface apenas: a Graph API não expõe cobrança.
+
+### 28.6 Uma linha de envio só — consequência de trocar a env
+
+`linhaDeEnvio()` é lido por **sete** pontos (send-message, send-template,
+enviar-midia, ligação ×2, fora de horário, admin/ligacao). Trocar
+`WHATSAPP_PHONE_NUMBER_ID` **move todo mundo de uma vez**: conversa que entrou
+por outro número passa a ser respondida pelo novo, o que na tela da cliente é
+uma **conversa nova**, e a janela de 24h — que é **por número** — não vem junto.
+
+E o interruptor de calling (§22.7 item 3) age exatamente sobre essa env: ligar
+"Chamadas de voz" em /admin → Linhas passou a valer para o número real, com o
+ícone de telefone aparecendo para todas as clientes da linha.
+
+### 28.7 Correções a seções anteriores
+
+- **Murano Shop foi eliminada de propósito pelo usuário em 24/08/2026.** A §20
+  inteira descreve um piloto que não existe mais: o número +55 91 9806-0032, a
+  WABA `1384896129703324` e os templates aprovados nela se foram. As 57
+  mensagens e as 6 conversas dela seguem no banco como histórico, e a linha
+  continua em `chat_linha` só para dar rótulo a elas.
+- **§23.2 item 1 (meio de pagamento na Murano Shop)** e **§23.2 item 2
+  (template de recontato)** estão resolvidos, porém na conta NOVA — não naquela.
+- **§21.4 item 2 e §23.1** já corrigiam o mito do "modo Ativo": confirmado outra
+  vez aqui, com número real em WABA real enviando para fora de qualquer
+  allowlist, com o app ainda em Desenvolvimento.
+
+### 28.8 Pendências
+
+1. **`promo` e `tudo_bem_com_voce` ativos em `crm_templates` sem existir na WABA
+   em uso** — desativar, ou recriar se alguém os quiser de volta.
+2. **Linhas mortas em `chat_linha`**: piloto (Murano Shop) e número de teste.
+   Desativar tira do filtro do chat, mas some o rótulo das conversas antigas —
+   por isso não foi feito.
+3. **Allowlist da `/api/whatsapp/diag` desatualizada** (§20.3): aponta para uma
+   conta que não existe mais. Rota é temporária e sai na Fase C de qualquer jeito.
+4. **Murano Pro e Murano Cobrança faturam por linha de crédito alocada por
+   terceiros** (ODCEM, Text Wave) — a Murano Pro é a WABA do número oficial;
+   esse arranjo precisa ser resolvido **antes** de migrar o número, não depois.
+
+## 29. Auditoria de UX do chat e o interruptor de desenho (24/08/2026) — migration 0095
+
+O `/chat` foi auditado sobre o **código**, não sobre print de tela, e ganhou três
+direções de redesenho em protótipo. A escolha entre elas virou configuração em
+`/admin` → aba **🎨 Desenho do chat**.
+
+### 29.1 O especialista e a skill de marca reconstruída
+
+Duas peças novas em `.claude/` (⚠️ **`.claude/` está no `.gitignore` deste repo** —
+elas NÃO são versionadas e somem se a pasta for recriada, como já aconteceu em
+11/08, §19.1):
+
+| Arquivo | O que é |
+|---|---|
+| `.claude/agents/ux-chat.md` | subagente especialista em UX/UI de ferramentas de atendimento. Régua de 12 pontos, as 10 tarefas reais do vendedor, e trava dura: escreve só em `prototipos/` |
+| `.claude/skills/murano-brand/SKILL.md` | **a skill original NÃO existe no disco** — é citada em comentário no código e no `CLAUDE.md` do hub, mas não está em `~/.claude`, nos plugins nem em nenhum repo. Reconstruída a partir de `murano-app/src/app/globals.css` (canônico), `web/lib/tema.ts` e o objeto `M` do chat |
+
+A skill registra o que hex sozinho não registra: **púrpura = marca, azul = ação,
+laranja = acento pontual** (um destaque por tela), e as duas calibragens de
+contraste já pagas — `.murano-btn` usa `#7a1755` porque `#621244` chapado sobre o
+card dá **1,46:1**; púrpura como *texto* precisa clarear para `#a8447f`.
+
+**Três paletas Murano divergem hoje**, e não é bug: a do hub é canônica; o tema
+`murano` do CRM usa laranja como cor de ação (anterior à calibragem de 02/08); e o
+chat usa **`#7b2d8b`**, um quarto roxo que **não é token de lugar nenhum**.
+
+### 29.2 Os achados que mais pesam
+
+Laudo completo em `prototipos/laudo-ux-chat.md` (11 achados com evidência
+`arquivo:linha`, custo das 10 tarefas em cliques, o que preservar, riscos).
+
+1. **A tela não diz quantas clientes estão esperando.** O contador de não lidas só
+   existe depois de abrir o dropdown (`page.tsx:1408-1428`) — 2 cliques na primeira
+   pergunta do dia, paga dezenas de vezes por 7 pessoas.
+2. **A janela de 24h só se manifesta como erro.** Zero indicadores; o dado para
+   antecipar **já vem carregado na thread**. Escreve-se a mensagem inteira para
+   descobrir que precisava de template (R$ 0,43).
+3. **A vantagem do ERP abre na aba errada e não existe no celular.** `abrir()` força
+   a aba Perfil, que repete o cabeçalho (`:816`); painel e abas são `!isMobile`
+   (`:1751`, `:2235`) — o diferencial contra o RD desaparece no dispositivo que vai
+   virar app.
+4. **Um único slot `aviso`** (18 `setAviso`) para janela, falha de envio, mídia,
+   nota, transferência e microfone: o segundo evento apaga o primeiro. E a barra de
+   chamada é `fixed bottom:0` em largura total (`ligacao.tsx:471`) — **cobre o
+   compositor**.
+5. **Falha tardia é inalcançável em touch:** o motivo da Meta vive num `title`
+   (`:362`), que exige hover, e não há reenviar.
+6. Contrastes medidos: texto secundário em 10px = **3,57:1** (reprova). Mobile usa
+   `100vh` sem área segura, e o compositor consome ~352 de 362px — sobram **10px**
+   para a caixa de texto.
+
+### 29.3 O interruptor — e a linha que o banco NÃO cruza
+
+`chat_layout` (linha única id=1) guarda o desenho em vigor; `acesso.chat_layout`
+guarda o **piloto por pessoa** (NULL = segue o global); `chat_layout_historico` é
+append-only com `de`/`para`/`por`/`escopo`.
+
+⚠️ **Quais desenhos têm implementação real é fato do CÓDIGO, não do banco** —
+mora em `web/lib/chatLayout.ts` (`implementado: boolean`). Quem sabe se a Direção 2
+existe é o deploy que está no ar, não uma coluna. Duplicar isso no banco criaria
+duas verdades que divergem no primeiro deploy, e o admin conseguiria "estabelecer
+para todos" um desenho que ninguém construiu. A rota recusa com **409**.
+
+Hoje **só `original` está implementado**: as três direções aparecem na tela como
+*Em avaliação*, não selecionáveis. Virar `implementado: true` é o **último** passo
+de implementar uma direção.
+
+`layoutEfetivo()` é a fonte única da régua (piloto ganha do global; valor
+desconhecido cai no padrão em vez de deixar a tela sem desenho) e é usada pelo
+`/api/chat` **e** pelo `/admin` — se cada um calculasse, o admin anunciaria um
+desenho diferente do que a equipe vê.
+
+**`original` é sempre um valor válido** — enquanto for, nenhum redesenho é
+irreversível. Mesmo instinto de `WHATSAPP_ENVIO_PADRAO` e da `chat_horario_atendimento`
+nascendo desligada.
+
+### 29.4 Duas decisões de UI da própria tela de admin
+
+- **Marcar o rádio NÃO aplica.** Estabelecer troca a tela de 15 acessos ativos; um
+  clique acidental não deve fazer isso. Marcar seleciona, um segundo gesto confirma
+  — o mesmo freio que o laudo cobra dos erros caros do chat.
+- **Opção sem implementação aparece, mas não é selecionável.** Esconder as três
+  direções tiraria o material de comparação; deixar ativá-las jogaria a equipe numa
+  tela que não existe.
+
+**PUT e PATCH são separados de propósito**: o primeiro afeta 15 pessoas, o segundo
+uma. Um endpoint só, decidindo pelo formato do corpo, tornaria fácil escrever
+global achando que escrevia piloto.
+
+### 29.5 Piloto por usuário — por que existe
+
+Trocar a tela de sete pessoas de uma vez, sem ninguém ter usado, é o cenário em que
+um desenho bom morre por estranhamento. Mesmo argumento do §21.4 para o corte do RD:
+*o que o vendedor reclamar depois de usar vale mais que qualquer item adivinhado numa
+lista.* Coluna em `acesso` e não tabela nova porque `acesso` **é** a tabela de config
+por usuário e não é escrita por ETL — o risco da §10.11 não se aplica.
+
+### 29.6 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `supabase/migrations/0095_chat_layout.sql` | as duas tabelas + a coluna em `acesso` |
+| `web/lib/chatLayout.ts` | catálogo das 4 opções (tese, ganhos, sacrifícios), `implementado`, `layoutEfetivo()` |
+| `web/app/api/admin/chat-layout/route.ts` | GET · PUT (global) · PATCH (piloto) |
+| `web/app/admin/page.tsx` | `RedesenhoAba` + aba 🎨 |
+| `web/app/api/chat/route.ts` | devolve `layout` no load único (entra no `Promise.all` que já existia — zero round-trip novo) |
+| `prototipos/` | laudo, 3 protótipos standalone e README comparativo |
+
+### 29.7 Pendências
+
+1. **Implementar a Direção 1** — é o piso: quase tudo nela é correção do que já
+   existe, e vale mesmo que a escolha final seja outra. Só então o interruptor tem
+   dois estados reais e serve de rollback.
+2. **Decidir entre 2 e 3** depois de a equipe usar a 1. A pergunta não é qual tela é
+   mais bonita: a **2 aposta em atender mais conversas por dia**, a **3 em vender
+   mais por conversa**.
+3. **Versionar `.claude/`** (skill + agente) ou aceitar que somem. Hoje estão
+   ignorados pelo git.
+4. Direção 2 exige **adiar**, que não existe no banco. Direção 3 exige catálogo com
+   preço e ação recomendada.
