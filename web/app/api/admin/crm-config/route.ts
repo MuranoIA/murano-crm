@@ -35,7 +35,32 @@ const MECANISMOS = [
       "Nada é apagado. A tabela wth_ciclo continua sendo atualizada a cada 10 minutos " +
       "pelo sync do WinThor, então religar mostra o dado de agora, não um buraco.",
   },
+  {
+    chave: "conversas_rd_visiveis",
+    rotulo: "Conversas do RD Conversas",
+    resumo:
+      "As conversas que vieram do RD Conversas alimentam a classificação dos cards nas 5 " +
+      "colunas do board e a lista do chat. Desligando, o CRM passa a enxergar só o que " +
+      "chegou pelo WhatsApp da Murano Professional.",
+    desliga: [
+      "Conversas do RD na lista do chat, na busca por conteúdo e na thread",
+      "Última mensagem, prévia e “há quanto tempo parado” nos cards do board",
+      "Os gatilhos que levam o card para Negociação e Tentativa de contato",
+    ],
+    mantem: [
+      "A régua das 5 colunas, intacta — só deixa de receber sinal do RD",
+      "A coluna Pedido emitido, que vem da nota fiscal e não da conversa",
+      "O ETL, que segue ingerindo o RD normalmente para o banco",
+      "O disparo em massa, que continua enxergando o contato real",
+    ],
+    nota:
+      "Sem sinal de conversa, cada cliente cai onde a régua manda: quem está na carteira do " +
+      "WinThor vai para Prospecção; quem foi contatado mas o ERP não alcança vai para Ociosos. " +
+      "Ninguém some. Medido em 24/08: 4.091 em prospecção, 75 em ociosos, 2 conversas da Cloud.",
+  },
 ] as const;
+
+const CHAVES = MECANISMOS.map((m) => m.chave) as readonly string[];
 
 export async function GET() {
   const g = guardaAdmin("ver os interruptores do CRM");
@@ -59,33 +84,52 @@ export async function PUT(req: Request) {
   const b = await corpo(req);
   if (!b) return Response.json({ error: "body inválido" }, { status: 400 });
 
+  // Uma chave por chamada: `{chave, valor}`. O formato antigo `{ciclo_ativo}`
+  // continua aceito porque uma aba já aberta no navegador de alguém ainda manda
+  // assim durante o deploy.
+  const chave: string = typeof b.chave === "string" ? b.chave
+    : typeof b.ciclo_ativo === "boolean" ? "ciclo_ativo" : "";
+  const valor = typeof b.valor === "boolean" ? b.valor : b.ciclo_ativo;
+
+  if (!CHAVES.includes(chave)) {
+    return Response.json({ error: "mecanismo desconhecido" }, { status: 400 });
+  }
   // Só booleano de verdade. `"false"` (string) é `true` em JS, e um cliente
   // desatualizado mandando string ligaria o mecanismo achando que desligou.
-  if (typeof b.ciclo_ativo !== "boolean") {
-    return Response.json({ error: "informe ciclo_ativo como true ou false" }, { status: 400 });
+  if (typeof valor !== "boolean") {
+    return Response.json({ error: "informe o valor como true ou false" }, { status: 400 });
   }
-  const alvo: boolean = b.ciclo_ativo;
 
   const sb = sbAdmin();
   const antes = await lerCrmConfig(sb);
-  if (antes.ciclo_ativo === alvo) {
+  if ((antes as any)[chave] === valor) {
     return Response.json({ ok: true, aviso: "já estava assim — nada mudou.", config: antes });
   }
 
   const { data, error } = await sb.from("crm_config").upsert({
     id: 1,
-    ciclo_ativo: alvo,
+    [chave]: valor,
     atualizado_por: g.email,
     atualizado_em: new Date().toISOString(),
-  }, { onConflict: "id" }).select("ciclo_ativo,atualizado_por,atualizado_em").single();
+  }, { onConflict: "id" }).select("ciclo_ativo,conversas_rd_visiveis,atualizado_por,atualizado_em").single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  const avisos: Record<string, { on: string; off: string }> = {
+    ciclo_ativo: {
+      on: "O ciclo volta a aparecer no board, no chat, no disparo em massa e no relatório.",
+      off: "O ciclo saiu do board, do chat, do disparo em massa e do relatório.",
+    },
+    conversas_rd_visiveis: {
+      on: "As conversas do RD voltam a aparecer no board e no chat.",
+      off: "O board passa a classificar só pelo WhatsApp da Murano Professional; os demais clientes caem em Prospecção e Ociosos.",
+    },
+  };
+  const a = avisos[chave];
 
   return Response.json({
     ok: true,
     config: data,
-    aviso: alvo
-      ? "O ciclo volta a aparecer no board, no chat, no disparo em massa e no relatório."
-      : "O ciclo saiu do board, do chat, do disparo em massa e do relatório. Quem estiver com a tela aberta vê a mudança na próxima atualização.",
+    aviso: `${valor ? a.on : a.off} Quem estiver com a tela aberta vê a mudança na próxima atualização.`,
   });
 }

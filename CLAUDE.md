@@ -2706,3 +2706,81 @@ equipe.
 Verificado ao vivo em 24/08: desligou, religou, e `vw_ciclo_card` seguiu com
 1.104 linhas. **Nada é apagado** — o `wth-sync-tudo` continua atualizando a cada
 10 min, então religar mostra o dado de agora, não um buraco.
+
+## 31. Segundo interruptor: esconder as conversas do RD (24/08/2026) — migration 0098
+
+`/admin` → ⚙️ Mecanismos → **Conversas do RD Conversas**. Pedido do usuário, ao pé
+da letra: **não mexer na régua das 5 colunas** — mexer no que ALIMENTA a régua.
+Sem gatilho de conversa, o card cai onde a régua manda.
+
+### 31.1 A `vw_funil` NÃO pode ser filtrada — o ETL depende dela
+
+**A armadilha central desta migration.** `src/etl/run.ts` lê a `vw_funil` para
+decidir o que sincronizar (`.gte("ultima_atividade", cutoff)` na linha 132 e
+`.eq("etapa","negociacao")` na 154). Filtrar a view existente faria o ETL
+concluir que nada está ativo e **parar de puxar o RD**, sem erro nenhum — o
+oposto do pedido, que é explícito: *"o ETL pode continuar alimentando o banco,
+mesmo que não mostre nada na tela"*.
+
+Daí a `vw_funil_sem_rd`: mesma régua, mesma ordem de colunas, enxergando só
+mensagem com `linha_id` não nulo. **Duplicação consciente** — as duas precisam
+mudar juntas se a régua mudar.
+
+### 31.2 A linha que separa esconder de agir
+
+| Lê a view filtrada (TELA) | Continua na `vw_funil` (VERDADE) |
+|---|---|
+| `/api/funil` · `/api/chat` · `/api/chat/contato` · `/api/chat/buscar` | `src/etl/run.ts` — senão para de ingerir |
+| `/api/chat/thread` · `/api/mensagens` (lupa do card) | `/api/admin/disparo-massa` — decide **quem abordar** |
+| | `/api/chat/transferir` · `lib/ligacao.ts` — checagem de dono (autorização) |
+
+**Esconder não pode virar agir sem saber.** Cegar o disparo em massa faria o CRM
+re-abordar quem está em conversa aberta no RD agora — dano real, no cliente. E
+checagem de permissão se resolve contra o dado autoritativo, nunca contra uma
+view deliberadamente parcial.
+
+`viewFunil(cfg)` em `web/lib/crmConfig.ts` é a escolha única: se cada rota
+decidisse, o board mostraria o card em Prospecção enquanto o chat ainda listaria
+a conversa dele.
+
+### 31.3 O ramo 1b existe para ninguém sumir
+
+Medido em 24/08 com a chave ligada:
+
+| | com RD | sem RD |
+|---|---|---|
+| conversa visível | 3.847 | **2** |
+| **ociosos (ramo 1b, NOVO)** | 0 | **75** |
+| prospecção | 820 | **4.091** |
+| venda sem contato | 39 | 39 |
+| **total da view** | 4.705 | 4.207 |
+
+Os **75** são contatos que estão no board hoje só por causa de uma conversa do
+RD e que a prospecção **não** alcança — sem vínculo e sem telefone batendo no
+WinThor. Sem o ramo 1b evaporariam em silêncio. Entram como `ociosos` (foram
+contatados; `prospeccao` significa "nunca contatado") com `ultima_atividade`
+NULA, então só aparecem no filtro de período "todos", igual à prospecção.
+
+**A diferença de 498 no total não é perda:** 510 compraram no mês e por isso saem
+da prospecção de propósito — aparecem na coluna **Pedido emitido**, que vem de
+`vw_pedido_bi_card` (nota fiscal, rota separada) e não da conversa. Outros 4
+reaparecem em prospecção casados por telefone. Conferido: **zero cliente_id
+duplicado**, ninguém sem card.
+
+### 31.4 Bug pré-existente que a chave escancarou
+
+O `/api/chat` cortava a prospecção por `ultima_atividade is not null` — mas o
+card de **venda** carrega a data da nota, então **39 cards sintéticos
+`venda:<codcli>` sempre estiveram na lista do chat**, invisíveis entre 3.908
+conversas. Com o RD escondido virariam **39 de 41 itens**, e o chat pareceria
+quebrado. Corrigido: a lista exclui `venda:%` e `winthor:%`, que não têm thread.
+Lista do chat hoje: 3.908 → **3.869** (com RD) e **2** (sem RD).
+
+### 31.5 O que vem a seguir invalida este formato — e é de propósito
+
+O usuário já pediu o passo seguinte: **escolher quais linhas ver** (RD, Murano
+Professional, ou as duas). Isso é a generalização deste booleano, não um terceiro
+interruptor: `conversas_rd_visiveis=false` é o mesmo que marcar só a Murano
+Professional. Quando o seletor entrar, esta coluna deve ser **substituída**, não
+acompanhada — dois controles sobre o mesmo assunto se contradizem ("RD escondido"
+com "mostrar RD" marcado) e ninguém sabe qual vence.

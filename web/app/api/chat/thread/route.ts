@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { lerCrmConfig } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +19,19 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
+  // Interruptor das conversas do RD (0098). A lista já não oferece essas
+  // conversas, mas um link antigo ou o botão voltar ainda chegam aqui — e a
+  // thread é onde o conteúdo apareceria por inteiro.
+  const cfgThread = await lerCrmConfig(sb);
+  let msgsQ = sb.from("mensagens")
+    .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro")
+    .eq("cliente_id", cliente_id);
+  if (!cfgThread.conversas_rd_visiveis) msgsQ = msgsQ.not("linha_id", "is", null);
+
   const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
-    sb.from("mensagens")
-      .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro")
-      .eq("cliente_id", cliente_id)
-      .order("criada_em", { ascending: false })
-      .limit(200),
+    msgsQ.order("criada_em", { ascending: false }).limit(200),
     // notas internas (migration 0080) — vêm à parte e o front intercala pela data.
     // Todas, sem limite de janela: são poucas por conversa, e esconder uma nota
     // que caiu fora das 200 últimas mensagens seria perder um recado da equipe.

@@ -458,9 +458,9 @@ export default function Admin() {
       {aba === "crm-config" && dados?.["crm-config"] && (
         <MecanismosAba
           d={dados["crm-config"]}
-          salvar={(ciclo_ativo) =>
-            enviar("crm-config", "PUT", { ciclo_ativo },
-              ciclo_ativo ? "Mecanismo religado." : "Mecanismo desligado.")}
+          salvar={(chave, valor) =>
+            enviar("crm-config", "PUT", { chave, valor },
+              valor ? "Mecanismo religado." : "Mecanismo desligado.")}
         />
       )}
 
@@ -1639,13 +1639,14 @@ function EnviosAba({ dados }: { dados: any }) {
 // mundo de uma vez. Religar pede um só — voltar ao estado anterior nunca deveria
 // custar mais caro do que sair dele.
 // ---------------------------------------------------------------------------
-function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) => Promise<boolean> }) {
+function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: boolean) => Promise<boolean> }) {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
   const cfg = d.config ?? {};
   const mecanismos: any[] = d.mecanismos ?? [];
-  const estado: Record<string, boolean> = { ciclo_ativo: cfg.ciclo_ativo !== false };
+  // lido direto da config: acrescentar mecanismo é mexer só na rota, não aqui
+  const ligado = (chave: string) => cfg[chave] !== false;
 
   const quando = (iso: string | null) => {
     if (!iso) return null;
@@ -1677,7 +1678,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
         }
       >
         {mecanismos.map((m: any) => {
-          const on = estado[m.chave] !== false;
+          const on = ligado(m.chave);
           const confirmandoEste = confirmando === m.chave;
           return (
             <div key={m.chave} style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
@@ -1691,7 +1692,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
                         <Botao cor={M.laranja} disabled={ocupado}
                           onClick={async () => {
                             setOcupado(true);
-                            const deu = await salvar(false);
+                            const deu = await salvar(m.chave, false);
                             setOcupado(false);
                             if (deu) setConfirmando(null);
                           }}>
@@ -1704,7 +1705,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
                     )
                   ) : (
                     <Botao disabled={ocupado}
-                      onClick={async () => { setOcupado(true); await salvar(true); setOcupado(false); }}>
+                      onClick={async () => { setOcupado(true); await salvar(m.chave, true); setOcupado(false); }}>
                       {ocupado ? "Religando…" : "Religar"}
                     </Botao>
                   )}
@@ -1730,15 +1731,15 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
               {m.nota && (
                 <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{m.nota}</p>
               )}
-
-              <p style={{ fontSize: 12, color: M.gray, margin: "10px 0 0" }}>
-                {cfg.atualizado_por
-                  ? <>Última mudança por <b>{cfg.atualizado_por}</b>{quando(cfg.atualizado_em) ? ` em ${quando(cfg.atualizado_em)}` : ""}.</>
-                  : "Nunca foi trocado — está no estado de origem."}
-              </p>
             </div>
           );
         })}
+
+        <p style={{ fontSize: 12, color: M.gray, margin: 0 }}>
+          {cfg.atualizado_por
+            ? <>Última mudança nesta tela: <b>{cfg.atualizado_por}</b>{quando(cfg.atualizado_em) ? `, em ${quando(cfg.atualizado_em)}` : ""}.</>
+            : "Nenhum interruptor foi trocado ainda."}
+        </p>
       </Bloco>
     </>
   );
