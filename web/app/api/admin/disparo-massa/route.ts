@@ -1,5 +1,6 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
+import { lerCrmConfig } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -173,10 +174,15 @@ export async function POST(req: Request) {
   // 2) contexto: último disparo, lixeira, ciclo de compra e quem já conversa
   //    pela Cloud. Nenhum depende do outro, então vão em paralelo.
   const desdeDisparo = new Date(Date.now() - Math.max(diasRecontato, 1) * 86_400_000).toISOString();
+  const cfg = await lerCrmConfig(db);
   const [dispRes, descRes, cicloRes, linhaRes] = await Promise.all([
     db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo),
     db.from("wth_descartados").select("cliente_id,codcli,tel8"),
-    db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade"),
+    // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
+    // passa a ser só tempo parado + ticket — ver o cálculo de `score` abaixo
+    cfg.ciclo_ativo
+      ? db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade")
+      : Promise.resolve({ data: [] as any[] }),
     db.from("vw_chat_linha_cliente").select("cliente_id"),
   ]);
 
@@ -246,7 +252,10 @@ export async function POST(req: Request) {
       || cicloCli.get(String(c.cliente_id))
       || (t.length === 8 ? cicloTel.get(t) : null);
 
-    // mesmo score do board: urgência do ciclo + tempo parado + ticket
+    // urgência do ciclo + tempo parado + ticket. Com o motor desligado, `ci` é
+    // sempre nulo e a parcela da urgência some — a ordem passa a ser tempo
+    // parado + ticket, que continua sendo uma ordem defensável, em vez de a
+    // campanha sair sem critério nenhum.
     const parado = dias === Infinity ? 40 : Math.min(dias, 60);
     const score = Number(ci?.score_urgencia ?? 0) + parado * 0.6 + Math.min(Number(c.venda_valor ?? 0) / 100, 30);
 
@@ -268,6 +277,9 @@ export async function POST(req: Request) {
   const selecionados = elegiveis.slice(0, limite);
 
   return Response.json({
+    // a tela explica a ordem do público; com o motor desligado a explicação
+    // muda junto, senão prometeria um critério que não está sendo aplicado
+    ciclo_ativo: cfg.ciclo_ativo,
     total: elegiveis.length,
     selecionados,
     cortes,

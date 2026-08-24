@@ -432,6 +432,10 @@ export default function Page() {
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
   const [cicloSel, setCicloSel] = useState<string[]>([]);
   const [cicloPainel, setCicloPainel] = useState(false);
+  // Motor de ciclo ligado? Vem do /api/funil (crm_config, migration 0097).
+  // Começa em `true` para a tela não piscar sem o selo antes da 1ª resposta —
+  // o mesmo estado em que o interruptor nasce no banco.
+  const [cicloAtivo, setCicloAtivo] = useState(true);
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
   // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
@@ -470,6 +474,8 @@ export default function Page() {
       if (j.error) { setErro(j.error); return; }
       setErro("");
       setCards(j.cards ?? []);
+      // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
+      setCicloAtivo(j.ciclo_ativo !== false);
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
@@ -1120,6 +1126,13 @@ export default function Page() {
       }
     } finally { setMelhoresCarregando(false); }
   }
+  // Motor desligado com filtro de ciclo aplicado: os cards vêm sem `ciclo`, e
+  // `matchCiclo` esconderia TODOS eles — a tela ficaria vazia sem explicação.
+  // Limpar a seleção é o único desfecho honesto.
+  useEffect(() => {
+    if (!cicloAtivo && cicloSel.length) { setCicloSel([]); setCicloPainel(false); }
+  }, [cicloAtivo, cicloSel.length]);
+
   // filtro por ciclo: dois EIXOS.
   // - "URGENTE" (ligar hoje) é PRIORIDADE, não categoria: refina o resto (E/AND).
   // - as categorias (situação no ciclo) são OR entre si.
@@ -2319,6 +2332,9 @@ export default function Page() {
               </div>
             )}
           </div>
+          {/* Filtro de ciclo: some inteiro com o motor desligado no /admin. O selo
+              no card não precisa de guarda — vem `ciclo: null` do servidor. */}
+          {cicloAtivo && (
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setCicloPainel((v) => !v)}
@@ -2377,6 +2393,7 @@ export default function Page() {
               </div>
             )}
           </div>
+          )}
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setParadoPainel((v) => !v)}

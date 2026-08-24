@@ -20,7 +20,7 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
@@ -28,6 +28,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "linhas", rotulo: "📞 Linhas" },
   { id: "templates-whatsapp", rotulo: "📨 Templates" },
   { id: "chat-layout", rotulo: "🎨 Desenho do chat" },
+  { id: "crm-config", rotulo: "⚙️ Mecanismos" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -451,6 +452,15 @@ export default function Admin() {
             enviar("chat-layout", "PUT", { layout }, "Desenho estabelecido para todos.")}
           piloto={(email, layout) =>
             enviar("chat-layout", "PATCH", { email, layout }, "Piloto atualizado.")}
+        />
+      )}
+
+      {aba === "crm-config" && dados?.["crm-config"] && (
+        <MecanismosAba
+          d={dados["crm-config"]}
+          salvar={(ciclo_ativo) =>
+            enviar("crm-config", "PUT", { ciclo_ativo },
+              ciclo_ativo ? "Mecanismo religado." : "Mecanismo desligado.")}
         />
       )}
 
@@ -1410,7 +1420,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
       <Bloco
         titulo="3. Prévia"
-        ajuda="Havendo mais elegíveis que a quantidade pedida, vão os mais prioritários — urgência do ciclo de compra, tempo parado e ticket."
+        ajuda={"Havendo mais elegíveis que a quantidade pedida, vão os mais prioritários — "
+          + (previa?.ciclo_ativo === false
+              ? "tempo parado e ticket. (O motor de ciclo de compra está desligado em Mecanismos.)"
+              : "urgência do ciclo de compra, tempo parado e ticket.")}
       >
         {carregandoPrevia && <p style={{ fontSize: 13, color: M.gray }}>Conferindo o público…</p>}
         {!carregandoPrevia && previa && (
@@ -1608,6 +1621,124 @@ function EnviosAba({ dados }: { dados: any }) {
             </table>
           </div>
         )}
+      </Bloco>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mecanismos — interruptores globais do CRM (`crm_config`, migration 0097).
+//
+// A tela mostra, para cada mecanismo, O QUE ele desliga e o que NÃO desliga.
+// Sem essa lista o interruptor vira um botão que ninguém tem coragem de virar —
+// e, virado, ninguém sabe explicar o que mudou na tela do vendedor no dia
+// seguinte. Mesma razão pela qual a aba de redesenho mostra a tese e o
+// sacrifício de cada direção em vez de só o nome.
+//
+// Desligar pede DOIS gestos, como estabelecer um desenho: muda a tela de todo
+// mundo de uma vez. Religar pede um só — voltar ao estado anterior nunca deveria
+// custar mais caro do que sair dele.
+// ---------------------------------------------------------------------------
+function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) => Promise<boolean> }) {
+  const [confirmando, setConfirmando] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+
+  const cfg = d.config ?? {};
+  const mecanismos: any[] = d.mecanismos ?? [];
+  const estado: Record<string, boolean> = { ciclo_ativo: cfg.ciclo_ativo !== false };
+
+  const quando = (iso: string | null) => {
+    if (!iso) return null;
+    const dt = new Date(iso);
+    return `${dt.toLocaleDateString("pt-BR")} às ${dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  };
+
+  const Lista = ({ titulo, itens, cor }: { titulo: string; itens: readonly string[]; cor: string }) => (
+    <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: cor, marginBottom: 6 }}>
+        {titulo}
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 17, fontSize: 12.5, color: M.gray, lineHeight: 1.65 }}>
+        {itens.map((t) => <li key={t}>{t}</li>)}
+      </ul>
+    </div>
+  );
+
+  return (
+    <>
+      <Bloco
+        titulo="Interruptores do sistema"
+        ajuda={
+          <>
+            Mecanismos que podem ser <b>desligados e religados sem deploy</b>, para toda a equipe.
+            Nada é apagado: o dado continua sendo sincronizado, só deixa de aparecer e de ser
+            usado nos cálculos. Religar mostra o estado de agora, não um buraco.
+          </>
+        }
+      >
+        {mecanismos.map((m: any) => {
+          const on = estado[m.chave] !== false;
+          const confirmandoEste = confirmando === m.chave;
+          return (
+            <div key={m.chave} style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{m.rotulo}</div>
+                <Selo ok={on} sim="Ligado" nao="Desligado" />
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  {on ? (
+                    confirmandoEste ? (
+                      <>
+                        <Botao cor={M.laranja} disabled={ocupado}
+                          onClick={async () => {
+                            setOcupado(true);
+                            const deu = await salvar(false);
+                            setOcupado(false);
+                            if (deu) setConfirmando(null);
+                          }}>
+                          {ocupado ? "Desligando…" : "Confirmar: desligar"}
+                        </Botao>
+                        <Botao cor={M.gray} onClick={() => setConfirmando(null)}>Cancelar</Botao>
+                      </>
+                    ) : (
+                      <Botao cor={M.laranja} onClick={() => setConfirmando(m.chave)}>Desligar</Botao>
+                    )
+                  ) : (
+                    <Botao disabled={ocupado}
+                      onClick={async () => { setOcupado(true); await salvar(true); setOcupado(false); }}>
+                      {ocupado ? "Religando…" : "Religar"}
+                    </Botao>
+                  )}
+                </div>
+              </div>
+
+              <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{m.resumo}</p>
+
+              {confirmandoEste && (
+                <div style={{ margin: "0 0 12px" }}>
+                  <Recado tipo="aviso">
+                    Isto muda a tela de <b>toda a equipe</b> na próxima atualização, não só a sua.
+                    Confira as duas listas abaixo antes de confirmar — e lembre que religar é um clique.
+                  </Recado>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+                <Lista titulo={on ? "Desligar tira do ar" : "Está fora do ar"} itens={m.desliga} cor={M.laranja} />
+                <Lista titulo="Continua funcionando" itens={m.mantem} cor={M.verde} />
+              </div>
+
+              {m.nota && (
+                <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{m.nota}</p>
+              )}
+
+              <p style={{ fontSize: 12, color: M.gray, margin: "10px 0 0" }}>
+                {cfg.atualizado_por
+                  ? <>Última mudança por <b>{cfg.atualizado_por}</b>{quando(cfg.atualizado_em) ? ` em ${quando(cfg.atualizado_em)}` : ""}.</>
+                  : "Nunca foi trocado — está no estado de origem."}
+              </p>
+            </div>
+          );
+        })}
       </Bloco>
     </>
   );

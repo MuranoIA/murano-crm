@@ -191,6 +191,9 @@ type Item =
 const NOTA = { bg: "#fdf6e3", borda: "#e8d9a8", ink: "#6b5a1f" };
 // painel do contato: dados do WinThor ao lado da conversa (o RD não tem isso)
 type Contato = {
+  // motor de ciclo ligado? (crm_config, migration 0097 — vem junto no mesmo JSON,
+  // então o painel não precisa de uma segunda chamada só para saber disso)
+  ciclo_ativo?: boolean;
   compras: { codcli: number | null; cidade: string | null; compras: number | null; ultima_compra: string | null;
              dias_sem_comprar: number | null; total_liquido: number | null; rca_oficial: string | null } | null;
   ciclo: { pct_ciclo: number | null; ciclo_medio: number | null; dias_ausente: number | null;
@@ -308,8 +311,12 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
     </div>
   );
 
+  // motor de ciclo desligado no /admin: some o que é DERIVADO (% do ciclo, ciclo
+  // médio, sugestão de ação). O que é fato do ERP — comprado, dias sem comprar,
+  // notas — continua, porque não faz parte do mecanismo em revisão.
+  const cicloOn = c.ciclo_ativo !== false;
   // barra do ciclo: quanto do intervalo médio de recompra já passou
-  const pct = ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
+  const pct = !cicloOn || ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
   const corCiclo = pct == null ? M.muted : pct >= 100 ? M.laranja : pct >= 75 ? "#b8860b" : "#1a6b3c";
 
   // Aviso de "sem cadastro" só nas abas que dependem do ERP — a de Perfil ainda
@@ -346,8 +353,10 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
                 v={compras?.dias_sem_comprar == null ? "—" : `${compras.dias_sem_comprar}d`}
                 cor={pct != null && pct >= 100 ? M.laranja : undefined}
                 dica="Dias desde a última nota faturada" />
-              <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
-                dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+              {cicloOn && (
+                <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
+                  dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+              )}
             </div>
             {ciclo?.acao_recomendada && (
               <div style={{ margin: "0 14px 12px", padding: "9px 12px", fontSize: 12, lineHeight: 1.5,
@@ -358,7 +367,7 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
             <Bloco titulo="Compra">
               <Linha r="Última" v={dataBR(compras?.ultima_compra)} />
               <Linha r="Notas" v={compras?.compras ?? "—"} />
-              <Linha r="Ciclo médio" v={ciclo?.ciclo_medio == null ? "—" : `${Math.round(Number(ciclo.ciclo_medio))} dias`} />
+              {cicloOn && <Linha r="Ciclo médio" v={ciclo?.ciclo_medio == null ? "—" : `${Math.round(Number(ciclo.ciclo_medio))} dias`} />}
               {compras?.cidade && <Linha r="Cidade" v={compras.cidade} />}
             </Bloco>
             {funil?.venda_valor ? (
@@ -615,6 +624,11 @@ export default function Chat() {
   // progresso do envio em lote (várias fotos de uma vez)
   const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
   const [contato, setContato] = useState<Contato | null>(null);
+  // Motor de ciclo (crm_config, 0097). Estado SEPARADO de `contato` de propósito:
+  // `contato` volta a null a cada conversa aberta, e ler o interruptor de lá faria
+  // a aba "Ciclo" piscar na lista toda vez. É config global — uma vez sabida, vale
+  // para todas as conversas.
+  const [cicloAtivo, setCicloAtivo] = useState(true);
   const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
   // presença: cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta
   const [presentes, setPresentes] = useState<Record<string, string[]>>({});
@@ -957,7 +971,7 @@ export default function Chat() {
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setContato(j ?? null))
+      .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
       .catch(() => setContato(null));
     // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
     if (c.nao_lida) {
@@ -1397,6 +1411,17 @@ export default function Chat() {
   // mais a paleta. Manter uma tela só é o que torna o rollback confiável.
   const d1 = layout === "continuidade";
   Object.assign(M, PALETAS[layout] ?? PALETAS.original);
+
+  // Abas do painel do contato que este usuário enxerga agora: "Resumo" só no
+  // desenho D1 (0095), "Ciclo" só com o motor ligado (crm_config, 0097). Uma
+  // lista só, usada pelo desktop e pela folha do celular — se cada um filtrasse
+  // por conta, uma aba sumiria de um lado e ficaria no outro.
+  const abasContato = ABAS.filter((a) => (!a.soD1 || d1) && (a.k !== "ciclo" || cicloAtivo));
+  // Estar na aba Ciclo quando um admin desliga o motor deixaria o painel em
+  // branco, sem nada explicando. Resolvido no render, não num efeito: efeito
+  // aqui dependeria de nenhum `return` aparecer antes desta linha, que é
+  // exatamente o acoplamento que o comentário do `abaPadrao` já evita.
+  const abaAtual: AbaContato = abasContato.some((a) => a.k === abaContato) ? abaContato : abaPadrao;
 
   // ---- D1 · a janela de 24h vira estado permanente, não aviso de erro ------
   // Hoje ela só se manifesta DEPOIS que o envio falha (§29.2 item 2): escreve-se
@@ -2028,8 +2053,8 @@ export default function Chat() {
                      conversa é justamente o que o RD não tem. ---- */}
                 {!isMobile && (
                   <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, overflowX: "auto", flexShrink: 0 }}>
-                    {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
-                      const on = painelAberto && abaContato === a.k;
+                    {abasContato.map((a) => {
+                      const on = painelAberto && abaAtual === a.k;
                       return (
                         <button key={a.k}
                           onClick={() => { setAbaContato(a.k); setPainelAberto(true); }}
@@ -2589,14 +2614,14 @@ export default function Chat() {
         {mostraThread && sel && painelAberto && !isMobile && (
           <div style={{ width: 268, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
             <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
-              <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaContato)?.rotulo}</b>
+              <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaAtual)?.rotulo}</b>
               <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>
-                {abaContato === "perfil" ? "contato e cadastro" : "direto do WinThor"}
+                {abaAtual === "perfil" ? "contato e cadastro" : "direto do WinThor"}
               </div>
             </div>
             <PainelContato
               c={contato}
-              aba={abaContato}
+              aba={abaAtual}
               extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
             />
           </div>
@@ -2623,8 +2648,8 @@ export default function Chat() {
               </div>
               <div style={{ display: "flex", gap: 2, padding: "0 10px", borderBottom: `1px solid ${M.border}`,
                 overflowX: "auto", flexShrink: 0 }}>
-                {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
-                  const on = abaContato === a.k;
+                {abasContato.map((a) => {
+                  const on = abaAtual === a.k;
                   return (
                     <button key={a.k} onClick={() => setAbaContato(a.k)}
                       style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
@@ -2639,7 +2664,7 @@ export default function Chat() {
               <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
                 <PainelContato
                   c={contato}
-                  aba={abaContato}
+                  aba={abaAtual}
                   extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
                 />
               </div>

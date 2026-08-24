@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { lerCrmConfig } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -17,15 +18,25 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const [compras, ciclo, funil, ultimas] = await Promise.all([
+  // interruptor do motor de ciclo (crm_config, migration 0097) — disparado junto
+  // com o resto, não antes, para não somar um round-trip ao painel do contato
+  const cfgP = lerCrmConfig(sb);
+
+  const [compras, cicloRow, funil, ultimas] = await Promise.all([
     // histórico de compra consolidado (líquido já desconta devolução)
     sb.from("vw_cliente_compras")
       .select("codcli,cidade,compras,ultima_compra,dias_sem_comprar,total_liquido,rca_oficial")
       .eq("cliente_id", cliente_id).maybeSingle(),
-    // ciclo de recompra: quanto do ciclo já passou, urgência, ação sugerida
-    sb.from("vw_ciclo_card")
-      .select("pct_ciclo,ciclo_medio,dias_ausente,tipo_oportunidade,acao_recomendada,tendencia")
-      .eq("cliente_id", cliente_id).maybeSingle(),
+    // ciclo de recompra: quanto do ciclo já passou, urgência, ação sugerida.
+    // Com o motor desligado a consulta nem sai — o painel perde a aba Ciclo,
+    // mas mantém compras, dias sem comprar e ticket, que são fato do ERP.
+    (async () => {
+      if (!(await cfgP).ciclo_ativo) return null;
+      const { data } = await sb.from("vw_ciclo_card")
+        .select("pct_ciclo,ciclo_medio,dias_ausente,tipo_oportunidade,acao_recomendada,tendencia")
+        .eq("cliente_id", cliente_id).maybeSingle();
+      return data ?? null;
+    })(),
     // etapa no funil + valor faturado no mês
     sb.from("vw_funil")
       .select("etapa,venda_valor,venda_data,codcli,sem_cadastro")
@@ -39,8 +50,9 @@ export async function GET(req: Request) {
   ]);
 
   return Response.json({
+    ciclo_ativo: (await cfgP).ciclo_ativo,
     compras: compras.data ?? null,
-    ciclo: ciclo.data ?? null,
+    ciclo: cicloRow,
     funil: funil.data ?? null,
     ultimas_notas: ultimas.data ?? [],
   });
