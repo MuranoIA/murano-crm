@@ -2498,3 +2498,124 @@ E o interruptor de calling (§22.7 item 3) age exatamente sobre essa env: ligar
 4. **Murano Pro e Murano Cobrança faturam por linha de crédito alocada por
    terceiros** (ODCEM, Text Wave) — a Murano Pro é a WABA do número oficial;
    esse arranjo precisa ser resolvido **antes** de migrar o número, não depois.
+
+## 29. Auditoria de UX do chat e o interruptor de desenho (24/08/2026) — migration 0095
+
+O `/chat` foi auditado sobre o **código**, não sobre print de tela, e ganhou três
+direções de redesenho em protótipo. A escolha entre elas virou configuração em
+`/admin` → aba **🎨 Desenho do chat**.
+
+### 29.1 O especialista e a skill de marca reconstruída
+
+Duas peças novas em `.claude/` (⚠️ **`.claude/` está no `.gitignore` deste repo** —
+elas NÃO são versionadas e somem se a pasta for recriada, como já aconteceu em
+11/08, §19.1):
+
+| Arquivo | O que é |
+|---|---|
+| `.claude/agents/ux-chat.md` | subagente especialista em UX/UI de ferramentas de atendimento. Régua de 12 pontos, as 10 tarefas reais do vendedor, e trava dura: escreve só em `prototipos/` |
+| `.claude/skills/murano-brand/SKILL.md` | **a skill original NÃO existe no disco** — é citada em comentário no código e no `CLAUDE.md` do hub, mas não está em `~/.claude`, nos plugins nem em nenhum repo. Reconstruída a partir de `murano-app/src/app/globals.css` (canônico), `web/lib/tema.ts` e o objeto `M` do chat |
+
+A skill registra o que hex sozinho não registra: **púrpura = marca, azul = ação,
+laranja = acento pontual** (um destaque por tela), e as duas calibragens de
+contraste já pagas — `.murano-btn` usa `#7a1755` porque `#621244` chapado sobre o
+card dá **1,46:1**; púrpura como *texto* precisa clarear para `#a8447f`.
+
+**Três paletas Murano divergem hoje**, e não é bug: a do hub é canônica; o tema
+`murano` do CRM usa laranja como cor de ação (anterior à calibragem de 02/08); e o
+chat usa **`#7b2d8b`**, um quarto roxo que **não é token de lugar nenhum**.
+
+### 29.2 Os achados que mais pesam
+
+Laudo completo em `prototipos/laudo-ux-chat.md` (11 achados com evidência
+`arquivo:linha`, custo das 10 tarefas em cliques, o que preservar, riscos).
+
+1. **A tela não diz quantas clientes estão esperando.** O contador de não lidas só
+   existe depois de abrir o dropdown (`page.tsx:1408-1428`) — 2 cliques na primeira
+   pergunta do dia, paga dezenas de vezes por 7 pessoas.
+2. **A janela de 24h só se manifesta como erro.** Zero indicadores; o dado para
+   antecipar **já vem carregado na thread**. Escreve-se a mensagem inteira para
+   descobrir que precisava de template (R$ 0,43).
+3. **A vantagem do ERP abre na aba errada e não existe no celular.** `abrir()` força
+   a aba Perfil, que repete o cabeçalho (`:816`); painel e abas são `!isMobile`
+   (`:1751`, `:2235`) — o diferencial contra o RD desaparece no dispositivo que vai
+   virar app.
+4. **Um único slot `aviso`** (18 `setAviso`) para janela, falha de envio, mídia,
+   nota, transferência e microfone: o segundo evento apaga o primeiro. E a barra de
+   chamada é `fixed bottom:0` em largura total (`ligacao.tsx:471`) — **cobre o
+   compositor**.
+5. **Falha tardia é inalcançável em touch:** o motivo da Meta vive num `title`
+   (`:362`), que exige hover, e não há reenviar.
+6. Contrastes medidos: texto secundário em 10px = **3,57:1** (reprova). Mobile usa
+   `100vh` sem área segura, e o compositor consome ~352 de 362px — sobram **10px**
+   para a caixa de texto.
+
+### 29.3 O interruptor — e a linha que o banco NÃO cruza
+
+`chat_layout` (linha única id=1) guarda o desenho em vigor; `acesso.chat_layout`
+guarda o **piloto por pessoa** (NULL = segue o global); `chat_layout_historico` é
+append-only com `de`/`para`/`por`/`escopo`.
+
+⚠️ **Quais desenhos têm implementação real é fato do CÓDIGO, não do banco** —
+mora em `web/lib/chatLayout.ts` (`implementado: boolean`). Quem sabe se a Direção 2
+existe é o deploy que está no ar, não uma coluna. Duplicar isso no banco criaria
+duas verdades que divergem no primeiro deploy, e o admin conseguiria "estabelecer
+para todos" um desenho que ninguém construiu. A rota recusa com **409**.
+
+Hoje **só `original` está implementado**: as três direções aparecem na tela como
+*Em avaliação*, não selecionáveis. Virar `implementado: true` é o **último** passo
+de implementar uma direção.
+
+`layoutEfetivo()` é a fonte única da régua (piloto ganha do global; valor
+desconhecido cai no padrão em vez de deixar a tela sem desenho) e é usada pelo
+`/api/chat` **e** pelo `/admin` — se cada um calculasse, o admin anunciaria um
+desenho diferente do que a equipe vê.
+
+**`original` é sempre um valor válido** — enquanto for, nenhum redesenho é
+irreversível. Mesmo instinto de `WHATSAPP_ENVIO_PADRAO` e da `chat_horario_atendimento`
+nascendo desligada.
+
+### 29.4 Duas decisões de UI da própria tela de admin
+
+- **Marcar o rádio NÃO aplica.** Estabelecer troca a tela de 15 acessos ativos; um
+  clique acidental não deve fazer isso. Marcar seleciona, um segundo gesto confirma
+  — o mesmo freio que o laudo cobra dos erros caros do chat.
+- **Opção sem implementação aparece, mas não é selecionável.** Esconder as três
+  direções tiraria o material de comparação; deixar ativá-las jogaria a equipe numa
+  tela que não existe.
+
+**PUT e PATCH são separados de propósito**: o primeiro afeta 15 pessoas, o segundo
+uma. Um endpoint só, decidindo pelo formato do corpo, tornaria fácil escrever
+global achando que escrevia piloto.
+
+### 29.5 Piloto por usuário — por que existe
+
+Trocar a tela de sete pessoas de uma vez, sem ninguém ter usado, é o cenário em que
+um desenho bom morre por estranhamento. Mesmo argumento do §21.4 para o corte do RD:
+*o que o vendedor reclamar depois de usar vale mais que qualquer item adivinhado numa
+lista.* Coluna em `acesso` e não tabela nova porque `acesso` **é** a tabela de config
+por usuário e não é escrita por ETL — o risco da §10.11 não se aplica.
+
+### 29.6 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `supabase/migrations/0095_chat_layout.sql` | as duas tabelas + a coluna em `acesso` |
+| `web/lib/chatLayout.ts` | catálogo das 4 opções (tese, ganhos, sacrifícios), `implementado`, `layoutEfetivo()` |
+| `web/app/api/admin/chat-layout/route.ts` | GET · PUT (global) · PATCH (piloto) |
+| `web/app/admin/page.tsx` | `RedesenhoAba` + aba 🎨 |
+| `web/app/api/chat/route.ts` | devolve `layout` no load único (entra no `Promise.all` que já existia — zero round-trip novo) |
+| `prototipos/` | laudo, 3 protótipos standalone e README comparativo |
+
+### 29.7 Pendências
+
+1. **Implementar a Direção 1** — é o piso: quase tudo nela é correção do que já
+   existe, e vale mesmo que a escolha final seja outra. Só então o interruptor tem
+   dois estados reais e serve de rollback.
+2. **Decidir entre 2 e 3** depois de a equipe usar a 1. A pergunta não é qual tela é
+   mais bonita: a **2 aposta em atender mais conversas por dia**, a **3 em vender
+   mais por conversa**.
+3. **Versionar `.claude/`** (skill + agente) ou aceitar que somem. Hoje estão
+   ignorados pelo git.
+4. Direção 2 exige **adiar**, que não existe no banco. Direção 3 exige catálogo com
+   preço e ação recomendada.

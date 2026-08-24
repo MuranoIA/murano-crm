@@ -20,13 +20,14 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
   { id: "horario", rotulo: "🕗 Horário" },
   { id: "linhas", rotulo: "📞 Linhas" },
   { id: "templates-whatsapp", rotulo: "📨 Templates" },
+  { id: "chat-layout", rotulo: "🎨 Desenho do chat" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -440,6 +441,16 @@ export default function Admin() {
           avisoMeta={dados.aviso ?? null}
           recarregar={() => carregar("templates-whatsapp")}
           avisar={avisar}
+        />
+      )}
+
+      {aba === "chat-layout" && dados?.["chat-layout"] && (
+        <RedesenhoAba
+          d={dados["chat-layout"]}
+          estabelecer={(layout) =>
+            enviar("chat-layout", "PUT", { layout }, "Desenho estabelecido para todos.")}
+          piloto={(email, layout) =>
+            enviar("chat-layout", "PATCH", { email, layout }, "Piloto atualizado.")}
         />
       )}
 
@@ -1601,6 +1612,285 @@ function EnviosAba({ dados }: { dados: any }) {
     </>
   );
 }
+
+// --- Desenho do chat (migration 0095) --------------------------------------
+// Onde a decisão sobre o redesenho do /chat é tomada e registrada. Mostra as
+// quatro opções com a tese e o SACRIFÍCIO de cada uma, porque escolher vendo só
+// o lado bom não é escolher — é o que o laudo (`prototipos/laudo-ux-chat.md`)
+// chama de aposta.
+//
+// Duas decisões de desenho desta tela em si:
+//
+// 1. Marcar o rádio NÃO aplica. Estabelecer um desenho troca a tela de trabalho
+//    de sete pessoas; um clique acidental num rádio não deve fazer isso. Marcar
+//    seleciona, e um segundo gesto confirma — o mesmo freio que o laudo cobra
+//    dos erros caros do próprio chat.
+// 2. Opção sem implementação aparece, mas não é selecionável. Esconder as três
+//    direções até existirem tiraria justamente o material de comparação; deixar
+//    ativá-las deixaria a equipe numa tela que não existe.
+function RedesenhoAba({ d, estabelecer, piloto }: {
+  d: any;
+  estabelecer: (layout: string) => Promise<boolean>;
+  piloto: (email: string, layout: string | null) => Promise<boolean>;
+}) {
+  const vigente: string = d.global?.layout ?? "original";
+  const [sel, setSel] = useState<string>(vigente);
+  const [confirmando, setConfirmando] = useState(false);
+
+  const opcoes: any[] = d.opcoes ?? [];
+  const pessoas: any[] = (d.pessoas ?? []).filter((p: any) => p.ativo);
+  const emPiloto: any[] = d.pilotos ?? [];
+  const ativaveis = opcoes.filter((o) => o.implementado);
+  const rotuloDe = (id: string) => opcoes.find((o) => o.id === id)?.rotulo ?? id;
+
+  const corRisco = (r: string) => (r === "alto" ? M.laranja : r === "baixo" ? M.verde : M.muted);
+  const quando = (iso: string | null) => {
+    if (!iso) return "—";
+    const d2 = new Date(iso);
+    return `${d2.toLocaleDateString("pt-BR")} às ${d2.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  };
+
+  return (
+    <>
+      <Bloco
+        titulo="O que está em vigor"
+        ajuda={
+          <>
+            Este é o desenho que a equipe vê hoje no <b>/chat</b>. A auditoria de UX e os três
+            protótipos estão em <code style={mono}>prototipos/</code> no repositório — o laudo
+            completo, com o custo de cada tarefa em cliques, em{" "}
+            <code style={mono}>prototipos/laudo-ux-chat.md</code>.
+          </>
+        }
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: M.wine, letterSpacing: -0.3 }}>
+            {rotuloDe(vigente)}
+          </div>
+          <div style={{ fontSize: 12.5, color: M.gray }}>
+            {d.global?.atualizado_por
+              ? <>estabelecido por <b>{d.global.atualizado_por}</b> em {quando(d.global.atualizado_em)}</>
+              : "nunca foi trocado — é o desenho de origem"}
+          </div>
+          {emPiloto.length > 0 && (
+            <span style={{ marginLeft: "auto" }}>
+              <Selo ok sim={`${emPiloto.length} em piloto`} nao="" />
+            </span>
+          )}
+        </div>
+        {emPiloto.length > 0 && (
+          <p style={{ fontSize: 12, color: M.gray, margin: "10px 0 0", lineHeight: 1.55 }}>
+            Quem está em piloto <b>não</b> é afetado pelo desenho em vigor — vê o do piloto até
+            sair dele. Lista mais abaixo.
+          </p>
+        )}
+      </Bloco>
+
+      <Bloco
+        titulo="As opções"
+        ajuda="Cada direção resolve problemas diferentes e sacrifica coisas diferentes. Marque uma para comparar; estabelecer para todos é o passo seguinte, com confirmação."
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {opcoes.map((o) => {
+            const marcada = sel === o.id;
+            const ativa = vigente === o.id;
+            return (
+              <label key={o.id}
+                style={{
+                  display: "block", position: "relative", overflow: "hidden", cursor: o.implementado ? "pointer" : "default",
+                  background: marcada ? M.roxoSoft : M.surface,
+                  border: `1px solid ${marcada ? M.roxo : M.border}`, borderRadius: 12,
+                  padding: "14px 16px 14px 20px", opacity: o.implementado ? 1 : 0.72,
+                }}>
+                {/* faixa de 4px — a assinatura visual do produto (skill murano-brand) */}
+                <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
+                  background: `linear-gradient(to bottom, ${M.azul}, #8a2a63, #3d0b2a)` }} />
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <input type="radio" name="chat-layout" value={o.id} checked={marcada}
+                    disabled={!o.implementado}
+                    onChange={() => { setSel(o.id); setConfirmando(false); }}
+                    style={{ accentColor: M.roxo, width: 16, height: 16, cursor: "inherit" }} />
+                  <b style={{ fontSize: 14.5, color: M.ink }}>{o.rotulo}</b>
+                  {ativa && <Selo ok sim="Em vigor" nao="" />}
+                  {!o.implementado && (
+                    <span title="Existe como protótipo; a tela ainda não foi construída"
+                      style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,
+                        color: M.laranja, background: "rgba(221,66,34,.08)", border: `1px solid rgba(221,66,34,.25)` }}>
+                      Em avaliação
+                    </span>
+                  )}
+                  <span style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 11.5, color: M.gray, whiteSpace: "nowrap" }}>
+                    <span>risco de treinamento <b style={{ color: corRisco(o.risco) }}>{o.risco}</b></span>
+                    <span>prazo <b style={{ color: M.ink }}>{o.prazo}</b></span>
+                  </span>
+                </div>
+
+                <p style={{ fontSize: 13, color: M.ink, margin: "9px 0 0", fontWeight: 600, lineHeight: 1.5 }}>{o.resumo}</p>
+                <p style={{ fontSize: 12.5, color: M.gray, margin: "6px 0 0", lineHeight: 1.6 }}>{o.tese}</p>
+
+                <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", marginTop: 12 }}>
+                  <div>
+                    <div style={rotuloCol}>O que resolve</div>
+                    <ul style={lista}>{o.ganhos.map((g: string, i: number) => <li key={i} style={item}>{g}</li>)}</ul>
+                  </div>
+                  <div>
+                    <div style={{ ...rotuloCol, color: M.laranja }}>O que sacrifica</div>
+                    <ul style={lista}>{o.sacrificios.map((s: string, i: number) => <li key={i} style={item}>{s}</li>)}</ul>
+                  </div>
+                </div>
+
+                {o.prototipo && (
+                  <p style={{ fontSize: 11.5, color: M.muted, margin: "11px 0 0" }}>
+                    Protótipo navegável: <code style={mono}>{o.prototipo}</code> — abre no navegador com
+                    duplo clique, sem build.
+                  </p>
+                )}
+              </label>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${M.border}` }}>
+          {sel === vigente ? (
+            <p style={{ fontSize: 12.5, color: M.gray, margin: 0 }}>
+              <b>{rotuloDe(sel)}</b> já é o desenho em vigor.
+              {ativaveis.length === 1 && (
+                <> Enquanto só um desenho estiver construído, não há o que trocar — as três
+                direções acima estão aqui para avaliação.</>
+              )}
+            </p>
+          ) : !confirmando ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <Botao onClick={() => setConfirmando(true)}>Estabelecer {rotuloDe(sel)} para todos</Botao>
+              <span style={{ fontSize: 12, color: M.gray }}>
+                afeta {pessoas.length} {pessoas.length === 1 ? "pessoa" : "pessoas"} com acesso ativo
+              </span>
+            </div>
+          ) : (
+            <div style={{ background: M.roxoSoft, border: `1px solid ${M.roxo}`, borderRadius: 10, padding: "13px 15px" }}>
+              <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.6 }}>
+                Confirmar: <b>{rotuloDe(sel)}</b> passa a valer para <b>todos</b> os usuários na próxima
+                vez que abrirem o chat. Dá para voltar a qualquer momento — <b>Original</b> continua
+                sendo uma opção válida.
+              </p>
+              <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+                <Botao onClick={async () => { const ok = await estabelecer(sel); if (ok) setConfirmando(false); }}>
+                  Sim, estabelecer para todos
+                </Botao>
+                <Botao onClick={() => setConfirmando(false)} cor={M.gray}>Cancelar</Botao>
+              </div>
+            </div>
+          )}
+        </div>
+      </Bloco>
+
+      <Bloco
+        titulo="Piloto por pessoa"
+        ajuda={
+          <>
+            Rodar um desenho novo em <b>uma conta só</b>, antes de impor a todos. Trocar a tela de
+            toda a equipe de uma vez, sem ninguém ter usado, é o cenário em que um desenho bom morre
+            por estranhamento — o que o vendedor reclamar depois de usar vale mais que qualquer item
+            adivinhado numa lista. <b>Seguir o vigente</b> tira a pessoa do piloto.
+          </>
+        }
+      >
+        {pessoas.length === 0 ? (
+          <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Nenhum acesso ativo.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+              <thead><tr>
+                <th style={th}>E-mail</th>
+                <th style={th}>Papel</th>
+                <th style={th}>Vê hoje</th>
+                <th style={th}>Piloto</th>
+              </tr></thead>
+              <tbody>
+                {pessoas.map((p: any) => (
+                  <tr key={p.email}>
+                    <td style={{ ...td, fontWeight: 600 }}>{p.email}</td>
+                    <td style={{ ...td, color: M.gray }}>{p.papel}{p.carteira ? ` · ${p.carteira}` : ""}</td>
+                    <td style={td}>
+                      {p.chat_layout
+                        ? <b style={{ color: M.roxo }}>{rotuloDe(p.chat_layout)}</b>
+                        : <span style={{ color: M.gray }}>{rotuloDe(vigente)}</span>}
+                    </td>
+                    <td style={td}>
+                      <select
+                        value={p.chat_layout ?? ""}
+                        onChange={(e) => piloto(p.email, e.target.value || null)}
+                        style={{ ...inputBase, padding: "5px 7px", fontSize: 12.5 }}
+                      >
+                        <option value="">Seguir o vigente</option>
+                        {ativaveis.map((o) => (
+                          <option key={o.id} value={o.id}>{o.rotulo}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Bloco>
+
+      <Bloco titulo="Histórico de decisões" ajuda="Toda troca, global ou de piloto. Últimas 25.">
+        {(d.historico ?? []).length === 0 ? (
+          <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>
+            Nada trocado ainda — o chat está no desenho de origem.
+          </p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+              <thead><tr>
+                <th style={th}>Quando</th>
+                <th style={th}>Escopo</th>
+                <th style={th}>De</th>
+                <th style={th}>Para</th>
+                <th style={th}>Por</th>
+              </tr></thead>
+              <tbody>
+                {d.historico.map((h: any, i: number) => (
+                  <tr key={i}>
+                    <td style={{ ...td, whiteSpace: "nowrap", color: M.gray }}>{quando(h.criada_em)}</td>
+                    <td style={td}>
+                      {h.escopo === "global"
+                        ? <b style={{ color: M.wine }}>todos</b>
+                        : <span style={{ color: M.gray }}>piloto · {h.alvo}</span>}
+                    </td>
+                    <td style={{ ...td, color: M.gray }}>{h.de ? rotuloDe(h.de) : "—"}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>{rotuloDe(h.para)}</td>
+                    <td style={{ ...td, color: M.gray }}>{h.por ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {d.historico_erro && (
+          <p style={{ fontSize: 12, color: M.laranja, margin: "10px 0 0" }}>
+            O histórico não pôde ser lido ({d.historico_erro}). A decisão em vigor, acima, não depende dele.
+          </p>
+        )}
+      </Bloco>
+    </>
+  );
+}
+
+const mono = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  fontSize: "0.92em", background: M.bg, border: `1px solid ${M.border}`,
+  borderRadius: 5, padding: "1px 5px",
+};
+const rotuloCol = {
+  fontSize: 10, fontWeight: 800, letterSpacing: 0.8, textTransform: "uppercase" as const,
+  color: M.verde, marginBottom: 5,
+};
+const lista = { margin: 0, paddingLeft: 17, display: "flex", flexDirection: "column" as const, gap: 4 };
+const item = { fontSize: 12.5, color: M.gray, lineHeight: 1.5 };
 
 function Moldura({ aba, setAba, esconderAbas, children }: {
   aba: Aba; setAba: (a: Aba) => void; esconderAbas?: boolean; children: React.ReactNode;
