@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ehApp } from "../pwa";
 import Link from "next/link";
 import {
   useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
@@ -556,6 +557,11 @@ export default function Chat() {
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
+  // rodando como app instalado (PWA na tela inicial ou APK/TWA). Em efeito, e
+  // nao no render, porque `ehApp()` lê `window` — calcular direto daria
+  // hidratação divergente entre servidor e cliente.
+  const [modoApp, setModoApp] = useState(false);
+  useEffect(() => { setModoApp(ehApp()); }, []);
   // declarada aqui, e não junto de `d1` lá embaixo, porque `abrir()` a usa e
   // fica acima no arquivo — depender da ordem de declaração dentro do render
   // é o tipo de acoplamento que quebra em silêncio numa refatoração
@@ -1483,8 +1489,14 @@ export default function Chat() {
           O Chat vira uma aba do produto, com a aba ativa sublinhada. */}
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "0 16px", minHeight: 52, background: M.surface, borderBottom: `1px solid ${M.border}`, flexShrink: 0 }}>
         <Logo size={26} />
-        <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>CRM</b>
-        {!isMobile ? (
+        <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>{modoApp ? "Chat" : "CRM"}</b>
+        {/* ---- No app instalado a navegação do CRM inteiro desaparece ----
+            O pedido foi "só o chat, fechado": um app de atendimento que oferece
+            Relatórios, Tickets e Administração não é um app de atendimento, é o
+            CRM dentro de uma moldura. O menu continua existindo no navegador,
+            onde o CRM é o produto inteiro — é a mesma tela servindo dois
+            contextos, e só o contexto muda. */}
+        {modoApp ? null : !isMobile ? (
           <nav style={{ display: "flex", alignItems: "center", alignSelf: "stretch", gap: 2, marginLeft: 8, minWidth: 0, overflowX: "auto" }}>
             {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
               const ativo = n.href === "/chat";
