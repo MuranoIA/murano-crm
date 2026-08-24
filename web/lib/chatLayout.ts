@@ -90,7 +90,10 @@ export const LAYOUTS: Layout[] = [
     risco: "baixo",
     prazo: "curto",
     prototipo: "prototipos/direcao-1-continuidade.html",
-    implementado: false,
+    // Construída em 24/08/2026. Tudo o que ela muda está atrás da flag `d1` em
+    // `app/chat/page.tsx` — não há uma segunda árvore de JSX, e o desenho
+    // original ficou intacto para o rollback ser exato.
+    implementado: true,
   },
   {
     id: "fila",

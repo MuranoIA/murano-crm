@@ -2607,15 +2607,38 @@ por usuário e não é escrita por ETL — o risco da §10.11 não se aplica.
 | `web/app/api/chat/route.ts` | devolve `layout` no load único (entra no `Promise.all` que já existia — zero round-trip novo) |
 | `prototipos/` | laudo, 3 protótipos standalone e README comparativo |
 
-### 29.7 Pendências
+### 29.7 Direção 1 CONSTRUÍDA (24/08/2026) — o interruptor tem dois estados reais
 
-1. **Implementar a Direção 1** — é o piso: quase tudo nela é correção do que já
-   existe, e vale mesmo que a escolha final seja outra. Só então o interruptor tem
-   dois estados reais e serve de rollback.
-2. **Decidir entre 2 e 3** depois de a equipe usar a 1. A pergunta não é qual tela é
+`implementado: true` para `continuidade`. Tudo o que ela muda está atrás da flag
+**`d1`** em `app/chat/page.tsx` — **não existe uma segunda árvore de JSX**. A tese
+dela é "nada muda de lugar, coisas passam a aparecer", então são adições pontuais
+nos quatro pontos caros, mais a paleta. Uma tela só é o que torna o rollback
+confiável.
+
+| O que mudou | Onde |
+|---|---|
+| **Paleta** — objeto `M` virou mutável com `Object.assign(M, PALETAS[layout])`, mesmo padrão do board (§11.5). Sai o rosa `#f5edf4` e o roxo `#7b2d8b` (que não são token de lugar nenhum); entram os tokens do hub, com a bolha enviada **azul** porque enviar é ação, não marca | topo de `page.tsx` |
+| **Faixa de filas** com os 4 contadores sempre visíveis; o dropdown continua onde estava | cabeçalho da sidebar |
+| **Faixa da janela de 24h** com tempo restante e barra, e o botão que reabre dentro dela. Conta da última mensagem **recebida**, que já vem na thread — zero chamada nova, sem tick próprio (o poll de 60s já re-renderiza) | acima do compositor |
+| **Aba "Resumo"** (`soD1: true`) com comprado / dias sem comprar / % do ciclo em corpo grande, e `abaPadrao` faz `abrir()` cair nela | `PainelContato` |
+| **Motivo antes dos nomes** na transferência, via a constante `campoMotivoTransf` — uma só, para as duas ordens não divergirem | bloco de transferência |
+| **Falha sai do `title`**: motivo em texto + botão Reenviar abaixo da bolha | thread |
+| **Mobile**: `100dvh`, `safe-area-inset-bottom`, barra inferior de filas (só na lista) e o ERP em **folha deslizante** — antes o painel era `!isMobile` e o celular atendia sem nenhum dado de compra | container raiz e thread |
+
+**Uma armadilha paga:** o container da bolha é `flex row` com `justifyContent`. O
+recado de falha do D1 precisa ficar **abaixo** dela, então em D1 o container vira
+`column` + `alignItems`. Foi feito condicional depois de já estar valendo para os
+dois — rollback que muda "quase nada" não é rollback.
+
+`layoutEfetivo` testado nos 7 casos (piloto ganha do global; valor não
+implementado, desconhecido ou nulo cai no padrão): todos passam.
+
+### 29.8 Pendências
+
+1. **Decidir entre 2 e 3** depois de a equipe usar a 1. A pergunta não é qual tela é
    mais bonita: a **2 aposta em atender mais conversas por dia**, a **3 em vender
    mais por conversa**.
-3. **Versionar `.claude/`** (skill + agente) ou aceitar que somem. Hoje estão
+2. **Versionar `.claude/`** (skill + agente) ou aceitar que somem. Hoje estão
    ignorados pelo git.
-4. Direção 2 exige **adiar**, que não existe no banco. Direção 3 exige catálogo com
+3. Direção 2 exige **adiar**, que não existe no banco. Direção 3 exige catálogo com
    preço e ação recomendada.
