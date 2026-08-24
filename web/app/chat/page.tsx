@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ehApp } from "../pwa";
+import { ehApp, ativarPush, desativarPush, pushInscrito } from "../pwa";
 import Link from "next/link";
 import {
   useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
@@ -562,6 +562,40 @@ export default function Chat() {
   // hidratação divergente entre servidor e cliente.
   const [modoApp, setModoApp] = useState(false);
   useEffect(() => { setModoApp(ehApp()); }, []);
+
+  // ---- notificação com o app fechado (0096) --------------------------------
+  // `null` = ainda não sabemos, e nesse estado nada é desenhado: um botão
+  // "Ativar" que pisca e some ao descobrir que já estava ativo é pior que
+  // esperar meio segundo.
+  const [push, setPush] = useState<boolean | null>(null);
+  const [pushOcupado, setPushOcupado] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const cfg = await fetch("/api/chat/push", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      // sem chave VAPID no servidor o recurso não existe: a tela some com o
+      // botão em vez de oferecer algo que vai falhar
+      if (!vivo || !cfg?.disponivel) return;
+      setPush(await pushInscrito());
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  async function alternarPush() {
+    setPushOcupado(true);
+    try {
+      if (push) {
+        await desativarPush();
+        setPush(false);
+        setAviso("Notificações desligadas neste aparelho.");
+      } else {
+        const r = await ativarPush();
+        if (r.ok) { setPush(true); setAviso(null); }
+        else setAviso(r.motivo);
+      }
+    } finally { setPushOcupado(false); }
+  }
   // declarada aqui, e não junto de `d1` lá embaixo, porque `abrir()` a usa e
   // fica acima no arquivo — depender da ordem de declaração dentro do render
   // é o tipo de acoplamento que quebra em silêncio numa refatoração
@@ -1561,8 +1595,33 @@ export default function Chat() {
                   <span style={{ fontSize: 11, color: M.gray, opacity: 0.8 }}>▾</span>
                 </button>
                 {/* atalho da fila de espera, como o ícone com contador do RD */}
+                {/* ---- notificação com o app fechado (0096) ----
+                    Fica aqui, no alto da lista, porque é onde se olha ao
+                    começar o dia — e porque o navegador só aceita pedir a
+                    permissão dentro de um clique, então precisa ser um botão
+                    de verdade, não um pedido automático ao abrir a tela (que
+                    o Chrome recusa e queima a chance de perguntar). */}
+                {push === false && (
+                  <button onClick={alternarPush} disabled={pushOcupado}
+                    title="Receber aviso de mensagem nova mesmo com o app fechado"
+                    style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                      fontSize: 11, fontWeight: 800, color: "#fff", background: M.roxo, border: "none",
+                      borderRadius: 999, padding: "4px 10px", cursor: pushOcupado ? "default" : "pointer",
+                      opacity: pushOcupado ? 0.6 : 1, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    🔔 {pushOcupado ? "…" : "Ativar avisos"}
+                  </button>
+                )}
+                {push === true && (
+                  <button onClick={alternarPush} disabled={pushOcupado}
+                    title="Avisos ligados neste aparelho — clique para desligar"
+                    style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: M.gray,
+                      background: "transparent", border: "none", padding: "4px 6px",
+                      cursor: pushOcupado ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    🔔 <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>avisos ligados</span>
+                  </button>
+                )}
                 <button onClick={() => setFiltro("fila")} title="Fila de espera — conversas sem dono"
-                  style={{ marginLeft: "auto", position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
+                  style={{ marginLeft: push === null ? "auto" : 4, position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
                   🚶
                   {contaFila > 0 && (
                     <span style={{ position: "absolute", top: -3, right: -4, minWidth: 15, height: 15, padding: "0 3px", boxSizing: "border-box", borderRadius: 15, background: M.laranja, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
