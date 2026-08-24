@@ -18,6 +18,12 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 //   azul    #1a5fa8  -> ticks de "lida" e links (pitada de azul do dev)
 //   laranja #dd4222  -> COM MODERAÇÃO: só avisos (fora da janela) e falha
 // ---------------------------------------------------------------------------
+//
+// `M` é MUTÁVEL de propósito — mesmo padrão do board (§11.5): trocar o desenho
+// é `Object.assign(M, PALETAS[layout])` no início do componente, e o re-render
+// leva a paleta nova para todos os estilos inline sem refatorar nenhum deles.
+// Componentes fora de `Chat()` (PainelContato, Ticks, Midia) leem este mesmo
+// objeto, então a troca alcança a tela inteira.
 const M = {
   dark: "#1c0e1b",
   wine: "#621244",
@@ -35,6 +41,36 @@ const M = {
   gray: "#6f5c6d",
   bolhaFora: "#ecdcf0",   // mensagem enviada (operator) — púrpura bem claro
   bolhaDentro: "#ffffff", // mensagem recebida (customer)
+};
+
+// A paleta de cada desenho (migration 0095, catálogo em lib/chatLayout.ts).
+//
+// `original` é a de sempre, guardada aqui para o rollback ser exato — voltar
+// não pode ser "quase igual".
+//
+// `continuidade` troca o rosa #f5edf4 e o roxo #7b2d8b, que não são token de
+// lugar nenhum (skill murano-brand §5), pelos tokens oficiais do hub: fundo
+// #f4f4f6, púrpura como MARCA e azul como AÇÃO. Por isso a bolha enviada vira
+// azul-clara — ela é ação do operador, não identidade — e o botão usa #7a1755,
+// o tom que o hub calibrou porque #621244 chapado dá 1,46:1 de contraste.
+const PALETAS: Record<string, Partial<typeof M>> = {
+  original: { ...M },
+  continuidade: {
+    wine: "#621244",
+    roxo: "#7a1755",        // .murano-btn do hub — calibrado por contraste
+    roxoSoft: "#f3ecf1",
+    azul: "#1a5fa8",
+    laranja: "#a83015",     // o laranja profundo lê como texto; o #dd4222 não
+    bg: "#f4f4f6",          // --color-murano-light, não o rosa do chat atual
+    bgThread: "#eceaf0",
+    surface: "#ffffff",
+    border: "#e3e1e8",
+    ink: "#241327",
+    muted: "#7c7986",       // 4,6:1 sobre o fundo — o #9a8098 antigo reprovava
+    gray: "#55555f",
+    bolhaFora: "#e9f1fb",   // enviada = ação = azul
+    bolhaDentro: "#ffffff",
+  },
 };
 
 // Mesma marca do board (app/page.tsx) — a barra de navegação do topo passou a ser
@@ -75,8 +111,11 @@ const FILAS: { k: Fila; icone: string; rotulo: string; dica: string }[] = [
 
 // Abas do contato — mesma posição das do RD (Perfil · Etiquetas · Atividades ·
 // Funis · Carteiras · Histórico), com o conteúdo que NÓS temos: o ERP.
-type AbaContato = "perfil" | "compras" | "ciclo" | "funil" | "notas";
-const ABAS: { k: AbaContato; rotulo: string }[] = [
+// `resumo` só existe no desenho "continuidade" (0095) e é a aba que ele abre
+// por padrão — ver o comentário em PainelContato.
+type AbaContato = "resumo" | "perfil" | "compras" | "ciclo" | "funil" | "notas";
+const ABAS: { k: AbaContato; rotulo: string; soD1?: boolean }[] = [
+  { k: "resumo", rotulo: "Resumo", soD1: true },
   { k: "perfil", rotulo: "Perfil" },
   { k: "compras", rotulo: "Compras" },
   { k: "ciclo", rotulo: "Ciclo" },
@@ -279,8 +318,57 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
     <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.5 }}>{t}</div>
   );
 
+  // ---- D1 · a aba que o painel passa a abrir (0095) -------------------------
+  // O laudo mediu que `abrir()` forçava "Perfil", e Perfil repete telefone e
+  // carteira que o cabeçalho da conversa já mostra: os números que decidem o
+  // que dizer — quanto ela compra, há quanto tempo sumiu, onde está no ciclo —
+  // ficavam a um ou dois cliques. Aqui eles são a primeira coisa, em corpo
+  // grande, porque são lidos de relance no meio de uma conversa.
+  const Numero = ({ r, v, cor, dica }: { r: string; v: string; cor?: string; dica?: string }) => (
+    <div title={dica} style={{ flex: 1, minWidth: 0, padding: "9px 10px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10 }}>
+      <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.4, fontVariantNumeric: "tabular-nums",
+        color: cor ?? M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</div>
+      <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: M.gray, marginTop: 1 }}>{r}</div>
+    </div>
+  );
+
   return (
     <div style={{ fontSize: 12.5 }}>
+      {aba === "resumo" && (
+        semErp ? (
+          <Vazio t="Este contato não tem vínculo com o cadastro do WinThor, então não há histórico de compra para resumir. O CPF no painel do RD é o que cria o vínculo." />
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 7, padding: "12px 14px 10px" }}>
+              <Numero r="comprado" v={moedaBR(compras?.total_liquido)} dica="Faturamento líquido — já descontadas as devoluções" />
+              <Numero r="sem comprar"
+                v={compras?.dias_sem_comprar == null ? "—" : `${compras.dias_sem_comprar}d`}
+                cor={pct != null && pct >= 100 ? M.laranja : undefined}
+                dica="Dias desde a última nota faturada" />
+              <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
+                dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+            </div>
+            {ciclo?.acao_recomendada && (
+              <div style={{ margin: "0 14px 12px", padding: "9px 12px", fontSize: 12, lineHeight: 1.5,
+                color: M.ink, background: M.roxoSoft, borderLeft: `3px solid ${M.wine}`, borderRadius: "0 8px 8px 0" }}>
+                <b style={{ color: M.wine }}>Sugestão: </b>{ciclo.acao_recomendada}
+              </div>
+            )}
+            <Bloco titulo="Compra">
+              <Linha r="Última" v={dataBR(compras?.ultima_compra)} />
+              <Linha r="Notas" v={compras?.compras ?? "—"} />
+              <Linha r="Ciclo médio" v={ciclo?.ciclo_medio == null ? "—" : `${Math.round(Number(ciclo.ciclo_medio))} dias`} />
+              {compras?.cidade && <Linha r="Cidade" v={compras.cidade} />}
+            </Bloco>
+            {funil?.venda_valor ? (
+              <Bloco titulo="Este mês">
+                <Linha r="Faturado" v={moedaBR(funil.venda_valor)} forte />
+                <Linha r="Em" v={dataBR(funil.venda_data)} />
+              </Bloco>
+            ) : null}
+          </>
+        )
+      )}
       {aba === "perfil" && (
         <>
           <Bloco titulo="Contato">
@@ -465,6 +553,13 @@ export default function Chat() {
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [filtro, setFiltro] = useState<Fila>("todas");
+  // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
+  // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
+  const [layout, setLayout] = useState<string>("original");
+  // declarada aqui, e não junto de `d1` lá embaixo, porque `abrir()` a usa e
+  // fica acima no arquivo — depender da ordem de declaração dentro do render
+  // é o tipo de acoplamento que quebra em silêncio numa refatoração
+  const abaPadrao: AbaContato = layout === "continuidade" ? "resumo" : "perfil";
   const [menuFila, setMenuFila] = useState(false);      // dropdown "Meus atendimentos"
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
@@ -563,6 +658,7 @@ export default function Chat() {
         setConversas(j?.conversas ?? []);
         setVendedores(j?.vendedores ?? []);
         setLinhas(j?.linhas ?? []);
+        if (j?.layout) setLayout(j.layout);
         setErro(null);
       }
       else if (r.status === 401) setSessao(null);
@@ -813,7 +909,10 @@ export default function Chat() {
     // o compositor guarda o nome da cliente ANTERIOR nos campos: deixá-lo aberto
     // ao trocar de conversa mandaria o texto de uma para outra
     setMenuTemplate(false); setCompondo(null);
-    setMenuAcoes(false); setAbaContato("perfil");
+    setMenuAcoes(false);
+    // D1 abre no Resumo (números do ERP); no desenho original, em Perfil.
+    // `abaPadrao` é lida do layout vigente — ver PainelContato.
+    setAbaContato(abaPadrao);
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
@@ -1251,6 +1350,58 @@ export default function Chat() {
     .filter((c) => !jaNaLista.has(c.cliente_id))
     .filter((c) => !vendFiltro || c.vendedor === vendFiltro);
 
+  // ---- DESENHO EM VIGOR (0095) ---------------------------------------------
+  // `d1` guarda tudo que a Direção 1 acrescenta. A tese dela é "nada muda de
+  // lugar, coisas passam a aparecer" — então não existe uma segunda árvore de
+  // JSX: são adições pontuais nos quatro pontos que o laudo mediu como caros,
+  // mais a paleta. Manter uma tela só é o que torna o rollback confiável.
+  const d1 = layout === "continuidade";
+  Object.assign(M, PALETAS[layout] ?? PALETAS.original);
+
+  // ---- D1 · a janela de 24h vira estado permanente, não aviso de erro ------
+  // Hoje ela só se manifesta DEPOIS que o envio falha (§29.2 item 2): escreve-se
+  // a mensagem inteira para descobrir que precisava de template, que custa
+  // R$ 0,43. O dado para antecipar já está aqui — é a última mensagem RECEBIDA,
+  // que veio junto da thread. Nenhuma chamada nova.
+  //
+  // Conta a partir da mensagem do cliente, não da nossa: é isso que a regra do
+  // WhatsApp define, e responder não reabre nada. Eventos de sistema ficam de
+  // fora pela mesma razão que ficam fora da régua de etapa do funil (§11.1).
+  //
+  // Sem tick próprio: o valor recalcula a cada re-render, e o chat já tem o
+  // poll de 60s (§15.4). Em horas, um minuto de atraso não muda decisão.
+  const ultimaRecebida = (msgs ?? [])
+    .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema")
+    .slice(-1)[0];
+  const msRestantes = ultimaRecebida
+    ? 24 * 3600 * 1000 - (Date.now() - new Date(ultimaRecebida.criada_em).getTime())
+    : null;
+  const janelaAberta = msRestantes != null && msRestantes > 0;
+  const janelaRotulo = !janelaAberta
+    ? ""
+    : msRestantes! > 2 * 3600 * 1000
+      ? `${Math.floor(msRestantes! / 3600000)}h`
+      : `${Math.max(1, Math.floor(msRestantes! / 60000))} min`;
+
+  // ---- D1 · freio na transferência (0095) ----------------------------------
+  // Hoje os botões de vendedor vêm ANTES do campo de motivo, e clicar num nome
+  // envia na hora: quem digitou a justificativa e só então escolheu a pessoa
+  // perde o texto sem aviso (§29.2 item 7). Em D1 o campo sobe para antes dos
+  // nomes, então escolher a pessoa é o último gesto — o que já era verdade no
+  // servidor passa a ser verdade na tela.
+  // O campo é uma constante e não dois blocos duplicados: duas cópias divergem
+  // na primeira vez que alguém mexer só numa delas.
+  const campoMotivoTransf = (
+    <input
+      value={obsTransf}
+      onChange={(e) => setObsTransf(e.target.value)}
+      placeholder={d1
+        ? "Por que está passando? (opcional) — fica registrado na conversa"
+        : "Motivo da passagem (opcional) — fica registrado na conversa"}
+      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12, fontFamily: "inherit", color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: d1 ? 8 : 0 }}
+    />
+  );
+
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
 
@@ -1281,7 +1432,13 @@ export default function Chat() {
   const podeSalvar = !!texto.trim() && !texto.startsWith("/");
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
+    // D1 usa 100dvh: no celular, `100vh` conta a barra do navegador como se ela
+    // não existisse, e o compositor fica embaixo dela — o laudo mediu ~10px
+    // sobrando para a caixa de texto num aparelho de 390px (§29.2 item 6).
+    // `paddingBottom` com safe-area tira o compositor de cima da barra de
+    // gestos do iPhone.
+    <div style={{ height: d1 ? "100dvh" : "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif",
+      ...(d1 && isMobile ? { paddingBottom: "env(safe-area-inset-bottom)" } : null) }}>
       {/* ---- LIGAÇÃO (0087) — camadas flutuantes, fora do fluxo da tela --------
           Ficam aqui, no topo do componente, e não dentro da thread: a chamada
           sobrevive à troca de conversa e continua visível se o vendedor for
@@ -1428,6 +1585,45 @@ export default function Chat() {
                   </>
                 )}
               </div>
+
+              {/* ---- D1 · triagem sem clique (0095) ----
+                  Os contadores das quatro filas saem de DENTRO do dropdown e
+                  viram uma faixa fixa. O laudo mediu isto como o achado de
+                  maior retorno: a primeira pergunta do dia — quem está me
+                  esperando? — custava 2 cliques, pagos dezenas de vezes por dia
+                  por 7 pessoas. O dropdown continua existindo e no mesmo lugar;
+                  a faixa é um atalho para ele, não um substituto.
+                  Zero é desenhado apagado, não escondido: fila que some faz o
+                  olho procurar onde ela foi. */}
+              {d1 && (
+                <div style={{ display: "flex", gap: 5 }}>
+                  {([
+                    { k: "pendentes" as Fila, r: "Esperando", n: contaPendentes, cor: M.laranja },
+                    { k: "todas" as Fila, r: "Meus", n: noEscopo.filter((c) => (c.status ?? "aberta") !== "resolvida" && !c.na_fila).length, cor: M.azul },
+                    { k: "fila" as Fila, r: "Sem dono", n: contaFila, cor: M.azul },
+                    { k: "resolvidas" as Fila, r: "Encerradas", n: contaResolvidas, cor: M.gray },
+                  ]).map((f) => {
+                    const on = filtro === f.k;
+                    const vazia = f.n === 0;
+                    return (
+                      <button key={f.k} onClick={() => setFiltro(f.k)}
+                        title={FILAS.find((x) => x.k === f.k)?.dica}
+                        style={{
+                          flex: 1, minWidth: 0, padding: "5px 4px 6px", cursor: "pointer", fontFamily: "inherit",
+                          borderRadius: 9, textAlign: "center", lineHeight: 1.15,
+                          background: on ? M.surface : M.bg,
+                          border: `1px solid ${on ? f.cor : M.border}`,
+                          boxShadow: on ? `inset 0 -2px 0 ${f.cor}` : "none",
+                        }}>
+                        <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                          color: vazia ? M.muted : f.cor }}>{f.n}</div>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.2, color: M.gray,
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.r}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <div style={{ position: "relative" }}>
                 <input
@@ -1741,6 +1937,17 @@ export default function Chat() {
                       WhatsApp ↗
                     </a>
                   )}
+                  {/* D1 · no celular não há faixa de abas: este é o caminho
+                      para o ERP, que fora do D1 simplesmente não existe ali */}
+                  {d1 && isMobile && (
+                    <button onClick={() => { setAbaContato(abaPadrao); setPainelAberto(true); }}
+                      title="Ver os dados de compra desta cliente"
+                      style={{ minHeight: 34, fontSize: 11.5, fontWeight: 800, color: M.wine, background: M.roxoSoft,
+                        border: `1px solid ${M.border}`, borderRadius: 999, padding: "5px 12px", cursor: "pointer",
+                        fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      📊 Cliente
+                    </button>
+                  )}
                 </div>
 
                 {/* ---- faixa de abas do contato — exatamente onde o RD a põe
@@ -1750,7 +1957,7 @@ export default function Chat() {
                      conversa é justamente o que o RD não tem. ---- */}
                 {!isMobile && (
                   <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, overflowX: "auto", flexShrink: 0 }}>
-                    {ABAS.map((a) => {
+                    {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
                       const on = painelAberto && abaContato === a.k;
                       return (
                         <button key={a.k}
@@ -1776,8 +1983,14 @@ export default function Chat() {
                 {transferindo && (
                   <div style={{ padding: "10px 14px", background: M.roxoSoft, borderBottom: `1px solid ${M.border}` }}>
                     <div style={{ fontSize: 11.5, fontWeight: 800, color: M.wine, marginBottom: 7, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                      Transferir a conversa para
+                      {d1 ? "Transferir a conversa" : "Transferir a conversa para"}
                     </div>
+                    {d1 && campoMotivoTransf}
+                    {d1 && (
+                      <div style={{ fontSize: 10.5, fontWeight: 700, color: M.gray, marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                        Para quem — escolher envia
+                      </div>
+                    )}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                       {vendedores
                         .filter((v) => v.slug !== (sel.vendedor ?? ""))
@@ -1789,12 +2002,7 @@ export default function Chat() {
                         ))}
                       {!vendedores.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando vendedores…</span>}
                     </div>
-                    <input
-                      value={obsTransf}
-                      onChange={(e) => setObsTransf(e.target.value)}
-                      placeholder="Motivo da passagem (opcional) — fica registrado na conversa"
-                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12, fontFamily: "inherit", color: M.ink, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none" }}
-                    />
+                    {!d1 && campoMotivoTransf}
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7 }}>
                       <span style={{ flex: 1, fontSize: 10.5, color: M.gray, lineHeight: 1.4 }}>
                         Muda só quem <b>atende</b> aqui no chat. A carteira do cliente continua a mesma — ela vem do RCA no WinThor.
@@ -1888,8 +2096,17 @@ export default function Chat() {
                         const m = it.m;
                         const fora = m.enviada_por !== "customer"; // operator/bot = lado direito
                         return (
-                          <div key={m.id} style={{ display: "flex", justifyContent: fora ? "flex-end" : "flex-start", position: "relative" }}>
-                            <div style={{ maxWidth: "72%", background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? "#dcc8e2" : M.border}`, borderRadius: fora ? "12px 12px 3px 12px" : "12px 12px 12px 3px", padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
+                          // empilha em coluna quando há um recado abaixo da bolha
+                          // (a falha do D1): em `row` ele iria PARA O LADO dela
+                          <div key={m.id} style={{ display: "flex", position: "relative",
+                            // só o D1 empilha: ele pendura um recado de falha
+                            // abaixo da bolha, e em `row` ele iria para o LADO.
+                            // O desenho original fica byte a byte como era —
+                            // rollback que muda "quase nada" não é rollback.
+                            ...(d1
+                              ? { flexDirection: "column" as const, alignItems: fora ? "flex-end" : "flex-start" }
+                              : { justifyContent: fora ? "flex-end" : "flex-start" }) }}>
+                            <div style={{ maxWidth: "72%", background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? (d1 ? "#c9dff5" : "#dcc8e2") : M.border}`, borderRadius: fora ? "12px 12px 3px 12px" : "12px 12px 12px 3px", padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
                               {m.tipo === "template" && (
                                 <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.roxo, marginBottom: 3 }}>template</div>
                               )}
@@ -1927,6 +2144,30 @@ export default function Chat() {
                                 </span>
                               )}
                             </div>
+                            {/* ---- D1 · a falha deixa de morar num `title` (0095) ----
+                                O motivo que a Meta devolveu vive hoje num atributo
+                                `title`, que depende de hover e NÃO abre em toque —
+                                num app mobile a mensagem que não chegou fica sem
+                                causa e sem saída (§29.2 item 5). Aqui o motivo é
+                                texto, e o reenvio é um botão ao lado dele. */}
+                            {d1 && fora && m.status === "failed" && (
+                              <div style={{ maxWidth: "76%", marginTop: 3, padding: "6px 10px", fontSize: 11,
+                                lineHeight: 1.45, color: M.laranja, background: "#fdeee9",
+                                border: "1px solid #f2cabb", borderRadius: 8,
+                                display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ flex: 1 }}>
+                                  <b>Não entregue.</b> {m.erro || "A Meta não explicou o motivo."}
+                                </span>
+                                <button
+                                  onClick={() => { setTexto(m.conteudo); setModoNota(false); }}
+                                  title="Copia o texto para a caixa de digitação para você enviar de novo"
+                                  style={{ flexShrink: 0, border: "none", borderRadius: 999, padding: "4px 11px",
+                                    fontSize: 11, fontWeight: 800, fontFamily: "inherit", color: "#fff",
+                                    background: M.roxo, cursor: "pointer" }}>
+                                  Reenviar
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1966,6 +2207,48 @@ export default function Chat() {
                     </>
                   )}
                 </div>
+
+                {/* ---- D1 · faixa permanente da janela de 24h (0095) ----
+                    Fica ACIMA do compositor, no caminho do olho antes de
+                    digitar. Fechada, ela deixa de ser aviso e vira ação: o
+                    botão que reabre está na própria faixa, não numa instrução
+                    mandando o vendedor procurar outro botão. */}
+                {d1 && msRestantes != null && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 9, margin: "0 14px",
+                    padding: "6px 12px", fontSize: 12, borderRadius: 8,
+                    color: janelaAberta ? M.azul : M.laranja,
+                    background: janelaAberta ? "#e9f1fb" : "#fdeee9",
+                    border: `1px solid ${janelaAberta ? "#c9dff5" : "#f2cabb"}`,
+                  }}>
+                    <span>{janelaAberta ? "🕐" : "🔒"}</span>
+                    <span style={{ fontWeight: 700 }}>
+                      {janelaAberta
+                        ? `Janela aberta · ${janelaRotulo}`
+                        : "Janela fechada"}
+                    </span>
+                    {janelaAberta ? (
+                      // a barra mostra o que resta das 24h — número sozinho não
+                      // dá noção de urgência, e é o que decide entre responder
+                      // agora ou depois do almoço
+                      <span style={{ flex: 1, maxWidth: 170, height: 5, borderRadius: 999, background: "rgba(127,127,140,.22)", overflow: "hidden" }}>
+                        <span style={{ display: "block", height: "100%", borderRadius: 999, background: "currentColor",
+                          width: `${Math.max(2, Math.round((msRestantes! / (24 * 3600 * 1000)) * 100))}%` }} />
+                      </span>
+                    ) : (
+                      <span style={{ flex: 1, color: M.gray }}>só um template reabre a conversa</span>
+                    )}
+                    {!janelaAberta && (
+                      <button onClick={() => setMenuTemplate(true)} disabled={enviando}
+                        title="Enviar um template para reabrir a conversa"
+                        style={{ border: "none", borderRadius: 999, padding: "5px 13px", fontSize: 11.5, fontWeight: 800,
+                          fontFamily: "inherit", color: "#fff", background: M.roxo, cursor: enviando ? "default" : "pointer",
+                          opacity: enviando ? 0.6 : 1, whiteSpace: "nowrap" }}>
+                        Enviar template
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* aviso (janela 24h / erro de envio) — o ÚNICO uso forte do laranja */}
                 {aviso && (
@@ -2247,7 +2530,91 @@ export default function Chat() {
             />
           </div>
         )}
+
+        {/* ---- D1 · o ERP no celular, em folha deslizante (0095) ----
+            Hoje o painel inteiro é `!isMobile`: no celular atende-se sem
+            NENHUM dado de compra, e é justamente a vantagem sobre o RD que
+            some no aparelho que vai virar app (§29.2 item 3). A folha sobe
+            sobre a conversa em vez de disputar largura com ela — não há 268px
+            sobrando em 390. */}
+        {d1 && isMobile && mostraThread && sel && painelAberto && (
+          <>
+            <div onClick={() => setPainelAberto(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(28,14,27,.38)" }} />
+            <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 61, maxHeight: "82dvh",
+              display: "flex", flexDirection: "column", background: M.surface,
+              borderRadius: "16px 16px 0 0", boxShadow: "0 -10px 34px rgba(28,14,27,.28)",
+              paddingBottom: "env(safe-area-inset-bottom)" }}>
+              {/* alça: o alvo de "fechar" não pode ser só o ✕ de 12px */}
+              <div onClick={() => setPainelAberto(false)}
+                style={{ padding: "9px 0 5px", display: "flex", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <span style={{ width: 38, height: 4, borderRadius: 999, background: M.border }} />
+              </div>
+              <div style={{ display: "flex", gap: 2, padding: "0 10px", borderBottom: `1px solid ${M.border}`,
+                overflowX: "auto", flexShrink: 0 }}>
+                {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
+                  const on = abaContato === a.k;
+                  return (
+                    <button key={a.k} onClick={() => setAbaContato(a.k)}
+                      style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
+                        fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.roxo : M.gray,
+                        padding: "9px 11px", minHeight: 44, borderBottom: `2px solid ${on ? M.roxo : "transparent"}`,
+                        whiteSpace: "nowrap" }}>
+                      {a.rotulo}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+                <PainelContato
+                  c={contato}
+                  aba={abaContato}
+                  extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* ---- D1 · barra inferior de filas no celular (0095) ----
+          O título-dropdown é um alvo ruim para o polegar e esconde os
+          contadores atrás de um clique. No celular as filas viram barra fixa
+          embaixo, onde o polegar alcança — o padrão que qualquer app de
+          mensagem usa. Só na LISTA: dentro da conversa o compositor manda no
+          rodapé, e duas barras empilhadas comeriam a tela. */}
+      {d1 && isMobile && mostraLista && (
+        <div style={{ display: "flex", flexShrink: 0, background: M.surface, borderTop: `1px solid ${M.border}` }}>
+          {([
+            { k: "pendentes" as Fila, i: "🔔", r: "Esperando", n: contaPendentes },
+            { k: "todas" as Fila, i: "💬", r: "Meus", n: noEscopo.filter((c) => (c.status ?? "aberta") !== "resolvida" && !c.na_fila).length },
+            { k: "fila" as Fila, i: "🚶", r: "Sem dono", n: contaFila },
+            { k: "resolvidas" as Fila, i: "✓", r: "Encerradas", n: contaResolvidas },
+          ]).map((f) => {
+            const on = filtro === f.k;
+            return (
+              <button key={f.k} onClick={() => setFiltro(f.k)}
+                style={{ flex: 1, minWidth: 0, minHeight: 52, background: "transparent", border: "none",
+                  borderTop: `2px solid ${on ? M.roxo : "transparent"}`, cursor: "pointer", fontFamily: "inherit",
+                  padding: "5px 2px", color: on ? M.roxo : M.gray }}>
+                <div style={{ fontSize: 15, lineHeight: 1.1, position: "relative", display: "inline-block" }}>
+                  {f.i}
+                  {f.n > 0 && (
+                    <span style={{ position: "absolute", top: -4, right: -11, minWidth: 15, height: 15, padding: "0 3px",
+                      boxSizing: "border-box", borderRadius: 999, background: f.k === "pendentes" ? M.laranja : M.azul,
+                      color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center",
+                      justifyContent: "center", fontVariantNumeric: "tabular-nums" }}>
+                      {f.n > 99 ? "99+" : f.n}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 9.5, fontWeight: on ? 800 : 600, marginTop: 2, whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis" }}>{f.r}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
