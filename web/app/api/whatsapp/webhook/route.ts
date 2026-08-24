@@ -18,6 +18,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
+import { avisar, destinatarios } from "../../../../lib/chatPush";
 import { avisarForaDeHorario } from "../../../../lib/foraDeHorario";
 
 export const dynamic = "force-dynamic";
@@ -156,6 +157,33 @@ async function gravarMensagemRecebida(
   // aviso de fora do horário (nasce desligado; não repete na mesma rajada).
   // Depois do upsert de propósito: se falhar, a mensagem da cliente já está salva.
   await avisarForaDeHorario(sb, cliente.id, waId);
+
+  // ---- push com o app fechado (0096) --------------------------------------
+  // Último passo do fluxo, de propósito: a mensagem já está salva e a conversa
+  // já reabriu. `avisar` NUNCA lança (ver lib/chatPush.ts) — o webhook precisa
+  // responder 200 a qualquer custo, porque a Meta reenvia eternamente o que
+  // não recebe 200 (§16.1), e um push falho não pode virar reentrega infinita.
+  //
+  // Vai só para quem atende esta carteira. Admin e home ficam de fora: eles
+  // veem todas as carteiras e receberiam um push por mensagem da empresa
+  // inteira — notificação que toca o tempo todo é desligada no primeiro dia.
+  try {
+    const paraQuem = await destinatarios(sb, cliente.carteira ?? null);
+    if (paraQuem.length) {
+      const texto = String(row.conteudo ?? "").trim();
+      await avisar(sb, paraQuem, {
+        // o nome do perfil é o que a cliente escolheu no WhatsApp; sem ele, o
+        // telefone — nunca "cliente desconhecido", que não ajuda a decidir se
+        // vale abrir agora
+        titulo: nomePerfil || waId,
+        // recorta: a notificação do sistema trunca sozinha, mas num aparelho
+        // de tela bloqueada é melhor nós decidirmos onde corta
+        corpo: texto.length > 120 ? `${texto.slice(0, 117)}…` : (texto || "enviou uma mensagem"),
+        cliente_id: cliente.id,
+        url: "/chat",
+      });
+    }
+  } catch { /* nunca derruba o webhook */ }
 }
 
 const TIPOS_MIDIA = ["image", "audio", "video", "document", "sticker"] as const;

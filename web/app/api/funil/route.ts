@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
+import { lerCrmConfig } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,11 @@ export async function GET() {
     return Response.json({ error: "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes" }, { status: 500 });
   }
   const sb = createClient(url, key, { auth: { persistSession: false } });
+
+  // Interruptores do CRM (migration 0097). Disparado JÁ, sem await: é uma linha
+  // só, e assim a leitura corre em paralelo com os blocos pesados lá embaixo em
+  // vez de somar latência a uma rota que já leva segundos (§12.6).
+  const cfgP = lerCrmConfig(sb);
 
   // vendedores do funil (fonte única: carteira_config) — slugs p/ filtrar vendas + cores p/ o board
   // rca_num e time entram junto: o card precisa deles para classificar a divergência
@@ -124,7 +130,11 @@ export async function GET() {
     return (await q).data ?? [];
   };
   // ciclo de compra / oportunidades (motor preditivo espelhado da v2). ~1116 linhas.
+  // Com o motor desligado no /admin, nem a consulta acontece: o mecanismo sai do
+  // ar de verdade, não fica escondido pelo CSS — e a rota economiza uma consulta
+  // paginada por chamada.
   const carregarCiclo = async (): Promise<any[]> => {
+    if (!(await cfgP).ciclo_ativo) return [];
     const out: any[] = [];
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await sb.from("vw_ciclo_card")
@@ -329,7 +339,10 @@ export async function GET() {
     };
   }
 
+  const cfg = await cfgP;
+
   return Response.json({
+    ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false
     cards: cardsOutros,
     pedidoCards,
     templatesTotais,

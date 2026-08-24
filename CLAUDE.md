@@ -2642,3 +2642,67 @@ implementado, desconhecido ou nulo cai no padrão): todos passam.
    ignorados pelo git.
 3. Direção 2 exige **adiar**, que não existe no banco. Direção 3 exige catálogo com
    preço e ação recomendada.
+
+## 30. Interruptores de mecanismo em /admin — o primeiro é o ciclo de compra (24/08/2026) — migration 0097
+
+Aba **⚙️ Mecanismos** no `/admin`, com a chave **Motor de ciclo de compra**. Decisão
+do usuário: o mecanismo vai ser revisado, e enquanto isso precisa poder ser
+desligado e religado **sem deploy**.
+
+`crm_config` é **linha única e genérica de propósito** — não `ciclo_config`. Os
+próximos interruptores no radar (fonte do board: conversas × carteira do ERP;
+quais conversas ficam visíveis) entram como **coluna nova ali**, não como tabela
+nova. Mesmo formato de `paginas_legais`.
+
+### 30.1 A fronteira é por CAMPO, não por tabela — e confundir isso quebra o Excel
+
+`wth_ciclo` carrega duas coisas na mesma linha:
+
+| | Campos | Com a chave desligada |
+|---|---|---|
+| **motor preditivo** (o que está em revisão) | `tipo_oportunidade` · `score_urgencia` · `pct_ciclo` · `acao_recomendada` · `tendencia` · `ciclo_medio` | **some** |
+| **fato bruto do ERP** | `dias_ausente` · `ultima_compra` · `ticket_medio` · `total_pedidos` · `rec_total` · `ramo` | **fica** |
+
+Isso importa porque o `relatorio_rows` tira **`ticket_medio` e `total_pedidos` de
+`wth_ciclo`** — "desligar a leitura de `wth_ciclo`" apagaria ticket médio da
+planilha, que ninguém pediu. O filtro **Tempo parado** do board também sobrevive:
+conta dias de inatividade, não usa o motor.
+
+### 30.2 Nasce LIGADO, e isso não é timidez
+
+O ciclo está em uso. Nascer desligado faria um **deploy** mudar a tela de 15
+acessos por efeito colateral — exatamente o que a 0095 evita. Desligar é decisão
+de um admin, na tela, com nome e hora em `atualizado_por`/`atualizado_em`.
+Consequência prática: **depois do deploy, alguém precisa ir ao /admin e desligar** —
+o merge sozinho não muda nada.
+
+### 30.3 Onde a chave pega (5 lugares, uma implementação)
+
+`web/lib/crmConfig.ts` é a fonte única, e **falha para o lado do que já
+funcionava**: tabela ausente, erro de leitura ou linha sumida devolvem `ligado`.
+O contrário seria uma instabilidade do banco desligando um mecanismo na cara da
+equipe.
+
+| Consumidor | O que muda |
+|---|---|
+| `/api/funil` | **nem consulta** `vw_ciclo_card` — o mecanismo sai do ar de verdade, não fica escondido por CSS, e a rota economiza uma consulta paginada. Devolve `ciclo_ativo` |
+| `web/app/page.tsx` | o filtro **Ciclo compra** some do cabeçalho. O selo no card **não precisou de guarda**: vem `ciclo: null` do servidor |
+| `/api/chat/contato` + `/chat` | some a aba **Ciclo**, o número "% do ciclo" e a linha "Ciclo médio" do Resumo, e a Sugestão |
+| `/api/admin/disparo-massa` | o ranqueamento perde a parcela de urgência e vira **tempo parado + ticket** — ordem defensável, em vez de campanha sem critério. O texto da tela muda junto |
+| `/api/relatorio` | a coluna **Ciclo Médio (dias)** sai da planilha em vez de virar coluna de traços |
+
+### 30.4 Três armadilhas pagas ao construir
+
+1. **Filtro de ciclo ligado quando a chave desliga** esconderia TODOS os cards
+   (`matchCiclo` contra `ciclo: null`) — tela vazia sem explicação. Um efeito
+   limpa `cicloSel`.
+2. **Estar na aba Ciclo** quando um admin desliga deixaria o painel do contato em
+   branco. Resolvido no render (`abaAtual`), não num efeito: efeito ali dependeria
+   de nenhum `return` aparecer antes daquela linha.
+3. **Ler o interruptor de dentro de `contato`** fazia a aba "Ciclo" **piscar** a
+   cada conversa aberta, porque `contato` volta a `null` no `abrir()`. É config
+   global: estado próprio, setado quando a resposta chega.
+
+Verificado ao vivo em 24/08: desligou, religou, e `vw_ciclo_card` seguiu com
+1.104 linhas. **Nada é apagado** — o `wth-sync-tudo` continua atualizando a cada
+10 min, então religar mostra o dado de agora, não um buraco.

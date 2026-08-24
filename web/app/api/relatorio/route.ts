@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import ExcelJS from "exceljs";
 import { veTudo } from "../../../lib/papel";
+import { cicloAtivo } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -62,6 +63,11 @@ export async function POST(req: Request) {
   const linhas: any[] = rows ?? [];
 
   const temProduto = codprods.length > 0;
+  // Motor de ciclo desligado (crm_config, 0097): a coluna derivada sai da planilha
+  // em vez de virar uma coluna de traços. "Dias sem Comprar" e "Ticket Médio"
+  // ficam — são fato do ERP, não fazem parte do mecanismo em revisão, embora
+  // também venham de wth_ciclo.
+  const comCiclo = await cicloAtivo(sb);
   // colunas: 5 base (cliente, telefone, dias sem compra, ciclo médio, ticket médio)
   // (+ colunas de produto quando há filtro de produto).
   const cols: { header: string; key: string; width: number; money?: boolean }[] = [
@@ -74,7 +80,7 @@ export async function POST(req: Request) {
     // pela carteira dele no RPC, então a coluna seria constante)
     ...(escopo && admin ? [{ header: "Carteira", key: "carteira", width: 14 }] : []),
     { header: "Dias sem Comprar", key: "dias_sem_comprar", width: 16 },
-    { header: "Ciclo Médio (dias)", key: "ciclo_medio", width: 16 },
+    ...(comCiclo ? [{ header: "Ciclo Médio (dias)", key: "ciclo_medio", width: 16 }] : []),
     { header: "Ticket Médio (R$)", key: "ticket_medio", width: 16, money: true },
     ...(temProduto ? [
       { header: "Produto", key: "produto", width: 34 },

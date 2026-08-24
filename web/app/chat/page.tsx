@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ehApp, ativarPush, desativarPush, pushInscrito } from "../pwa";
 import Link from "next/link";
 import {
   useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
@@ -190,6 +191,9 @@ type Item =
 const NOTA = { bg: "#fdf6e3", borda: "#e8d9a8", ink: "#6b5a1f" };
 // painel do contato: dados do WinThor ao lado da conversa (o RD não tem isso)
 type Contato = {
+  // motor de ciclo ligado? (crm_config, migration 0097 — vem junto no mesmo JSON,
+  // então o painel não precisa de uma segunda chamada só para saber disso)
+  ciclo_ativo?: boolean;
   compras: { codcli: number | null; cidade: string | null; compras: number | null; ultima_compra: string | null;
              dias_sem_comprar: number | null; total_liquido: number | null; rca_oficial: string | null } | null;
   ciclo: { pct_ciclo: number | null; ciclo_medio: number | null; dias_ausente: number | null;
@@ -307,8 +311,12 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
     </div>
   );
 
+  // motor de ciclo desligado no /admin: some o que é DERIVADO (% do ciclo, ciclo
+  // médio, sugestão de ação). O que é fato do ERP — comprado, dias sem comprar,
+  // notas — continua, porque não faz parte do mecanismo em revisão.
+  const cicloOn = c.ciclo_ativo !== false;
   // barra do ciclo: quanto do intervalo médio de recompra já passou
-  const pct = ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
+  const pct = !cicloOn || ciclo?.pct_ciclo == null ? null : Math.max(0, Math.min(140, Number(ciclo.pct_ciclo)));
   const corCiclo = pct == null ? M.muted : pct >= 100 ? M.laranja : pct >= 75 ? "#b8860b" : "#1a6b3c";
 
   // Aviso de "sem cadastro" só nas abas que dependem do ERP — a de Perfil ainda
@@ -345,8 +353,10 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
                 v={compras?.dias_sem_comprar == null ? "—" : `${compras.dias_sem_comprar}d`}
                 cor={pct != null && pct >= 100 ? M.laranja : undefined}
                 dica="Dias desde a última nota faturada" />
-              <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
-                dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+              {cicloOn && (
+                <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
+                  dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+              )}
             </div>
             {ciclo?.acao_recomendada && (
               <div style={{ margin: "0 14px 12px", padding: "9px 12px", fontSize: 12, lineHeight: 1.5,
@@ -357,7 +367,7 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
             <Bloco titulo="Compra">
               <Linha r="Última" v={dataBR(compras?.ultima_compra)} />
               <Linha r="Notas" v={compras?.compras ?? "—"} />
-              <Linha r="Ciclo médio" v={ciclo?.ciclo_medio == null ? "—" : `${Math.round(Number(ciclo.ciclo_medio))} dias`} />
+              {cicloOn && <Linha r="Ciclo médio" v={ciclo?.ciclo_medio == null ? "—" : `${Math.round(Number(ciclo.ciclo_medio))} dias`} />}
               {compras?.cidade && <Linha r="Cidade" v={compras.cidade} />}
             </Bloco>
             {funil?.venda_valor ? (
@@ -556,6 +566,45 @@ export default function Chat() {
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
+  // rodando como app instalado (PWA na tela inicial ou APK/TWA). Em efeito, e
+  // nao no render, porque `ehApp()` lê `window` — calcular direto daria
+  // hidratação divergente entre servidor e cliente.
+  const [modoApp, setModoApp] = useState(false);
+  useEffect(() => { setModoApp(ehApp()); }, []);
+
+  // ---- notificação com o app fechado (0096) --------------------------------
+  // `null` = ainda não sabemos, e nesse estado nada é desenhado: um botão
+  // "Ativar" que pisca e some ao descobrir que já estava ativo é pior que
+  // esperar meio segundo.
+  const [push, setPush] = useState<boolean | null>(null);
+  const [pushOcupado, setPushOcupado] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const cfg = await fetch("/api/chat/push", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      // sem chave VAPID no servidor o recurso não existe: a tela some com o
+      // botão em vez de oferecer algo que vai falhar
+      if (!vivo || !cfg?.disponivel) return;
+      setPush(await pushInscrito());
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  async function alternarPush() {
+    setPushOcupado(true);
+    try {
+      if (push) {
+        await desativarPush();
+        setPush(false);
+        setAviso("Notificações desligadas neste aparelho.");
+      } else {
+        const r = await ativarPush();
+        if (r.ok) { setPush(true); setAviso(null); }
+        else setAviso(r.motivo);
+      }
+    } finally { setPushOcupado(false); }
+  }
   // declarada aqui, e não junto de `d1` lá embaixo, porque `abrir()` a usa e
   // fica acima no arquivo — depender da ordem de declaração dentro do render
   // é o tipo de acoplamento que quebra em silêncio numa refatoração
@@ -575,6 +624,11 @@ export default function Chat() {
   // progresso do envio em lote (várias fotos de uma vez)
   const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
   const [contato, setContato] = useState<Contato | null>(null);
+  // Motor de ciclo (crm_config, 0097). Estado SEPARADO de `contato` de propósito:
+  // `contato` volta a null a cada conversa aberta, e ler o interruptor de lá faria
+  // a aba "Ciclo" piscar na lista toda vez. É config global — uma vez sabida, vale
+  // para todas as conversas.
+  const [cicloAtivo, setCicloAtivo] = useState(true);
   const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
   // presença: cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta
   const [presentes, setPresentes] = useState<Record<string, string[]>>({});
@@ -917,7 +971,7 @@ export default function Chat() {
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setContato(j ?? null))
+      .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
       .catch(() => setContato(null));
     // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
     if (c.nao_lida) {
@@ -1358,6 +1412,17 @@ export default function Chat() {
   const d1 = layout === "continuidade";
   Object.assign(M, PALETAS[layout] ?? PALETAS.original);
 
+  // Abas do painel do contato que este usuário enxerga agora: "Resumo" só no
+  // desenho D1 (0095), "Ciclo" só com o motor ligado (crm_config, 0097). Uma
+  // lista só, usada pelo desktop e pela folha do celular — se cada um filtrasse
+  // por conta, uma aba sumiria de um lado e ficaria no outro.
+  const abasContato = ABAS.filter((a) => (!a.soD1 || d1) && (a.k !== "ciclo" || cicloAtivo));
+  // Estar na aba Ciclo quando um admin desliga o motor deixaria o painel em
+  // branco, sem nada explicando. Resolvido no render, não num efeito: efeito
+  // aqui dependeria de nenhum `return` aparecer antes desta linha, que é
+  // exatamente o acoplamento que o comentário do `abaPadrao` já evita.
+  const abaAtual: AbaContato = abasContato.some((a) => a.k === abaContato) ? abaContato : abaPadrao;
+
   // ---- D1 · a janela de 24h vira estado permanente, não aviso de erro ------
   // Hoje ela só se manifesta DEPOIS que o envio falha (§29.2 item 2): escreve-se
   // a mensagem inteira para descobrir que precisava de template, que custa
@@ -1483,8 +1548,14 @@ export default function Chat() {
           O Chat vira uma aba do produto, com a aba ativa sublinhada. */}
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "0 16px", minHeight: 52, background: M.surface, borderBottom: `1px solid ${M.border}`, flexShrink: 0 }}>
         <Logo size={26} />
-        <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>CRM</b>
-        {!isMobile ? (
+        <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>{modoApp ? "Chat" : "CRM"}</b>
+        {/* ---- No app instalado a navegação do CRM inteiro desaparece ----
+            O pedido foi "só o chat, fechado": um app de atendimento que oferece
+            Relatórios, Tickets e Administração não é um app de atendimento, é o
+            CRM dentro de uma moldura. O menu continua existindo no navegador,
+            onde o CRM é o produto inteiro — é a mesma tela servindo dois
+            contextos, e só o contexto muda. */}
+        {modoApp ? null : !isMobile ? (
           <nav style={{ display: "flex", alignItems: "center", alignSelf: "stretch", gap: 2, marginLeft: 8, minWidth: 0, overflowX: "auto" }}>
             {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
               const ativo = n.href === "/chat";
@@ -1549,8 +1620,33 @@ export default function Chat() {
                   <span style={{ fontSize: 11, color: M.gray, opacity: 0.8 }}>▾</span>
                 </button>
                 {/* atalho da fila de espera, como o ícone com contador do RD */}
+                {/* ---- notificação com o app fechado (0096) ----
+                    Fica aqui, no alto da lista, porque é onde se olha ao
+                    começar o dia — e porque o navegador só aceita pedir a
+                    permissão dentro de um clique, então precisa ser um botão
+                    de verdade, não um pedido automático ao abrir a tela (que
+                    o Chrome recusa e queima a chance de perguntar). */}
+                {push === false && (
+                  <button onClick={alternarPush} disabled={pushOcupado}
+                    title="Receber aviso de mensagem nova mesmo com o app fechado"
+                    style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                      fontSize: 11, fontWeight: 800, color: "#fff", background: M.roxo, border: "none",
+                      borderRadius: 999, padding: "4px 10px", cursor: pushOcupado ? "default" : "pointer",
+                      opacity: pushOcupado ? 0.6 : 1, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    🔔 {pushOcupado ? "…" : "Ativar avisos"}
+                  </button>
+                )}
+                {push === true && (
+                  <button onClick={alternarPush} disabled={pushOcupado}
+                    title="Avisos ligados neste aparelho — clique para desligar"
+                    style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: M.gray,
+                      background: "transparent", border: "none", padding: "4px 6px",
+                      cursor: pushOcupado ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    🔔 <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>avisos ligados</span>
+                  </button>
+                )}
                 <button onClick={() => setFiltro("fila")} title="Fila de espera — conversas sem dono"
-                  style={{ marginLeft: "auto", position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
+                  style={{ marginLeft: push === null ? "auto" : 4, position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
                   🚶
                   {contaFila > 0 && (
                     <span style={{ position: "absolute", top: -3, right: -4, minWidth: 15, height: 15, padding: "0 3px", boxSizing: "border-box", borderRadius: 15, background: M.laranja, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1957,8 +2053,8 @@ export default function Chat() {
                      conversa é justamente o que o RD não tem. ---- */}
                 {!isMobile && (
                   <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, overflowX: "auto", flexShrink: 0 }}>
-                    {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
-                      const on = painelAberto && abaContato === a.k;
+                    {abasContato.map((a) => {
+                      const on = painelAberto && abaAtual === a.k;
                       return (
                         <button key={a.k}
                           onClick={() => { setAbaContato(a.k); setPainelAberto(true); }}
@@ -2518,14 +2614,14 @@ export default function Chat() {
         {mostraThread && sel && painelAberto && !isMobile && (
           <div style={{ width: 268, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
             <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
-              <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaContato)?.rotulo}</b>
+              <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaAtual)?.rotulo}</b>
               <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>
-                {abaContato === "perfil" ? "contato e cadastro" : "direto do WinThor"}
+                {abaAtual === "perfil" ? "contato e cadastro" : "direto do WinThor"}
               </div>
             </div>
             <PainelContato
               c={contato}
-              aba={abaContato}
+              aba={abaAtual}
               extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
             />
           </div>
@@ -2552,8 +2648,8 @@ export default function Chat() {
               </div>
               <div style={{ display: "flex", gap: 2, padding: "0 10px", borderBottom: `1px solid ${M.border}`,
                 overflowX: "auto", flexShrink: 0 }}>
-                {ABAS.filter((a) => !a.soD1 || d1).map((a) => {
-                  const on = abaContato === a.k;
+                {abasContato.map((a) => {
+                  const on = abaAtual === a.k;
                   return (
                     <button key={a.k} onClick={() => setAbaContato(a.k)}
                       style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit",
@@ -2568,7 +2664,7 @@ export default function Chat() {
               <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
                 <PainelContato
                   c={contato}
-                  aba={abaContato}
+                  aba={abaAtual}
                   extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
                 />
               </div>

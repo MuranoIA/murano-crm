@@ -10,3 +10,12 @@ src/_tmp_*.ts
 .vercel
 .env*
 !.env.example
+
+# APK (TWA) — o keystore é a identidade do app: perdê-lo impede atualizar o que já foi instalado.
+# Guardado no gerenciador de senhas, nunca aqui.
+apk/android.keystore
+apk/*.keystore
+apk/*.apk
+apk/*.aab
+apk/app/
+apk/.bubblewrap/
