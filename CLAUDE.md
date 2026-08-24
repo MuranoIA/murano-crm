@@ -2356,3 +2356,145 @@ ERP para um terceiro projeto (a mesma preocupação da §10.7, item 5).
 | `web/app/admin/page.tsx` | `EnviosAba`, terceira posição da chave; link 🗂️ Gestão de carteira na barra |
 | `web/app/page.tsx` | menos as duas pastilhas, o dropdown e 4 itens de menu; mais Visões da Carteira |
 | `web/app/carteira/page.tsx` | o "voltar" aponta para /admin, não mais para o board |
+
+## 28. Segundo número real na Cloud API — "Murano Professional" (23–24/08/2026)
+
+Número próprio registrado direto na Cloud API e colocado como **a linha de envio
+do app**. Recebimento, envio de texto, recibos de entrega, template e ligação
+validados ponta a ponta no mesmo dia. O RD segue intocado atendendo o número
+oficial — continua valendo a §23: dois números em paralelo, sem corte à vista.
+
+### 28.1 Os ids (verificados na Graph API, não no painel)
+
+| | valor |
+|---|---|
+| `phone_number_id` | `1264458800091787` |
+| número | **+55 91 8166-0019** |
+| `verified_name` | Murano Professional · `account_mode: LIVE` · `CLOUD_API` |
+| **WABA** | `1568370048121307` (conta "Murano Professional") |
+| token | o **`WHATSAPP_TOKEN` que já existia** — system user Murano Pulse, `expires_at: 0` |
+
+Migration **0094** cadastra a linha em `chat_linha`; `WHATSAPP_PHONE_NUMBER_ID` e
+`WHATSAPP_WABA_ID` na Vercel apontam para os dois ids acima.
+
+**Como achar o WABA id sem adivinhar:** a coluna "Identificação" da tela
+*Cobrança → Contas do WhatsApp Business* É o WABA id — conferido porque duas
+linhas dela batem com ids já conhecidos daqui (Test `28189344217325382`, Murano
+Pro `1441580480587007`). O token do CRM **não** lista WABAs
+(`assigned_whatsapp_business_accounts` volta vazio, `owned_…` dá #200), mas
+depois de conhecido o id ele lê a conta inteira.
+
+### 28.2 TEMPLATE É POR WABA, NÃO POR NÚMERO — a armadilha central
+
+Trocar o número trocou de **conta**, e com isso os quatro templates aprovados
+viraram pó: `crm_templates` continuou apontando para nomes que só existiam na
+WABA anterior. Sintoma no chat, com o cadastro impecável e o código correto:
+
+```
+Graph 132001: template name (recontato_de_clientes) does not exist in pt_BR
+```
+
+A WABA nova nasce só com o `hello_world` de fábrica — por isso um teste com
+`hello_world` passa e todo o resto falha, o que engana o diagnóstico.
+
+Recriados na conta nova, aprovados em minutos: **`recontato_de_clientes`** (o ★
+padrão, `{{1}}` + `{{2}}`) e **`tudo_bem`**. Ficaram de fora de propósito
+`promo` (corpo "teste asdfasdf…") e `tudo_bem_com_voce` (duplicata truncada do
+padrão) — **os dois seguem `ativo: true` no cadastro e dão 132001 se alguém
+escolher**; ver pendências.
+
+**Isto vai se repetir na Fase C**, quando o número oficial migrar: recriar os
+templates na WABA de destino faz parte do corte, não é acabamento posterior.
+
+### 28.3 `subscribed_apps` vazio — a falha mais silenciosa que este projeto já teve
+
+Por horas o envio funcionou e **nada voltava**: nenhuma mensagem recebida,
+nenhum tique, nenhum evento de chamada. Inscrever o app é passo separado de
+tudo o mais e não dá erro em lugar nenhum quando falta.
+
+```
+GET  /<waba_id>/subscribed_apps  -> {"data":[]}      <- o diagnóstico
+POST /<waba_id>/subscribed_apps  -> {"success":true} <- a correção
+```
+
+**O sintoma que denuncia isso no nosso banco** (e vale como régua permanente):
+mensagem enviada parada em **`status: "wait"`** para sempre, porque quem
+promove `wait → success → read` é o webhook (§16.3). Some-se a isso zero linhas
+`enviada_por='customer'` com id `wamid.*` na linha nova.
+
+⚠️ Assinar a WABA **não** assina os campos: `messages` já vinha assinado no
+nível do app (herdado), mas **`calls` precisa ser marcado à mão** no App
+Dashboard — é a armadilha nº 3 da §16.4 outra vez, agora para voz. Ler quais
+campos estão assinados exige **app token** (`#190 Application Secret required`),
+então é conferência visual no painel: o `WHATSAPP_APP_SECRET` só existe na
+Vercel.
+
+⚠️ A rota `/api/whatsapp/diag` faz esse POST, mas a allowlist dela (§20.3) só
+permite Murano Shop e a conta de teste — **a lista está desatualizada** e não
+alcança a conta em uso.
+
+### 28.4 `132001` tem TRÊS causas e o texto da Meta só nomeia uma
+
+`template name (X) does not exist in pt_BR` sai igual para: **nome** errado,
+**idioma** errado, ou **conta** errada. O `pt_BR` no fim é só o que ela
+procurou, não uma reclamação sobre a língua do texto — e foi exatamente isso que
+despistou o diagnóstico aqui, onde a causa era a terceira.
+
+A rota não usa `pt_BR` fixo: lê `crm_templates.idioma` e só cai em `pt_BR` se
+estiver vazio (`send-template`, ~linha 156). Um `pt-BR` ou `pt` guardado ali
+reproduz o mesmo erro com a conta certa.
+
+### 28.5 Cobrança: saldo R$ 0,00 NÃO é bloqueio
+
+O "Saldo atual" da tela de contas é **valor acumulado a pagar**, não crédito
+pré-pago — a cobrança do Cloud API é pós-paga. O que bloqueia é **WABA sem forma
+de pagamento vinculada**, e o vínculo é por conta: o mesmo cartão do portfólio
+serve para várias WABAs (a Test e a Murano Professional dividem o mesmo Visa).
+
+Efeito prático, e a razão de a ligação ter sido o último item a cair:
+
+| | precisa de cartão na WABA? |
+|---|---|
+| conversa de serviço / texto na janela de 24h | não (franquia gratuita) |
+| template de marketing | só depois de esgotada a franquia — falha tarde e sem aviso |
+| **chamada de saída** | **sim, desde a primeira** — é o `131044` da §22.6.1 |
+
+Vínculo por interface apenas: a Graph API não expõe cobrança.
+
+### 28.6 Uma linha de envio só — consequência de trocar a env
+
+`linhaDeEnvio()` é lido por **sete** pontos (send-message, send-template,
+enviar-midia, ligação ×2, fora de horário, admin/ligacao). Trocar
+`WHATSAPP_PHONE_NUMBER_ID` **move todo mundo de uma vez**: conversa que entrou
+por outro número passa a ser respondida pelo novo, o que na tela da cliente é
+uma **conversa nova**, e a janela de 24h — que é **por número** — não vem junto.
+
+E o interruptor de calling (§22.7 item 3) age exatamente sobre essa env: ligar
+"Chamadas de voz" em /admin → Linhas passou a valer para o número real, com o
+ícone de telefone aparecendo para todas as clientes da linha.
+
+### 28.7 Correções a seções anteriores
+
+- **Murano Shop foi eliminada de propósito pelo usuário em 24/08/2026.** A §20
+  inteira descreve um piloto que não existe mais: o número +55 91 9806-0032, a
+  WABA `1384896129703324` e os templates aprovados nela se foram. As 57
+  mensagens e as 6 conversas dela seguem no banco como histórico, e a linha
+  continua em `chat_linha` só para dar rótulo a elas.
+- **§23.2 item 1 (meio de pagamento na Murano Shop)** e **§23.2 item 2
+  (template de recontato)** estão resolvidos, porém na conta NOVA — não naquela.
+- **§21.4 item 2 e §23.1** já corrigiam o mito do "modo Ativo": confirmado outra
+  vez aqui, com número real em WABA real enviando para fora de qualquer
+  allowlist, com o app ainda em Desenvolvimento.
+
+### 28.8 Pendências
+
+1. **`promo` e `tudo_bem_com_voce` ativos em `crm_templates` sem existir na WABA
+   em uso** — desativar, ou recriar se alguém os quiser de volta.
+2. **Linhas mortas em `chat_linha`**: piloto (Murano Shop) e número de teste.
+   Desativar tira do filtro do chat, mas some o rótulo das conversas antigas —
+   por isso não foi feito.
+3. **Allowlist da `/api/whatsapp/diag` desatualizada** (§20.3): aponta para uma
+   conta que não existe mais. Rota é temporária e sai na Fase C de qualquer jeito.
+4. **Murano Pro e Murano Cobrança faturam por linha de crédito alocada por
+   terceiros** (ODCEM, Text Wave) — a Murano Pro é a WABA do número oficial;
+   esse arranjo precisa ser resolvido **antes** de migrar o número, não depois.
