@@ -100,8 +100,18 @@ export async function GET() {
   const carregarPedidoCards = async (): Promise<any[]> => {
     const out: any[] = [];
     for (let from = 0; ; from += PAGE) {
+      // O bucket `todos` da view vai de 1900 até hoje — e era ele que o board
+      // usava por padrão, então a coluna Pedido emitido ACUMULAVA meses (medido
+      // em 25/08: 3.147 clientes, com compras desde 27/04) em vez de zerar no
+      // dia 1º. Pior: quem comprou num mês anterior aparecia AO MESMO TEMPO na
+      // sua etapa normal e em Pedido emitido — o mesmo cliente, dois cards.
+      //
+      // A regra do negócio é "fica até o fim do mês e volta para a fila no dia
+      // 1º", então a coluna simplesmente não tem universo maior que o mês.
+      // Cortado aqui, na origem: não adianta o front esconder se o dado chega.
       let pcQ = sb.from("vw_pedido_bi_card")
         .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,pedidos,valor,ultima_compra")
+        .neq("periodo", "todos")
         .range(from, from + PAGE - 1);
       pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
       const { data, error } = await pcQ;

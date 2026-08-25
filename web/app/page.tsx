@@ -1342,7 +1342,11 @@ export default function Page() {
   // vendedor filtrado. Fica FORA da coluna (mostrado acima dela) — é o KPI do mês,
   // independente de quantos compradores estão em Pedido emitido vs reengajados.
   const vendaMes = useMemo(() => {
-    const per = periodoPorColuna["pedido_emitido"] ?? "todos";
+    // mesmo padrão da coluna: sem período escolhido, o KPI é o do MÊS. Com
+    // "todos" ele somava desde abril (R$ 2,45 mi contra R$ 375 mil do mês) —
+    // um número que ninguém conferia porque parecia grande demais para estar errado.
+    const bruto = periodoPorColuna["pedido_emitido"] ?? "todos";
+    const per = bruto === "todos" ? "mes" : bruto;
     const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
     return {
       per,
@@ -2540,8 +2544,17 @@ export default function Page() {
 
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: isMobile ? 10 : 12, alignItems: "start" }}>
           {COLUNAS.map((col) => {
-            const periodoAtivo = periodoPorColuna[col.key] ?? "todos";
             const ehPedido = col.key === "pedido_emitido";
+            // Pedido emitido não tem "todos": o universo da coluna É o mês corrente,
+            // e ela zera sozinha no dia 1º. hoje/semana/quinzena recortam DENTRO do
+            // mês. Nas demais colunas, "todos" segue sendo o padrão.
+            //
+            // O "todos" precisa ser TRADUZIDO, não só ter outro padrão: o dropdown
+            // global aplica um período a todas as colunas de uma vez, e escolher
+            // "todos" ali deixaria esta coluna procurando um bucket que o servidor
+            // não manda mais — vazia, sem nada explicando.
+            const periodoBruto = periodoPorColuna[col.key] ?? "todos";
+            const periodoAtivo: Periodo = ehPedido && periodoBruto === "todos" ? "mes" : periodoBruto;
             const ehProspec = col.key === "prospeccao";
             // atividade EFETIVA do card = a mais recente entre a última msg (RD) e o
             // disparo de template nosso (disparos_template). Assim um card que você
@@ -2551,7 +2564,7 @@ export default function Page() {
             // prospecção: carteira nunca contatada, sem data -> ignora o período;
             // demais colunas: da vw_funil filtrada por atividade.
             const todosDaEtapa = ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === "todos")
+              ? pedidoVisiveis.filter((c) => c.periodo === "mes")
               : visiveis.filter((c) => c.etapa === col.key);
             let doGrupo = ehPedido
               ? pedidoVisiveis.filter((c) => c.periodo === periodoAtivo)
@@ -2590,7 +2603,7 @@ export default function Page() {
             // contagem por período. pedido_emitido: nº de clientes com venda no período
             // (linhas daquele período na view); demais: por atividade.
             const contaPeriodo = (p: Periodo) => ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === p).length
+              ? pedidoVisiveis.filter((c) => c.periodo === (p === "todos" ? "mes" : p)).length
               : ehProspec
               ? todosDaEtapa.length
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
