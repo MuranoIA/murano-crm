@@ -2915,3 +2915,57 @@ exatamente a regra pedida.
 2. **"Um card por cliente"**: com o `venda:` removido, falta decidir se o cliente
    que comprou continua aparecendo so na coluna Pedido emitido (hoje) ou vira um
    card unico que muda de coluna.
+
+
+## 33. O card ampliado virou chat de verdade (25/08/2026) — `web/app/conversa.tsx`
+
+Pedido do usuario: *"que em cada card apareca a conversa igual como aparece no
+chat... nao somente algumas ultimas mensagens, mas a rolagem das mensagens normal
+como e no chat, e em negociacao o input para a mensagem deve ser normal como em um
+chat e nao com limitacoes tipo inline"*.
+
+| | antes | agora |
+|---|---|---|
+| fonte | `/api/mensagens` — **30 mensagens, so texto** | `/api/chat/thread` — **200**, a MESMA rota do /chat |
+| conteudo | bolha de texto e hora | midia (foto/audio/video/documento), tique de entrega, selo de template, separador de dia, notas internas e transferencias na linha do tempo |
+| falha de envio | invisivel | motivo da Meta em texto, abaixo da bolha |
+| compositor | `<input>` de uma linha | `<textarea>` que cresce com o texto, Enter envia e Shift+Enter quebra linha |
+| quando aparece | so em `negociacao` (ou pedido com conversa <24h) | sempre que a **janela de 24h** estiver aberta |
+
+### 33.1 A janela decide o compositor, nao a etapa do card
+
+Antes: `zMostraInput = etapa === "negociacao" || ...`. A etapa vem da `vw_funil`,
+que so recalcula quando o board recarrega — entao quem tinha acabado de receber
+mensagem **nao via o campo**, mesmo com a janela aberta, ate o proximo load.
+
+Agora quem decide e a **ultima mensagem recebida**, que ja veio junto da thread:
+zero chamada a mais, e o rodape mostra *"Janela aberta · fecha em 3h"* ANTES de a
+pessoa escrever. Com a janela fechada, no lugar do campo aparece o motivo e o
+botao TEMPLATE — o mesmo remedio da §29.2 item 2, que e o erro que custa R$ 0,43.
+
+### 33.2 Arquivo proprio, e a duplicacao que isso assume
+
+`app/chat/page.tsx` passa de 2.900 linhas e a bolha de la esta amarrada a
+presenca, ligacao, respostas rapidas, picker e ao layout D1. Extrair aquilo
+mexeria na tela que a equipe usa o dia inteiro para entregar uma que ela ainda nao
+viu. `app/page.tsx` tambem ja passa de 3.000. Mesma decisao e mesmo motivo de
+`app/chat/ligacao.tsx` (§22.8): modulo proprio, superficie de contato pequena.
+
+⚠️ **Existem agora DUAS renderizacoes de bolha no projeto.** Mudou o desenho da
+bolha, muda nas duas. E custo assumido — a alternativa trocava esse custo por
+risco em producao.
+
+### 33.3 O poll de 5 SEGUNDOS que ninguem tinha visto
+
+O card ampliado rodava `setInterval(..., 5000)` contra `/api/mensagens`: **12
+requisicoes por minuto por card aberto**. Nao queimava cota do RD (e Supabase),
+mas e exatamente o vicio que a §15.1 corrigiu no board — polling incondicional que
+escala com abas abertas, nao com trabalho real. Morreu junto: a `<Conversa>` usa
+**60s**, a mesma rede de protecao do /chat.
+
+### 33.4 O que NAO mudou
+
+O card pequeno da coluna continua com a previa curta e o seu `<input>` inline de
+resposta rapida. A conversa completa vive no card **ampliado** (a lupa) — num card
+de ~250px de largura um chat nao cabe. Se a intencao era trocar tambem o input do
+card pequeno, e um passo a parte.
