@@ -3099,3 +3099,100 @@ contenha escapes.
 - **Grupo B tem conserto automatico** e ainda nao foi feito: provisionar as 145
   linhas em `clientes` fecha o grupo e destrava o envio para a carteira inteira.
 - Os grupos A, C e D precisam de decisao humana antes de qualquer botao.
+
+
+## 37. O admin escolhe por qual numero o CRM fala (25/08/2026) — migration 0102
+
+Sintoma que originou isto, com print: o usuario digitou um numero que **ja
+existia no RD**, a conversa abriu — e o envio devolveu so **`RD 429`**. Ele leu
+como *"o sistema nao permitiu falar com esse numero"*. Era a cota da API do RD
+estourada, que passa sozinha em um minuto.
+
+**Erro que nao diz o que fazer vira diagnostico errado, e diagnostico errado
+vira pedido de mudanca na coisa errada.** Mesma licao da §22.6.1, do lado da
+Meta; aqui o texto util nem existia.
+
+### 37.1 A decisao de canal passa a ter dono
+
+`canalDeResposta()` decidia POR CONVERSA (responde pelo canal em que o cliente
+falou por ultimo, §16.3). Continua sendo um bom padrao, mas agora existe uma
+precedencia acima dele:
+
+| ordem | quem decide | por que |
+|---|---|---|
+| 1 | `wa:*` -> sempre Cloud | o RD nao conhece esse contato; a rota de mensagem livre endereca pelo `_id` DELE. Enviar pelo RD e falha garantida — sobrepoe ate a escolha do admin |
+| 2 | **`crm_config.numero_envio`** | a escolha do admin, valendo para mensagem, template e ligacao em QUALQUER contato |
+| 3 | o canal da ultima mensagem recebida | o automatico de sempre, quando nada foi escolhido |
+
+`numero_envio` nasce **NULO** (= automatico): nenhum deploy troca o canal de
+sete pessoas por efeito colateral.
+
+⚠️ **`numero_envio` guarda `'rd' | 'cloud'`, NAO o `phone_number_id`.** Quem
+carimba `linha_id` na mensagem enviada e `linhaDeEnvio()`, que le a env
+`WHATSAPP_PHONE_NUMBER_ID`. Guardar o id aqui criaria uma segunda fonte para a
+mesma decisao, e o sintoma seria mensagem saindo por um numero e sendo
+registrada como de outro. Enviar por VARIAS linhas Cloud e outra feature — o
+lugar de mudar seria a env virar tabela, nao esta coluna.
+
+### 37.2 A JANELA DE 24H E POR NUMERO — e a tela nao sabia
+
+Este era o bug que a mudanca ia introduzir. Com o admin escolhendo Cloud, um
+cliente que respondeu ha 10 minutos **no RD** nao tem janela aberta na Cloud.
+Mas a faixa do chat e a do card contavam a janela sobre a conversa INTEIRA:
+diriam *"aberta, fecha em 23h"*, liberariam o campo, e o envio falharia com
+131047 — com o texto ja escrito.
+
+Corrigido: `/api/chat/thread` devolve `canal_envio` (ja com a escolha aplicada) e
+as duas telas so contam mensagens daquele canal. **A faixa existe justamente
+para evitar escrever a mensagem inteira e descobrir depois; contar a janela
+errada a transformaria no oposto.**
+
+### 37.3 ENVIO ≠ VISIBILIDADE
+
+Sao dois interruptores, e a tela precisa dizer isso:
+
+| | pergunta | coluna |
+|---|---|---|
+| **Numero de envio** | por qual numero eu FALO | `numero_envio` |
+| **Conversas visiveis** | o que eu VEJO na tela | `linhas_visiveis` |
+
+Da para acompanhar o historico do RD e ja estar respondendo pelo numero novo. Um
+so knob juntaria duas decisoes que nao sao a mesma.
+
+### 37.4 Provisionamento do grupo B (108 de 145)
+
+O grupo B da §36 era o que impedia *"enviar para qualquer um de seus clientes"*:
+esta na carteira, tem telefone, e nao havia linha em `clientes` para o envio
+usar. Provisionados **108**; o grupo caiu de 145 para 37.
+
+Os **37 restantes tem telefone malformado no WinThor** (`92775900` sem DDD,
+`919925573999` com digito a mais) e o normalizador os RECUSA de proposito:
+criar contato com numero invalido so empurra a falha para o dia do envio. Ficam
+visiveis na tela de Pendencias, que e onde devem estar.
+
+⚠️ Nao gera card duplicado: o contato novo nasce sem mensagem, entao nao entra
+no ramo 1 da view, e o card de prospeccao continua sendo o unico. Quando o
+primeiro template sair, ele troca de coluna — nao ganha um irmao. Conferido:
+zero `cliente_id` duplicado depois da carga.
+
+### 37.5 O bug que so o teste pegou
+
+A rota do /admin extraia o valor assim:
+```ts
+const valor = typeof b.valor === "boolean" || Array.isArray(b.valor) ? b.valor : b.ciclo_ativo;
+```
+Para uma **string** (`"cloud"`) isso caia no fallback e virava `undefined` — a
+tela salvava e nada mudava, **sem erro visivel**. So apareceu ao dirigir o
+navegador de verdade e conferir o radio DEPOIS do clique.
+
+Vale como regra: quando um endpoint aceita tipos diferentes por chave, testar um
+tipo nao testa os outros. O conserto foi `"valor" in b ? b.valor : b.ciclo_ativo`.
+
+### 37.6 O que NAO foi feito, por decisao do usuario
+
+**Contornar a cota do RD.** O 429 sobreviveu as 5 tentativas com backoff que ja
+existiam — a cota estava mesmo saturada. O usuario foi explicito: *"nao e uma
+preocupacao minha resolver isso, pois estamos desenvolvendo uma nova ferramenta
+que ira funcionar independente do rd conversas"*. Ficou so a **traducao do
+erro** (`lib/erroRd.ts`), porque custa dez linhas e evita o diagnostico errado.
+Nao investir mais no lado do RD.

@@ -80,6 +80,24 @@ export async function GET() {
       config: cfg,
       padrao: CRM_CONFIG_PADRAO,
       mecanismos: MECANISMOS,
+      // ENVIO ≠ VISIBILIDADE. São duas perguntas diferentes e a tela precisa
+      // dizer isso, senão o admin muda uma achando que mudou a outra.
+      envio: {
+        rotulo: "Número de envio",
+        resumo:
+          "Por qual número o CRM FALA: mensagem, template e ligação, em qualquer contato. " +
+          "É diferente de quais conversas aparecem na tela — dá para acompanhar o histórico " +
+          "do RD e já estar respondendo pelo número novo.",
+        atual: cfg.numero_envio,
+        opcoes: [
+          { v: null, rotulo: "Automático (como hoje)",
+            desc: "Responde pelo canal em que o cliente falou por último. Contato novo sai pela Cloud." },
+          { v: "rd", rotulo: "Murano Pro (RD Conversas)",
+            desc: "Tudo pelo número oficial. Mensagem livre só alcança quem o RD já conhece; template alcança qualquer número." },
+          { v: "cloud", rotulo: "Murano Professional",
+            desc: "Tudo pelo número novo. Para quem tem histórico no número antigo, a conversa chega como de um número desconhecido." },
+        ],
+      },
       linhas: {
         ...LINHAS_INFO,
         // as linhas vêm de `chat_linha` (§14.1: cadastro em tabela, não lista no
@@ -105,7 +123,11 @@ export async function PUT(req: Request) {
   // assim durante o deploy.
   const chave: string = typeof b.chave === "string" ? b.chave
     : typeof b.ciclo_ativo === "boolean" ? "ciclo_ativo" : "";
-  const valor = typeof b.valor === "boolean" || Array.isArray(b.valor) ? b.valor : b.ciclo_ativo;
+  // `valor` pode ser booleano (mecanismo), lista (linhas visíveis), string ou
+  // NULO (número de envio). O fallback para `b.ciclo_ativo` só existe para o
+  // formato antigo `{ciclo_ativo:bool}`, que uma aba já aberta ainda manda
+  // durante o deploy — e só deve valer quando `valor` não veio de jeito nenhum.
+  const valor = "valor" in b ? b.valor : b.ciclo_ativo;
 
   const sb = sbAdmin();
   const antes = await lerCrmConfig(sb);
@@ -141,6 +163,27 @@ export async function PUT(req: Request) {
       aviso: novo === null
         ? "Todos os números voltaram a aparecer no board e no chat."
         : `Board e chat passam a enxergar só: ${nomes.join(", ")}. Os demais clientes caem em Prospecção e Ociosos. Quem estiver com a tela aberta vê na próxima atualização.`,
+    });
+  }
+
+  // ---- número de envio: três estados, e um deles é NULO ---------------------
+  if (chave === "numero_envio") {
+    const v = valor === null || valor === "" ? null : String(valor);
+    if (v !== null && v !== "rd" && v !== "cloud") {
+      return Response.json({ error: "número de envio inválido" }, { status: 400 });
+    }
+    const { data, error } = await sb.from("crm_config").upsert({
+      id: 1, numero_envio: v,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,atualizado_por,atualizado_em").single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({
+      ok: true, config: data,
+      aviso: v === null
+        ? "Voltou ao automático: cada conversa responde pelo canal em que o cliente falou por último."
+        : v === "rd"
+          ? "Tudo passa a sair pelo Murano Pro (RD Conversas). Contatos que só existem no nosso banco continuam saindo pela Cloud — o RD não os conhece."
+          : "Tudo passa a sair pelo Murano Professional, inclusive para quem tem histórico no número antigo.",
     });
   }
 

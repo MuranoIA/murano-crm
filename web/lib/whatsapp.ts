@@ -27,16 +27,39 @@ export function canalDoCliente(clienteId: string): "whatsapp" | "rd" {
 }
 
 /**
- * Regra completa de roteamento de resposta: além de canalDoCliente(), responde
- * pelo canal em que o CLIENTE falou por último — se a última mensagem recebida
- * dele tem id `wamid.*` (chegou pelo webhook da Cloud API), a resposta volta
- * pela Cloud API; senão, RD. Durante a transição isso roteia cada conversa
- * sozinho, sem configuração por cliente.
+ * Regra completa de roteamento de resposta.
+ *
+ * ORDEM DE PRECEDÊNCIA — a primeira que responder ganha:
+ *
+ *  1. **A escolha do admin** (`crm_config.numero_envio`, 0102). Quando existe,
+ *     ela vale para TODO contato: mensagem, template e ligação saem pelo número
+ *     escolhido, independente de onde a conversa nasceu. É a decisão que o
+ *     usuário pediu em 25/08 — *"quando abrir a janela de conversa, mensagens,
+ *     templates, ligação, isso deve ocorrer para o número que estiver
+ *     previamente setado no painel administrativo"*.
+ *
+ *  2. `wa:*` — contato que só existe do nosso lado; o RD não o conhece.
+ *     Sobrepõe até o item 1 com 'rd' escolhido, porque enviar pelo RD a um
+ *     contato que ele não tem é falha garantida (a rota de mensagem livre
+ *     endereça pelo `_id` do RD). Melhor sair pela Cloud do que não sair.
+ *
+ *  3. O canal em que o CLIENTE falou por último (id `wamid.*` = Cloud). É o
+ *     roteamento automático da transição (§16.3), e segue valendo enquanto
+ *     nenhuma escolha estiver feita no /admin.
  */
 export async function canalDeResposta(
   sb: { from: (t: string) => any },
   clienteId: string,
 ): Promise<"whatsapp" | "rd"> {
+  // 2 antes de 1: contato `wa:` não existe no RD, então nem a escolha do admin
+  // consegue mandar por lá. Ver o comentário de precedência acima.
+  if (clienteId.startsWith("wa:")) return "whatsapp";
+
+  const { data: cfg } = await sb
+    .from("crm_config").select("numero_envio").eq("id", 1).maybeSingle();
+  if (cfg?.numero_envio === "rd") return "rd";
+  if (cfg?.numero_envio === "cloud") return "whatsapp";
+
   if (canalDoCliente(clienteId) === "whatsapp") return "whatsapp";
   const { data } = await sb
     .from("mensagens")

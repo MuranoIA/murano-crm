@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
+import { canalDeResposta } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -96,8 +97,16 @@ export async function GET(req: Request) {
     // chamam o mesmo número pelo mesmo nome
     : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
 
+  // Por qual canal ESTA conversa vai sair — já com a escolha do admin aplicada
+  // (0102). A tela precisa disto para calcular a janela de 24h da linha CERTA:
+  // a janela é por número, então um cliente que respondeu há 10 min no RD NÃO
+  // tem janela aberta na Cloud. Sem isso a tela liberaria o campo de texto e o
+  // envio falharia com 131047, perdendo o que a pessoa escreveu.
+  const canalEnvio = await canalDeResposta(sb, cliente_id).catch(() => "rd" as const);
+
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
+    canal_envio: canalEnvio,
     linha,
     mensagens,
     notas: notas ?? [],

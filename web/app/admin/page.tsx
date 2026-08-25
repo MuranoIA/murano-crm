@@ -474,7 +474,7 @@ export default function Admin() {
       {aba === "crm-config" && dados?.["crm-config"] && (
         <MecanismosAba
           d={dados["crm-config"]}
-          salvar={(chave: string, valor: boolean | string[]) =>
+          salvar={(chave: string, valor: boolean | string[] | string | null) =>
             enviar("crm-config", "PUT", { chave, valor },
               valor ? "Mecanismo religado." : "Mecanismo desligado.")}
         />
@@ -1768,7 +1768,7 @@ function PendenciasAba({ d, recarregar }: { d: any; recarregar: (grupo: string |
 // mundo de uma vez. Religar pede um só — voltar ao estado anterior nunca deveria
 // custar mais caro do que sair dele.
 // ---------------------------------------------------------------------------
-function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: boolean | string[]) => Promise<boolean> }) {
+function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: boolean | string[] | string | null) => Promise<boolean> }) {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
@@ -1776,6 +1776,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   // gesto, como estabelecer um desenho (§29.4). Um clique acidental num
   // checkbox não deve trocar a tela de quinze pessoas.
   const linhasInfo = d.linhas ?? { opcoes: [], selecionadas: [] };
+  const envio = d.envio ?? null;
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
   const alternar = (id: string) =>
@@ -1875,6 +1876,52 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             </div>
           );
         })}
+
+        {/* ---- número de ENVIO (0102) --------------------------------------
+            Vem ANTES do seletor de visibilidade de propósito: "por qual número
+            eu falo" é a pergunta que o vendedor sente; "o que eu vejo" é a que
+            o supervisor ajusta. E o texto precisa separar as duas, senão o
+            admin muda uma achando que mudou a outra. */}
+        {envio && (
+          <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{envio.rotulo}</div>
+              <Selo ok={!!envio.atual} sim="Definido" nao="Automático" />
+            </div>
+            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{envio.resumo}</p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(envio.opcoes ?? []).map((o: any) => {
+                const on = (envio.atual ?? null) === (o.v ?? null);
+                return (
+                  <label key={String(o.v)}
+                    style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: ocupado ? "default" : "pointer",
+                      border: `1px solid ${on ? M.roxo : M.border}`, background: on ? M.roxoSoft : M.surface,
+                      borderRadius: 9, padding: "9px 11px" }}>
+                    <input type="radio" name="numero_envio" checked={on} disabled={ocupado}
+                      onChange={async () => {
+                        if (on) return;
+                        setOcupado(true);
+                        await salvar("numero_envio", o.v ?? null);
+                        setOcupado(false);
+                      }}
+                      style={{ marginTop: 2 }} />
+                    <span style={{ minWidth: 0 }}>
+                      <b style={{ fontSize: 13, color: M.ink, display: "block" }}>{o.rotulo}</b>
+                      <span style={{ fontSize: 12, color: M.gray, lineHeight: 1.5 }}>{o.desc}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>
+              Vale na hora, para o chat e para o board. Contato que só existe no nosso banco
+              (criado pelo botão + ou por quem escreveu primeiro) sai sempre pelo Murano
+              Professional, mesmo com o RD escolhido — o RD não conhece esse contato.
+            </p>
+          </div>
+        )}
 
         {/* ---- seletor de linhas ------------------------------------------- */}
         <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>

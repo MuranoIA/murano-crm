@@ -19,6 +19,18 @@ export type CrmConfig = {
   linhas_visiveis: string[] | null;
   /** Cadastro de `chat_linha` (só as ativas), para a tela montar o seletor. */
   linhas: Linha[];
+  /**
+   * Número pelo qual o CRM ENVIA (0102). Decisão do admin, valendo para
+   * mensagem, template e ligação em qualquer contato.
+   *   'rd'    -> Murano Pro (RD Conversas)
+   *   'cloud' -> Murano Professional (a linha da env WHATSAPP_PHONE_NUMBER_ID)
+   *   null    -> automático: responde pelo canal em que o cliente falou por último
+   *
+   * NÃO confundir com `linhas_visiveis`, que é o que a TELA mostra. Ver e falar
+   * são decisões diferentes: dá para acompanhar as conversas do RD e mesmo
+   * assim já estar respondendo pelo número novo.
+   */
+  numero_envio: "rd" | "cloud" | null;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -28,6 +40,7 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   ciclo_ativo: true,
   linhas_visiveis: null,
   linhas: [],
+  numero_envio: null,
   atualizado_por: null,
   atualizado_em: null,
 };
@@ -96,7 +109,7 @@ type Sb = { from: (t: string) => any };
 export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
   try {
     const [cfgR, linhasR] = await Promise.all([
-      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em")
+      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,atualizado_por,atualizado_em")
         .eq("id", 1).maybeSingle(),
       sb.from("chat_linha").select("phone_number_id,rotulo,numero,ativo").eq("ativo", true).order("rotulo"),
     ]);
@@ -105,6 +118,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
     return {
       ciclo_ativo: data.ciclo_ativo !== false,
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
+      numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
       atualizado_em: data.atualizado_em ?? null,
@@ -113,6 +127,13 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
     return CRM_CONFIG_PADRAO;
   }
 }
+
+/**
+ * O canal que o admin escolheu, já traduzido para o vocabulário do envio.
+ * `null` = nenhuma escolha feita, então quem decide segue sendo a conversa.
+ */
+export const canalEscolhido = (cfg: CrmConfig): "rd" | "whatsapp" | null =>
+  cfg.numero_envio === "rd" ? "rd" : cfg.numero_envio === "cloud" ? "whatsapp" : null;
 
 /** Atalho para quem só precisa do ciclo (a maioria dos consumidores). */
 export async function cicloAtivo(sb: Sb): Promise<boolean> {
