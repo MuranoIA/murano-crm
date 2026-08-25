@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { canalDeResposta, sendText, linhaDeEnvio } from "../../../lib/whatsapp";
+import { traduzErroRd } from "../../../lib/erroRd";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -97,7 +98,9 @@ export async function POST(req: Request) {
       await sleep(2000 * (tent + 1)); // 2s, 4s, 6s, 8s (cabe no maxDuration=30)
     }
     if (!rd.ok) {
-      return Response.json({ error: body?.message || `RD ${rd.status}`, detail: body }, { status: 502 });
+      // "RD 429" sozinho fez o usuário concluir que o sistema proibia falar com
+      // aquele contato, quando era a cota estourada (ver lib/erroRd.ts).
+      return Response.json({ ...traduzErroRd(rd.status, body), detail: body }, { status: 502 });
     }
 
     return Response.json({ ok: true, cliente: cli.nome_completo });

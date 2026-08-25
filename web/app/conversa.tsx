@@ -50,6 +50,7 @@ type Msg = {
   id: string; conteudo: string | null; enviada_por: string | null; tipo: string | null;
   status: string | null; criada_em: string; erro?: string | null;
   midia_tipo?: string | null; midia_nome?: string | null; midia_path?: string | null;
+  linha_id?: string | null;   // null = RD Conversas (§23.4)
 };
 type Nota = { id: string; autor: string | null; texto: string; criada_em: string };
 type Transf = {
@@ -147,6 +148,8 @@ export function Conversa({
   const c = { ...CORES_PADRAO, ...(cores ?? {}) };
 
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
+  // por qual canal ESTA conversa sai, já com a escolha do admin (0102)
+  const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
   const [notas, setNotas] = useState<Nota[]>([]);
   const [transfs, setTransfs] = useState<Transf[]>([]);
   const [erro, setErro] = useState<string | null>(null);
@@ -170,6 +173,7 @@ export function Conversa({
       if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); setMsgs([]); return; }
       setErro(null);
       setMsgs(j.mensagens ?? []);
+      setCanalEnvio(j.canal_envio ?? null);
       setNotas(j.notas ?? []);
       setTransfs(j.transferencias ?? []);
       if (rolar) setTimeout(() => fim.current?.scrollIntoView({ behavior: "auto" }), 30);
@@ -201,8 +205,15 @@ export function Conversa({
   // WhatsApp define — responder não reabre nada. O dado já veio na thread:
   // nenhuma chamada a mais, e o aviso aparece ANTES de escrever, não depois de
   // o envio falhar (§29.2 item 2), que é o erro que custa R$ 0,43.
+  //
+  // ⚠️ A JANELA É POR NÚMERO. Um cliente que respondeu há 10 minutos NO RD não
+  // tem janela aberta na Cloud, e vice-versa. Contar sobre a conversa inteira
+  // faria a tela liberar o campo de texto e o envio falhar com 131047 — com o
+  // texto já escrito. Por isso só contam as mensagens do canal de ENVIO.
+  const doCanalDeEnvio = (m: Msg) =>
+    canalEnvio === null ? true : canalEnvio === "rd" ? !m.linha_id : !!m.linha_id;
   const ultimaRecebida = (msgs ?? [])
-    .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema")
+    .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema" && doCanalDeEnvio(m))
     .slice(-1)[0];
   const msRestantes = ultimaRecebida
     ? 24 * 3600 * 1000 - (Date.now() - new Date(ultimaRecebida.criada_em).getTime())
@@ -401,7 +412,9 @@ export function Conversa({
               <span style={{ fontSize: 11.5, color: c.aviso, lineHeight: 1.4, flex: "1 1 180px", minWidth: 0 }}>
                 {ultimaRecebida
                   ? "A janela de 24h fechou — só um template reabre a conversa."
-                  : "Esta cliente ainda não respondeu — só um template inicia a conversa."}
+                  : canalEnvio === "whatsapp"
+                    ? "Sem conversa aberta neste número — só um template inicia."
+                    : "Esta cliente ainda não respondeu — só um template inicia a conversa."}
               </span>
               {aoPedirTemplate && (
                 <button

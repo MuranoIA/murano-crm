@@ -167,6 +167,7 @@ type Msg = {
   reacao?: string | null;      // emoji com que a cliente reagiu A ESTA mensagem
   resposta_a?: string | null;  // wamid da mensagem citada
   erro?: string | null;        // motivo da falha, como a Meta explicou (0091)
+  linha_id?: string | null;    // null = RD Conversas (§23.4); decide a janela de 24h
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -634,6 +635,7 @@ export default function Chat() {
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   // progresso do envio em lote (várias fotos de uma vez)
   const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
+  const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
   const [contato, setContato] = useState<Contato | null>(null);
   // Motor de ciclo (crm_config, 0097). Estado SEPARADO de `contato` de propósito:
   // `contato` volta a null a cada conversa aberta, e ler o interruptor de lá faria
@@ -744,6 +746,7 @@ export default function Chat() {
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     setMsgs(j?.mensagens ?? []);
+    setCanalEnvio(j?.canal_envio ?? null);
     setNotas(j?.notas ?? []);
     setTransferencias(j?.transferencias ?? []);
     setLigacoes(j?.ligacoes ?? []);
@@ -1485,8 +1488,14 @@ export default function Chat() {
   //
   // Sem tick próprio: o valor recalcula a cada re-render, e o chat já tem o
   // poll de 60s (§15.4). Em horas, um minuto de atraso não muda decisão.
+  // ⚠️ A JANELA É POR NÚMERO (0102). Um cliente que respondeu há 10 minutos NO
+  // RD não tem janela aberta na Cloud. Contar sobre a conversa inteira faria a
+  // faixa dizer "aberta, fecha em 23h" e o envio falhar com 131047 — com o
+  // texto já escrito, que é justamente o que a faixa existe para evitar.
+  const doCanalDeEnvio = (m: Msg) =>
+    canalEnvio === null ? true : canalEnvio === "rd" ? !m.linha_id : !!m.linha_id;
   const ultimaRecebida = (msgs ?? [])
-    .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema")
+    .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema" && doCanalDeEnvio(m))
     .slice(-1)[0];
   const msRestantes = ultimaRecebida
     ? 24 * 3600 * 1000 - (Date.now() - new Date(ultimaRecebida.criada_em).getTime())
