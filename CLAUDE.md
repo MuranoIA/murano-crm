@@ -3196,3 +3196,70 @@ preocupacao minha resolver isso, pois estamos desenvolvendo uma nova ferramenta
 que ira funcionar independente do rd conversas"*. Ficou so a **traducao do
 erro** (`lib/erroRd.ts`), porque custa dez linhas e evita o diagnostico errado.
 Nao investir mais no lado do RD.
+
+
+## 38. "Minha carteira" no chat — a agenda ao lado das conversas (25/08/2026)
+
+Quinta opcao no dropdown do chat: **todos os clientes do RCA do vendedor**, com
+ou sem conversa. Pedido do usuario: *"como se fosse mesmo a funcao contatos do
+whatsapp"*.
+
+Volume medido: **961 (luana), 955 (kamilly), 754 (romulo), ~500 os demais** —
+4.692 no total. **98% ja tem contato aberto**, entao clicar e conversar funciona
+quase sempre.
+
+### 38.1 A identidade — o ponto delicado, e como foi resolvido
+
+O board identifica cliente de prospeccao por `winthor:<codcli>`: id sintetico,
+sem thread, que serve para desenhar card e nada mais. O chat precisa do contato
+REAL para abrir conversa e enviar. Sao **fontes diferentes para a mesma pessoa**.
+
+A solucao foi **nao misturar as duas listas**:
+
+| lista | chaveada por |
+|---|---|
+| conversas (as 4 filas) | `cliente_id` |
+| **carteira (a agenda)** | **`codcli`** |
+
+O dropdown ALTERNA entre elas. Sem merge, nao ha como nascer linha duplicada —
+que e o risco de forcar a mesma view a servir os dois usos.
+
+Cada linha da agenda carrega os dois ids, com `cliente_id` resolvido no servidor:
+`wth_vinculo` (CPF) → `clientes` com o mesmo telefone (8 digitos) → NULO.
+
+No clique: se o `cliente_id` ja esta entre as conversas carregadas, seleciona
+**aquele objeto** — assim nao-lidas, status e transferencia ficam certos. Se nao
+esta, monta a conversa na hora, reusando a maquinaria do botao + (§35.2).
+
+### 38.2 Rota propria, e nao mais um recorte de /api/chat
+
+As quatro filas sao recortes da lista que o chat JA tem em memoria — custam
+zero. A carteira sao ate 961 linhas por vendedor que nao sao buscadas hoje.
+Enfia-las no carregamento inicial encareceria toda abertura do chat por uma aba
+que quase nunca e a primeira. `/api/chat/carteira` e chamada **so quando a aba
+abre, uma vez por sessao**.
+
+Ordem **alfabetica** (e uma agenda, nao uma caixa de entrada) e a busca da
+sidebar filtra. Com ~900 nomes, procurar e o caminho principal; a lista corta em
+400 e **diz quantos ficaram de fora**.
+
+### 38.3 Os 96 sem contato aparecem INERTES, nao somem
+
+58 sem telefone no WinThor + 38 cujo telefone nao confere com nenhum contato.
+Ficam na lista esmaecidos, com o motivo — mesmo principio da §36: sumir em
+silencio e a doenca, nao o remedio.
+
+### 38.4 ⚠️ React #310 — o hook depois do `return`
+
+O `useEffect` que dispara a carga foi escrito junto do resto da logica da
+carteira, por volta da linha 1500. So que a partir da **1436** o componente tem
+`if (sessao === undefined) return ...`. Hook depois de um return e chamado num
+render e nao no outro: **React #310, chat em branco**.
+
+O proprio arquivo ja avisa disso no comentario do `abaPadrao` ("depender da
+ordem de declaracao dentro do render e o tipo de acoplamento que quebra em
+silencio") — e eu cai mesmo assim. **`tsc` e `next build` passaram limpos**; so
+o teste no navegador pegou. O efeito agora mora junto do estado, na linha 658.
+
+Regra que fica: em `chat/page.tsx` e `page.tsx`, **todo hook vai para o topo**,
+antes de qualquer `return` condicional. Build verde nao prova que a tela abre.
