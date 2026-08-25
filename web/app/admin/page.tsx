@@ -20,7 +20,7 @@ const M = {
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config" | "pendencias";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
@@ -29,8 +29,11 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "templates-whatsapp", rotulo: "📨 Templates" },
   { id: "chat-layout", rotulo: "🎨 Desenho do chat" },
   { id: "crm-config", rotulo: "⚙️ Mecanismos" },
+  { id: "pendencias", rotulo: "⚠️ Pendências" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
+
+const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 
 const PAPEIS = ["admin", "home", "vendedor"] as const;
 const DIAS = [
@@ -135,6 +138,19 @@ export default function Admin() {
   }, []);
 
   useEffect(() => { carregar(aba); }, [aba, carregar]);
+
+  // Pendências é a única aba com filtro no servidor (grupo), então tem o próprio
+  // carregador — o genérico monta a URL sem querystring.
+  const carregarPendencias = useCallback(async (grupo: string | null) => {
+    setCarregando(true); setErro(null);
+    try {
+      const r = await fetch(`/api/admin/pendencias${grupo ? `?grupo=${encodeURIComponent(grupo)}` : ""}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
+      setDados(j);
+    } catch (e: any) { setErro(e?.message ?? String(e)); }
+    finally { setCarregando(false); }
+  }, []);
 
   // Identidade estável de propósito: `avisar` entra nas dependências do efeito
   // que busca a prévia do disparo, que varre a vw_funil inteira. Recriado a
@@ -462,6 +478,10 @@ export default function Admin() {
             enviar("crm-config", "PUT", { chave, valor },
               valor ? "Mecanismo religado." : "Mecanismo desligado.")}
         />
+      )}
+
+      {aba === "pendencias" && dados?.pendencias && (
+        <PendenciasAba d={dados.pendencias} recarregar={(gr) => carregarPendencias(gr)} />
       )}
 
       {aba === "paginas-legais" && dados?.["paginas-legais"] && (
@@ -1623,6 +1643,115 @@ function EnviosAba({ dados }: { dados: any }) {
         )}
       </Bloco>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pendências — o que o board não consegue colocar em coluna nenhuma (0101).
+//
+// A tela NÃO resolve nada, e isso é deliberado: as ações de cada caso vêm
+// depois. Ela existe para o problema ter dono agora, em vez de continuar sendo
+// silêncio — foi assim que a conversa da §34 ficou invisível por meses, mesmo
+// havendo uma métrica que a registrava.
+//
+// O .csv é a peça que faz a tela valer hoje: a maioria destes casos se resolve
+// FORA do CRM (cadastro no WinThor), então o admin precisa levar a lista para
+// quem cuida do ERP.
+// ---------------------------------------------------------------------------
+function PendenciasAba({ d, recarregar }: { d: any; recarregar: (grupo: string | null) => void }) {
+  const linhas: any[] = d.linhas ?? [];
+  const totais: Record<string, number> = d.totais ?? {};
+  const grupoAtivo: string | null = d.grupo ?? null;
+  const chaves = Object.keys(totais).sort();
+
+  const dataBR = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("pt-BR") : "—";
+
+  function baixarCsv() {
+    const cols = ["grupo", "codcli", "cliente_id", "nome", "telefone", "cpf", "carteira", "rca_num", "rca_nome", "detalhe", "ultima_atividade"];
+    // ; como separador e BOM: é o que o Excel em pt-BR abre sem pedir importação
+    const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    // BOM + CRLF escritos por codigo: escape em string de origem ja se perdeu
+    // uma vez nesta linha, e o Excel precisa dos dois para abrir sem importacao
+    const BOM = String.fromCharCode(0xFEFF);
+    const linhasCsv = [cols.join(";"), ...linhas.map((l) => cols.map((c) => esc(l[c])).join(";"))];
+    const csv = BOM + linhasCsv.join(String.fromCharCode(13, 10));
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pendencias_${grupoAtivo ?? "todas"}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <Bloco
+      titulo="O que o board não consegue classificar"
+      ajuda={
+        <>
+          Clientes e contatos que não cabem em nenhuma coluna — por falta de telefone, de
+          cadastro no WinThor ou de carteira. <b>Nada aqui é resolvido por esta tela</b>: ela
+          existe para nenhum caso ficar invisível enquanto as ações não existem. A maioria se
+          conserta no cadastro do ERP, então leve o <code style={mono}>.csv</code> a quem cuida dele.
+        </>
+      }
+    >
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+        {[{ k: null as string | null, r: `Todas (${d.total ?? 0})` },
+          ...chaves.map((g) => ({ k: g.slice(0, 1), r: `${g} (${totais[g]})` }))].map((c) => {
+          const on = grupoAtivo === c.k;
+          return (
+            <button key={c.r} onClick={() => recarregar(c.k)}
+              style={{ padding: "5px 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", borderRadius: 20,
+                cursor: "pointer", color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                border: `1px solid ${on ? M.roxo : M.border}` }}>
+              {c.r}
+            </button>
+          );
+        })}
+        <span style={{ marginLeft: "auto" }}>
+          <Botao cor={M.azul} onClick={baixarCsv} disabled={!linhas.length}>⬇ .csv ({linhas.length})</Botao>
+        </span>
+      </div>
+
+      {!linhas.length ? (
+        <p style={{ fontSize: 13, color: M.verde, fontWeight: 700 }}>Nenhuma pendência neste grupo.</p>
+      ) : (
+        <div style={{ overflowX: "auto", maxHeight: 520, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ position: "sticky", top: 0, background: M.surface }}>
+              <tr>
+                {["Grupo", "Cliente", "Código", "Telefone", "Carteira / RCA", "Última conversa"].map((h) => (
+                  <th key={h} style={th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.slice(0, 600).map((l) => (
+                <tr key={l.chave} title={l.detalhe}>
+                  <td style={{ ...td, whiteSpace: "nowrap", fontSize: 11.5, color: M.gray }}>{l.grupo}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{l.nome ?? "—"}</td>
+                  <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{l.codcli ?? "—"}</td>
+                  <td style={{ ...td, fontVariantNumeric: "tabular-nums", color: l.telefone ? M.ink : M.laranja }}>
+                    {l.telefone ?? "sem telefone"}
+                  </td>
+                  <td style={td}>
+                    {l.carteira ? cap(l.carteira) : <span style={{ color: M.muted }}>sem carteira</span>}
+                    {l.rca_num ? <span style={{ color: M.gray }}> · RCA {l.rca_num}</span> : null}
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{dataBR(l.ultima_atividade)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {linhas.length > 600 && (
+            <p style={{ fontSize: 12, color: M.gray, margin: "10px 0 0" }}>
+              Mostrando 600 de {linhas.length} — o <b>.csv</b> traz a lista inteira.
+            </p>
+          )}
+        </div>
+      )}
+    </Bloco>
   );
 }
 

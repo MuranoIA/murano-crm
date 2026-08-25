@@ -3043,3 +3043,59 @@ never }`).
 Verificado em Chrome headless contra o build de producao: form abre, mascara
 normalizada, numero existente abre a conversa certa, repeticao nao duplica,
 numero incompleto e recusado. Zero excecao nas duas telas.
+
+
+## 36. Pendencias — o que o board nao consegue classificar (25/08/2026) — migration 0101
+
+`/admin` → aba **⚠️ Pendencias**. Pedido do usuario: os clientes sem telefone,
+e os que nao estao na carteira de nenhum vendedor do board, *"nao podem ficar
+sem serem visualizados pelo admin"* — mesmo antes de existir a funcao que
+resolve cada caso.
+
+### 36.1 O principio, que vale alem desta tela
+
+**Um registro que o sistema nao sabe classificar nao pode simplesmente nao
+aparecer.** Foi exatamente assim que a conversa da §34 ficou invisivel por
+meses: havia ate uma metrica registrando o caso
+(`vw_carteira_conflito.no_board`), mas contagem escondida em view de
+diagnostico nao e visibilidade — **tela e**.
+
+Por isso a view **nao resolve nada, de proposito**. As acoes vem depois; o que
+nao pode e o caso nao ter dono.
+
+### 36.2 Os quatro grupos (medidos em 25/08/2026 — total 438)
+
+| | n | o que e | onde se resolve |
+|---|---|---|---|
+| **A** sem telefone | 102 | cliente da carteira sem numero: nao ha canal possivel, nem template | cadastro do WinThor |
+| **B** sem contato criado | 145 | esta na carteira e tem telefone, mas nao existe linha em `clientes` — o envio precisa de uma | **tem conserto automatico** (mesma logica de /api/chat/novo-contato) |
+| **C** conversa sem cadastro no ERP | 79 | alguem falando conosco que nao e cliente de ninguem | cadastrar, atribuir ou descartar |
+| **D** RCA fora do board | 112 | cliente de outro time (GC/IS) que conversou; desde a 0100 cai na fila em vez de sumir | decidir de quem e |
+
+O grupo E que eu tinha previsto (sem CPF) deu **zero** — aquele buraco ja foi
+fechado em algum momento anterior.
+
+### 36.3 O `.csv` e a peca que faz a tela valer HOJE
+
+A maioria destes casos se resolve **fora do CRM**, no cadastro do ERP. Sem a
+exportacao, a tela seria so um numero para o admin olhar e nao poder agir. O
+arquivo sai com `;` e BOM porque e o que o Excel em pt-BR abre sem pedir
+importacao.
+
+A tabela mostra 600 linhas e diz quantas ficaram de fora; o csv leva tudo.
+Truncar em silencio seria a mesma doenca que a tela existe para curar.
+
+### 36.4 Armadilha de edicao (custou dois ciclos de build)
+
+Ao gerar codigo TS por script, `"﻿"` e `"
+"` viraram **o BOM de
+verdade e uma quebra de linha real** dentro do literal — string nao terminada. O
+conserto foi montar os dois em runtime (`String.fromCharCode`), que e imune a
+mais uma rodada de escape. Vale para qualquer edicao automatizada de fonte que
+contenha escapes.
+
+### 36.5 Pendencias da propria pendencia
+
+- **Grupo B tem conserto automatico** e ainda nao foi feito: provisionar as 145
+  linhas em `clientes` fecha o grupo e destrava o envio para a carteira inteira.
+- Os grupos A, C e D precisam de decisao humana antes de qualquer botao.
