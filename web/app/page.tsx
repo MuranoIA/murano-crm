@@ -9,7 +9,7 @@ type Msg = { c: string | null; e: string | null; t?: string | null }; // conteud
 type Card = {
   cliente_id: string;
   cliente: string;
-  vendedor: string;
+  vendedor: string | null;   // NULO = sem dono (fila de não atribuídos, 0100)
   etapa: string;
   ultima_atividade: string | null;
   ultima_mensagem: string | null;
@@ -265,7 +265,11 @@ function dataDiaISO(s: string | null): string {
   return `${d}/${m}`;
 }
 const DIAS_RECONTATO = 4; // tentativa de contato parada há >= 4 dias -> recontactar
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+// Aceita null de propósito. Desde a 0100 o board recebe cards SEM DONO (a fila
+// de não atribuídos), e `vendedor` chega nulo — a versão anterior fazia
+// `s.charAt(0)` direto e derrubava a tela inteira com "Cannot read properties
+// of null". Mesma implementação que o /chat já usava.
+const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
@@ -1028,7 +1032,7 @@ export default function Page() {
   }, [syncRodando]);
 
   const vendedores = useMemo(
-    () => [...new Set(cards.map((c) => c.vendedor).filter(Boolean))].sort(),
+    () => [...new Set(cards.map((c) => c.vendedor).filter((v): v is string => !!v))].sort(),
     [cards]
   );
   // filtro por produto: um card "casa" se o cliente comprou o(s) produto(s) no período.
@@ -2876,8 +2880,8 @@ export default function Page() {
                           </div>
                           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: RD.gray, fontWeight: 600 }}>
-                              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[c.vendedor] ?? CoresVendedor[c.vendedor] ?? RD.grayLight }} />
-                              {cap(c.vendedor)}
+                              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[c.vendedor ?? ""] ?? CoresVendedor[c.vendedor ?? ""] ?? RD.grayLight }} />
+                              {cap(c.vendedor) || "sem dono"}
                             </span>
                             {!prospeccao && (
                               <span style={{ color: recontactar && !viaDisparo ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar && !viaDisparo ? 700 : 400 }}>
@@ -2984,8 +2988,8 @@ export default function Page() {
             {/* dono da carteira + tempo parado: sobe para cá porque a conversa
                 agora traz o próprio compositor colado no rodapé */}
             <div style={{ padding: "0 14px 9px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
-              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor] ?? CoresVendedor[zc.vendedor] ?? RD.grayLight }} />
-              {cap(zc.vendedor)}
+              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor ?? ""] ?? CoresVendedor[zc.vendedor ?? ""] ?? RD.grayLight }} />
+              {cap(zc.vendedor) || "sem dono"}
               {!zprospec && (
                 <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}{zRecontactar ? " parado" : ""}</span>
               )}
