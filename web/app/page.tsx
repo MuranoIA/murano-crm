@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
-import { Conversa } from "./conversa";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
 
@@ -341,13 +340,12 @@ export default function Page() {
   const [menuMobile, setMenuMobile] = useState(false); // gaveta de navegação no celular
   // card ampliado (lupa): janela arrastável com o histórico rolável + resposta
   const [cardZoom, setCardZoom] = useState<Card | null>(null);
-
+  const [zoomMsgs, setZoomMsgs] = useState<Msg[] | null>(null);
+  const [zoomLoading, setZoomLoading] = useState(false);
   const [zoomPos, setZoomPos] = useState({ x: 80, y: 74 });
   const zoomDrag = useRef<{ dx: number; dy: number } | null>(null);
+  const zoomScrollRef = useRef<HTMLDivElement>(null);
   const [zoomSyncing, setZoomSyncing] = useState(false);
-  // ↻ do card: muda de valor e a <Conversa> recarrega a thread sem remontar
-  // (remontar apagaria o texto que a pessoa está escrevendo)
-  const [zoomRefresh, setZoomRefresh] = useState(0);
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -733,11 +731,17 @@ export default function Page() {
     } finally { setMusicaEnviando(""); }
   }
 
-  // abre o card ampliado (lupa). Quem busca e rola a conversa agora é o
-  // componente <Conversa>, que usa a mesma rota do /chat.
-  function abrirZoom(c: Card) {
+  // abre o card ampliado (lupa) e carrega o histórico recente
+  async function abrirZoom(c: Card) {
     setCardZoom(c);
+    setZoomMsgs(null);
+    setZoomLoading(true);
     try { const w = window.innerWidth; setZoomPos({ x: Math.max(20, Math.round(w / 2 - 330)), y: 70 }); } catch {}
+    try {
+      const j = await fetch(`/api/mensagens?cliente_id=${encodeURIComponent(c.cliente_id)}`).then((r) => (r.ok ? r.json() : null));
+      setZoomMsgs(j?.mensagens ?? []);
+    } catch { setZoomMsgs([]); }
+    finally { setZoomLoading(false); }
   }
   // atualiza SÓ esta conversa: puxa do RD as mensagens que faltam (item 3) e recarrega o histórico.
   // Mostra o resultado na tela (não precisa de DevTools pra diagnosticar).
@@ -748,7 +752,8 @@ export default function Page() {
       const r = await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: cardZoom.cliente_id }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) alert("Não consegui puxar do RD (item 3): " + (j?.error ?? `HTTP ${r.status}`) + "\n\nEle recarrega o que já está no banco mesmo assim.");
-      setZoomRefresh((n) => n + 1);
+      const jm = await fetch(`/api/mensagens?cliente_id=${encodeURIComponent(cardZoom.cliente_id)}`).then((x) => (x.ok ? x.json() : null));
+      if (jm?.mensagens) setZoomMsgs(jm.mensagens);
     } catch (e: any) { alert("Erro ao atualizar: " + (e?.message ?? e)); }
     finally { setZoomSyncing(false); }
   }
@@ -1019,6 +1024,19 @@ export default function Page() {
     fetch("/api/meta").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setMetaAtual(Number(j.meta ?? 0) || 0); }).catch(() => {});
   }, [sessao]);
 
+  // card ampliado aberto: atualiza o histórico a cada 5s (novas msgs do cliente aparecem)
+  useEffect(() => {
+    if (!cardZoom) return;
+    const t = setInterval(() => {
+      fetch(`/api/mensagens?cliente_id=${encodeURIComponent(cardZoom.cliente_id)}`)
+        .then((r) => (r.ok ? r.json() : null)).then((j) => { if (j?.mensagens) setZoomMsgs(j.mensagens); }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [cardZoom]);
+  // rola pro fim quando abre / chega msg nova
+  useEffect(() => {
+    if (cardZoom && zoomScrollRef.current) zoomScrollRef.current.scrollTop = zoomScrollRef.current.scrollHeight;
+  }, [zoomMsgs, cardZoom]);
 
   // relógio vivo só enquanto um run está rodando, pra mostrar "rodando há 0:47"
   useEffect(() => {
@@ -2946,10 +2964,16 @@ export default function Page() {
       {orcamentoAberto && <OrcamentoFlutuante onClose={() => setOrcamentoAberto(false)} />}
       {cardZoom && (() => {
         const zc = cardZoom;
+        const zmsgs = zoomMsgs ?? [];
+        const zpend = (pendentes[zc.cliente_id] ?? []).filter((p) => !zmsgs.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim()));
+        const zall = [...zmsgs, ...zpend];
         const zid = ehProspeccao(zc) ? (zc.rd_cliente_id ?? null) : zc.cliente_id;
         const zcol = COLUNAS.find((k) => k.key === zc.etapa);
         const zcodcli = codcliDe(zc);
         const zciclo = zc.ciclo?.tipo && CICLO_LABEL[zc.ciclo.tipo] ? CICLO_LABEL[zc.ciclo.tipo] : null;
+        // msg livre só onde a janela de 24h vale (negociação / pedido com conversa). Prospecção,
+        // ociosos e tentativa estão inativos >24h -> só template, sem input.
+        const zMostraInput = zc.etapa === "negociacao" || (zc.etapa === "pedido_emitido" && !String(zc.cliente_id).includes(":") && dentro24h(zc.ultima_atividade));
         // mesma lógica do card p/ a pill TEMPLATE/AGUARDANDO no topo à direita
         const zprospec = ehProspeccao(zc);
         const zRecontactar = zprospec ? !!zc.rd_cliente_id : ((zc.etapa === "tentativa_contato" && diasInativo(zc.ultima_atividade) >= DIAS_RECONTATO) || zc.etapa === "ociosos");
@@ -2981,28 +3005,43 @@ export default function Page() {
                 <span style={{ display: "inline-flex", alignItems: "center", marginTop: 5, background: zciclo.bg, color: zciclo.cor, border: `1px solid ${zciclo.cor}44`, borderRadius: 6, padding: "1px 8px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}>{zciclo.label}{zc.ciclo?.acao === "LIGAR HOJE" ? " ·hoje" : ""}</span>
               )}
             </div>
-            {/* dono da carteira + tempo parado: sobe para cá porque a conversa
-                agora traz o próprio compositor colado no rodapé */}
-            <div style={{ padding: "0 14px 9px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
+            <div ref={zoomScrollRef} style={{ overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 7, background: "#fbfafb" }}>
+              {zoomLoading && zall.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: RD.grayLight, textAlign: "center", padding: 20 }}>Carregando conversa…</div>
+              ) : zall.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: RD.grayLight, textAlign: "center", padding: 20 }}>Sem mensagens nesta conversa.</div>
+              ) : zall.map((m, i) => {
+                const doCliente = m.e === "customer";
+                return (
+                  <div key={i} style={{ display: "flex", justifyContent: doCliente ? "flex-start" : "flex-end" }}>
+                    <div style={{ maxWidth: "80%", background: doCliente ? "#f2f4f7" : "#eaf6fd", border: `1px solid ${doCliente ? "#e4e8ee" : "#cfeafb"}`, borderRadius: 12, borderTopLeftRadius: doCliente ? 3 : 12, borderTopRightRadius: doCliente ? 12 : 3, padding: "7px 11px" }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.4, color: RD.navy, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{limpaMsg(m.c)}</div>
+                      {m.t && <div style={{ marginTop: 2, textAlign: "right", fontSize: 9.5, color: RD.grayLight }}>{dataHora(m.t)}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ borderTop: `1px solid ${RD.border}`, padding: zMostraInput ? "8px 14px 0" : "8px 14px 12px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
               <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor] ?? CoresVendedor[zc.vendedor] ?? RD.grayLight }} />
               {cap(zc.vendedor)}
               {!zprospec && (
                 <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}{zRecontactar ? " parado" : ""}</span>
               )}
             </div>
-            {/* A conversa inteira, com a mesma rolagem e o mesmo compositor do
-                /chat. A janela de 24h é decidida DENTRO do componente, pela
-                última mensagem recebida — não pela etapa do card, que podia
-                estar desatualizada e escondia o campo de quem podia escrever. */}
-            <Conversa
-              clienteId={zc.cliente_id}
-              altura={Math.round(Math.min(420, Math.max(220, window.innerHeight * 0.42)))}
-              recarregar={zoomRefresh}
-              cores={{ ink: RD.navy, gray: RD.gray, grayLight: RD.grayLight, border: RD.border, surface: RD.surface, marca: RD.wine }}
-              aoEnviar={() => void load()}
-              aoPedirTemplate={zid ? () => recontatar(zid!, zc.cliente) : undefined}
-              enviandoTemplate={enviando === zid}
-            />
+            {zMostraInput && (
+              <div style={{ padding: "8px 12px 12px", display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  value={respostaTexto[zc.cliente_id] ?? ""}
+                  onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [zc.cliente_id]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(zc.cliente_id); } }}
+                  placeholder="Responder (msg livre, 24h)…"
+                  disabled={enviandoResposta === zc.cliente_id}
+                  style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "8px 11px", border: `1px solid ${RD.border}`, borderRadius: 8, outline: "none", color: RD.navy }}
+                />
+                <button onClick={() => enviarResposta(zc.cliente_id)} disabled={enviandoResposta === zc.cliente_id || !(respostaTexto[zc.cliente_id] ?? "").trim()} title="Enviar mensagem livre (dentro da janela de 24h)" style={{ cursor: "pointer", background: RD.cyan, color: "#fff", border: "none", borderRadius: 8, padding: "0 13px", height: 34, fontSize: 14, fontWeight: 700 }}>{enviandoResposta === zc.cliente_id ? "…" : "➤"}</button>
+              </div>
+            )}
           </div>
         );
       })()}
