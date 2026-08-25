@@ -2857,7 +2857,56 @@ escancararia justamente a conversa escondida. `filtroLinhas()` em
 `web/lib/crmConfig.ts` e a implementacao unica — e precisa de `.or(...)` porque
 a linha do RD e `linha_id IS NULL` e nao cabe num `.in(...)`.
 
-### 32.6 Pendencias combinadas com o usuario
+### 32.6 A coluna Pedido emitido nunca zerava — o bucket `todos` (25/08/2026)
+
+Sintoma relatado pelo usuario: *"os cards que estao em pedido emitido sempre ficam
+la, e nao e assim para ser — devem ficar ate o final do mes e ir para a lista de
+prospeccao no inicio do mes seguinte."*
+
+A §11.1 sempre afirmou que a etapa "expira sozinha no dia 1o". **A etapa expira;
+a COLUNA nao.** Sao coisas diferentes e foi ai que passou despercebido: a coluna
+nao vem da `vw_funil`, vem de `vw_pedido_bi_card` (§12.4), que oferece buckets de
+periodo — e um deles, **`todos`, vai de 1900-01-01 ate hoje**. O board usava
+`todos` como padrao (`periodoPorColuna[col.key] ?? "todos"`).
+
+Medido em 25/08/2026:
+
+| bucket | clientes | compra mais antiga |
+|---|---|---|
+| **`todos`** (o que a coluna usava) | **3.147** | **27/04/2026** |
+| `mes` | 849 | 01/08/2026 |
+
+**Dois defeitos, mesma causa:**
+1. A coluna acumulava quatro meses em vez de zerar no dia 1o.
+2. **O mesmo cliente aparecia duas vezes no board.** `ehCompradorMes` so remove
+   das outras colunas quem comprou no MES; quem comprou em abril seguia na sua
+   etapa normal **e** em Pedido emitido. Isso e o oposto de "cada card representa
+   um cliente".
+3. De quebra, o KPI do cabecalho somava desde abril: **R$ 2,45 mi contra
+   R$ 375 mil do mes** — grande demais para alguem desconfiar.
+
+**Conserto — na origem, nao na tela.** `/api/funil` passou a pedir
+`.neq("periodo","todos")`: a coluna simplesmente nao tem universo maior que o mes.
+Esconder no front deixaria o dado chegando e alguem o reintroduziria.
+
+⚠️ **`todos` precisou ser TRADUZIDO, nao so trocado de padrao.** O dropdown global
+aplica um periodo a todas as colunas de uma vez; escolher "todos" ali deixaria
+esta coluna procurando um bucket que o servidor nao manda mais — vazia, sem nada
+explicando. Em `page.tsx`, `ehPedido && periodo === "todos"` vira `"mes"`, nos tres
+lugares (cards, contagem, KPI).
+
+**Para onde vao os 2.298 que saem da coluna** (medido com todas as linhas visiveis):
+tentativa_contato 699 · ociosos 551 · prospeccao 166 · negociacao 13 · **353 saem
+do board**. Desses 353, **335 tem RCA fora das 7 carteiras do CRM**: nunca
+estiveram em carteira nenhuma, apareciam so porque alguem do time LANCOU o pedido
+(a coluna e chaveada por `nome_usuario`, §12.3). Sem carteira nao ha fila para
+voltar — reaparecem em Pedido emitido se comprarem de novo. **Isso e correto, nao
+perda.**
+
+Com o RD escondido a distribuicao muda: quase todos caem em prospeccao, que e
+exatamente a regra pedida.
+
+### 32.7 Pendencias combinadas com o usuario
 
 1. **Card virar chat de verdade**: hoje o card ampliado busca as ultimas 30
    mensagens em `/api/mensagens` e mostra um input reduzido so em negociacao.
