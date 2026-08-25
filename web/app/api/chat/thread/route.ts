@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { lerCrmConfig } from "../../../../lib/crmConfig";
+import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   let msgsQ = sb.from("mensagens")
     .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro")
     .eq("cliente_id", cliente_id);
-  if (!cfgThread.conversas_rd_visiveis) msgsQ = msgsQ.not("linha_id", "is", null);
+  msgsQ = filtroLinhas(msgsQ, cfgThread);
 
   const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([

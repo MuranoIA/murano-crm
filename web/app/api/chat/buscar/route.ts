@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../../lib/papel";
 import { carregarAtribuicoes, aplicaEscopo, emLotes } from "../../../../lib/chatEscopo";
-import { lerCrmConfig, viewFunil } from "../../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, filtroLinhas } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +54,7 @@ export async function GET(req: Request) {
     .select("cliente_id,conteudo,enviada_por,criada_em")
     .ilike("conteudo", `%${termo}%`)
     .neq("tipo", "evento_sistema");
-  if (!cfg.conversas_rd_visiveis) busca = busca.not("linha_id", "is", null);
+  busca = filtroLinhas(busca, cfg);
   const { data: achadas, error } = await busca
     .order("criada_em", { ascending: false })
     .limit(TETO_MSGS);
@@ -79,7 +79,7 @@ export async function GET(req: Request) {
   const linhas: any[] = [];
   for (const lote of emLotes(ids)) {
     const { data } = await sb
-      .from(viewFunil(cfg))
+      .from(VIEW_FUNIL_TELA)
       .select("cliente_id,cliente,vendedor,etapa,telefone,ultima_atividade,ultima_mensagem,ultima_enviada_por")
       .in("cliente_id", lote);
     linhas.push(...(data ?? []));

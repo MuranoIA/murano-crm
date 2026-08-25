@@ -1,5 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
-import { lerCrmConfig, CRM_CONFIG_PADRAO } from "../../../../lib/crmConfig";
+import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -35,30 +35,34 @@ const MECANISMOS = [
       "Nada é apagado. A tabela wth_ciclo continua sendo atualizada a cada 10 minutos " +
       "pelo sync do WinThor, então religar mostra o dado de agora, não um buraco.",
   },
-  {
-    chave: "conversas_rd_visiveis",
-    rotulo: "Conversas do RD Conversas",
-    resumo:
-      "As conversas que vieram do RD Conversas alimentam a classificação dos cards nas 5 " +
-      "colunas do board e a lista do chat. Desligando, o CRM passa a enxergar só o que " +
-      "chegou pelo WhatsApp da Murano Professional.",
-    desliga: [
-      "Conversas do RD na lista do chat, na busca por conteúdo e na thread",
-      "Última mensagem, prévia e “há quanto tempo parado” nos cards do board",
-      "Os gatilhos que levam o card para Negociação e Tentativa de contato",
-    ],
-    mantem: [
-      "A régua das 5 colunas, intacta — só deixa de receber sinal do RD",
-      "A coluna Pedido emitido, que vem da nota fiscal e não da conversa",
-      "O ETL, que segue ingerindo o RD normalmente para o banco",
-      "O disparo em massa, que continua enxergando o contato real",
-    ],
-    nota:
-      "Sem sinal de conversa, cada cliente cai onde a régua manda: quem está na carteira do " +
-      "WinThor vai para Prospecção; quem foi contatado mas o ERP não alcança vai para Ociosos. " +
-      "Ninguém some. Medido em 24/08: 4.091 em prospecção, 75 em ociosos, 2 conversas da Cloud.",
-  },
-] as const;
+]  as const;
+
+// O seletor de linhas NÃO é um booleano, então não entra na lista acima: é uma
+// escolha de conjunto. O texto mora aqui pelo mesmo motivo dos outros — a tela
+// não deve inventar a explicação do que o admin está prestes a mudar.
+const LINHAS_INFO = {
+  rotulo: "Conversas visíveis, por número",
+  resumo:
+    "Quais números alimentam a classificação dos cards nas 5 colunas do board e a lista do " +
+    "chat. Desmarcar um número não apaga nada: as conversas dele continuam no banco e o ETL " +
+    "continua trazendo as novas.",
+  desliga: [
+    "Conversas do número desmarcado na lista do chat, na busca e na thread",
+    "Última mensagem, prévia e tempo parado nos cards vindos dele",
+    "Os gatilhos que levam esses cards para Negociação e Tentativa de contato",
+  ],
+  mantem: [
+    "A régua das 5 colunas, intacta — só deixa de receber sinal daquele número",
+    "A coluna Pedido emitido, que vem da nota fiscal e não da conversa",
+    "O ETL, que segue ingerindo o RD normalmente para o banco",
+    "O disparo em massa, que continua enxergando o contato real",
+  ],
+  nota:
+    "Sem sinal de conversa, cada cliente cai onde a régua manda: quem está na carteira do " +
+    "WinThor vai para Prospecção; quem foi contatado mas o ERP não alcança vai para Ociosos. " +
+    "Ninguém some. Medido em 24/08, só com a Murano Professional marcada: 4.091 em " +
+    "prospecção, 76 em ociosos, 1 em negociação.",
+} as const;
 
 const CHAVES = MECANISMOS.map((m) => m.chave) as readonly string[];
 
@@ -72,7 +76,19 @@ export async function GET() {
   // `padrao` viaja junto para a tela poder dizer "este é o estado de fábrica"
   // sem repetir a regra do lado do navegador.
   return Response.json({
-    "crm-config": { config: cfg, padrao: CRM_CONFIG_PADRAO, mecanismos: MECANISMOS },
+    "crm-config": {
+      config: cfg,
+      padrao: CRM_CONFIG_PADRAO,
+      mecanismos: MECANISMOS,
+      linhas: {
+        ...LINHAS_INFO,
+        // as linhas vêm de `chat_linha` (§14.1: cadastro em tabela, não lista no
+        // código) — ativar uma amanhã a faz aparecer aqui sozinha
+        opcoes: cfg.linhas,
+        selecionadas: linhasVisiveis(cfg),
+        tudo: tudoVisivel(cfg),
+      },
+    },
   });
 }
 
@@ -89,7 +105,44 @@ export async function PUT(req: Request) {
   // assim durante o deploy.
   const chave: string = typeof b.chave === "string" ? b.chave
     : typeof b.ciclo_ativo === "boolean" ? "ciclo_ativo" : "";
-  const valor = typeof b.valor === "boolean" ? b.valor : b.ciclo_ativo;
+  const valor = typeof b.valor === "boolean" || Array.isArray(b.valor) ? b.valor : b.ciclo_ativo;
+
+  const sb = sbAdmin();
+  const antes = await lerCrmConfig(sb);
+
+  // ---- seletor de linhas: escolha de CONJUNTO, não booleano -----------------
+  if (chave === "linhas_visiveis") {
+    if (!Array.isArray(valor) || valor.some((v) => typeof v !== "string")) {
+      return Response.json({ error: "informe a lista de linhas" }, { status: 400 });
+    }
+    const ativas = antes.linhas.filter((l) => l.ativo).map((l) => l.phone_number_id);
+    const escolhidas = ativas.filter((id) => valor.includes(id));   // ignora id desconhecido
+
+    // Zero linhas deixaria o board inteiro em prospecção/ociosos sem nada na
+    // tela explicando por quê. Se um dia esse for o desenho desejado, ele é
+    // outro interruptor ("fonte do board"), não um efeito colateral daqui.
+    if (!escolhidas.length) {
+      return Response.json({ error: "marque ao menos um número" }, { status: 400 });
+    }
+
+    // Tudo marcado grava NULO, não a lista: com a lista congelada, ativar uma
+    // linha nova amanhã a deixaria invisível até alguém lembrar de marcá-la.
+    const novo = escolhidas.length === ativas.length ? null : escolhidas;
+    const { data, error } = await sb.from("crm_config").upsert({
+      id: 1, linhas_visiveis: novo,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    const nomes = antes.linhas.filter((l) => escolhidas.includes(l.phone_number_id)).map((l) => l.rotulo);
+    return Response.json({
+      ok: true,
+      config: data,
+      aviso: novo === null
+        ? "Todos os números voltaram a aparecer no board e no chat."
+        : `Board e chat passam a enxergar só: ${nomes.join(", ")}. Os demais clientes caem em Prospecção e Ociosos. Quem estiver com a tela aberta vê na próxima atualização.`,
+    });
+  }
 
   if (!CHAVES.includes(chave)) {
     return Response.json({ error: "mecanismo desconhecido" }, { status: 400 });
@@ -100,8 +153,6 @@ export async function PUT(req: Request) {
     return Response.json({ error: "informe o valor como true ou false" }, { status: 400 });
   }
 
-  const sb = sbAdmin();
-  const antes = await lerCrmConfig(sb);
   if ((antes as any)[chave] === valor) {
     return Response.json({ ok: true, aviso: "já estava assim — nada mudou.", config: antes });
   }
@@ -111,7 +162,7 @@ export async function PUT(req: Request) {
     [chave]: valor,
     atualizado_por: g.email,
     atualizado_em: new Date().toISOString(),
-  }, { onConflict: "id" }).select("ciclo_ativo,conversas_rd_visiveis,atualizado_por,atualizado_em").single();
+  }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -119,10 +170,6 @@ export async function PUT(req: Request) {
     ciclo_ativo: {
       on: "O ciclo volta a aparecer no board, no chat, no disparo em massa e no relatório.",
       off: "O ciclo saiu do board, do chat, do disparo em massa e do relatório.",
-    },
-    conversas_rd_visiveis: {
-      on: "As conversas do RD voltam a aparecer no board e no chat.",
-      off: "O board passa a classificar só pelo WhatsApp da Murano Professional; os demais clientes caem em Prospecção e Ociosos.",
     },
   };
   const a = avisos[chave];

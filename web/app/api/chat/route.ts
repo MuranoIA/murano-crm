@@ -4,7 +4,7 @@ import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
-import { lerCrmConfig, viewFunil } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +28,7 @@ export async function GET() {
   // veio da Cloud: os ramos sem conversa da view irmã têm `ultima_atividade`
   // nula, e o `.not(..., "is", null)` abaixo já os corta — nenhum filtro extra.
   const cfg = await lerCrmConfig(sb);
-  const fonte = viewFunil(cfg);
+  const fonte = VIEW_FUNIL_TELA;
 
   // Cards SINTÉTICOS (`venda:<codcli>`, `winthor:<codcli>`) não são conversa: não
   // têm thread, e clicar num deles não leva a lugar nenhum. A lista sempre teve

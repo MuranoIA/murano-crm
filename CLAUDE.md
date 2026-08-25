@@ -2784,3 +2784,85 @@ interruptor: `conversas_rd_visiveis=false` é o mesmo que marcar só a Murano
 Professional. Quando o seletor entrar, esta coluna deve ser **substituída**, não
 acompanhada — dois controles sobre o mesmo assunto se contradizem ("RD escondido"
 com "mostrar RD" marcado) e ninguém sabe qual vence.
+
+
+## 32. O interruptor de conversas vira SELETOR DE LINHAS (24-25/08/2026) — migration 0099
+
+`/admin` → ⚙️ Mecanismos → **Conversas visíveis, por número**: marca-se RD
+Conversas, Murano Professional, ou as duas. Isso **substitui** o booleano
+`conversas_rd_visiveis` da 0098 — não convive com ele. Dois controles sobre o
+mesmo assunto acabam se contradizendo ("RD escondido" com "mostrar RD" marcado)
+e ninguem sabe qual vence. A 0099 migra o valor e derruba a coluna.
+
+### 32.1 As linhas saem da tabela, e NULO significa "todas"
+
+`chat_linha` ja era o cadastro: hoje `rd` (Murano Pro, +55 91 2018-2357) e
+`1264458800091787` (Murano Professional) ativas; Shop e o numero de teste
+ficaram `ativo=false` (§28.7). O seletor le dali — ativar uma linha amanha a faz
+aparecer sozinha (§14.1).
+
+**`linhas_visiveis` NULO = todas as ativas**, e e o estado de origem. Nulo em vez
+de uma lista congelada de proposito: com a lista, ativar uma linha nova a
+deixaria invisivel ate alguem lembrar de marca-la — falha silenciosa. Pelo mesmo
+motivo, marcar TUDO na tela grava NULO, nao a lista.
+
+### 32.2 Uma view so, que se filtra sozinha
+
+A 0098 criou `vw_funil_sem_rd`, um caso particular; com N linhas isso viraria N
+views. A `vw_funil_visivel` **le a config**:
+`coalesce(m.linha_id,'rd') = any(<selecao>)`. Medido: **473 ms / 4.666 linhas**
+com tudo marcado — as 4.705 de hoje menos os 39 cards sinteticos.
+
+O app le SEMPRE `vw_funil_visivel` (`VIEW_FUNIL_TELA`), nunca alternando entre
+duas views: "as vezes uma, as vezes outra" e onde nasce board e chat divergirem.
+
+⚠️ A `vw_funil` continua **sem filtro nenhum**, e isso nao e descuido: o ETL
+depende dela para saber o que sincronizar (`src/etl/run.ts:132,154`). Filtrada,
+ele concluiria que nada esta ativo e pararia de puxar o RD em silencio. O pedido
+do usuario e explicito e o oposto: *"o ETL pode continuar alimentando o banco,
+mesmo que nao mostre nada na tela"*.
+
+### 32.3 O ramo sintetico `venda:<codcli>` MORREU
+
+Os 39 cards `venda:` nunca apareceram no board — o `/api/funil` os descartava em
+`etapa !== "pedido_emitido"`. Serviam so para poluir a lista do chat (§31.4).
+Verificado: **os 39 sao todos clientes de carteira ativa**, entao continuam no
+board pelo ramo de prospeccao ou pela coluna Pedido emitido, que vem de
+`vw_pedido_bi_card` (nota fiscal) e nao da conversa. Peso morto removido.
+
+### 32.4 A regua das 5 colunas NAO mudou — e nao precisava
+
+Levantamento pedido pelo usuario em 24/08. A regua que ele descreveu ja e a que
+esta no codigo desde a 0093:
+
+| Regra que o usuario descreveu | Onde ja estava |
+|---|---|
+| nunca contatado -> prospeccao | ramo de prospeccao da `vw_funil` |
+| recebeu template -> tentativa de contato | `WHEN operator AND tipo='template'` |
+| respondeu -> negociacao | `ELSE` (ultima mensagem ha menos de 24h) |
+| respondeu e a janela de 24h fechou -> ociosos | `WHEN criada_em < now()-24h` |
+| comprou -> pedido emitido | nota fiscal, via `vw_pedido_bi_card` |
+
+**Conclusao que vale registrar: o problema nunca foi a regua, foi o DADO** — as
+conversas do RD chegam atrasadas e desorganizadas pelo ETL. Por isso o seletor
+resolve o incomodo sem tocar em gatilho nenhum. Nao "consertar" a classificacao
+antes de olhar a origem do dado.
+
+### 32.5 Onde o recorte de linha precisa ser aplicado a mao
+
+A lupa do card (`/api/mensagens`), a thread (`/api/chat/thread`) e a busca por
+conteudo (`/api/chat/buscar`) varrem `mensagens` **direto**, sem passar pela
+view. Sem filtro ali, o board mostraria o cliente em Prospeccao e um clique
+escancararia justamente a conversa escondida. `filtroLinhas()` em
+`web/lib/crmConfig.ts` e a implementacao unica — e precisa de `.or(...)` porque
+a linha do RD e `linha_id IS NULL` e nao cabe num `.in(...)`.
+
+### 32.6 Pendencias combinadas com o usuario
+
+1. **Card virar chat de verdade**: hoje o card ampliado busca as ultimas 30
+   mensagens em `/api/mensagens` e mostra um input reduzido so em negociacao.
+   Vira thread com rolagem/paginacao como a do `/chat`, e o compositor completo,
+   com a mesma regra de janela de 24h.
+2. **"Um card por cliente"**: com o `venda:` removido, falta decidir se o cliente
+   que comprou continua aparecendo so na coluna Pedido emitido (hoje) ou vira um
+   card unico que muda de coluna.

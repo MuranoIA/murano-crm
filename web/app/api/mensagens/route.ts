@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { lerCrmConfig } from "../../../lib/crmConfig";
+import { lerCrmConfig, filtroLinhas } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -22,12 +22,12 @@ export async function GET(req: Request) {
   // Interruptor das conversas do RD (0098). Sem este filtro a lupa do card
   // devolveria a conversa do RD inteira — o board mostraria o cliente em
   // prospecção e um clique escancararia justamente o que foi escondido.
-  const { conversas_rd_visiveis } = await lerCrmConfig(sb);
+  const cfgMsg = await lerCrmConfig(sb);
 
   let q = sb.from("mensagens")
     .select("conteudo,enviada_por,tipo,criada_em")
     .eq("cliente_id", cliente_id);
-  if (!conversas_rd_visiveis) q = q.not("linha_id", "is", null);
+  q = filtroLinhas(q, cfgMsg);
   const { data, error } = await q
     .order("criada_em", { ascending: false })
     .limit(60);

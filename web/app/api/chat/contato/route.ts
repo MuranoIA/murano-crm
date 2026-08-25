@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { lerCrmConfig, viewFunil } from "../../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,8 @@ export async function GET(req: Request) {
     // lendo (0098): senão o painel diria "negociação" para um card que a tela
     // ao lado mostra em prospecção.
     (async () => {
-      const { data } = await sb.from(viewFunil(await cfgP))
+      await cfgP;
+      const { data } = await sb.from(VIEW_FUNIL_TELA)
         .select("etapa,venda_valor,venda_data,codcli,sem_cadastro")
         .eq("cliente_id", cliente_id).maybeSingle();
       return data ?? null;
