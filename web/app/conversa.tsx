@@ -150,6 +150,10 @@ export function Conversa({
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
   // por qual canal ESTA conversa sai, já com a escolha do admin (0102)
   const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
+  // histórico do RD (0103): quantas mensagens a seleção de linhas esconde, e se
+  // esta thread já foi carregada com elas
+  const [ocultas, setOcultas] = useState(0);
+  const [comHistorico, setComHistorico] = useState(false);
   const [notas, setNotas] = useState<Nota[]>([]);
   const [transfs, setTransfs] = useState<Transf[]>([]);
   const [erro, setErro] = useState<string | null>(null);
@@ -165,15 +169,19 @@ export function Conversa({
   // nunca conversou. Pedir a rota devolveria vazio com erro no console.
   const sintetico = clienteId.includes(":") && !clienteId.startsWith("wa:");
 
-  const carregar = useCallback(async (rolar: boolean) => {
+  const carregar = useCallback(async (rolar: boolean, historico = false) => {
     if (sintetico) { setMsgs([]); return; }
     try {
-      const r = await fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(clienteId)}`, { cache: "no-store" });
+      const r = await fetch(
+        `/api/chat/thread?cliente_id=${encodeURIComponent(clienteId)}${historico ? "&historico=1" : ""}`,
+        { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); setMsgs([]); return; }
       setErro(null);
       setMsgs(j.mensagens ?? []);
       setCanalEnvio(j.canal_envio ?? null);
+      setOcultas(j.historico_oculto ?? 0);
+      setComHistorico(!!j.historico_carregado);
       setNotas(j.notas ?? []);
       setTransfs(j.transferencias ?? []);
       if (rolar) setTimeout(() => fim.current?.scrollIntoView({ behavior: "auto" }), 30);
@@ -196,9 +204,9 @@ export function Conversa({
   // já recarrega o funil, mas a thread aberta precisa de um caminho próprio.
   useEffect(() => {
     if (sintetico) return;
-    const t = setInterval(() => void carregar(false), 60000);
+    const t = setInterval(() => void carregar(false, comHistorico), 60000);
     return () => clearInterval(t);
-  }, [carregar, sintetico]);
+  }, [carregar, sintetico, comHistorico]);
 
   // ---- janela de 24h -------------------------------------------------------
   // Conta a partir da última mensagem DO CLIENTE, que é o que a regra do
@@ -299,7 +307,33 @@ export function Conversa({
           <div style={{ fontSize: 12, color: c.aviso, textAlign: "center", padding: 18 }}>{erro}</div>
         ) : itens.length === 0 ? (
           <div style={{ fontSize: 12, color: c.grayLight, textAlign: "center", padding: 18 }}>Sem mensagens nesta conversa.</div>
-        ) : grupos.map((g) => (
+        ) : (<>
+          {/* Histórico do outro número: um clique, como no RD Conversas. Fica no
+              topo porque é o que vem ANTES na linha do tempo — e some depois de
+              carregado, virando o rótulo que separa as duas origens. */}
+          {ocultas > 0 && !comHistorico && (
+            <div style={{ textAlign: "center", padding: "4px 0 10px" }}>
+              <button
+                onClick={() => void carregar(false, true)}
+                style={{ fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  color: c.acao, background: c.surface, border: `1px solid ${c.border}`,
+                  borderRadius: 20, padding: "5px 14px" }}>
+                ↑ Ver histórico anterior ({ocultas})
+              </button>
+              <div style={{ fontSize: 10, color: c.grayLight, marginTop: 4 }}>
+                conversas deste cliente no outro número
+              </div>
+            </div>
+          )}
+          {comHistorico && (
+            <div style={{ textAlign: "center", padding: "2px 0 8px" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: c.gray, background: c.surface,
+                border: `1px solid ${c.border}`, borderRadius: 20, padding: "2px 10px" }}>
+                histórico do Murano Pro (RD Conversas)
+              </span>
+            </div>
+          )}
+          {grupos.map((g) => (
           <div key={g.dia}>
             <Separador txt={rotuloDia(g.dia)} />
             {g.itens.map((it) => {
@@ -351,7 +385,8 @@ export function Conversa({
               );
             })}
           </div>
-        ))}
+          ))}
+        </>)}
         <div ref={fim} />
       </div>
 

@@ -24,10 +24,19 @@ export async function GET(req: Request) {
   // conversas, mas um link antigo ou o botão voltar ainda chegam aqui — e a
   // thread é onde o conteúdo apareceria por inteiro.
   const cfgThread = await lerCrmConfig(sb);
-  let msgsQ = sb.from("mensagens")
-    .select("id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro")
-    .eq("cliente_id", cliente_id);
-  msgsQ = filtroLinhas(msgsQ, cfgThread);
+
+  // ---- histórico do RD, a um clique (0103) ---------------------------------
+  // `?historico=1` traz TAMBÉM as mensagens das linhas que `linhas_visiveis`
+  // esconde. Sem o parâmetro, a thread mostra só o número em uso e devolve
+  // quantas ficaram de fora, para a tela oferecer o botão. É o mesmo gesto que
+  // o RD Conversas faz — e evita carregar 23 mensagens por conversa que quase
+  // nunca serão lidas.
+  const querHistorico = new URL(req.url).searchParams.get("historico") === "1"
+    && cfgThread.historico_rd;
+
+  const COLS_MSG = "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro";
+  let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
+  if (!querHistorico) msgsQ = filtroLinhas(msgsQ, cfgThread);
 
   const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([
@@ -104,9 +113,25 @@ export async function GET(req: Request) {
   // envio falharia com 131047, perdendo o que a pessoa escreveu.
   const canalEnvio = await canalDeResposta(sb, cliente_id).catch(() => "rd" as const);
 
+  // Quantas mensagens a seleção de linhas está escondendo. Duas contagens de
+  // cabeçalho (o total menos o visível) em vez de negar o filtro: a negação de
+  // `filtroLinhas` teria de ser escrita à mão e divergiria dele no primeiro
+  // ajuste — e o sintoma seria um botão prometendo histórico que não existe.
+  let historicoOculto = 0;
+  if (cfgThread.historico_rd && !querHistorico) {
+    const base = () => sb.from("mensagens").select("*", { count: "exact", head: true })
+      .eq("cliente_id", cliente_id).neq("tipo", "evento_sistema");
+    const [tudo, visivel] = await Promise.all([base(), filtroLinhas(base(), cfgThread)]);
+    historicoOculto = Math.max(0, (tudo.count ?? 0) - (visivel.count ?? 0));
+  }
+
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
     canal_envio: canalEnvio,
+    // quantas mensagens existem em linhas escondidas (0 = nada a oferecer)
+    historico_oculto: historicoOculto,
+    // veio COM o histórico? a tela usa para rotular as antigas e não reoferecer
+    historico_carregado: querHistorico,
     linha,
     mensagens,
     notas: notas ?? [],

@@ -31,6 +31,12 @@ export type CrmConfig = {
    * assim já estar respondendo pelo número novo.
    */
   numero_envio: "rd" | "cloud" | null;
+  /**
+   * Oferecer o botão "ver histórico" na conversa quando existirem mensagens em
+   * linhas que `linhas_visiveis` esconde (na prática, o RD). NÃO mistura nada na
+   * thread sozinho — o vendedor clica e as antigas aparecem, rotuladas (0103).
+   */
+  historico_rd: boolean;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -41,6 +47,7 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   linhas_visiveis: null,
   linhas: [],
   numero_envio: null,
+  historico_rd: true,
   atualizado_por: null,
   atualizado_em: null,
 };
@@ -109,7 +116,7 @@ type Sb = { from: (t: string) => any };
 export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
   try {
     const [cfgR, linhasR] = await Promise.all([
-      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,atualizado_por,atualizado_em")
+      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,atualizado_por,atualizado_em")
         .eq("id", 1).maybeSingle(),
       sb.from("chat_linha").select("phone_number_id,rotulo,numero,ativo").eq("ativo", true).order("rotulo"),
     ]);
@@ -119,6 +126,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       ciclo_ativo: data.ciclo_ativo !== false,
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
       numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
+      historico_rd: data.historico_rd !== false,
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
       atualizado_em: data.atualizado_em ?? null,

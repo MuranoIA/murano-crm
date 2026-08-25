@@ -3263,3 +3263,76 @@ o teste no navegador pegou. O efeito agora mora junto do estado, na linha 658.
 
 Regra que fica: em `chat/page.tsx` e `page.tsx`, **todo hook vai para o topo**,
 antes de qualquer `return` condicional. Build verde nao prova que a tela abre.
+
+
+## 39. Historico do RD a um clique, dentro da conversa (25/08/2026) — migration 0103
+
+### 39.1 O contexto que explica TODAS as chaves de ligar/desligar
+
+O usuario declarou, ao pedir esta: *"o objetivo de ter chaves para ligar e
+desligar as coisas e porque estou me preparando e testando aos poucos, para
+mudar, sair do rd conversas de vez e ficar so com o murano professional... quero
+ver os comportamentos"*.
+
+**As chaves nao sao preferencia de tela; sao instrumento de migracao.** Cada uma
+existe para simular um pedaco do cenario pos-corte e medir o estrago antes de
+ele ser irreversivel. Isso muda como avaliar pedidos futuros: o padrao certo de
+uma chave nova e "reproduz o depois", e o valor dela e poder VOLTAR.
+
+### 39.2 O problema medido
+
+Com `linhas_visiveis` em "so Murano Professional", abrir um cliente mostrava
+**"Sem mensagens ainda"** — e havia, no banco:
+
+| | |
+|---|---|
+| clientes da carteira com historico oculto | **3.769** |
+| mensagens ocultas | **88.523** (media de 23 por cliente) |
+| conversaram nos ultimos 30 dias | **2.553** |
+| conversaram nos ultimos **7 dias** | **567** |
+
+A tela nao estava so omitindo: **afirmava algo falso**, e o vendedor ligava
+achando que era primeiro contato. Isso nunca foi pedido — o que ele tirou foi o
+RD de ORGANIZAR AS COLUNAS; o historico foi junto porque `linhas_visiveis`
+decidia as duas coisas com a mesma chave.
+
+### 39.3 A forma foi escolhida pelo usuario, e e melhor que a minha proposta
+
+Eu propus **misturar** as mensagens do RD na thread quando a chave estivesse
+ligada. Ele preferiu **copiar o que o proprio RD faz**: um botao "ver historico"
+dentro da conversa. Tres razoes pelas quais e melhor:
+
+1. a thread continua sendo **o que aconteceu neste numero** — nao funde dois
+   canais como se fossem um;
+2. o historico vem **rotulado** ("inclui o historico do Murano Pro"), entao
+   ninguem confunde a origem;
+3. nao paga o custo de carregar 23 mensagens por conversa que quase nunca serao
+   lidas.
+
+`/api/chat/thread` sem parametro devolve so o numero em uso **mais a contagem do
+que ficou de fora** (`historico_oculto`); com `?historico=1`, devolve tudo.
+
+⚠️ A contagem e **total menos visivel**, com duas consultas de cabecalho, e nao
+a negacao de `filtroLinhas`: negar o filtro a mao criaria uma segunda regra que
+divergiria dele no primeiro ajuste — e o sintoma seria um botao prometendo
+historico que nao existe.
+
+### 39.4 O que a chave NAO afeta
+
+A **janela de 24h** continua contando so o numero de envio (§37.2), entao trazer
+o historico do RD nao faz a tela achar que ha conversa aberta na Cloud. As duas
+coisas compoem sem se contaminar — e era o risco obvio de misturar canais numa
+thread so.
+
+### 39.5 Pendencias que o usuario deixou ao encerrar o dia
+
+Registradas tambem na memoria (`crm-proximas-features`):
+
+1. **Clicar no nome no board deve abrir o NOSSO chat**, nao o RD (`URL_CHAT` em
+   `page.tsx` ainda aponta para `app.tallos.com.br`).
+2. **A lupa deve mostrar a MESMA tela do chat** — cabecalho com acoes, abas do
+   painel, faixa da janela e a barra do compositor. Hoje e o `conversa.tsx`, mais
+   enxuto.
+3. **Pedido emitido nao pode FIXAR o card**: gatilho continua a nota fiscal, mas
+   **7 dias apos a compra o card volta para Lista de prospeccao**. O usuario
+   autorizou **substituir a regra do mes corrente** (§32.6), que conflita.
