@@ -2969,3 +2969,69 @@ O card pequeno da coluna continua com a previa curta e o seu `<input>` inline de
 resposta rapida. A conversa completa vive no card **ampliado** (a lupa) — num card
 de ~250px de largura um chat nao cabe. Se a intencao era trocar tambem o input do
 card pequeno, e um passo a parte.
+
+
+## 34. Quem fala com a gente primeiro nao existia (25/08/2026) — migration 0100
+
+BUG relatado: *"o numero desconhecido que entra em contato ou faz ligacao nao
+aparece no chat; mandei um oi hoje de um numero desconhecido e nao encontrei"*.
+
+Reproduzido: `wa:559184522161` mandou "Oi" as 11:13 (BRT), ligou as 11:14,
+autorizou receber ligacoes — **e nao estava em lugar nenhum**.
+
+### 34.1 Eram DUAS causas, e a segunda so apareceu ao conferir a primeira
+
+**Causa 1 — a view exigia que NOS tivessemos falado.**
+```sql
+WHERE EXISTS (SELECT 1 FROM mensagens x
+               WHERE x.cliente_id = c.id
+                 AND x.enviada_por = 'operator'   -- <<<
+                 AND x.tipo <> 'evento_sistema')
+```
+Conversa so de entrada nao existia para o board nem para o chat. Medido: **22
+clientes** nessa situacao, **0** aparecendo. A condicao fazia sentido na era do
+RD, quando `clientes` recebia contatos importados sem conversa e "teve mensagem
+de operador" era o proxy de "isto e uma conversa de verdade". Com o webhook da
+Cloud criando o contato a partir da mensagem RECEBIDA (§16.3), a premissa se
+inverteu.
+
+**Causa 2 — o filtro de RCA.** Com a causa 1 corrigida o contato CONTINUAVA
+sumido: ele tem vinculo no WinThor sob um RCA que nao e nenhuma das 7 carteiras,
+e o ramo 1 exigia tambem `AND (vln.cliente_id IS NULL OR ccr.slug IS NOT NULL)`.
+**Quem tem cadastro no ERP sob RCA de fora do CRM sumia inteiro, mesmo
+conversando agora.** Medido: **122 clientes com conversa** nessa situacao.
+
+Nao era desconhecido — a `vw_carteira_conflito.no_board` (0093) ja registrava
+"cliente invisivel no board e no chat". **O que ninguem tinha ligado e que isso
+significa "o cliente me mandou mensagem e eu nao acho".** Fica a licao: uma
+metrica de diagnostico so vira conserto quando alguem traduz o que ela custa na
+operacao.
+
+### 34.2 A regra que separa as duas condicoes
+
+A condicao de RCA faz sentido para **prospeccao** — nao encher o board de um
+vendedor com cliente de outra carteira. Nao faz nenhum para uma **conversa
+aberta**: perder alguem que esta falando conosco e sempre pior que mostrar um
+card a mais. Removida do ramo 1, mantida no espirito do ramo 2.
+
+Onde eles caem: `vendedor` e `COALESCE(ccr.slug, c.carteira)`, que fica NULO —
+entao vao para a **fila de nao atribuidos** do chat (§21), visivel a todos, com
+o botao ✋ Pegar. E o "lugar para ficar" que o usuario pediu. A fila existia
+desde o P2 e **nunca tinha recebido ninguem**, porque a view cortava antes dela.
+
+### 34.3 Simetria obrigatoria
+
+A condicao de remetente foi removida nos DOIS lados:
+- ramo 1 usa `EXISTS` para INCLUIR quem tem conversa;
+- ramo 2 usa `NOT EXISTS` para TIRAR da prospeccao quem ja tem conversa.
+
+Afrouxar so um deixaria o mesmo cliente em duas colunas. Conferido depois:
+**zero cliente_id duplicado**.
+
+⚠️ Substituicao cirurgica, nao `replace()` sobre `pg_get_viewdef`: o padrao
+`enviada_por = 'operator'` aparece 5 e 7 vezes nas duas views — e **duas delas
+sao a propria regua de etapa** (`ult.enviada_por = 'operator' AND tipo =
+'template'`). Troca cega teria quebrado a classificacao dos cards em silencio.
+
+Resultado: `vw_funil` 4.713 -> 4.835 · a conversa de hoje aparece em
+**negociacao**, na fila sem dono.
