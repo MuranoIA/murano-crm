@@ -102,13 +102,24 @@ const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
 // As "filas" da sidebar. No RD isto é o dropdown "Meus atendimentos" no alto da
 // lista; aqui são os mesmos quatro estados que os chips antigos filtravam — só
 // mudou a forma de escolher, não a regra (ver `filtradas`).
-type Fila = "pendentes" | "todas" | "resolvidas" | "fila";
+type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "carteira";
 const FILAS: { k: Fila; icone: string; rotulo: string; dica: string }[] = [
   { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
   { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
   { k: "fila", icone: "🚶", rotulo: "Fila de espera", dica: "sem dono — qualquer um pode pegar" },
   { k: "resolvidas", icone: "✓", rotulo: "Encerradas", dica: "atendimentos já resolvidos" },
+  // A carteira NÃO é um recorte da lista de conversas como as quatro acima: é a
+  // agenda inteira do vendedor, buscada à parte e só quando aberta (§38).
+  { k: "carteira", icone: "📇", rotulo: "Minha carteira", dica: "todos os clientes do seu RCA, com ou sem conversa" },
 ];
+
+// Uma linha da agenda. `codcli` é a identidade no ERP e a chave da lista;
+// `cliente_id` é o contato para abrir a conversa, já resolvido pelo servidor.
+type ContatoCarteira = {
+  codcli: number; cliente_id: string | null; cliente: string;
+  telefone: string | null; cidade: string | null; vendedor: string | null;
+  impedimento: string | null;
+};
 
 // Abas do contato — mesma posição das do RD (Perfil · Etiquetas · Atividades ·
 // Funis · Carteiras · Histórico), com o conteúdo que NÓS temos: o ERP.
@@ -621,6 +632,32 @@ export default function Chat() {
   const [novoOcupado, setNovoOcupado] = useState(false);
   const [novosLocais, setNovosLocais] = useState<Conversa[]>([]);
 
+  // ---- agenda da carteira (§38) -------------------------------------------
+  // Buscada UMA vez, e só quando a aba é aberta: são até 961 linhas por
+  // vendedor que não têm por que pesar na abertura do chat.
+  const [carteira, setCarteira] = useState<ContatoCarteira[] | null>(null);
+  const [carteiraCarregando, setCarteiraCarregando] = useState(false);
+  const carregarCarteira = useCallback(async () => {
+    setCarteiraCarregando(true);
+    try {
+      const r = await fetch("/api/chat/carteira", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      setCarteira(r.ok ? (j.carteira ?? []) : []);
+      if (!r.ok) setAviso(j?.error ?? `não consegui carregar a carteira (erro ${r.status})`);
+    } catch (e: any) { setCarteira([]); setAviso(String(e?.message ?? e)); }
+    finally { setCarteiraCarregando(false); }
+  }, []);
+
+  // ⚠️ ESTE useEffect FICA AQUI, e não junto do resto da lógica da carteira lá
+  // embaixo: a partir da linha ~1426 o componente tem `return` condicional
+  // (`if (sessao === undefined) return ...`). Hook depois de um return é
+  // chamado num render e não no outro — React #310, tela branca. O arquivo já
+  // avisa disso no comentário do `abaPadrao`; eu caí mesmo assim, e só o teste
+  // no navegador pegou.
+  useEffect(() => {
+    if (filtro === "carteira" && carteira === null && !carteiraCarregando) void carregarCarteira();
+  }, [filtro, carteira, carteiraCarregando, carregarCarteira]);
+
   const [menuFila, setMenuFila] = useState(false);      // dropdown "Meus atendimentos"
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
@@ -1004,6 +1041,22 @@ export default function Chat() {
     } finally {
       setNovoOcupado(false);
     }
+  }
+
+  // Abre a conversa de um contato da agenda. Se ele JÁ está na lista carregada,
+  // seleciona aquele objeto — assim não-lidas, status e transferência ficam
+  // certos; senão monta a conversa na hora, como o botão + faz.
+  function abrirDaCarteira(k: ContatoCarteira) {
+    if (!k.cliente_id) { setAviso(`${k.cliente}: ${k.impedimento}`); return; }
+    const existente = conversas.find((c) => c.cliente_id === k.cliente_id);
+    if (existente) { abrir(existente); return; }
+    const conv: Conversa = {
+      cliente_id: k.cliente_id, cliente: k.cliente, vendedor: k.vendedor,
+      etapa: null, telefone: k.telefone, ultima_atividade: null,
+      ultima_mensagem: null, ultima_enviada_por: null, na_fila: !k.vendedor,
+    };
+    setNovosLocais((n) => [conv, ...n.filter((x) => x.cliente_id !== conv.cliente_id)]);
+    abrir(conv);
   }
 
   function abrir(c: Conversa) {
@@ -1456,6 +1509,19 @@ export default function Chat() {
   const achadosNovos = (achados ?? [])
     .filter((c) => !jaNaLista.has(c.cliente_id))
     .filter((c) => !vendFiltro || c.vendedor === vendFiltro);
+
+  // A agenda é chaveada por `codcli` e a lista de conversas por `cliente_id`:
+  // são listas separadas que o dropdown alterna, então não há merge e não há
+  // como nascer linha duplicada. A busca da sidebar filtra as duas.
+  const carteiraVisivel = (carteira ?? [])
+    .filter((k) => !vendFiltro || k.vendedor === vendFiltro)
+    .filter((k) => {
+      const t = busca.trim().toLowerCase();
+      if (!t) return true;
+      return (k.cliente ?? "").toLowerCase().includes(t)
+        || (k.telefone ?? "").includes(t.replace(/\D/g, ""))
+        || String(k.codcli).includes(t);
+    });
 
   // ---- DESENHO EM VIGOR (0095) ---------------------------------------------
   // `d1` guarda tudo que a Direção 1 acrescenta. A tese dela é "nada muda de
@@ -1931,6 +1997,72 @@ export default function Chat() {
             </div>
             <div style={{ flex: 1, overflowY: "auto" }}>
               {erro && <div style={{ padding: 14, fontSize: 12.5, color: M.laranja }}>{erro}</div>}
+
+              {/* ---- MINHA CARTEIRA: a agenda, não uma fila de conversas ----
+                  Ordem alfabética (é uma agenda, não uma caixa de entrada) e a
+                  busca da sidebar filtra. Com ~900 nomes, procurar é o caminho
+                  principal; rolar é o secundário. */}
+              {filtro === "carteira" ? (
+                carteiraCarregando && carteira === null ? (
+                  <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando sua carteira…</div>
+                ) : !carteiraVisivel.length ? (
+                  <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>
+                    {busca.trim() ? `Nenhum cliente para “${busca.trim()}”.` : "Nenhum cliente na carteira."}
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ padding: "8px 12px", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: M.muted, background: M.bg }}>
+                      {carteiraVisivel.length} cliente{carteiraVisivel.length === 1 ? "" : "s"}
+                      {(carteira ?? []).some((k) => !k.cliente_id) && " · alguns sem contato"}
+                    </div>
+                    {carteiraVisivel.slice(0, 400).map((k) => {
+                      const conv = conversas.find((c) => c.cliente_id === k.cliente_id);
+                      const ativa = !!k.cliente_id && sel?.cliente_id === k.cliente_id;
+                      const inerte = !k.cliente_id;
+                      return (
+                        <button
+                          key={k.codcli}
+                          onClick={() => abrirDaCarteira(k)}
+                          title={k.impedimento ?? undefined}
+                          style={{ display: "flex", gap: 10, width: "100%", textAlign: "left", padding: "10px 12px",
+                            background: ativa ? M.roxoSoft : "transparent", border: "none",
+                            borderBottom: `1px solid ${M.bg}`, cursor: inerte ? "default" : "pointer",
+                            fontFamily: "inherit", opacity: inerte ? 0.55 : 1 }}
+                        >
+                          <span style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 38,
+                            background: inerte ? M.muted : ativa ? M.roxo : M.wine, color: "#fff",
+                            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800 }}>
+                            {(k.cliente ?? "?").trim().charAt(0).toUpperCase()}
+                          </span>
+                          <span style={{ minWidth: 0, flex: 1 }}>
+                            <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: M.ink,
+                              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {k.cliente}
+                            </span>
+                            <span style={{ display: "block", fontSize: 11.5, color: inerte ? M.laranja : M.gray,
+                              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {inerte ? k.impedimento
+                                : conv?.ultima_mensagem ? conv.ultima_mensagem
+                                : `${k.telefone ?? ""}${k.cidade ? ` · ${k.cidade}` : ""}`}
+                            </span>
+                          </span>
+                          {!inerte && !conv && (
+                            <span style={{ flexShrink: 0, alignSelf: "center", fontSize: 9.5, fontWeight: 800,
+                              color: M.gray, background: M.bg, border: `1px solid ${M.border}`,
+                              borderRadius: 20, padding: "2px 7px" }}>sem conversa</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    {carteiraVisivel.length > 400 && (
+                      <div style={{ padding: "10px 12px", fontSize: 11.5, color: M.gray }}>
+                        Mostrando 400 de {carteiraVisivel.length} — use a busca para achar quem você procura.
+                      </div>
+                    )}
+                  </>
+                )
+              ) : (
+              <>
               {!erro && !conversas.length && <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando conversas…</div>}
               {ordenadas.map((c) => {
                 const ativa = sel?.cliente_id === c.cliente_id;
@@ -2021,6 +2153,8 @@ export default function Chat() {
                     </button>
                   ))}
                 </div>
+              )}
+              </>
               )}
             </div>
 
