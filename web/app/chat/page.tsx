@@ -609,6 +609,17 @@ export default function Chat() {
   // fica acima no arquivo — depender da ordem de declaração dentro do render
   // é o tipo de acoplamento que quebra em silêncio numa refatoração
   const abaPadrao: AbaContato = layout === "continuidade" ? "resumo" : "perfil";
+  // ---- novo contato: "digitar o número e conversar", como num WhatsApp -----
+  // O contato criado ainda NÃO tem mensagem, então não entra na `vw_funil_visivel`
+  // (que exige conversa) — por isso ele é adicionado à lista LOCALMENTE e
+  // selecionado na hora. Assim que o primeiro template sair, ele passa a vir do
+  // servidor como qualquer outra conversa, com o mesmo cliente_id.
+  const [novoAberto, setNovoAberto] = useState(false);
+  const [novoTel, setNovoTel] = useState("");
+  const [novoNome, setNovoNome] = useState("");
+  const [novoOcupado, setNovoOcupado] = useState(false);
+  const [novosLocais, setNovosLocais] = useState<Conversa[]>([]);
+
   const [menuFila, setMenuFila] = useState(false);      // dropdown "Meus atendimentos"
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
@@ -953,6 +964,42 @@ export default function Chat() {
       carregarLista();
     } catch (e: any) {
       setAviso(`Não consegui transferir: ${e?.message ?? e}`);
+    }
+  }
+
+  // Cria (ou acha) o contato e abre a conversa na hora. A rota NÃO envia nada:
+  // cadastrar e mandar mensagem são gestos separados de propósito — um clique em
+  // "abrir conversa" nunca deve disparar mensagem para um número digitado errado.
+  async function criarContato() {
+    const tel = novoTel.trim();
+    if (!tel || novoOcupado) return;
+    setNovoOcupado(true);
+    try {
+      const r = await fetch("/api/chat/novo-contato", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telefone: tel, nome: novoNome.trim() || undefined }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setAviso(j?.error ?? `não consegui abrir (erro ${r.status})`); return; }
+
+      const jaNaLista = conversas.find((x) => x.cliente_id === j.cliente_id);
+      const conv: Conversa = jaNaLista ?? {
+        cliente_id: j.cliente_id, cliente: j.nome, vendedor: j.carteira ?? null,
+        etapa: null, telefone: tel, ultima_atividade: null,
+        ultima_mensagem: null, ultima_enviada_por: null,
+        na_fila: !j.carteira,
+      };
+      // sem conversa ainda, o servidor não o devolve na lista (a view exige
+      // mensagem): fica aqui até o primeiro envio, e some daqui quando o
+      // servidor passar a mandá-lo
+      if (!jaNaLista) setNovosLocais((n) => [conv, ...n.filter((x) => x.cliente_id !== conv.cliente_id)]);
+      setNovoAberto(false); setNovoTel(""); setNovoNome("");
+      setAviso(j.ja_existia ? `Esse número já estava na base como “${j.nome}”.` : null);
+      abrir(conv);
+    } catch (e: any) {
+      setAviso(String(e?.message ?? e));
+    } finally {
+      setNovoOcupado(false);
     }
   }
 
@@ -1353,7 +1400,10 @@ export default function Chat() {
 
   // bases cruzadas: cada seletor conta DENTRO do que o outro já escolheu, senão
   // o chip promete 12 e a lista mostra 3
-  const baseVend = conversas.filter(doVendedor);
+  // contatos recém-criados que o servidor ainda não devolve (sem mensagem).
+  // Somem sozinhos assim que a conversa existir de verdade.
+  const pendentesNovos = novosLocais.filter((n) => !conversas.some((c) => c.cliente_id === n.cliente_id));
+  const baseVend = [...pendentesNovos, ...conversas].filter(doVendedor);
   const baseLinha = conversas.filter(daLinha);
   const noEscopo = conversas.filter((c) => daLinha(c) && doVendedor(c));
 
@@ -1721,15 +1771,63 @@ export default function Chat() {
                 </div>
               )}
 
-              <div style={{ position: "relative" }}>
-                <input
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar conversa…"
-                  style={{ width: "100%", boxSizing: "border-box", padding: "8px 32px 8px 12px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10, outline: "none" }}
-                />
-                <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: M.muted, pointerEvents: "none" }}>🔍</span>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                  <input
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar conversa…"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 32px 8px 12px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10, outline: "none" }}
+                  />
+                  <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: M.muted, pointerEvents: "none" }}>🔍</span>
+                </div>
+                <button
+                  onClick={() => { setNovoAberto((v) => !v); setNovoTel(""); setNovoNome(""); }}
+                  title="Nova conversa — digite o número"
+                  style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, cursor: "pointer",
+                    background: novoAberto ? M.roxo : M.bg, color: novoAberto ? "#fff" : M.gray,
+                    border: `1px solid ${novoAberto ? M.roxo : M.border}`, fontSize: 17, fontWeight: 700, lineHeight: 1 }}
+                >+</button>
               </div>
+
+              {novoAberto && (
+                <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 10, background: M.surface }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: M.muted, marginBottom: 6 }}>
+                    Nova conversa
+                  </div>
+                  <input
+                    autoFocus
+                    value={novoTel}
+                    onChange={(e) => setNovoTel(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void criarContato(); }}
+                    placeholder="Telefone com DDD — (91) 98166-0019"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 6 }}
+                  />
+                  <input
+                    value={novoNome}
+                    onChange={(e) => setNovoNome(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void criarContato(); }}
+                    placeholder="Nome (opcional)"
+                    style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 8 }}
+                  />
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                    <button onClick={() => setNovoAberto(false)}
+                      style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: M.gray, background: "transparent", border: `1px solid ${M.border}`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit" }}>
+                      Cancelar
+                    </button>
+                    <button onClick={() => void criarContato()} disabled={novoOcupado || !novoTel.trim()}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, color: "#fff", fontFamily: "inherit",
+                        background: novoOcupado || !novoTel.trim() ? M.muted : M.azul, border: "none", borderRadius: 8,
+                        cursor: novoOcupado || !novoTel.trim() ? "default" : "pointer" }}>
+                      {novoOcupado ? "Abrindo…" : "Abrir conversa"}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: M.gray, marginTop: 7, lineHeight: 1.45 }}>
+                    Se o número já estiver na base, abre a conversa existente. Fora da janela de
+                    24h, o primeiro contato sai por <b>template</b>.
+                  </div>
+                </div>
+              )}
 
               {/* ---- seletor de NÚMERO (migration 0089) ----
                   Só aparece quando existe mais de um número com conversa: numa
