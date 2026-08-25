@@ -2706,3 +2706,163 @@ equipe.
 Verificado ao vivo em 24/08: desligou, religou, e `vw_ciclo_card` seguiu com
 1.104 linhas. **Nada é apagado** — o `wth-sync-tudo` continua atualizando a cada
 10 min, então religar mostra o dado de agora, não um buraco.
+
+## 31. Segundo interruptor: esconder as conversas do RD (24/08/2026) — migration 0098
+
+`/admin` → ⚙️ Mecanismos → **Conversas do RD Conversas**. Pedido do usuário, ao pé
+da letra: **não mexer na régua das 5 colunas** — mexer no que ALIMENTA a régua.
+Sem gatilho de conversa, o card cai onde a régua manda.
+
+### 31.1 A `vw_funil` NÃO pode ser filtrada — o ETL depende dela
+
+**A armadilha central desta migration.** `src/etl/run.ts` lê a `vw_funil` para
+decidir o que sincronizar (`.gte("ultima_atividade", cutoff)` na linha 132 e
+`.eq("etapa","negociacao")` na 154). Filtrar a view existente faria o ETL
+concluir que nada está ativo e **parar de puxar o RD**, sem erro nenhum — o
+oposto do pedido, que é explícito: *"o ETL pode continuar alimentando o banco,
+mesmo que não mostre nada na tela"*.
+
+Daí a `vw_funil_sem_rd`: mesma régua, mesma ordem de colunas, enxergando só
+mensagem com `linha_id` não nulo. **Duplicação consciente** — as duas precisam
+mudar juntas se a régua mudar.
+
+### 31.2 A linha que separa esconder de agir
+
+| Lê a view filtrada (TELA) | Continua na `vw_funil` (VERDADE) |
+|---|---|
+| `/api/funil` · `/api/chat` · `/api/chat/contato` · `/api/chat/buscar` | `src/etl/run.ts` — senão para de ingerir |
+| `/api/chat/thread` · `/api/mensagens` (lupa do card) | `/api/admin/disparo-massa` — decide **quem abordar** |
+| | `/api/chat/transferir` · `lib/ligacao.ts` — checagem de dono (autorização) |
+
+**Esconder não pode virar agir sem saber.** Cegar o disparo em massa faria o CRM
+re-abordar quem está em conversa aberta no RD agora — dano real, no cliente. E
+checagem de permissão se resolve contra o dado autoritativo, nunca contra uma
+view deliberadamente parcial.
+
+`viewFunil(cfg)` em `web/lib/crmConfig.ts` é a escolha única: se cada rota
+decidisse, o board mostraria o card em Prospecção enquanto o chat ainda listaria
+a conversa dele.
+
+### 31.3 O ramo 1b existe para ninguém sumir
+
+Medido em 24/08 com a chave ligada:
+
+| | com RD | sem RD |
+|---|---|---|
+| conversa visível | 3.847 | **2** |
+| **ociosos (ramo 1b, NOVO)** | 0 | **75** |
+| prospecção | 820 | **4.091** |
+| venda sem contato | 39 | 39 |
+| **total da view** | 4.705 | 4.207 |
+
+Os **75** são contatos que estão no board hoje só por causa de uma conversa do
+RD e que a prospecção **não** alcança — sem vínculo e sem telefone batendo no
+WinThor. Sem o ramo 1b evaporariam em silêncio. Entram como `ociosos` (foram
+contatados; `prospeccao` significa "nunca contatado") com `ultima_atividade`
+NULA, então só aparecem no filtro de período "todos", igual à prospecção.
+
+**A diferença de 498 no total não é perda:** 510 compraram no mês e por isso saem
+da prospecção de propósito — aparecem na coluna **Pedido emitido**, que vem de
+`vw_pedido_bi_card` (nota fiscal, rota separada) e não da conversa. Outros 4
+reaparecem em prospecção casados por telefone. Conferido: **zero cliente_id
+duplicado**, ninguém sem card.
+
+### 31.4 Bug pré-existente que a chave escancarou
+
+O `/api/chat` cortava a prospecção por `ultima_atividade is not null` — mas o
+card de **venda** carrega a data da nota, então **39 cards sintéticos
+`venda:<codcli>` sempre estiveram na lista do chat**, invisíveis entre 3.908
+conversas. Com o RD escondido virariam **39 de 41 itens**, e o chat pareceria
+quebrado. Corrigido: a lista exclui `venda:%` e `winthor:%`, que não têm thread.
+Lista do chat hoje: 3.908 → **3.869** (com RD) e **2** (sem RD).
+
+### 31.5 O que vem a seguir invalida este formato — e é de propósito
+
+O usuário já pediu o passo seguinte: **escolher quais linhas ver** (RD, Murano
+Professional, ou as duas). Isso é a generalização deste booleano, não um terceiro
+interruptor: `conversas_rd_visiveis=false` é o mesmo que marcar só a Murano
+Professional. Quando o seletor entrar, esta coluna deve ser **substituída**, não
+acompanhada — dois controles sobre o mesmo assunto se contradizem ("RD escondido"
+com "mostrar RD" marcado) e ninguém sabe qual vence.
+
+
+## 32. O interruptor de conversas vira SELETOR DE LINHAS (24-25/08/2026) — migration 0099
+
+`/admin` → ⚙️ Mecanismos → **Conversas visíveis, por número**: marca-se RD
+Conversas, Murano Professional, ou as duas. Isso **substitui** o booleano
+`conversas_rd_visiveis` da 0098 — não convive com ele. Dois controles sobre o
+mesmo assunto acabam se contradizendo ("RD escondido" com "mostrar RD" marcado)
+e ninguem sabe qual vence. A 0099 migra o valor e derruba a coluna.
+
+### 32.1 As linhas saem da tabela, e NULO significa "todas"
+
+`chat_linha` ja era o cadastro: hoje `rd` (Murano Pro, +55 91 2018-2357) e
+`1264458800091787` (Murano Professional) ativas; Shop e o numero de teste
+ficaram `ativo=false` (§28.7). O seletor le dali — ativar uma linha amanha a faz
+aparecer sozinha (§14.1).
+
+**`linhas_visiveis` NULO = todas as ativas**, e e o estado de origem. Nulo em vez
+de uma lista congelada de proposito: com a lista, ativar uma linha nova a
+deixaria invisivel ate alguem lembrar de marca-la — falha silenciosa. Pelo mesmo
+motivo, marcar TUDO na tela grava NULO, nao a lista.
+
+### 32.2 Uma view so, que se filtra sozinha
+
+A 0098 criou `vw_funil_sem_rd`, um caso particular; com N linhas isso viraria N
+views. A `vw_funil_visivel` **le a config**:
+`coalesce(m.linha_id,'rd') = any(<selecao>)`. Medido: **473 ms / 4.666 linhas**
+com tudo marcado — as 4.705 de hoje menos os 39 cards sinteticos.
+
+O app le SEMPRE `vw_funil_visivel` (`VIEW_FUNIL_TELA`), nunca alternando entre
+duas views: "as vezes uma, as vezes outra" e onde nasce board e chat divergirem.
+
+⚠️ A `vw_funil` continua **sem filtro nenhum**, e isso nao e descuido: o ETL
+depende dela para saber o que sincronizar (`src/etl/run.ts:132,154`). Filtrada,
+ele concluiria que nada esta ativo e pararia de puxar o RD em silencio. O pedido
+do usuario e explicito e o oposto: *"o ETL pode continuar alimentando o banco,
+mesmo que nao mostre nada na tela"*.
+
+### 32.3 O ramo sintetico `venda:<codcli>` MORREU
+
+Os 39 cards `venda:` nunca apareceram no board — o `/api/funil` os descartava em
+`etapa !== "pedido_emitido"`. Serviam so para poluir a lista do chat (§31.4).
+Verificado: **os 39 sao todos clientes de carteira ativa**, entao continuam no
+board pelo ramo de prospeccao ou pela coluna Pedido emitido, que vem de
+`vw_pedido_bi_card` (nota fiscal) e nao da conversa. Peso morto removido.
+
+### 32.4 A regua das 5 colunas NAO mudou — e nao precisava
+
+Levantamento pedido pelo usuario em 24/08. A regua que ele descreveu ja e a que
+esta no codigo desde a 0093:
+
+| Regra que o usuario descreveu | Onde ja estava |
+|---|---|
+| nunca contatado -> prospeccao | ramo de prospeccao da `vw_funil` |
+| recebeu template -> tentativa de contato | `WHEN operator AND tipo='template'` |
+| respondeu -> negociacao | `ELSE` (ultima mensagem ha menos de 24h) |
+| respondeu e a janela de 24h fechou -> ociosos | `WHEN criada_em < now()-24h` |
+| comprou -> pedido emitido | nota fiscal, via `vw_pedido_bi_card` |
+
+**Conclusao que vale registrar: o problema nunca foi a regua, foi o DADO** — as
+conversas do RD chegam atrasadas e desorganizadas pelo ETL. Por isso o seletor
+resolve o incomodo sem tocar em gatilho nenhum. Nao "consertar" a classificacao
+antes de olhar a origem do dado.
+
+### 32.5 Onde o recorte de linha precisa ser aplicado a mao
+
+A lupa do card (`/api/mensagens`), a thread (`/api/chat/thread`) e a busca por
+conteudo (`/api/chat/buscar`) varrem `mensagens` **direto**, sem passar pela
+view. Sem filtro ali, o board mostraria o cliente em Prospeccao e um clique
+escancararia justamente a conversa escondida. `filtroLinhas()` em
+`web/lib/crmConfig.ts` e a implementacao unica — e precisa de `.or(...)` porque
+a linha do RD e `linha_id IS NULL` e nao cabe num `.in(...)`.
+
+### 32.6 Pendencias combinadas com o usuario
+
+1. **Card virar chat de verdade**: hoje o card ampliado busca as ultimas 30
+   mensagens em `/api/mensagens` e mostra um input reduzido so em negociacao.
+   Vira thread com rolagem/paginacao como a do `/chat`, e o compositor completo,
+   com a mesma regra de janela de 24h.
+2. **"Um card por cliente"**: com o `venda:` removido, falta decidir se o cliente
+   que comprou continua aparecendo so na coluna Pedido emitido (hoje) ou vira um
+   card unico que muda de coluna.

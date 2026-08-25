@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
-import { lerCrmConfig } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -72,10 +72,15 @@ export async function GET() {
 
   // cards do funil (paginado, com fallback de colunas se migration pendente).
   const carregarCards = async (): Promise<any[]> => {
+    // Com as conversas do RD escondidas, lê a view irmã (0098): MESMA régua de
+    // 5 colunas, enxergando só mensagem da Cloud. Sem gatilho de conversa, o
+    // card cai em prospecção (cliente do ERP) ou ociosos (contato que o ERP não
+    // alcança) — que é o desfecho pedido.
+    await cfgP;   // garante a config lida antes de montar a consulta
     let cols = COLS_FULL;
     const out: any[] = [];
     for (let from = 0; ; from += PAGE) {
-      let q = sb.from("vw_funil").select(cols)
+      let q = sb.from(VIEW_FUNIL_TELA).select(cols)
         .order("ultima_atividade", { ascending: false, nullsFirst: false })
         .range(from, from + PAGE - 1);
       if (carteira) q = q.eq("vendedor", carteira);
@@ -343,6 +348,9 @@ export async function GET() {
 
   return Response.json({
     ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false
+    linhas_visiveis: cfg.linhas_visiveis,
+    linhas: cfg.linhas,
+    tudo_visivel: tudoVisivel(cfg),
     cards: cardsOutros,
     pedidoCards,
     templatesTotais,

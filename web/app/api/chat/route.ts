@@ -4,10 +4,12 @@ import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
+import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
-// Lista de conversas do CHAT (sidebar). Fonte: vw_funil — 1 linha por cliente com
+// Lista de conversas do CHAT (sidebar). Fonte: vw_funil (ou vw_funil_sem_rd, com
+// as conversas do RD escondidas — 0098) — 1 linha por cliente com
 // última mensagem/atividade, já com o dono (RCA atual) resolvido. Só clientes com
 // conversa de verdade (ultima_atividade não nula — corta a fila de prospecção).
 // Vendedor vê a própria carteira (filtro no SERVIDOR); admin/home veem tudo.
@@ -22,6 +24,19 @@ export async function GET() {
 
   const COLS = "cliente_id,cliente,vendedor,etapa,telefone,ultima_atividade,ultima_mensagem,ultima_enviada_por";
 
+  // Interruptor das conversas do RD (0098). Escondidas, a sidebar lista só o que
+  // veio da Cloud: os ramos sem conversa da view irmã têm `ultima_atividade`
+  // nula, e o `.not(..., "is", null)` abaixo já os corta — nenhum filtro extra.
+  const cfg = await lerCrmConfig(sb);
+  const fonte = VIEW_FUNIL_TELA;
+
+  // Cards SINTÉTICOS (`venda:<codcli>`, `winthor:<codcli>`) não são conversa: não
+  // têm thread, e clicar num deles não leva a lugar nenhum. A lista sempre teve
+  // 39 deles — invisíveis entre 3.908 conversas do RD. Com o RD escondido eles
+  // passariam a ser 39 de 41 itens, e o chat pareceria quebrado. O corte por
+  // `ultima_atividade` não os pega: o card de venda carrega a data da nota.
+  const soConversa = (q: any) => q.not("cliente_id", "like", "venda:%").not("cliente_id", "like", "winthor:%");
+
   // transferências vigentes (0081): mudam quem atende, sem tocar na carteira
   const atrib = await carregarAtribuicoes(sb);
 
@@ -29,7 +44,7 @@ export async function GET() {
   const PAGE = 1000;
   const out: any[] = [];
   for (let from = 0; ; from += PAGE) {
-    let q = sb.from("vw_funil").select(COLS)
+    let q = soConversa(sb.from(fonte).select(COLS))
       .not("ultima_atividade", "is", null)
       .order("ultima_atividade", { ascending: false })
       .range(from, from + PAGE - 1);
@@ -48,7 +63,7 @@ export async function GET() {
       .filter(([id, a]) => a.para === carteira && !jaTem.has(id))
       .map(([id]) => id);
     for (const lote of emLotes(recebidas)) {
-      const { data } = await sb.from("vw_funil").select(COLS)
+      const { data } = await soConversa(sb.from(fonte).select(COLS))
         .in("cliente_id", lote)
         .not("ultima_atividade", "is", null);
       out.push(...(data ?? []));
@@ -65,7 +80,7 @@ export async function GET() {
   // Buscada à parte porque o filtro por carteira acima nunca traz `null`.
   const filaCandidatos: any[] = [];
   for (let from = 0; ; from += PAGE) {
-    const { data } = await sb.from("vw_funil").select(COLS)
+    const { data } = await soConversa(sb.from(fonte).select(COLS))
       .not("ultima_atividade", "is", null)
       .is("vendedor", null)
       .order("ultima_atividade", { ascending: false })

@@ -458,9 +458,9 @@ export default function Admin() {
       {aba === "crm-config" && dados?.["crm-config"] && (
         <MecanismosAba
           d={dados["crm-config"]}
-          salvar={(ciclo_ativo) =>
-            enviar("crm-config", "PUT", { ciclo_ativo },
-              ciclo_ativo ? "Mecanismo religado." : "Mecanismo desligado.")}
+          salvar={(chave: string, valor: boolean | string[]) =>
+            enviar("crm-config", "PUT", { chave, valor },
+              valor ? "Mecanismo religado." : "Mecanismo desligado.")}
         />
       )}
 
@@ -1639,13 +1639,26 @@ function EnviosAba({ dados }: { dados: any }) {
 // mundo de uma vez. Religar pede um só — voltar ao estado anterior nunca deveria
 // custar mais caro do que sair dele.
 // ---------------------------------------------------------------------------
-function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) => Promise<boolean> }) {
+function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: boolean | string[]) => Promise<boolean> }) {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
+  // seleção de linhas em estado local: marcar NÃO aplica — aplicar é o segundo
+  // gesto, como estabelecer um desenho (§29.4). Um clique acidental num
+  // checkbox não deve trocar a tela de quinze pessoas.
+  const linhasInfo = d.linhas ?? { opcoes: [], selecionadas: [] };
+  const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
+  const marcada = (id: string) => sel.includes(id);
+  const alternar = (id: string) =>
+    setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const mesmaSelecao =
+    sel.length === (linhasInfo.selecionadas ?? []).length &&
+    sel.every((x: string) => (linhasInfo.selecionadas ?? []).includes(x));
+
   const cfg = d.config ?? {};
   const mecanismos: any[] = d.mecanismos ?? [];
-  const estado: Record<string, boolean> = { ciclo_ativo: cfg.ciclo_ativo !== false };
+  // lido direto da config: acrescentar mecanismo é mexer só na rota, não aqui
+  const ligado = (chave: string) => cfg[chave] !== false;
 
   const quando = (iso: string | null) => {
     if (!iso) return null;
@@ -1677,7 +1690,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
         }
       >
         {mecanismos.map((m: any) => {
-          const on = estado[m.chave] !== false;
+          const on = ligado(m.chave);
           const confirmandoEste = confirmando === m.chave;
           return (
             <div key={m.chave} style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
@@ -1691,7 +1704,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
                         <Botao cor={M.laranja} disabled={ocupado}
                           onClick={async () => {
                             setOcupado(true);
-                            const deu = await salvar(false);
+                            const deu = await salvar(m.chave, false);
                             setOcupado(false);
                             if (deu) setConfirmando(null);
                           }}>
@@ -1704,7 +1717,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
                     )
                   ) : (
                     <Botao disabled={ocupado}
-                      onClick={async () => { setOcupado(true); await salvar(true); setOcupado(false); }}>
+                      onClick={async () => { setOcupado(true); await salvar(m.chave, true); setOcupado(false); }}>
                       {ocupado ? "Religando…" : "Religar"}
                     </Botao>
                   )}
@@ -1730,15 +1743,62 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (ciclo_ativo: boolean) =
               {m.nota && (
                 <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{m.nota}</p>
               )}
-
-              <p style={{ fontSize: 12, color: M.gray, margin: "10px 0 0" }}>
-                {cfg.atualizado_por
-                  ? <>Última mudança por <b>{cfg.atualizado_por}</b>{quando(cfg.atualizado_em) ? ` em ${quando(cfg.atualizado_em)}` : ""}.</>
-                  : "Nunca foi trocado — está no estado de origem."}
-              </p>
             </div>
           );
         })}
+
+        {/* ---- seletor de linhas ------------------------------------------- */}
+        <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{linhasInfo.rotulo}</div>
+            <Selo ok={!!linhasInfo.tudo} sim="Todos os números" nao="Filtrado" />
+            <div style={{ marginLeft: "auto" }}>
+              <Botao disabled={ocupado || mesmaSelecao || sel.length === 0}
+                titulo={sel.length === 0 ? "Marque ao menos um número" : mesmaSelecao ? "Nada mudou" : undefined}
+                onClick={async () => { setOcupado(true); await salvar("linhas_visiveis", sel); setOcupado(false); }}>
+                {ocupado ? "Aplicando…" : "Aplicar"}
+              </Botao>
+            </div>
+          </div>
+
+          <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{linhasInfo.resumo}</p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 13 }}>
+            {(linhasInfo.opcoes ?? []).map((l: any) => (
+              <label key={l.phone_number_id}
+                style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" checked={marcada(l.phone_number_id)} onChange={() => alternar(l.phone_number_id)} />
+                <b style={{ color: M.ink }}>{l.rotulo}</b>
+                <span style={{ color: M.gray, fontVariantNumeric: "tabular-nums" }}>{l.numero ?? ""}</span>
+              </label>
+            ))}
+            {!(linhasInfo.opcoes ?? []).length && (
+              <span style={{ fontSize: 12.5, color: M.muted }}>Nenhuma linha ativa cadastrada.</span>
+            )}
+          </div>
+
+          {!mesmaSelecao && sel.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <Recado tipo="aviso">
+                Isto muda a tela de <b>toda a equipe</b> na próxima atualização. Marcar de volta é um clique.
+              </Recado>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+            <Lista titulo="Desmarcar tira do ar" itens={linhasInfo.desliga ?? []} cor={M.laranja} />
+            <Lista titulo="Continua funcionando" itens={linhasInfo.mantem ?? []} cor={M.verde} />
+          </div>
+          {linhasInfo.nota && (
+            <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{linhasInfo.nota}</p>
+          )}
+        </div>
+
+        <p style={{ fontSize: 12, color: M.gray, margin: 0 }}>
+          {cfg.atualizado_por
+            ? <>Última mudança nesta tela: <b>{cfg.atualizado_por}</b>{quando(cfg.atualizado_em) ? `, em ${quando(cfg.atualizado_em)}` : ""}.</>
+            : "Nenhum interruptor foi trocado ainda."}
+        </p>
       </Bloco>
     </>
   );

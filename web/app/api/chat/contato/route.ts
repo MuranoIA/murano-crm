@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { lerCrmConfig } from "../../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +37,16 @@ export async function GET(req: Request) {
         .eq("cliente_id", cliente_id).maybeSingle();
       return data ?? null;
     })(),
-    // etapa no funil + valor faturado no mês
-    sb.from("vw_funil")
-      .select("etapa,venda_valor,venda_data,codcli,sem_cadastro")
-      .eq("cliente_id", cliente_id).maybeSingle(),
+    // etapa no funil + valor faturado no mês. Mesma view que o board está
+    // lendo (0098): senão o painel diria "negociação" para um card que a tela
+    // ao lado mostra em prospecção.
+    (async () => {
+      await cfgP;
+      const { data } = await sb.from(VIEW_FUNIL_TELA)
+        .select("etapa,venda_valor,venda_data,codcli,sem_cadastro")
+        .eq("cliente_id", cliente_id).maybeSingle();
+      return data ?? null;
+    })(),
     // últimas notas fiscais do cliente
     sb.from("vw_pedido_emitido")
       .select("data_fat,valor,num_nota,filial")
@@ -53,7 +59,7 @@ export async function GET(req: Request) {
     ciclo_ativo: (await cfgP).ciclo_ativo,
     compras: compras.data ?? null,
     ciclo: cicloRow,
-    funil: funil.data ?? null,
+    funil,
     ultimas_notas: ultimas.data ?? [],
   });
 }

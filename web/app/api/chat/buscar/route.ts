@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../../lib/papel";
 import { carregarAtribuicoes, aplicaEscopo, emLotes } from "../../../../lib/chatEscopo";
+import { lerCrmConfig, VIEW_FUNIL_TELA, filtroLinhas } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -43,11 +44,18 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const { data: achadas, error } = await sb
+  // Interruptor das conversas do RD (0098). A busca varre `mensagens` direto,
+  // sem passar pela view — então precisa do filtro aqui, senão o trecho de uma
+  // conversa escondida apareceria no resultado com o termo destacado.
+  const cfg = await lerCrmConfig(sb);
+
+  let busca = sb
     .from("mensagens")
     .select("cliente_id,conteudo,enviada_por,criada_em")
     .ilike("conteudo", `%${termo}%`)
-    .neq("tipo", "evento_sistema")
+    .neq("tipo", "evento_sistema");
+  busca = filtroLinhas(busca, cfg);
+  const { data: achadas, error } = await busca
     .order("criada_em", { ascending: false })
     .limit(TETO_MSGS);
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -71,7 +79,7 @@ export async function GET(req: Request) {
   const linhas: any[] = [];
   for (const lote of emLotes(ids)) {
     const { data } = await sb
-      .from("vw_funil")
+      .from(VIEW_FUNIL_TELA)
       .select("cliente_id,cliente,vendedor,etapa,telefone,ultima_atividade,ultima_mensagem,ultima_enviada_por")
       .in("cliente_id", lote);
     linhas.push(...(data ?? []));
