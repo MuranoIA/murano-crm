@@ -2969,3 +2969,77 @@ O card pequeno da coluna continua com a previa curta e o seu `<input>` inline de
 resposta rapida. A conversa completa vive no card **ampliado** (a lupa) — num card
 de ~250px de largura um chat nao cabe. Se a intencao era trocar tambem o input do
 card pequeno, e um passo a parte.
+
+
+## 35. Contato novo pelo numero, e o bug que derrubou o board (25/08/2026)
+
+### 35.1 O board caiu inteiro por causa de um `charAt` — e a culpa foi da 0100
+
+Depois da 0100 a producao ficou com **"Application error: a client-side
+exception has occurred"** no board, dentro e fora do hub.
+
+```
+TypeError: Cannot read properties of null (reading 'charAt')
+web/app/page.tsx:268
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+```
+
+**A causa foi a propria 0100**, nao a PR do card-chat que chegou junto. Ao parar
+de exigir mensagem de operador e RCA de carteira ativa, o board passou a receber
+os cards da **fila de nao atribuidos** — e neles `vendedor` chega **NULO**.
+Nunca tinha chegado antes, entao um `cap()` sem guarda que vivia ali havia meses
+so entrou em contato com null naquele dia.
+
+⚠️ **O tipo mentia**: `Card.vendedor` era `string`, e por isso o TypeScript nunca
+apontou o risco. Corrigido para `string | null` — e foi o proprio compilador que
+revelou **mais tres pontos** que o `grep` nao tinha achado (a lista de chips e
+duas indexacoes de cor). **Quando uma view passa a devolver null num campo,
+corrigir o TIPO acha os chamadores; procurar por texto, nao.**
+
+**Licao de metodo, essa custou um revert desnecessario:** eu descartei a PR nova
+por leitura de codigo (tudo nela estava dentro do bloco do card, que so renderiza
+apos o clique) e nao desconfiei da minha propria migration, aplicada minutos
+antes. Reverter a PR nao consertou nada. O que resolveu foi parar de deduzir e
+**executar**: subir o build de producao local e dirigir o Chrome headless por
+CDP com cookie de admin — a excecao apareceu na primeira tentativa.
+
+Receita, que vale para a proxima:
+```
+chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/perfil
+# Node 22+ tem WebSocket nativo: da para falar CDP sem puppeteer.
+# Runtime.enable + Console.enable -> Network.setCookie -> Page.navigate
+```
+⚠️ Em headless sem layout, **`innerText` volta VAZIO** mesmo com a pagina
+renderizada. Medir por `innerHTML.length`, `document.title` ou `querySelectorAll`
+— foi por isso que o primeiro teste pareceu "tela em branco" quando nao era.
+
+### 35.2 Novo contato — `POST /api/chat/novo-contato`
+
+Botao **+** ao lado da busca do chat: telefone e nome opcional.
+
+- **Normaliza** o que for digitado (mascara, `+55`, com ou sem o nono digito) em
+  `web/lib/telefone.ts`. Recusa numero incompleto em vez de criar contato
+  truncado que nunca receberia nada.
+- **Acha antes de criar**, pelos 8 ultimos digitos — a mesma chave do webhook e
+  do ETL (§16.3). Numero ja conhecido abre a conversa existente.
+- **Mesmo id sintetico do webhook** (`wa:<numero>`): quem escrever depois cai na
+  MESMA conversa, sem duplicar.
+- **Dono**: o do ERP se o telefone bater em `wth_carteira`; senao a carteira de
+  quem cadastrou, quando e vendedor. Admin e home nao tem carteira, entao o
+  contato nasce na fila de nao atribuidos.
+- **Nao envia nada.** Cadastrar e mandar mensagem sao gestos separados: um
+  clique em "abrir conversa" nunca deve disparar mensagem para numero digitado
+  errado. Fora da janela de 24h, o primeiro contato sai por template.
+
+O contato recem-criado ainda nao tem mensagem, entao a view (que exige conversa)
+nao o devolve — ele fica na lista **localmente** e some de la sozinho quando o
+servidor passar a manda-lo, com o mesmo `cliente_id`.
+
+⚠️ `normalizarTelefone` mora em `lib/`, nao na rota: um `route.ts` do Next so
+pode exportar handlers, e um export a mais quebra o build com um erro de tipo
+que **nao menciona a causa** (`does not satisfy the constraint { [x: string]:
+never }`).
+
+Verificado em Chrome headless contra o build de producao: form abre, mascara
+normalizada, numero existente abre a conversa certa, repeticao nao duplica,
+numero incompleto e recusado. Zero excecao nas duas telas.
