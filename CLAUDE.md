@@ -3494,3 +3494,67 @@ alturas diferentes centralizados na MESMA linha tem tops diferentes. O que
 resolveu foi **capturar a tela** (`Page.captureScreenshot` via CDP) e olhar.
 Para layout, screenshot > sonda numerica — a sonda mede o que voce pensou em
 perguntar, a imagem mostra o que esta la.
+
+
+## 42. Pedido emitido (3 dias) -> Vender novamente (18) -> Prospeccao (26/08/2026) — migration 0105
+
+Substitui a regra dos 7 dias da §40.2, escrita no dia anterior. O usuario
+confirmou as tres objecoes que levantei antes de implementar.
+
+### 42.1 A regra e funcao de UM numero
+
+    dias desde a ultima compra:  0..2 -> pedido_emitido
+                                 3..18 -> vender_novamente
+                                 >18  -> sai (prospeccao / etapa da conversa)
+
+**"Voltar para Pedido emitido ao comprar de novo" sai de graca**: a venda nova
+muda `ultima_compra`, o contador zera e a etapa se recalcula. Nao ha estado
+guardado, nada para sincronizar, nada que possa ficar preso — que era o defeito
+das duas versoes anteriores desta coluna.
+
+Por isso a fonte deixou de ser `vw_pedido_bi_card` (uma linha por cliente POR
+PERIODO, boa para recortes do dropdown) e passou a ser **`vw_venda_card`**: uma
+linha por cliente, com a etapa ja decidida no banco.
+
+Medido em 26/08: **94 em Pedido emitido, 377 em Vender novamente**.
+
+### 42.2 As tres objecoes, e o que o usuario decidiu
+
+**1. A pilha nao some, muda de coluna.** Tirar 167 de uma coluna e criar uma com
+377 nao resolve "por que aparecem tantos cards" — a janela e 6x mais longa e o
+time fatura ~35 clientes/dia. O usuario aceitou: a diferenca e que Vender
+novamente **e fila de trabalho** (ha o que fazer: reabordar), e Pedido emitido
+era trofeu.
+
+**2. O selo do mes mentiria.** "Valor total no mes vigente" era o pedido
+original: quem comprou em 30/08 e esta em Vender novamente em 02/09 apareceria
+com **R$ 0**. `valor` passou a somar a janela de 18 dias — as compras que
+justificam a posicao do card. Conferido: **zero selos zerados**.
+
+**3. Conversa aberta ganha de tudo.** Sem isso, quem esta respondendo AGORA
+ficaria em Vender novamente por 18 dias em vez de Negociacao — e reabordar quem
+ja fala com voce e ruido. A view marca `conversa_aberta` (recebida ha <24h) e o
+/api/funil deixa esses cards na coluna da conversa. Hoje sao 9; depois da
+migracao do numero, muitos mais.
+
+### 42.3 ⚠️ O off-by-one que colocou 40 clientes em duas colunas
+
+A view segurava `dias <= 18`; a prospeccao excluia `data > hoje - 18`, que e
+`dias <= 17`. **Quarenta clientes no 18o dia apareciam nas duas colunas.**
+
+Achado so ao conferir a sobreposicao com dado real DEPOIS de aplicar — nao pelo
+build, nao pelo tsc, nao pela leitura. E o mesmo comparador estava errado na
+soma do selo: o cliente no 18o dia entraria com `valor = 0`, exatamente o furo
+que a decisao 2 existia para tapar.
+
+**Regra que fica: quando duas regras delimitam a MESMA janela, comparar os dois
+lados com dado real antes de dar por pronto.** Escrever `<= 18` de um lado e
+`> hoje-18` do outro parece igual e nao e.
+
+### 42.4 Armadilhas de processo repetidas nesta sessao
+
+- **`
+` em string TS editada por script** virou quebra de linha real de novo
+  (3a vez: §36.4, §40.4, aqui). Para strings com escapes, edicao direta.
+- **`rm -rf .next` com o `next start` rodando** travou um build por mais de 20
+  minutos. Matar o servidor antes de limpar.

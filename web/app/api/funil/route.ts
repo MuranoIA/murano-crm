@@ -97,21 +97,15 @@ export async function GET() {
   };
 
   // pedido emitido (paginado): 1 linha por cliente por período
+  // As DUAS colunas de venda vêm da mesma máquina de estados (0105):
+  //    0-2 dias -> pedido_emitido · 3-18 -> vender_novamente · >18 -> sai
+  // Uma linha por cliente, com a etapa já decidida no banco. Nova venda zera o
+  // contador e traz o card de volta sozinho, sem estado guardado.
   const carregarPedidoCards = async (): Promise<any[]> => {
     const out: any[] = [];
     for (let from = 0; ; from += PAGE) {
-      // O bucket `todos` da view vai de 1900 até hoje — e era ele que o board
-      // usava por padrão, então a coluna Pedido emitido ACUMULAVA meses (medido
-      // em 25/08: 3.147 clientes, com compras desde 27/04) em vez de zerar no
-      // dia 1º. Pior: quem comprou num mês anterior aparecia AO MESMO TEMPO na
-      // sua etapa normal e em Pedido emitido — o mesmo cliente, dois cards.
-      //
-      // A regra do negócio é "fica até o fim do mês e volta para a fila no dia
-      // 1º", então a coluna simplesmente não tem universo maior que o mês.
-      // Cortado aqui, na origem: não adianta o front esconder se o dado chega.
-      let pcQ = sb.from("vw_pedido_bi_card")
-        .select("periodo,vendedor_slug,codcli,cliente,cliente_id,telefone,pedidos,valor,ultima_compra")
-        .neq("periodo", "todos")
+      let pcQ = sb.from("vw_venda_card")
+        .select("etapa,dias,vendedor_slug,codcli,cliente,cliente_id,telefone,pedidos,valor,ultima_compra,conversa_aberta")
         .range(from, from + PAGE - 1);
       pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
       const { data, error } = await pcQ;
@@ -293,11 +287,10 @@ export async function GET() {
   // inteiro (o enriquecimento do card de pedido depende dele); só filtramos o que é exibido.
   const compradoresMes = new Set<string>();
   for (const r of pcRows ?? []) {
-    // 0104: a coluna Pedido emitido e a janela de 7 dias. Quem comprou ha mais
-    // tempo VOLTA para o fluxo normal — e por isso deixa de ser removido das
-    // outras colunas. Se este filtro continuasse no mes, o cliente que saiu da
-    // coluna aos 7 dias ficaria fora das duas ate o dia 1o.
-    if (r.periodo !== "7d") continue;
+    // Quem está numa das duas colunas de venda sai das demais — MENOS quem tem
+    // conversa aberta: a cliente que está respondendo AGORA fica em Negociação,
+    // porque reabordar quem já está falando com você é ruído (0105).
+    if (r.conversa_aberta) continue;
     const cid = r.cliente_id ?? effCliId(r);
     if (cid) compradoresMes.add("cli:" + cid);
     if (r.codcli != null) compradoresMes.add("cod:" + Number(r.codcli));
@@ -325,9 +318,14 @@ export async function GET() {
     c.ciclo = cicloDe(c);
   }
 
-  // Coluna Pedido emitido = VENDAS do vendedor (fonte bi/ranking), 1 card por cliente por
-  // período. Enriquece com a conversa (se houver) pro clique/preview.
-  const pedidoCards = (pcRows ?? []).map((r: any) => {
+  // As duas colunas de venda (0105). A `etapa` vem do banco; o card guarda
+  // `dias` para a tela dizer "há 4 dias" sem recalcular. Enriquece com a
+  // conversa, se houver, para o clique e a prévia.
+  //
+  // `conversa_aberta` é filtrada aqui: a cliente que respondeu nas últimas 24h
+  // fica na coluna da CONVERSA, não numa de venda — e por isso ela também não
+  // foi removida das demais colunas lá em cima.
+  const pedidoCards = (pcRows ?? []).filter((r: any) => !r.conversa_aberta).map((r: any) => {
     const cid = r.cliente_id ?? effCliId(r);
     const key = cid ?? `venda:${r.codcli}`;
     const f = cid ? funilByCliente[cid] : null;
@@ -335,11 +333,13 @@ export async function GET() {
       cliente_id: key,
       cliente: r.cliente,
       vendedor: r.vendedor_slug,
-      etapa: "pedido_emitido",
+      etapa: r.etapa,             // "pedido_emitido" | "vender_novamente"
       codcli: r.codcli ?? null,
-      periodo: r.periodo,
+      dias_da_compra: r.dias,
       pedidos: r.pedidos,
-      venda_valor: r.valor,       // total do mês do cliente
+      // soma das compras da janela de 18 dias — NÃO do mês vigente, que zeraria
+      // no dia 1º e mostraria R$ 0 num card que está ali por causa de uma compra
+      venda_valor: r.valor,
       venda_data: r.ultima_compra,
       telefone: r.telefone ?? f?.telefone ?? null,
       ultima_atividade: f?.ultima_atividade ?? null,

@@ -161,8 +161,10 @@ const COLUNAS = [
     regras: "Um card cai aqui quando:\n• a última mensagem real é do operador E é um template (você disparou e aguarda a 1ª resposta).\n\nAutomações:\n• cliente responde → Negociação;\n• passou +24h sem resposta → Ociosos;\n• parado +4 dias → o botão TEMPLATE reaparece pra reenviar." },
   { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h",
     regras: "Um card cai aqui quando:\n• há troca ativa nas últimas 24h (o cliente falou por último há menos de 24h, ou você falou fora de template).\n\nAutomações:\n• alerta vermelho 'AGUARDA RESPOSTA' se o cliente falou por último e você está +10 min sem responder (some ao clicar no card, volta se ele mandar msg nova);\n• passou 24h sem novo template → Ociosos;\n• fechou venda no mês → Pedido Emitido." },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "comprou nos últimos 7 dias", subLong: "venda nos últimos 7 dias; depois o card volta a se mover",
-    regras: "Um card cai aqui quando há nota fiscal faturada no WinThor nos ÚLTIMOS 7 DIAS (fuso de Brasília).\n\nAutomações:\n• 7 dias após a compra o card SAI daqui sozinho e volta a se mover como os outros — Lista de prospecção, ou a etapa que a conversa dele indicar;\n• o total R$ do cabeçalho continua sendo o do MÊS (é o número comercial que o time acompanha), então ele não coincide com esta coluna de propósito." },
+  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "comprou nos últimos 3 dias", subLong: "venda nos últimos 3 dias; depois vai para Vender novamente",
+    regras: "Um card cai aqui quando há nota fiscal faturada no WinThor nos ÚLTIMOS 3 DIAS (fuso de Brasília).\n\nAutomações:\n• 3 dias após a compra o card vai para VENDER NOVAMENTE;\n• se comprar de novo, volta para cá na hora;\n• o selo R$ mostra o que ele comprou na janela de 18 dias — não o total do mês, que zeraria no dia 1º e mostraria R$ 0 num card que está aqui por causa de uma compra.\n\nO total R$ do cabeçalho é do MÊS (o número comercial que o time acompanha), então ele não coincide com esta coluna de propósito.\n\nConversa aberta tem precedência: se a cliente respondeu nas últimas 24h, o card fica em Negociação." },
+  { key: "vender_novamente", titulo: "Vender novamente", status: "Recomprar", cor: "#0e7490", sub: "comprou de 3 a 18 dias atrás", subLong: "saiu de Pedido emitido e ainda não voltou a comprar",
+    regras: "O cliente cai aqui 3 DIAS depois da compra, vindo de Pedido emitido.\n\nAutomações:\n• se comprar de novo, volta na hora para Pedido emitido;\n• se passarem 15 dias aqui sem nova compra (18 desde a compra), vai para Lista de prospecção;\n• o selo R$ mostra o que ele comprou na janela — não o total do mês, que zeraria no dia 1º.\n\nConversa aberta tem precedência: se a cliente respondeu nas últimas 24h, o card fica em Negociação." },
 ] as const;
 
 // categorias do motor de ciclo de compra (análise preditiva, tipo_oportunidade)
@@ -1203,7 +1205,7 @@ export default function Page() {
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
   const pedidoMesCount = useMemo(
-    () => pedidoVisiveis.filter((c) => c.periodo === "7d").length,
+    () => pedidoVisiveis.length,
     [pedidoVisiveis]
   );
   // "na carteira" = só quem é CADASTRADO no WinThor (decisão de 06/08/2026).
@@ -2549,7 +2551,10 @@ export default function Page() {
 
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: isMobile ? 10 : 12, alignItems: "start" }}>
           {COLUNAS.map((col) => {
-            const ehPedido = col.key === "pedido_emitido";
+            // as duas colunas de venda vem de `pedidoVisiveis`, com a etapa
+            // ja decidida no banco (0105); as demais, da vw_funil
+            const ehVenda = col.key === "pedido_emitido" || col.key === "vender_novamente";
+            const ehPedido = ehVenda;
             // Pedido emitido não tem "todos": o universo da coluna É o mês corrente,
             // e ela zera sozinha no dia 1º. hoje/semana/quinzena recortam DENTRO do
             // mês. Nas demais colunas, "todos" segue sendo o padrão.
@@ -2569,10 +2574,10 @@ export default function Page() {
             // prospecção: carteira nunca contatada, sem data -> ignora o período;
             // demais colunas: da vw_funil filtrada por atividade.
             const todosDaEtapa = ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === "7d")
+              ? pedidoVisiveis.filter((c) => c.etapa === col.key)
               : visiveis.filter((c) => c.etapa === col.key);
             let doGrupo = ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === periodoAtivo)
+              ? todosDaEtapa.filter((c) => periodoBruto === "todos" || dentroPeriodo(c.venda_data ?? null, periodoAtivo))
               : ehProspec
               ? todosDaEtapa
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, periodoAtivo));
@@ -2608,7 +2613,7 @@ export default function Page() {
             // contagem por período. pedido_emitido: nº de clientes com venda no período
             // (linhas daquele período na view); demais: por atividade.
             const contaPeriodo = (p: Periodo) => ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === (p === "todos" ? "7d" : p)).length
+              ? todosDaEtapa.filter((c) => p === "todos" || dentroPeriodo(c.venda_data ?? null, p)).length
               : ehProspec
               ? todosDaEtapa.length
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;
