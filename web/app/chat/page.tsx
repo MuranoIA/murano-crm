@@ -1659,6 +1659,13 @@ export default function Chat() {
     />
   );
 
+  // Dentro da lupa a largura util e ~500px: as acoes precisam caber numa linha
+  // so, senao a conversa — que e o motivo da janela existir — fica espremida.
+  // Viram icone; o `title` que cada botao ja tinha vira a legenda no hover.
+  const compacto = embutido;
+  const rot = (icone: string, texto: string) => (compacto ? icone : texto);
+  const padBotao = compacto ? "5px 9px" : "5px 11px";
+
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
 
@@ -1734,10 +1741,11 @@ export default function Chat() {
           )}
         </div>
       )}
-      <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
+      {embutido ? null : <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />}
       {/* ---- barra de navegação do produto (posição do menu do RD Conversas) ----
           Logo à esquerda, abas horizontais do CRM no meio, identidade à direita.
           O Chat vira uma aba do produto, com a aba ativa sublinhada. */}
+      {embutido ? null : (
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, padding: "0 16px", minHeight: 52, background: M.surface, borderBottom: `1px solid ${M.border}`, flexShrink: 0 }}>
         <Logo size={26} />
         <b style={{ fontSize: 16, letterSpacing: 0.2, color: M.wine }}>{modoApp ? "Chat" : "CRM"}</b>
@@ -1793,6 +1801,7 @@ export default function Chat() {
           </>
         )}
       </div>
+      )}
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* ---- sidebar: lista de conversas ---- */}
@@ -2255,8 +2264,8 @@ export default function Chat() {
             {sel && (
               <>
                 {/* cabeçalho da conversa */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: M.surface, borderBottom: `1px solid ${M.border}` }}>
-                  {isMobile && (
+                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : "9px 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: compacto ? "wrap" : "nowrap" }}>
+                  {isMobile && !compacto && (
                     <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
                   <span style={{ width: 34, height: 34, borderRadius: 34, background: M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, flexShrink: 0 }}>
@@ -2288,13 +2297,21 @@ export default function Chat() {
                       )}
                     </span>
                   </span>
+                  {/* No modo compacto as ações ganham FAIXA PRÓPRIA (flexBasis
+                      100%): com ~500px, nome + 6 ações na mesma linha quebravam
+                      em três, e cada quebra come altura da conversa — que é o
+                      motivo de a janela existir. Aqui é uma linha só, sem
+                      quebrar, rolando na horizontal se faltar espaço. */}
+                  <span style={compacto
+                    ? { flexBasis: "100%", display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto", paddingTop: 2 }
+                    : { display: "contents" }}>
                   {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
                   {sel.na_fila && (
                     sessao.carteira ? (
                       <button onClick={puxarDaFila} disabled={puxando} title="Assumir este atendimento"
                         style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: "#1a6b3c", border: "none",
                           borderRadius: 999, padding: "6px 13px", cursor: puxando ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                        {puxando ? "…" : "✋ Pegar atendimento"}
+                        {puxando ? "…" : rot("✋", "✋ Pegar atendimento")}
                       </button>
                     ) : (
                       <span title="admin/supervisão não têm carteira: use Transferir para designar alguém"
@@ -2304,10 +2321,10 @@ export default function Chat() {
                       </span>
                     )
                   )}
-                  {!isMobile && (
-                    <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente"}
-                      style={{ fontSize: 11.5, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      📊 Cliente
+                  {(!isMobile || compacto) && (
+                    <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente (ERP)"}
+                      style={{ fontSize: 11.5, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {rot("📊", "📊 Cliente")}
                     </button>
                   )}
                   {/* ligar: só nas conversas do piloto (Cloud API). `linha.canal`
@@ -2319,26 +2336,27 @@ export default function Chat() {
                     ocupado={lig.ocupado}
                     emChamada={!!lig.chamada}
                     onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
+                    compacto={compacto}
                   />
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
-                    style={{ fontSize: 11.5, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                    ↪ Transferir
+                    style={{ fontSize: 11.5, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    {rot("↪", "↪ Transferir")}
                   </button>
                   {(sel.status ?? "aberta") === "resolvida" ? (
                     <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
-                      style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: "5px 11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      ✓ Resolvida — reabrir
+                      style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {rot("↺", "✓ Resolvida — reabrir")}
                     </button>
                   ) : (
                     <button onClick={() => setResolvendo((v) => !v)} title="Encerrar atendimento com um motivo"
-                      style={{ fontSize: 11.5, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      Resolver
+                      style={{ fontSize: 11.5, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: compacto ? "5px 10px" : "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {rot("✓", "Resolver")}
                     </button>
                   )}
                   {sel.telefone && (
                     <a href={`https://wa.me/${String(sel.telefone).replace(/\D/g, "").length <= 11 ? "55" : ""}${String(sel.telefone).replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" title="Abrir no WhatsApp" style={{ fontSize: 12, fontWeight: 700, color: M.azul, textDecoration: "none", whiteSpace: "nowrap" }}>
-                      WhatsApp ↗
+                      {rot("↗", "WhatsApp ↗")}
                     </a>
                   )}
                   {/* D1 · no celular não há faixa de abas: este é o caminho
@@ -2352,6 +2370,7 @@ export default function Chat() {
                       📊 Cliente
                     </button>
                   )}
+                  </span>
                 </div>
 
                 {/* ---- faixa de abas do contato — exatamente onde o RD a põe
@@ -2785,7 +2804,7 @@ export default function Chat() {
                     onClick={() => arquivoRef.current?.click()}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
@@ -2794,7 +2813,7 @@ export default function Chat() {
                     onClick={alternarGravacao}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
-                    style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
+                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
                       opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
                       border: `1px solid ${gravando ? M.laranja : M.border}`,
                       background: gravando ? "#fdeae3" : M.bg, color: gravando ? M.laranja : M.gray }}
@@ -2828,7 +2847,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -2836,7 +2855,7 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: 42, height: 42, borderRadius: 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>

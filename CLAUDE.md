@@ -3464,3 +3464,33 @@ componente compartilhado: mais limpo no papel, e recusado pelo mesmo motivo da
 §33.2 — aquele arquivo passa de 2.900 linhas com a thread amarrada a presenca,
 ligacao, picker e layout D1, e mexer nele para entregar OUTRA tela e a troca que
 ja custou producao nesta mesma sessao.
+
+
+### 41.5 Compactacao do modo embutido (26/08/2026)
+
+Primeiro retorno do usuario com print: *"o espaco para a conversa em si ficou
+muito estreito... diminuir os icones de ligar, transferir, resolver, de maneira
+que tudo caiba somente em uma linha... chat, indicadores, talvez nao seja viavel
+manter aparecendo nessa visualizacao"*.
+
+Tres desperdicios de altura, todos corrigidos so no modo embutido (`compacto`):
+
+| | antes | agora |
+|---|---|---|
+| barra do produto (logo, "Chat", Indicadores, avatar) | ~52px + faixa de 3px | **some** — dentro da lupa ela nao navega para lugar nenhum |
+| acoes (Cliente, Ligar, Transferir, Resolver, WhatsApp) | texto completo, quebrando em 3 linhas a 500px | **icone so**, numa faixa propria que nao quebra |
+| botoes do compositor | 42x42 | 34x34 |
+
+As acoes ganharam `flexBasis: 100%` para ficar numa linha propria: dividindo a
+faixa com o nome, elas quebravam em tres — e cada quebra come altura da
+conversa, que e o motivo de a janela existir.
+
+O texto de cada acao **nao se perdeu**: virou o `title`, que todos os botoes ja
+tinham. Nada precisou ser inventado.
+
+⚠️ **Licao de metodo.** Duas sondas de DOM me disseram "3 linhas" quando as
+acoes ja estavam em uma: eu media `getBoundingClientRect().top`, e botoes de
+alturas diferentes centralizados na MESMA linha tem tops diferentes. O que
+resolveu foi **capturar a tela** (`Page.captureScreenshot` via CDP) e olhar.
+Para layout, screenshot > sonda numerica — a sonda mede o que voce pensou em
+perguntar, a imagem mostra o que esta la.
