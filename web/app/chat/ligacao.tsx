@@ -426,9 +426,12 @@ export function useLigacao(opts: {
 // seria pior — convida a clicar e ensina que o sistema não funciona. Quem manda
 // de verdade é o servidor, que barra a chamada de qualquer jeito.
 // ---------------------------------------------------------------------------
-export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud }: {
+export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, compacto }: {
   onLigar: () => void;
   ocupado: boolean; emChamada: boolean; temTelefone: boolean; naCloud: boolean;
+  /** dentro da lupa do board a largura util e ~500px: so o icone, com o texto
+   *  no `title` que este botao ja tinha (§41.5) */
+  compacto?: boolean;
 }) {
   if (!temTelefone || !naCloud) return null;
 
@@ -437,10 +440,10 @@ export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud }
     <button onClick={onLigar} disabled={travado}
       title={emChamada ? "já há uma ligação em andamento" : "Ligar para o cliente pelo WhatsApp"}
       style={{ fontSize: 11.5, fontWeight: 700, color: M.verde, background: M.verdeSoft,
-        border: "1px solid #bfe0cb", borderRadius: 999, padding: "5px 11px",
+        border: "1px solid #bfe0cb", borderRadius: 999, padding: compacto ? "5px 9px" : "5px 11px",
         cursor: travado ? "default" : "pointer", opacity: travado ? 0.55 : 1,
         fontFamily: "inherit", whiteSpace: "nowrap" }}>
-      {ocupado ? "…" : "📞 Ligar"}
+      {ocupado ? "…" : compacto ? "📞" : "📞 Ligar"}
     </button>
   );
 }
