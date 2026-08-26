@@ -3403,3 +3403,64 @@ Editar por script uma string TS que contem `
 escapes em quebras de linha reais e quebrou o literal. Segunda vez no dia (a
 primeira foi na §36.4, com `﻿`). **Para strings com escapes, usar edicao
 direta de arquivo, nao substituicao por script.**
+
+
+## 41. A lupa do board VIROU o /chat, embutido (26/08/2026)
+
+Pedido: a lupa devia mostrar a mesma tela do chat — cabecalho com acoes, abas do
+painel, faixa da janela, barra completa do compositor. **A ideia do usuario foi
+melhor que a minha**: em vez de reconstruir aquilo, reusar a **visao de celular**
+do proprio chat.
+
+### 41.1 Por que sai quase de graca — duas coisas que ja existiam
+
+1. **`isMobile` e `window.innerWidth < 768`.** Dentro de um iframe de 500px,
+   `innerWidth` e a largura DELE. A visao de celular liga **sozinha**, sem
+   layout novo. Medido: iframe 500x628, "so a thread", sem a lista.
+2. **`modoApp`** (do PWA, §29) ja escondia a navegacao do topo. Bastou aceitar
+   tambem `?embed=1`.
+
+A lupa passou a ser `<iframe src="/chat?cliente=X&embed=1">`.
+
+### 41.2 O ganho de verdade: uma tela de conversa, nao duas
+
+Quando criei `conversa.tsx` (§33.2), registrei que estava aceitando **duas
+renderizacoes de bolha no projeto** — "mudou o desenho, muda nas duas". Essa
+divida **morreu aqui**: o arquivo foi removido, e agora existe UMA tela de
+conversa. Toda melhoria futura do chat aparece na lupa de graca.
+
+Trocado de barato (o componente enxuto) por completo: a lupa ganhou Pegar
+atendimento, Cliente, Ligar, Transferir, Resolver, abas do painel, respostas
+rapidas, anexo e audio — nada disso ela tinha.
+
+### 41.3 Tres armadilhas tratadas
+
+**Microfone.** `allow="microphone; autoplay; clipboard-write"` NAO e opcional:
+em iframe o padrao do navegador para `microphone` e `self`, entao sem delegacao
+o botao Ligar falha com `NotAllowedError` **e sem prompt** — erro identico ao de
+"o usuario bloqueou", mas nao ha nada que ele possa liberar no cadeado. E a
+armadilha da §22.5, que ja custou uma hora naquela vez.
+
+**A lista nao e carregada.** Embutido mostra UMA conversa; buscar as ~3.900 so
+para isso seria o desperdicio que a §15.1 corrigiu no board. Consequencia: o
+deep link nao pode ESPERAR pela lista — embutido resolve o cliente direto na
+thread.
+
+**Altura por `flex`, nao por pixel.** O cabecalho do card varia (selo de ciclo,
+"sem cadastro", aviso de disparo), entao um calculo fixo sobra ou falta conforme
+o card. O iframe preenche o que sobra (`flex: 1`, `minHeight: 300`) e a janela
+passou a `height: min(78vh, 720px)` — ela hospeda um chat inteiro agora, nao uma
+previa.
+
+### 41.4 O custo assumido
+
+Um segundo React montado dentro do board enquanto a lupa esta aberta: mais
+memoria e ~1s a mais na primeira pintura, alem de uma conexao Realtime extra.
+Aceitavel porque so uma lupa fica aberta por vez — e o preco de nao ter duas
+telas de conversa para manter.
+
+A alternativa era extrair a coluna da thread de `chat/page.tsx` para um
+componente compartilhado: mais limpo no papel, e recusado pelo mesmo motivo da
+§33.2 — aquele arquivo passa de 2.900 linhas com a thread amarrada a presenca,
+ligacao, picker e layout D1, e mexer nele para entregar OUTRA tela e a troca que
+ja custou producao nesta mesma sessao.
