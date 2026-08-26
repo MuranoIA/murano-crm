@@ -55,6 +55,29 @@ const MECANISMOS = [
       "Medido em 25/08 com o RD escondido: 3.769 clientes da carteira têm histórico oculto, " +
       "88.523 mensagens ao todo — 2.553 deles conversaram nos últimos 30 dias.",
   },
+  {
+    chave: "carteira_rd_ativa",
+    rotulo: "Carteira do RD como dono do cliente",
+    resumo:
+      "Hoje o dono de um cliente é o RCA do WinThor e, quando não há RCA, a tag “carteira " +
+      "<nome>” do painel do RD. Desligar tira a segunda metade: só o RCA manda.",
+    desliga: [
+      "A tag de carteira do painel do RD como critério de dono, no board e no chat",
+      "A presença, na carteira de um vendedor, de cliente que o WinThor não atribui a ele",
+    ],
+    mantem: [
+      "O RCA do WinThor, que passa a ser o único critério — é o pedido",
+      "Todos os clientes na tela: quem fica sem RCA vai para a fila de não atribuídos, de onde qualquer um pega",
+      "A coluna `carteira_rd` no banco, intacta, para conferência",
+    ],
+    nota:
+      "Medido em 26/08. Na carteira inteira: 4.420 clientes onde RCA e tag concordam (nada muda), " +
+      "210 onde divergem (o RCA passa a mandar) e 335 que só têm a tag. Desses 335, 233 existem no " +
+      "WinThor sob RCA de outro time — Francisco (2) 76, Jorge (53) 38, Maiara (9) 37, Henry (30) 29, " +
+      "Administrativo Venus (11) 20 — ou seja, nunca foram do IS/ISR; para devolvê-los a um dono, " +
+      "basta cadastrar aquele RCA em carteira_config. No board de hoje o efeito é menor: 78 cards " +
+      "mudam de lugar, e NENHUM deles teve atividade nos últimos 30 dias.",
+  },
 ]  as const;
 
 // O seletor de linhas NÃO é um booleano, então não entra na lista acima: é uma
@@ -102,6 +125,16 @@ export async function GET() {
       mecanismos: MECANISMOS,
       // ENVIO ≠ VISIBILIDADE. São duas perguntas diferentes e a tela precisa
       // dizer isso, senão o admin muda uma achando que mudou a outra.
+      // texto do aviso de pausa (0106): mora no banco porque quem sabe o tom
+      // certo e o time, nao quem faz deploy
+      pausa: {
+        rotulo: "Aviso de pausa",
+        resumo:
+          "O que a cliente recebe quando o vendedor clica em ⏸ no chat. Só é enviado dentro " +
+          "da janela de 24h — fora dela exigiria template, e um aviso de intervalo não vale isso. " +
+          "A rota também recusa repetir para quem já foi avisado.",
+        texto: cfg.texto_pausa,
+      },
       envio: {
         rotulo: "Número de envio",
         resumo:
@@ -173,7 +206,7 @@ export async function PUT(req: Request) {
     const { data, error } = await sb.from("crm_config").upsert({
       id: 1, linhas_visiveis: novo,
       atualizado_por: g.email, atualizado_em: new Date().toISOString(),
-    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
+    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
     const nomes = antes.linhas.filter((l) => escolhidas.includes(l.phone_number_id)).map((l) => l.rotulo);
@@ -184,6 +217,18 @@ export async function PUT(req: Request) {
         ? "Todos os números voltaram a aparecer no board e no chat."
         : `Board e chat passam a enxergar só: ${nomes.join(", ")}. Os demais clientes caem em Prospecção e Ociosos. Quem estiver com a tela aberta vê na próxima atualização.`,
     });
+  }
+
+  // ---- texto do aviso de pausa ---------------------------------------------
+  if (chave === "texto_pausa") {
+    const t = String(valor ?? "").trim();
+    if (t.length < 10) return Response.json({ error: "o aviso precisa de pelo menos 10 caracteres" }, { status: 400 });
+    if (t.length > 900) return Response.json({ error: "o aviso ficou longo demais (máx. 900)" }, { status: 400 });
+    const { error } = await sb.from("crm_config").upsert({
+      id: 1, texto_pausa: t, atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ ok: true, aviso: "Aviso de pausa atualizado." });
   }
 
   // ---- número de envio: três estados, e um deles é NULO ---------------------
@@ -225,7 +270,7 @@ export async function PUT(req: Request) {
     [chave]: valor,
     atualizado_por: g.email,
     atualizado_em: new Date().toISOString(),
-  }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
+  }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -234,8 +279,22 @@ export async function PUT(req: Request) {
       on: "O ciclo volta a aparecer no board, no chat, no disparo em massa e no relatório.",
       off: "O ciclo saiu do board, do chat, do disparo em massa e do relatório.",
     },
+    historico_rd: {
+      on: "O botão “ver histórico anterior” volta a aparecer nas conversas que têm passado no outro número.",
+      off: "O histórico do outro número deixou de ser alcançável pela tela. As mensagens continuam no banco.",
+    },
+    carteira_rd_ativa: {
+      on: "A tag de carteira do RD volta a valer como dono para quem não tem RCA — os clientes voltam às carteiras de antes.",
+      off: "O dono passou a ser só o RCA do WinThor. Quem não tem RCA ativo foi para a fila de não atribuídos, de onde qualquer um pega.",
+    },
   };
-  const a = avisos[chave];
+  // Sem o fallback, um mecanismo novo em MECANISMOS sem linha aqui grava no
+  // banco e SÓ DEPOIS estoura em `a.on` — a chave vira, a tela mostra erro, e
+  // ninguém confia mais no botão. Já aconteceu com `historico_rd`.
+  const a = avisos[chave] ?? {
+    on: `"${chave}" ligado.`,
+    off: `"${chave}" desligado.`,
+  };
 
   return Response.json({
     ok: true,

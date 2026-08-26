@@ -1777,6 +1777,8 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   // checkbox não deve trocar a tela de quinze pessoas.
   const linhasInfo = d.linhas ?? { opcoes: [], selecionadas: [] };
   const envio = d.envio ?? null;
+  const pausa = d.pausa ?? null;
+  const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
   const alternar = (id: string) =>
@@ -1876,6 +1878,27 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             </div>
           );
         })}
+
+        {/* ---- aviso de pausa (0106) --------------------------------------- */}
+        {pausa && (
+          <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2, marginBottom: 4 }}>{pausa.rotulo}</div>
+            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{pausa.resumo}</p>
+            <textarea value={txtPausa} onChange={(e) => setTxtPausa(e.target.value)} rows={3}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 13, fontFamily: "inherit",
+                lineHeight: 1.5, color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9,
+                outline: "none", resize: "vertical" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: M.muted }}>{txtPausa.trim().length} caracteres</span>
+              <span style={{ marginLeft: "auto" }}>
+                <Botao disabled={ocupado || txtPausa.trim() === (pausa.texto ?? "").trim() || txtPausa.trim().length < 10}
+                  onClick={async () => { setOcupado(true); await salvar("texto_pausa", txtPausa.trim()); setOcupado(false); }}>
+                  {ocupado ? "Salvando…" : "Salvar aviso"}
+                </Botao>
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* ---- número de ENVIO (0102) --------------------------------------
             Vem ANTES do seletor de visibilidade de propósito: "por qual número
