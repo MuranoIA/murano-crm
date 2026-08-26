@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
-import { Conversa } from "./conversa";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
 
@@ -2981,7 +2980,7 @@ export default function Page() {
         const zDisparoRecente = !!zUltimoDisparo && diasInativo(zUltimoDisparo) < DIAS_RECONTATO;
         const zUltimaEf = maisRecenteISO(zc.ultima_atividade, disparos[zc.cliente_id]);
         return (
-          <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", maxHeight: "74vh" }}>
+          <div style={{ position: "fixed", left: zoomPos.x, top: zoomPos.y, zIndex: 400, width: 500, maxWidth: "94vw", background: RD.surface, border: `1px solid ${RD.border}`, borderLeft: `4px solid ${RD.wine}`, borderRadius: 10, boxShadow: "0 24px 70px rgba(16,32,64,.3)", display: "flex", flexDirection: "column", height: "min(78vh, 720px)", maxHeight: "78vh" }}>
             <div onMouseDown={zoomOnDown} style={{ cursor: "move", userSelect: "none", padding: "10px 14px 11px", borderBottom: `1px solid ${RD.border}` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ width: 12, height: 12, borderRadius: 3, background: zcol?.cor ?? RD.wine, flexShrink: 0 }} />
@@ -3018,14 +3017,29 @@ export default function Page() {
                 /chat. A janela de 24h é decidida DENTRO do componente, pela
                 última mensagem recebida — não pela etapa do card, que podia
                 estar desatualizada e escondia o campo de quem podia escrever. */}
-            <Conversa
-              clienteId={zc.cliente_id}
-              altura={Math.round(Math.min(420, Math.max(220, window.innerHeight * 0.42)))}
-              recarregar={zoomRefresh}
-              cores={{ ink: RD.navy, gray: RD.gray, grayLight: RD.grayLight, border: RD.border, surface: RD.surface, marca: RD.wine }}
-              aoEnviar={() => void load()}
-              aoPedirTemplate={zid ? () => recontatar(zid!, zc.cliente) : undefined}
-              enviandoTemplate={enviando === zid}
+            {/* ---- a lupa É o /chat, embutido (§41) --------------------------
+                Antes era um componente proprio (`conversa.tsx`), mais enxuto —
+                e uma SEGUNDA renderizacao de bolha no projeto, divida que eu
+                mesmo registrei ao cria-lo. Aqui ela morre: a lupa passa a ter
+                Pegar atendimento, Cliente, Ligar, Transferir, Resolver, as abas
+                do painel, a faixa da janela e a barra completa do compositor —
+                e toda melhoria futura do chat aparece aqui de graca.
+
+                A visao de celular se liga SOZINHA: `isMobile` e
+                `innerWidth < 768`, e dentro do iframe innerWidth e a largura
+                dele (500px).
+
+                ⚠️ `allow` NAO e opcional: em iframe o padrao do navegador para
+                `microphone` e `self`, entao sem delegacao o botao Ligar falha
+                com NotAllowedError E SEM PROMPT — o erro e identico ao de
+                "usuario bloqueou", mas nao ha nada que ele possa liberar no
+                cadeado. Foi a armadilha da §22.5, que ja custou uma hora. */}
+            <iframe
+              key={`${zc.cliente_id}:${zoomRefresh}`}
+              src={`/chat?cliente=${encodeURIComponent(zc.cliente_id)}&embed=1`}
+              title={`Conversa com ${zc.cliente}`}
+              allow="microphone; autoplay; clipboard-write"
+              style={{ width: "100%", flex: 1, minHeight: 300, border: "none", display: "block", background: RD.surface }}
             />
           </div>
         );

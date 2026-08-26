@@ -582,7 +582,18 @@ export default function Chat() {
   // nao no render, porque `ehApp()` lê `window` — calcular direto daria
   // hidratação divergente entre servidor e cliente.
   const [modoApp, setModoApp] = useState(false);
-  useEffect(() => { setModoApp(ehApp()); }, []);
+  // Embutido = a lupa do board, que renderiza esta mesma tela num <iframe>
+  // estreito (§41). Duas consequências, e nenhuma delas precisou de layout novo:
+  //  · `isMobile` é `innerWidth < 768` e, dentro do iframe, innerWidth é a
+  //    largura DELE — a visão de celular se liga sozinha;
+  //  · a navegação do topo já sabe sumir, pelo `modoApp` do PWA.
+  const [embutido, setEmbutido] = useState(false);
+  useEffect(() => {
+    let emb = false;
+    try { emb = new URLSearchParams(window.location.search).get("embed") === "1"; } catch {}
+    setEmbutido(emb);
+    setModoApp(emb || ehApp());
+  }, []);
 
   // ---- notificação com o app fechado (0096) --------------------------------
   // `null` = ainda não sabemos, e nesse estado nada é desenhado: um botão
@@ -660,7 +671,10 @@ export default function Chat() {
   // na thread e monta a conversa — o mesmo caminho do botão + e da carteira.
   useEffect(() => {
     const alvo = clienteDaUrl.current;
-    if (!alvo || jaAbriuDaUrl.current || !conversas.length) return;
+    // Embutido não carrega lista, então não pode esperar por ela — resolve o
+    // cliente direto na thread. Fora dele, espera a lista para poder selecionar
+    // o objeto certo (com não-lidas, status e transferência já resolvidos).
+    if (!alvo || jaAbriuDaUrl.current || (!embutido && !conversas.length)) return;
     jaAbriuDaUrl.current = true;
     const achada = conversas.find((c) => c.cliente_id === alvo);
     if (achada) { abrirRef.current?.(achada); return; }
@@ -677,7 +691,7 @@ export default function Chat() {
         });
       } catch { setAviso("Não consegui abrir essa conversa."); }
     })();
-  }, [conversas]);
+  }, [conversas, embutido]);
 
   // ⚠️ ESTE useEffect FICA AQUI, e não junto do resto da lógica da carteira lá
   // embaixo: a partir da linha ~1426 o componente tem `return` condicional
@@ -864,10 +878,12 @@ export default function Chat() {
   // carga inicial + poll lento (rede de proteção) + Realtime (mesmo canal do board)
   useEffect(() => {
     if (!sessao) return;
-    carregarLista();
+    // Embutido mostra UMA conversa: buscar a lista inteira (~3.900) só para
+    // isso seria o mesmo desperdício que a §15.1 corrigiu no board.
+    if (!embutido) carregarLista();
     carregarRespostas();
     const lento = setInterval(() => {
-      carregarLista();
+      if (!embutido) carregarLista();
       if (selRef.current) carregarThread(selRef.current, false);
     }, 60_000);
 
@@ -939,7 +955,7 @@ export default function Chat() {
       try { canalPresenca?.unsubscribe(); } catch {}
       presencaCanalRef.current = null;
     };
-  }, [sessao, carregarLista, carregarThread, carregarRespostas, rotuloUsuario]);
+  }, [sessao, carregarLista, carregarThread, carregarRespostas, rotuloUsuario, embutido]);
 
   // republica a presença sempre que troco de conversa (ou fecho a thread)
   useEffect(() => {
