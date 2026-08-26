@@ -306,7 +306,84 @@ function Trecho({ texto, termo }: { texto: string; termo: string }) {
 // Conversas nunca teve: o vendedor decide o que responder olhando o histórico de
 // compra, sem trocar de tela.
 // ---------------------------------------------------------------------------
-function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; extra?: any }) {
+// ---------------------------------------------------------------------------
+// Salvar contato — o que faltava para quem chega pela fila de espera.
+//
+// O webhook cria o contato com o nome do PERFIL do WhatsApp, que as vezes e o
+// proprio numero. Sem isto, ele fica assim para sempre: nada no CRM editava
+// `clientes`.
+//
+// O CPF e o campo que importa: `wth_reconciliar_vinculos()` casa CPF e liga o
+// contato ao cadastro do WinThor a cada 10 minutos (§10.5). Preenchido aqui, o
+// card ganha codcli, RCA e historico de compra sozinho — sem escrita paralela
+// que o proprio job poderia desfazer.
+// ---------------------------------------------------------------------------
+function SalvarContato({ atual, salvar, temErp }: {
+  atual?: any;
+  salvar: (d: { nome?: string; cpf?: string }) => Promise<boolean>;
+  temErp: boolean;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [nome, setNome] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+
+  if (!aberto) {
+    return (
+      <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
+        <button onClick={() => { setNome(atual?.nome ?? ""); setCpf(""); setAberto(true); }}
+          style={{ width: "100%", padding: "8px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
+            color: M.wine, background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 9, cursor: "pointer" }}>
+          ✎ Salvar contato
+        </button>
+        {!temErp && (
+          <div style={{ fontSize: 10.5, color: M.gray, marginTop: 6, lineHeight: 1.45 }}>
+            Com o CPF preenchido, o cadastro do WinThor e o histórico de compra aparecem sozinhos.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
+      <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 7 }}>
+        Salvar contato
+      </div>
+      <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do cliente"
+        style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, fontFamily: "inherit",
+          color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 6 }} />
+      <input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="CPF ou CNPJ (opcional)" inputMode="numeric"
+        style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, fontFamily: "inherit",
+          color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 8 }} />
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <button onClick={() => setAberto(false)}
+          style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", color: M.gray,
+            background: "transparent", border: `1px solid ${M.border}`, borderRadius: 8, cursor: "pointer" }}>
+          Cancelar
+        </button>
+        <button disabled={ocupado || nome.trim().length < 2}
+          onClick={async () => {
+            setOcupado(true);
+            const ok = await salvar({ nome: nome.trim(), cpf: cpf.trim() || undefined });
+            setOcupado(false);
+            if (ok) setAberto(false);
+          }}
+          style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: "#fff",
+            background: ocupado || nome.trim().length < 2 ? M.muted : M.azul, border: "none", borderRadius: 8,
+            cursor: ocupado || nome.trim().length < 2 ? "default" : "pointer" }}>
+          {ocupado ? "Salvando…" : "Salvar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PainelContato({ c, aba, extra, salvarContato }: {
+  c: Contato | null; aba: AbaContato; extra?: any;
+  /** salvar nome/CPF do contato — ausente quando não há o que salvar */
+  salvarContato?: (dados: { nome?: string; cpf?: string }) => Promise<boolean>;
+}) {
   if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
   const { compras, ciclo, funil, ultimas_notas } = c;
 
@@ -408,6 +485,7 @@ function PainelContato({ c, aba, extra }: { c: Contato | null; aba: AbaContato; 
           ) : (
             <Vazio t="Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP." />
           )}
+          {salvarContato && <SalvarContato atual={extra} salvar={salvarContato} temErp={!!compras} />}
         </>
       )}
 
@@ -1124,6 +1202,35 @@ export default function Chat() {
     abrir(conv);
   }
 
+  // Salva nome/CPF do contato. Só faz sentido para contato NOSSO (`wa:`) ou do
+  // RD — card sintético do ERP não é contato, é cliente, e a rota recusa.
+  function carregarContatoDe(clienteId: string) {
+    fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(clienteId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
+      .catch(() => setContato(null));
+  }
+
+  async function salvarContato(dados: { nome?: string; cpf?: string }): Promise<boolean> {
+    if (!sel) return false;
+    try {
+      const r = await fetch("/api/chat/contato", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, ...dados }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setAviso(j?.error ?? `não consegui salvar (erro ${r.status})`); return false; }
+      // reflete na hora, na lista e no cabeçalho, sem esperar o próximo load
+      if (dados.nome) {
+        setSel((s) => (s ? { ...s, cliente: dados.nome! } : s));
+        setConversas((cs) => cs.map((x) => (x.cliente_id === sel.cliente_id ? { ...x, cliente: dados.nome! } : x)));
+      }
+      setAviso(j?.aviso ?? "Contato salvo.");
+      carregarContatoDe(sel.cliente_id);
+      return true;
+    } catch (e: any) { setAviso(String(e?.message ?? e)); return false; }
+  }
+
   function abrir(c: Conversa) {
     setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
@@ -1137,10 +1244,7 @@ export default function Chat() {
     setAbaContato(abaPadrao);
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
-    fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
-      .catch(() => setContato(null));
+    carregarContatoDe(c.cliente_id);
     // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
     if (c.nao_lida) {
       setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
@@ -2977,6 +3081,7 @@ export default function Chat() {
             <PainelContato
               c={contato}
               aba={abaAtual}
+              salvarContato={sel && !sel.cliente_id.startsWith("winthor:") && !sel.cliente_id.startsWith("venda:") ? salvarContato : undefined}
               extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
             />
           </div>
@@ -3020,6 +3125,7 @@ export default function Chat() {
                 <PainelContato
                   c={contato}
                   aba={abaAtual}
+              salvarContato={sel && !sel.cliente_id.startsWith("winthor:") && !sel.cliente_id.startsWith("venda:") ? salvarContato : undefined}
                   extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
                 />
               </div>

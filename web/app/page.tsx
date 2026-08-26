@@ -2549,7 +2549,25 @@ export default function Page() {
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: isMobile ? 10 : 12, alignItems: "start" }}>
+        {/* As colunas fluem na HORIZONTAL e rolam — não quebram linha.
+            Antes era `repeat(5, ...)` fixo: ao entrar a sexta (Vender novamente,
+            0105) ela caía para baixo da Lista de prospecção, porque a grade só
+            tinha cinco trilhas.
+
+            `gridAutoFlow: column` + `gridAutoColumns: minmax(330px, 1fr)` mantém
+            a largura que as colunas já tinham (~334px com cinco) e deixa a
+            sexta transbordar para a barra de rolagem, em vez de encolher todas.
+            Acrescentar uma sétima coluna um dia não vai exigir mexer aqui. */}
+        <div style={{
+          display: "grid",
+          gridAutoFlow: isMobile ? "row" : "column",
+          gridAutoColumns: isMobile ? "1fr" : "minmax(330px, 1fr)",
+          gap: isMobile ? 10 : 12,
+          alignItems: "start",
+          overflowX: isMobile ? "visible" : "auto",
+          // respiro para a barra não encostar no rodapé dos cards
+          paddingBottom: isMobile ? 0 : 10,
+        }}>
           {COLUNAS.map((col) => {
             // as duas colunas de venda vem de `pedidoVisiveis`, com a etapa
             // ja decidida no banco (0105); as demais, da vw_funil

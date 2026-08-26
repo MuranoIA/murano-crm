@@ -1,6 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
+import { carteiraDe } from "../../../../lib/papel";
+import { carregarAtribuicoes, donoEfetivo } from "../../../../lib/chatEscopo";
+import { normalizarTelefone } from "../../../../lib/telefone";
 
 export const dynamic = "force-dynamic";
 
@@ -61,5 +64,104 @@ export async function GET(req: Request) {
     ciclo: cicloRow,
     funil,
     ultimas_notas: ultimas.data ?? [],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SALVAR CONTATO — dar nome (e CPF) a quem chegou pela fila de espera.
+//
+// Pedido do usuário (26/08/2026): *"contatos novos que caem em fila de espera,
+// o vendedor atende, como ele faz pra salvar? se nao houver essa funcionalidade,
+// deve ser implementada"*. Não havia: `clientes` só era escrita pelo ETL, pelo
+// webhook e pela criação — nada editava.
+//
+// O contato que o webhook cria tem o nome do PERFIL do WhatsApp, que às vezes é
+// o próprio número (hoje há um chamado "551152826842" na fila). Sem poder
+// renomear, ele fica assim para sempre.
+//
+// ---------------------------------------------------------------------------
+// O CPF É O QUE LIGA O CONTATO AO ERP — E ELE SE LIGA SOZINHO
+//
+// Não escrevo `wth_vinculo` na mão: `wth_reconciliar_vinculos()` casa CPF e
+// preenche o vínculo a cada 10 minutos (§10.5). Gravando o CPF aqui, em até
+// dez minutos o card ganha codcli, RCA oficial e todo o histórico de compra —
+// pela máquina que já existe, em vez de uma escrita paralela que o próprio job
+// poderia desfazer depois.
+//
+// ⚠️ Por que a edição PERSISTE (verificado antes de escrever): o ETL só faz
+// `clientes.set(...)` dentro do laço dos NOVOS — contato já conhecido é
+// filtrado antes (§25.2) —, e o webhook só cria quando não acha por telefone.
+// Nenhum dos dois reescreve nome de contato existente.
+// ---------------------------------------------------------------------------
+export async function PATCH(req: Request) {
+  const sessao = cookies().get("crm_sessao")?.value;
+  if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
+
+  let b: any;
+  try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
+  const cliente_id = String(b?.cliente_id ?? "");
+  if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
+  if (cliente_id.includes(":") && !cliente_id.startsWith("wa:")) {
+    return Response.json({ error: "este card não é um contato — é um cliente do ERP" }, { status: 422 });
+  }
+
+  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
+  const sb = createClient(url, key, { auth: { persistSession: false } });
+
+  // Quem pode salvar: o dono efetivo da conversa, ou admin/home. Um vendedor não
+  // renomeia contato da carteira de outro — mesma régua do /api/chat/transferir.
+  const minha = carteiraDe(sessao);
+  if (minha) {
+    const [{ data: f }, atrib] = await Promise.all([
+      sb.from(VIEW_FUNIL_TELA).select("vendedor").eq("cliente_id", cliente_id).maybeSingle(),
+      carregarAtribuicoes(sb),
+    ]);
+    const dono = donoEfetivo(cliente_id, (f as any)?.vendedor ?? null, atrib);
+    // dono NULO = está na fila, e a fila é de todos: quem atende pode salvar
+    if (dono && dono !== minha) {
+      return Response.json({ error: "esta conversa é de outra carteira" }, { status: 403 });
+    }
+  }
+
+  const campos: Record<string, any> = {};
+
+  if (b?.nome !== undefined) {
+    const nome = String(b.nome ?? "").trim();
+    if (nome.length < 2) return Response.json({ error: "informe um nome" }, { status: 400 });
+    campos.nome_completo = nome;
+  }
+
+  if (b?.cpf !== undefined) {
+    const cpf = String(b.cpf ?? "").replace(/\D/g, "");
+    if (cpf === "") {
+      campos.cpf = null;
+    } else if (cpf.length !== 11 && cpf.length !== 14) {
+      // 11 = CPF, 14 = CNPJ (a base tem os dois). Recusar o incompleto evita
+      // gravar algo que nunca vai casar no reconciliador e ficar parecendo bug.
+      return Response.json({ error: "CPF/CNPJ incompleto" }, { status: 400 });
+    } else {
+      campos.cpf = cpf;
+    }
+  }
+
+  if (b?.telefone !== undefined) {
+    const tel = normalizarTelefone(String(b.telefone ?? ""));
+    if (!tel) return Response.json({ error: "telefone inválido — use DDD" }, { status: 400 });
+    campos.telefone = tel;
+  }
+
+  if (!Object.keys(campos).length) {
+    return Response.json({ error: "nada para salvar" }, { status: 400 });
+  }
+
+  const { error } = await sb.from("clientes").update(campos).eq("id", cliente_id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  return Response.json({
+    ok: true,
+    aviso: campos.cpf
+      ? "Salvo. Com o CPF preenchido, o vínculo com o cadastro do WinThor aparece em até 10 minutos, junto com o histórico de compra."
+      : "Contato salvo.",
   });
 }
