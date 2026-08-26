@@ -35,6 +35,26 @@ const MECANISMOS = [
       "Nada é apagado. A tabela wth_ciclo continua sendo atualizada a cada 10 minutos " +
       "pelo sync do WinThor, então religar mostra o dado de agora, não um buraco.",
   },
+  {
+    chave: "historico_rd",
+    rotulo: "Histórico do outro número na conversa",
+    resumo:
+      "Quando um cliente tem conversa num número que a seleção acima esconde, oferece " +
+      "o botão “ver histórico anterior” dentro da thread — o mesmo gesto do RD Conversas.",
+    desliga: [
+      "O botão “ver histórico anterior” no chat e no card ampliado",
+      "O acesso, pela tela, às mensagens do número escondido",
+    ],
+    mantem: [
+      "As mensagens no banco — o ETL segue trazendo tudo",
+      "A conversa do número em uso, que é o que a thread mostra por padrão",
+      "A janela de 24h, que continua contando só o número de envio",
+    ],
+    nota:
+      "Desligada, simula o cenário depois do corte: nenhum histórico do RD em lugar nenhum. " +
+      "Medido em 25/08 com o RD escondido: 3.769 clientes da carteira têm histórico oculto, " +
+      "88.523 mensagens ao todo — 2.553 deles conversaram nos últimos 30 dias.",
+  },
 ]  as const;
 
 // O seletor de linhas NÃO é um booleano, então não entra na lista acima: é uma

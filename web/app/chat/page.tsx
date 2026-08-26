@@ -673,6 +673,10 @@ export default function Chat() {
   // progresso do envio em lote (várias fotos de uma vez)
   const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
   const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
+  // histórico do outro número (0103): quantas mensagens a seleção de linhas
+  // esconde nesta conversa, e se já foram trazidas
+  const [ocultas, setOcultas] = useState(0);
+  const [comHistorico, setComHistorico] = useState(false);
   const [contato, setContato] = useState<Contato | null>(null);
   // Motor de ciclo (crm_config, 0097). Estado SEPARADO de `contato` de propósito:
   // `contato` volta a null a cada conversa aberta, e ler o interruptor de lá faria
@@ -778,12 +782,16 @@ export default function Chat() {
       .catch(() => {});
   }, []);
 
-  const carregarThread = useCallback(async (c: Conversa, scroll = true) => {
-    const r = await fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}`, { cache: "no-store" });
+  const carregarThread = useCallback(async (c: Conversa, scroll = true, historico = false) => {
+    const r = await fetch(
+      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}${historico ? "&historico=1" : ""}`,
+      { cache: "no-store" });
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     setMsgs(j?.mensagens ?? []);
     setCanalEnvio(j?.canal_envio ?? null);
+    setOcultas(j?.historico_oculto ?? 0);
+    setComHistorico(!!j?.historico_carregado);
     setNotas(j?.notas ?? []);
     setTransferencias(j?.transferencias ?? []);
     setLigacoes(j?.ligacoes ?? []);
@@ -2376,7 +2384,35 @@ export default function Chat() {
                 {/* mensagens */}
                 <div ref={rolagemRef} style={{ position: "relative", flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
-                  {msgs?.length === 0 && !notas.length && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
+                  {msgs?.length === 0 && !notas.length && ocultas === 0 && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
+
+                  {/* Histórico do outro número, a um clique — como o RD faz (0103).
+                      Fica no TOPO porque é o que vem antes na linha do tempo. Sem
+                      isto, uma conversa com 23 mensagens no RD dizia "Sem mensagens
+                      ainda", e o vendedor ligava achando que era o primeiro contato. */}
+                  {ocultas > 0 && !comHistorico && sel && (
+                    <div style={{ textAlign: "center", padding: "2px 0 10px" }}>
+                      <button
+                        onClick={() => void carregarThread(sel, false, true)}
+                        style={{ fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                          color: M.azul, background: M.surface, border: `1px solid ${M.border}`,
+                          borderRadius: 999, padding: "6px 16px" }}>
+                        ↑ Ver histórico anterior ({ocultas})
+                      </button>
+                      <div style={{ fontSize: 10.5, color: M.muted, marginTop: 4 }}>
+                        conversas deste cliente no Murano Pro (RD Conversas)
+                      </div>
+                    </div>
+                  )}
+                  {comHistorico && (
+                    <div style={{ textAlign: "center", padding: "2px 0 6px" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface,
+                        border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px" }}>
+                        inclui o histórico do Murano Pro (RD Conversas)
+                      </span>
+                    </div>
+                  )}
+
                   {grupos.map((g) => (
                     <div key={g.dia} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <div style={{ alignSelf: "center", fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px", margin: "8px 0 4px" }}>
