@@ -3558,3 +3558,55 @@ lados com dado real antes de dar por pronto.** Escrever `<= 18` de um lado e
   (3a vez: §36.4, §40.4, aqui). Para strings com escapes, edicao direta.
 - **`rm -rf .next` com o `next start` rodando** travou um build por mais de 20
   minutos. Matar o servidor antes de limpar.
+
+
+## 43. Colunas rolam na horizontal, e "salvar contato" (26/08/2026)
+
+### 43.1 A sexta coluna caia para baixo
+
+`gridTemplateColumns: repeat(5, minmax(0,1fr))` — **cinco trilhas fixas**. Ao
+entrar Vender novamente (0105), ela quebrava linha e aparecia sob a Lista de
+prospeccao.
+
+Trocado por `gridAutoFlow: column` + `gridAutoColumns: minmax(330px, 1fr)` +
+`overflowX: auto`. Mantem a largura que as colunas ja tinham (~334px com cinco),
+deixa a sexta transbordar para a barra em vez de encolher todas, e **uma setima
+coluna um dia nao vai exigir mexer aqui**. Medido: 6 colunas em 1 linha, 330px
+cada, `scrollWidth 2040 > clientWidth 1440`.
+
+### 43.2 Nao existia como SALVAR um contato
+
+Pergunta do usuario: *"contatos novos que caem em fila de espera, o vendedor
+atende, como ele faz pra salvar?"*. Conferido: **nao existia**. `clientes` so era
+escrita pelo ETL, pelo webhook e pela criacao — nada editava.
+
+Consequencia visivel: o webhook grava o nome do PERFIL do WhatsApp, que as vezes
+e o proprio numero. Havia um contato na fila chamado literalmente
+**"551152826842"**, e ele ficaria assim para sempre.
+
+O ✋ **Pegar atendimento ja resolvia o DONO** (via `chat_transferencia`); o que
+faltava era a IDENTIDADE.
+
+### 43.3 O CPF liga ao ERP sozinho — nao escrever `wth_vinculo` a mao
+
+`wth_reconciliar_vinculos()` casa CPF e preenche o vinculo a cada 10 minutos
+(§10.5). Gravando o CPF em `clientes`, o card ganha codcli, RCA oficial e todo o
+historico de compra **pela maquina que ja existe** — em vez de uma escrita
+paralela que o proprio job poderia desfazer no ciclo seguinte.
+
+Por isso o formulario e so **nome + CPF/CNPJ**, e o aviso diz que o vinculo
+aparece "em ate 10 minutos".
+
+⚠️ **Verificado ANTES de escrever que a edicao persiste:** o ETL so faz
+`clientes.set(...)` dentro do laco dos NOVOS — contato conhecido e filtrado
+antes (§25.2) — e o webhook so cria quando nao acha por telefone. Nenhum dos
+dois reescreve nome de contato existente. Sem essa checagem, o nome salvo
+poderia ser sobrescrito na proxima sincronizacao e ninguem entenderia por que.
+
+### 43.4 Permissao
+
+Dono efetivo da conversa, ou admin/home. **Dono NULO nao bloqueia**: a fila e de
+todos, e quem atende precisa poder salvar — era o caso do pedido. Card sintetico
+do ERP (`winthor:`/`venda:`) e recusado com 422: nao e contato, e cliente.
+
+Verificado na rota: CPF incompleto recusa, card do ERP recusa, nome valido grava.
