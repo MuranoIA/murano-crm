@@ -3336,3 +3336,70 @@ Registradas tambem na memoria (`crm-proximas-features`):
 3. **Pedido emitido nao pode FIXAR o card**: gatilho continua a nota fiscal, mas
    **7 dias apos a compra o card volta para Lista de prospeccao**. O usuario
    autorizou **substituir a regra do mes corrente** (§32.6), que conflita.
+
+
+## 40. Board aponta para o nosso chat, e Pedido emitido para de fixar o card (25-26/08/2026) — migration 0104
+
+Dois itens da lista que o usuario deixou ao encerrar o dia.
+
+### 40.1 Clicar no card abre o NOSSO chat
+
+`page.tsx` mandava para `app.tallos.com.br/app/chat/<id>` — tirava o vendedor do
+sistema **no gesto mais frequente da tela**, e com o RD sendo aposentado mandava
+para o lugar errado. Agora `router.push('/chat?cliente=<id>')`, na mesma aba:
+board e chat sao o mesmo app, entao navegar e instantaneo e o voltar funciona.
+
+Card de prospeccao (`winthor:<codcli>`) nao tem thread — usa o `rd_cliente_id`,
+que e o contato real casado por telefone; sem ele, segue abrindo o `wa.me`.
+
+No `/chat`, `?cliente=` e lido **uma vez** e guardado em ref: sem isso, qualquer
+recarga da lista puxaria a selecao de volta, tirando o vendedor de onde ele foi
+parar. Se o cliente nao esta na lista (contato sem conversa, ou fora do filtro),
+busca o minimo em `/api/chat/thread` e monta a conversa — mesmo caminho do botao
++ e da aba de carteira.
+
+⚠️ O efeito do deep link roda ACIMA de `abrir()` no arquivo, e hook nao pode
+descer para depois do `return` condicional (§38.4). A ponte e um `abrirRef`.
+
+### 40.2 Pedido emitido: 7 dias, nao o mes
+
+Pedido do usuario: *"o comportamento do board esta fixando o card la, eu nao
+quero isso, quero que ele se mova igual aos outros... 7 dias apos a compra
+realizada, esse card pode ir para lista de prospeccao"*. Autorizou substituir a
+regra antiga.
+
+**Isto substitui a §32.6**, escrita poucas horas antes. Aquela consertou o card
+que nunca saia (a coluna acumulava desde abril) fazendo a coluna ser o mes
+corrente — mas mantinha um degrau: quem comprava no dia 2 ficava preso quase 30
+dias. A regra nova e por **idade da compra**, nao por calendario.
+
+Medido em 25/08: a coluna cai de **594 para 167 clientes**; para a Milene, de
+145 para 41, e a prospeccao dela sobe de 367 para 460. Os que saem **nao somem**
+— voltam para prospeccao ou para a etapa que a conversa indicar.
+
+⚠️ **SAO DOIS LADOS, e esquecer um deles faz o card sumir da tela.**
+
+| lado | o que faz |
+|---|---|
+| `vw_pedido_bi_card` | ganhou o periodo `7d`, que passa a ser o universo da coluna |
+| prospeccao das views do funil | EXCLUI quem comprou — precisou passar de "no mes" para "nos ultimos 7 dias" |
+
+Se so o primeiro mudasse, o cliente que sai da coluna aos 7 dias ficaria **fora
+das duas** ate o dia 1o. As duas views (`vw_funil` do ETL e `vw_funil_visivel`
+da tela) andam juntas pelo motivo da §32.2. Conferido: prospeccao 4.524 + coluna
+167 = **4.691**, a carteira exata, com zero `cliente_id` duplicado.
+
+### 40.3 O KPI do cabecalho segue sendo o do MES — e agora diz isso
+
+O total "R$ X · N VENDAS" continua acumulando o mes, porque e o numero comercial
+que o time acompanha. Mas com a coluna em 7 dias os dois **passam a discordar na
+tela**, e sem rotulo pareceria que um deles esta errado. Ganhou o selo **NO MES**
+e o `title` explica a diferenca.
+
+### 40.4 Armadilha de edicao, de novo
+
+Editar por script uma string TS que contem `
+` literais: o helper converteu os
+escapes em quebras de linha reais e quebrou o literal. Segunda vez no dia (a
+primeira foi na §36.4, com `﻿`). **Para strings com escapes, usar edicao
+direta de arquivo, nao substituicao por script.**

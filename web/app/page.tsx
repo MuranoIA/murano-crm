@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { Conversa } from "./conversa";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
@@ -118,7 +119,10 @@ function ehAlerta(c: Card, ackMs?: number): boolean {
   return true;
 }
 
-const URL_CHAT = "https://app.tallos.com.br/app/chat"; // deep link do RD Conversas (por cliente_id)
+// O board abre a conversa NO NOSSO CHAT (25/08/2026). Antes mandava para
+// `app.tallos.com.br/app/chat/<id>`, o que tirava o vendedor do sistema no
+// gesto mais frequente da tela — e, com o RD sendo aposentado, mandava para o
+// lugar errado. `/chat?cliente=<id>` seleciona a conversa ao abrir.
 const URL_CONSULTA = "https://consultaclientes.muranoprofessional.com.br"; // Consulta Clientes (deep link por ?codcli=)
 // código WinThor do cliente (pro botão "C"): coluna codcli, ou parse do cliente_id sintético
 function codcliDe(c: Card): number | null {
@@ -158,8 +162,8 @@ const COLUNAS = [
     regras: "Um card cai aqui quando:\n• a última mensagem real é do operador E é um template (você disparou e aguarda a 1ª resposta).\n\nAutomações:\n• cliente responde → Negociação;\n• passou +24h sem resposta → Ociosos;\n• parado +4 dias → o botão TEMPLATE reaparece pra reenviar." },
   { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h",
     regras: "Um card cai aqui quando:\n• há troca ativa nas últimas 24h (o cliente falou por último há menos de 24h, ou você falou fora de template).\n\nAutomações:\n• alerta vermelho 'AGUARDA RESPOSTA' se o cliente falou por último e você está +10 min sem responder (some ao clicar no card, volta se ele mandar msg nova);\n• passou 24h sem novo template → Ociosos;\n• fechou venda no mês → Pedido Emitido." },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "venda no mês — zera dia 1º", subLong: "venda no mês corrente; zera no dia 1º de cada mês",
-    regras: "Um card cai aqui quando há venda no mês corrente (fuso de Brasília):\n• nota fiscal faturada no WinThor (fonte principal), OU\n• texto '*pedido faturado*' / '*pedido finalizado*' na conversa, OU\n• tabulação 'venda_realizada'.\n\nAutomações:\n• expira sozinho no dia 1º de cada mês → volta pra Ociosos/Negociação;\n• o cabeçalho mostra o total R$ faturado no período." },
+  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "comprou nos últimos 7 dias", subLong: "venda nos últimos 7 dias; depois o card volta a se mover",
+    regras: "Um card cai aqui quando há nota fiscal faturada no WinThor nos ÚLTIMOS 7 DIAS (fuso de Brasília).\n\nAutomações:\n• 7 dias após a compra o card SAI daqui sozinho e volta a se mover como os outros — Lista de prospecção, ou a etapa que a conversa dele indicar;\n• o total R$ do cabeçalho continua sendo o do MÊS (é o número comercial que o time acompanha), então ele não coincide com esta coluna de propósito." },
 ] as const;
 
 // categorias do motor de ciclo de compra (análise preditiva, tipo_oportunidade)
@@ -278,7 +282,9 @@ const CARD_ALTURA = 168;    // altura fixa do card (simétrico) — nome em até
 // Períodos de atividade. "hoje/semana/quinzena/mês" são janelas cumulativas; "ontem"
 // é o dia-calendário anterior (só no dropdown, não nos chips). "todos" = sem filtro.
 // Cards de prospecção (ultima_atividade null) só aparecem em "todos".
-type Periodo = "todos" | "hoje" | "ontem" | "semana" | "quinzena" | "mes";
+// "7d" só existe na coluna Pedido emitido: é o universo dela desde a 0104 (o
+// card sai 7 dias após a compra), não uma opção do dropdown de período.
+type Periodo = "todos" | "hoje" | "ontem" | "semana" | "quinzena" | "mes" | "7d";
 const PERIODOS: { key: Exclude<Periodo, "todos" | "ontem">; label: string; dias: number }[] = [
   { key: "hoje", label: "hoje", dias: 0 },       // 0 = dia-calendário (via ehHoje), não 24h móveis
   { key: "semana", label: "semana", dias: 7 },
@@ -318,6 +324,7 @@ export default function Page() {
     escolherTema(ordem[(ordem.indexOf(tema) + 1) % ordem.length]);
   };
 
+  const router = useRouter();
   const [cards, setCards] = useState<Card[]>([]);
   const [disparos, setDisparos] = useState<Record<string, string>>({});
   // cores dos vendedores vindas da carteira_config (via API) — pra vendedor novo não exigir código
@@ -869,8 +876,10 @@ export default function Page() {
   // Conversas E "reconhece" o card (silencia o alerta na hora).
   function abrirConversa(c: Card) {
     if (ehSintetico(c)) {
-      // prospecção: se o cliente JÁ tem contato no RD Conversas, abre o RD; senão, WhatsApp cru.
-      if (c.rd_cliente_id) { window.open(`${URL_CHAT}/${c.rd_cliente_id}`, "rdconversas"); return; }
+      // prospecção: o card é `winthor:<codcli>` e não tem thread. Se existe um
+      // contato de verdade por trás (`rd_cliente_id`, casado por telefone),
+      // abre a conversa dele; senão, o WhatsApp cru pelo número.
+      if (c.rd_cliente_id) { router.push(`/chat?cliente=${encodeURIComponent(c.rd_cliente_id)}`); return; }
       if (c.telefone) window.open(`https://wa.me/${c.telefone.replace(/\D/g, "")}`, "whatsapp");
       return;
     }
@@ -880,7 +889,10 @@ export default function Page() {
       try { localStorage.setItem(ACKS_KEY, JSON.stringify(prox)); } catch {}
       return prox;
     });
-    window.open(`${URL_CHAT}/${c.cliente_id}`, "rdconversas");
+    // Mesma aba: board e chat são o mesmo app, então navegar é instantâneo e o
+    // botão voltar funciona. Abrir em aba nova fazia sentido quando o destino
+    // era outro sistema.
+    router.push(`/chat?cliente=${encodeURIComponent(c.cliente_id)}`);
   }
 
   // checa a sessão ao montar + carrega acks salvos (limpa os antigos)
@@ -1192,7 +1204,7 @@ export default function Page() {
   // compradores do mês (coluna Pedido emitido). Como são mutuamente exclusivos, a soma
   // dá a carteira inteira sem duplicar.
   const pedidoMesCount = useMemo(
-    () => pedidoVisiveis.filter((c) => c.periodo === "mes").length,
+    () => pedidoVisiveis.filter((c) => c.periodo === "7d").length,
     [pedidoVisiveis]
   );
   // "na carteira" = só quem é CADASTRADO no WinThor (decisão de 06/08/2026).
@@ -1332,6 +1344,9 @@ export default function Page() {
     // "todos" ele somava desde abril (R$ 2,45 mi contra R$ 375 mil do mês) —
     // um número que ninguém conferia porque parecia grande demais para estar errado.
     const bruto = periodoPorColuna["pedido_emitido"] ?? "todos";
+    // O KPI segue o MÊS mesmo com a coluna em 7 dias (0104): é o número que o
+    // time acompanha. Mas os dois passam a discordar na tela, então o rótulo
+    // abaixo diz de qual período ele é — senão parece que um deles está errado.
     const per = bruto === "todos" ? "mes" : bruto;
     const vt = filtro === "todos" ? Object.values(vendasTotais) : (vendasTotais[filtro] ? [vendasTotais[filtro]] : []);
     return {
@@ -2459,11 +2474,16 @@ export default function Page() {
           </button>
           <div style={{ marginLeft: isMobile ? 0 : "auto", display: "flex", alignItems: "flex-end", gap: 8, flexWrap: isMobile ? "wrap" : "nowrap" }}>
             <div
-              title="Faturado no período (bruto, quem lançou). É o total do mês, mesmo que alguns compradores estejam noutras etapas do funil."
+              title="Faturado no MÊS (bruto, por quem lançou). A coluna Pedido emitido mostra os últimos 7 dias, então os dois números não coincidem de propósito — este é o acumulado do mês."
               style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, boxSizing: "border-box", padding: "0 10px", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 8, whiteSpace: "nowrap", marginLeft: 12 }}
             >
               <b style={{ fontSize: 12.5, color: "#15803d", lineHeight: 1 }}>{moedaBR(vendaMes.total)}</b>
               <span style={{ fontSize: 9.5, color: "#15803d", fontWeight: 700, whiteSpace: "nowrap" }}>{vendaMes.vendas} VENDAS</span>
+              {/* rótulo do período: a coluna ao lado passou a mostrar 7 dias
+                  (0104) e sem isto os dois números pareceriam contraditórios */}
+              <span style={{ fontSize: 9, color: "#15803d", opacity: 0.75, fontWeight: 700, whiteSpace: "nowrap" }}>
+                {vendaMes.per === "mes" ? "NO MÊS" : vendaMes.per.toUpperCase()}
+              </span>
             </div>
           </div>
           {/* Vendedor: "na carteira" no fim da linha única (não tem a linha de cima) */}
@@ -2540,7 +2560,7 @@ export default function Page() {
             // "todos" ali deixaria esta coluna procurando um bucket que o servidor
             // não manda mais — vazia, sem nada explicando.
             const periodoBruto = periodoPorColuna[col.key] ?? "todos";
-            const periodoAtivo: Periodo = ehPedido && periodoBruto === "todos" ? "mes" : periodoBruto;
+            const periodoAtivo: Periodo = ehPedido && periodoBruto === "todos" ? "7d" : periodoBruto;
             const ehProspec = col.key === "prospeccao";
             // atividade EFETIVA do card = a mais recente entre a última msg (RD) e o
             // disparo de template nosso (disparos_template). Assim um card que você
@@ -2550,7 +2570,7 @@ export default function Page() {
             // prospecção: carteira nunca contatada, sem data -> ignora o período;
             // demais colunas: da vw_funil filtrada por atividade.
             const todosDaEtapa = ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === "mes")
+              ? pedidoVisiveis.filter((c) => c.periodo === "7d")
               : visiveis.filter((c) => c.etapa === col.key);
             let doGrupo = ehPedido
               ? pedidoVisiveis.filter((c) => c.periodo === periodoAtivo)
@@ -2589,7 +2609,7 @@ export default function Page() {
             // contagem por período. pedido_emitido: nº de clientes com venda no período
             // (linhas daquele período na view); demais: por atividade.
             const contaPeriodo = (p: Periodo) => ehPedido
-              ? pedidoVisiveis.filter((c) => c.periodo === (p === "todos" ? "mes" : p)).length
+              ? pedidoVisiveis.filter((c) => c.periodo === (p === "todos" ? "7d" : p)).length
               : ehProspec
               ? todosDaEtapa.length
               : todosDaEtapa.filter((c) => dentroPeriodo(c.ultima_atividade, p)).length;

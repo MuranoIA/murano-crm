@@ -648,6 +648,37 @@ export default function Chat() {
     finally { setCarteiraCarregando(false); }
   }, []);
 
+  // Lê o `?cliente=` uma vez, na montagem. `useSearchParams` do Next exigiria
+  // <Suspense> em volta da página inteira; a querystring aqui é um parâmetro de
+  // navegação simples, e ler do `location` evita esse arrasto.
+  useEffect(() => {
+    try { clienteDaUrl.current = new URLSearchParams(window.location.search).get("cliente"); } catch {}
+  }, []);
+
+  // Assim que a lista chega, seleciona o cliente que veio na URL. Se ele não
+  // estiver na lista (contato sem conversa, ou fora do filtro), busca o mínimo
+  // na thread e monta a conversa — o mesmo caminho do botão + e da carteira.
+  useEffect(() => {
+    const alvo = clienteDaUrl.current;
+    if (!alvo || jaAbriuDaUrl.current || !conversas.length) return;
+    jaAbriuDaUrl.current = true;
+    const achada = conversas.find((c) => c.cliente_id === alvo);
+    if (achada) { abrirRef.current?.(achada); return; }
+    void (async () => {
+      try {
+        const r = await fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(alvo)}`, { cache: "no-store" });
+        const j = await r.json().catch(() => null);
+        const cli = j?.cliente;
+        if (!cli) { setAviso("Não encontrei essa conversa."); return; }
+        abrirRef.current?.({
+          cliente_id: cli.id, cliente: cli.nome, vendedor: cli.carteira ?? null,
+          etapa: null, telefone: cli.telefone ?? null, ultima_atividade: null,
+          ultima_mensagem: null, ultima_enviada_por: null, na_fila: !cli.carteira,
+        });
+      } catch { setAviso("Não consegui abrir essa conversa."); }
+    })();
+  }, [conversas]);
+
   // ⚠️ ESTE useEffect FICA AQUI, e não junto do resto da lógica da carteira lá
   // embaixo: a partir da linha ~1426 o componente tem `return` condicional
   // (`if (sessao === undefined) return ...`). Hook depois de um return é
@@ -677,6 +708,16 @@ export default function Chat() {
   // esconde nesta conversa, e se já foram trazidas
   const [ocultas, setOcultas] = useState(0);
   const [comHistorico, setComHistorico] = useState(false);
+  // `/chat?cliente=<id>` — o board manda o vendedor para cá com a conversa já
+  // selecionada. Guardado num ref porque só vale UMA vez: sem isso, qualquer
+  // recarga da lista puxaria a seleção de volta para aquele cliente, tirando o
+  // vendedor de onde ele foi parar.
+  const clienteDaUrl = useRef<string | null>(null);
+  const jaAbriuDaUrl = useRef(false);
+  // `abrir()` é declarada bem abaixo, depois de coisas que ela usa. O efeito do
+  // deep link roda ANTES dela no arquivo, e hook não pode descer para depois de
+  // um `return` condicional (React #310, §38.4) — então a ponte é um ref.
+  const abrirRef = useRef<((c: Conversa) => void) | null>(null);
   const [contato, setContato] = useState<Contato | null>(null);
   // Motor de ciclo (crm_config, 0097). Estado SEPARADO de `contato` de propósito:
   // `contato` volta a null a cada conversa aberta, e ler o interruptor de lá faria
@@ -1093,6 +1134,8 @@ export default function Chat() {
       body: JSON.stringify({ cliente_id: c.cliente_id }),
     }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
   }
+  // ponte para o efeito do deep link, que roda acima desta declaração
+  abrirRef.current = abrir;
 
   // puxar da fila: "pegar" é uma transferência de ninguém para mim. Reaproveita
   // /api/chat/transferir (append-only), que aceita origem nula justamente por isso.
