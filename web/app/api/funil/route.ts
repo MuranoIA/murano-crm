@@ -293,7 +293,11 @@ export async function GET() {
   // inteiro (o enriquecimento do card de pedido depende dele); só filtramos o que é exibido.
   const compradoresMes = new Set<string>();
   for (const r of pcRows ?? []) {
-    if (r.periodo !== "mes") continue;
+    // 0104: a coluna Pedido emitido e a janela de 7 dias. Quem comprou ha mais
+    // tempo VOLTA para o fluxo normal — e por isso deixa de ser removido das
+    // outras colunas. Se este filtro continuasse no mes, o cliente que saiu da
+    // coluna aos 7 dias ficaria fora das duas ate o dia 1o.
+    if (r.periodo !== "7d") continue;
     const cid = r.cliente_id ?? effCliId(r);
     if (cid) compradoresMes.add("cli:" + cid);
     if (r.codcli != null) compradoresMes.add("cod:" + Number(r.codcli));
