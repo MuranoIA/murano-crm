@@ -37,6 +37,22 @@ export type CrmConfig = {
    * thread sozinho — o vendedor clica e as antigas aparecem, rotuladas (0103).
    */
   historico_rd: boolean;
+  /** Aviso enviado ao cliente pelo botão de pausa do chat (0106). */
+  texto_pausa: string;
+  /**
+   * A tag `carteira <nome>` do painel do RD ainda vale como dono do cliente?
+   * (0107)
+   *
+   *   true  -> dono = COALESCE(RCA do WinThor, carteira do RD)  ← como sempre foi
+   *   false -> dono = só o RCA. Quem não tem RCA ativo cai na fila de não
+   *            atribuídos, que é de todos — não some da tela, muda de lugar.
+   *
+   * Quem aplica a regra é a VIEW, não o TypeScript: `vw_funil`/`vw_funil_visivel`
+   * leem esta coluna direto. Aqui o valor serve só para a tela do admin dizer em
+   * que estado está. Se o cálculo fosse feito nos dois lugares, board e ETL
+   * discordariam sobre de quem é o cliente no primeiro ajuste.
+   */
+  carteira_rd_ativa: boolean;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -48,6 +64,8 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   linhas: [],
   numero_envio: null,
   historico_rd: true,
+  texto_pausa: "",
+  carteira_rd_ativa: true,
   atualizado_por: null,
   atualizado_em: null,
 };
@@ -116,7 +134,7 @@ type Sb = { from: (t: string) => any };
 export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
   try {
     const [cfgR, linhasR] = await Promise.all([
-      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,atualizado_por,atualizado_em")
+      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,texto_pausa,carteira_rd_ativa,atualizado_por,atualizado_em")
         .eq("id", 1).maybeSingle(),
       sb.from("chat_linha").select("phone_number_id,rotulo,numero,ativo").eq("ativo", true).order("rotulo"),
     ]);
@@ -127,6 +145,8 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
       numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
       historico_rd: data.historico_rd !== false,
+      texto_pausa: String(data.texto_pausa ?? ""),
+      carteira_rd_ativa: data.carteira_rd_ativa !== false,
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
       atualizado_em: data.atualizado_em ?? null,

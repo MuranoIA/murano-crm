@@ -126,6 +126,12 @@ export async function POST(req: Request) {
         // pior do que recusar com o caminho certo escrito.
         return Response.json({
           error: `"${escolhido?.nome ?? nomeTemplate}" tem ${campos.length} campos para preencher — envie pelo chat, onde dá para digitar cada um.`,
+          // Marca legível por máquina, e não só o texto acima: o board usa isto
+          // para ABRIR a conversa em vez de mostrar um alerta de falha. Casar
+          // por substring da mensagem quebraria no dia em que o texto mudasse,
+          // e o sintoma seria o alerta voltando sem ninguém ter mexido no board.
+          comporNoChat: true,
+          campos: campos.length,
         }, { status: 400 });
       } else {
         // o comportamento de sempre: {{1}} = primeiro nome da cliente

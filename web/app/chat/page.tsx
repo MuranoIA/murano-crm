@@ -1211,6 +1211,25 @@ export default function Chat() {
       .catch(() => setContato(null));
   }
 
+  // Pausa: avisa o cliente que o vendedor vai se ausentar (0106). As travas
+  // (janela de 24h, não repetir) moram no servidor — aqui só o gesto e o recado.
+  const [pausando, setPausando] = useState(false);
+  async function avisarPausa() {
+    if (!sel || pausando) return;
+    setPausando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/pausa", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setAviso(j?.error ?? `não consegui avisar (erro ${r.status})`); return; }
+      setAviso("Aviso de pausa enviado.");
+      carregarThread(sel, true);
+    } catch (e: any) { setAviso(String(e?.message ?? e)); }
+    finally { setPausando(false); }
+  }
+
   async function salvarContato(dados: { nome?: string; cpf?: string }): Promise<boolean> {
     if (!sel) return false;
     try {
@@ -2947,6 +2966,22 @@ export default function Chat() {
                     </span>
                   )}
                   {/* ⚡ respostas rápidas — o mesmo que digitar `/` */}
+                  {/* Pausa (0106): só faz sentido com a janela aberta — fora
+                      dela o envio falharia, e o aviso não vale um template. O
+                      botão fica visível mas desabilitado, dizendo por quê. */}
+                  <button
+                    onClick={avisarPausa}
+                    disabled={pausando || modoNota || !janelaAberta}
+                    title={!janelaAberta
+                      ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
+                      : "Avisar a cliente que você vai se ausentar por alguns minutos"}
+                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12,
+                      border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 15,
+                      opacity: modoNota || !janelaAberta ? 0.4 : 1,
+                      cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
+                      fontFamily: "inherit", flexShrink: 0 }}>
+                    {pausando ? "…" : "⏸"}
+                  </button>
                   <button
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}

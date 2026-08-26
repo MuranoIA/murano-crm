@@ -505,7 +505,12 @@ export default function Page() {
     }
   }
 
-  async function recontatar(clienteId: string, clienteNome: string) {
+  // `card` existe para o caso em que o template não cabe num clique: em vez de
+  // um alerta de falha, o board ABRE a conversa, que é onde há como digitar os
+  // campos. Sem ele o botão do card era um beco sem saída — o template padrão
+  // (`recontato_de_clientes`) tem {{1}} e {{2}}, e o board só sabe mandar o
+  // primeiro nome, então TODO clique terminava em "Falha ao enviar".
+  async function recontatar(clienteId: string, clienteNome: string, card?: Card) {
     // dispara direto ao clicar (sem confirmação); o botão já desativa após enviar
     setEnviando(clienteId);
     try {
@@ -523,15 +528,31 @@ export default function Page() {
       const txt = await r.text();
       let j: any = {};
       try { j = txt ? JSON.parse(txt) : {}; } catch { j = { error: txt || `HTTP ${r.status} (resposta vazia)` }; }
-      if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`));
+      if (j.comporNoChat && card && cardZoom?.cliente_id !== card.cliente_id) {
+        // Não é falha: o template pede texto que só quem está na conversa sabe
+        // escrever. Abrir a conversa entrega a pessoa no lugar certo, com o
+        // compositor de template a um clique — em vez de mandá-la ler um alerta
+        // e procurar sozinha onde fazer o que o alerta pediu.
+        setCardZoom(card);
+      } else if (j.comporNoChat) {
+        // já estamos com a conversa aberta: mandar "abra o chat" seria mandar a
+        // pessoa para onde ela já está
+        alert(`Este template pede ${j.campos ?? "mais de um"} campos — use o botão TEMPLATE dentro da conversa, logo abaixo, para digitá-los.`);
+      } else if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`));
       else {
         await load(); // mostra o disparo/AGUARDANDO na hora
-        // sync em segundo plano: puxa a mensagem real do RD e atualiza a data do card
-        // (sem esperar o ciclo do ETL). Não trava o botão — atualiza quando terminar.
-        fetch("/api/sync-cliente", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cliente_id: clienteId }),
-        }).then(() => load()).catch(() => {});
+        // Sync sob demanda SÓ faz sentido no RD: lá a mensagem enviada só existe
+        // depois de ser buscada de volta. Na Cloud a própria rota já gravou a
+        // linha em `mensagens` antes de responder, então chamar isto seria
+        // gastar cota do RD (~48 req/min, dividida com o ETL) para reimportar
+        // uma conversa que não é de lá — e o 429 daí voltava como "instabilidade"
+        // logo depois de um envio que tinha dado certo.
+        if (j.canal !== "whatsapp") {
+          fetch("/api/sync-cliente", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cliente_id: clienteId }),
+          }).then(() => load()).catch(() => {});
+        }
       }
     } catch (e: any) {
       alert("Erro: " + (e?.message ?? e));
@@ -2817,7 +2838,7 @@ export default function Page() {
                                 </span>
                               ) : recontactar ? (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente); }}
+                                  onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente, c); }}
                                   disabled={enviando === idEnvio}
                                   title="Enviar template (mensagem real no WhatsApp)"
                                   style={{
@@ -3019,7 +3040,7 @@ export default function Page() {
                 {zDisparoRecente ? (
                   <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
                 ) : (zRecontactar && zid) ? (
-                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
+                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente, zc); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
                 ) : null}
               </div>
               <div style={{ fontSize: 15, fontWeight: 800, color: RD.navy, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</div>
