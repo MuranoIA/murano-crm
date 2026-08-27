@@ -1,5 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
-import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel } from "../../../../lib/crmConfig";
+import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -123,6 +123,38 @@ export async function GET() {
       config: cfg,
       padrao: CRM_CONFIG_PADRAO,
       mecanismos: MECANISMOS,
+      // A chave mestra. Vem separada das outras porque não é mais um mecanismo
+      // na lista: é o estado das quatro de baixo lidas juntas. A tela desenha
+      // ela em cima e marca as outras como "definidas pelo modo migração"
+      // enquanto estiver ligada — se as deixasse editáveis, dois controles
+      // decidiriam a mesma coisa e ninguém saberia qual vence.
+      migracao: {
+        rotulo: "Modo migração — sem RD Conversas",
+        ligado: modoMigracao(cfg),
+        resumo:
+          "O sistema como será quando o RD Conversas não existir mais. Ligando, o RD some da " +
+          "tela inteira: conversas, histórico, carteira, a linha Murano Pro e as menções a ETL. " +
+          "Os clientes passam a vir do espelho do WinThor e o dono é só o RCA.",
+        desliga: [
+          "Conversas, prévias e threads vindas do RD, e o botão “ver histórico anterior”",
+          "A linha Murano Pro no filtro por número e na etiqueta do cabeçalho",
+          "A tag de carteira do RD como dono — vale só o RCA do WinThor",
+          "O selo “RCA n · RD x” dos cards e os avisos de divergência entre os dois",
+          "O botão Sinc/Pause do ETL e o ↻ que puxa mensagens do RD",
+        ],
+        mantem: [
+          "Todos os clientes: vêm da carteira do WinThor pelo RCA, contatados ou não",
+          "As conversas do número próprio, os templates, a ligação e o disparo em massa",
+          "TUDO no banco — as mensagens do RD continuam lá, e o ETL continua trazendo as novas",
+        ],
+        nota:
+          "É reversível e não apaga nada: desligar devolve o RD à tela no estado de fábrica " +
+          "(todas as linhas, histórico e carteira do RD de volta, envio no automático). Ligada, " +
+          "espere um chat quase vazio no primeiro dia — hoje 92.864 mensagens são do RD contra " +
+          "poucas dezenas do número próprio, e é exatamente essa a foto do dia seguinte ao corte.",
+        // as quatro que o modo controla — a tela usa para travá-las
+        controla: ["linhas_visiveis", "historico_rd", "carteira_rd_ativa", "numero_envio"],
+      },
       // ENVIO ≠ VISIBILIDADE. São duas perguntas diferentes e a tela precisa
       // dizer isso, senão o admin muda uma achando que mudou a outra.
       // texto do aviso de pausa (0106): mora no banco porque quem sabe o tom
@@ -184,6 +216,48 @@ export async function PUT(req: Request) {
 
   const sb = sbAdmin();
   const antes = await lerCrmConfig(sb);
+
+  // ---- MODO MIGRAÇÃO: escreve as quatro chaves de uma vez -------------------
+  // Não há coluna `modo_migracao` no banco de propósito (ver `modoMigracao()`
+  // em lib/crmConfig.ts): o modo É a leitura das quatro. Aqui só se escreve o
+  // conjunto — ligar põe as quatro na posição de migração, desligar devolve as
+  // quatro ao CRM de sempre. Sem snapshot para guardar, e sem um quinto estado
+  // que possa contradizer os outros.
+  if (chave === "modo_migracao") {
+    if (typeof valor !== "boolean") {
+      return Response.json({ error: "informe o valor como true ou false" }, { status: 400 });
+    }
+    const ativas = antes.linhas.filter((l) => l.ativo).map((l) => l.phone_number_id);
+    const semRd = ativas.filter((id) => id !== "rd");
+
+    // Sem nenhuma linha própria não há para onde migrar: ligar o modo deixaria
+    // o board inteiro em prospecção e o chat vazio, sem nada na tela dizendo por
+    // quê. Melhor recusar com o motivo do que entregar uma tela morta.
+    if (valor && !semRd.length) {
+      return Response.json({
+        error: "Não há nenhuma linha própria ativa além do RD — cadastre a linha da Cloud em chat_linha antes de migrar.",
+      }, { status: 400 });
+    }
+
+    const novo = valor
+      ? { linhas_visiveis: semRd, ...POSICAO_MIGRACAO }
+      // Desligar devolve ao estado de fábrica: todas as linhas (NULO, para que
+      // uma linha nova apareça sozinha — §32.1), histórico e carteira do RD de
+      // volta, e envio no automático.
+      : { linhas_visiveis: null, historico_rd: true, carteira_rd_ativa: true, numero_envio: null };
+
+    const { data, error } = await sb.from("crm_config").upsert({
+      id: 1, ...novo, atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    return Response.json({
+      ok: true, config: data,
+      aviso: valor
+        ? "Modo migração LIGADO. O RD Conversas sumiu da tela inteira: conversas, histórico, carteira, linha e menções a ETL. Os clientes vêm do WinThor e o dono é o RCA. Nada foi apagado — desligar devolve tudo."
+        : "Modo migração desligado. O RD Conversas voltou: conversas, histórico, carteira e envio no automático.",
+    });
+  }
 
   // ---- seletor de linhas: escolha de CONJUNTO, não booleano -----------------
   if (chave === "linhas_visiveis") {

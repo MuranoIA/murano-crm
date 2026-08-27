@@ -122,7 +122,15 @@ function ehAlerta(c: Card, ackMs?: number): boolean {
 // `app.tallos.com.br/app/chat/<id>`, o que tirava o vendedor do sistema no
 // gesto mais frequente da tela — e, com o RD sendo aposentado, mandava para o
 // lugar errado. `/chat?cliente=<id>` seleciona a conversa ao abrir.
-const URL_CONSULTA = "https://consultaclientes.muranoprofessional.com.br"; // Consulta Clientes (deep link por ?codcli=)
+// Consulta Clientes — agora o MÓDULO INTERNO do hub (murano-app), não mais o app
+// avulso em consultaclientes.muranoprofessional.com.br. O `?codcli=` continua
+// indo: se o módulo souber ler, abre no cliente; se não souber, ele ignora o
+// parâmetro e a pessoa cai na busca — nunca numa página de erro.
+//
+// Abre em aba nomeada (não em `_top`) de propósito: diferente do item de menu
+// Visões da Carteira (§27.4), este é um gesto sobre UM card, e trocar a aba
+// inteira faria o vendedor perder o board no meio do trabalho.
+const URL_CONSULTA = "https://app.muranoprofessional.com.br/consulta-clientes";
 // código WinThor do cliente (pro botão "C"): coluna codcli, ou parse do cliente_id sintético
 function codcliDe(c: Card): number | null {
   if (c.codcli != null && !isNaN(Number(c.codcli))) return Number(c.codcli);
@@ -450,6 +458,20 @@ export default function Page() {
   // Começa em `true` para a tela não piscar sem o selo antes da 1ª resposta —
   // o mesmo estado em que o interruptor nasce no banco.
   const [cicloAtivo, setCicloAtivo] = useState(true);
+  // Modo migracao (Fase C simulada): o RD nao existe para esta tela. Derivado
+  // no servidor a partir das quatro chaves -- ver modoMigracao() em crmConfig.
+  const [semRd, setSemRd] = useState(false);
+  // Os textos de ajuda das colunas foram escritos quando o RD era o único canal
+  // e o nomeiam ("nunca teve conversa com operador no RD Conversas"). No modo
+  // migração isso é justamente a menção que não deve existir. Trocar a palavra
+  // no render, em vez de manter duas versões de cada texto: são strings longas,
+  // e duas cópias divergem no primeiro ajuste da régua das colunas.
+  const semMencaoRd = (t: string) =>
+    semRd
+      ? t.replace(/\bno RD Conversas\b/g, "no atendimento")
+         .replace(/\bRD Conversas\b/g, "atendimento")
+         .replace(/\bno RD\b/g, "no atendimento")
+      : t;
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
   // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
@@ -490,6 +512,7 @@ export default function Page() {
       setCards(j.cards ?? []);
       // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
       setCicloAtivo(j.ciclo_ativo !== false);
+      setSemRd(j.modo_migracao === true);
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
@@ -1719,7 +1742,11 @@ export default function Page() {
               </div>
             );
           })()}
-          {!isMobile && sessao.role === "admin" && (
+          {/* No modo migração o ETL não existe para quem olha a tela: este toggle
+              pausa e retoma a ingestão do RD, então mantê-lo seria a menção mais
+              gritante justamente onde não deve haver nenhuma. O ETL continua
+              rodando por baixo — o que sai é o controle, não o processo. */}
+          {!isMobile && sessao.role === "admin" && !semRd && (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
               {/* Toggle Sinc | Pause: a "chave" desliza pro lado ativo. Junta as 3 ações antigas —
                   Sinc = retoma (se pausado) e força um sync agora; Pause = pausa (libera cota do RD). */}
@@ -2672,14 +2699,14 @@ export default function Page() {
                         const r = e.currentTarget.getBoundingClientRect();
                         const W = 300;
                         const x = Math.min(r.left - 8, window.innerWidth - W - 12);
-                        setTip({ text: col.regras, x: Math.max(8, x), y: r.bottom + 6 });
+                        setTip({ text: semMencaoRd(col.regras), x: Math.max(8, x), y: r.bottom + 6 });
                       }}
                       onMouseLeave={() => setTip(null)}
                     >
                       <span title="Regras e automações desta etapa" style={{ width: 15, height: 15, borderRadius: 15, border: `1.3px solid ${RD.grayLight}`, color: RD.grayLight, fontSize: 11, fontWeight: 700, fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "help", userSelect: "none" }}>i</span>
                     </span>
                   </div>
-                  <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div title={semMencaoRd(col.subLong)} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
                   </div>
                   {/* chips de período por coluna — guardados por ora; trocar false->true p/ reativar */}
@@ -2760,7 +2787,8 @@ export default function Page() {
                         (p) => !msgsRaw.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim())
                       );
                       const msgsChrono = [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
-                      const selo = seloAtribuicao(c, vendMeta);
+                      // o selo COMPARA a carteira do RD com o RCA: sem RD nao ha o que comparar
+                      const selo = semRd ? null : seloAtribuicao(c, vendMeta);
                       return (
                         <article
                           key={c.cliente_id}
@@ -2791,7 +2819,7 @@ export default function Page() {
                             )}
                             {codcli != null && (
                               <button
-                                onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${codcli}`, "consultaclientes"); }}
+                                onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${codcli}`, "consultaclientes"); }}
                                 title={`Ver cadastro completo na Consulta Clientes (código ${codcli})`}
                                 style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
                               >
@@ -2807,7 +2835,7 @@ export default function Page() {
                                 🔍
                               </button>
                             )}
-                            {temConversaReal && (
+                            {temConversaReal && !semRd && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); atualizarCard(c.cliente_id); }}
                                 disabled={!!syncingCards[c.cliente_id]}
@@ -2937,7 +2965,12 @@ export default function Page() {
                               </div>
                             ) : (
                               <div style={{ fontSize: 11, color: RD.grayLight }}>
-                                última msg · {dataHora(c.ultima_atividade)}
+                                {/* Sem data isto virava "última msg · —", que promete uma
+                                    informação e entrega um travessão. Quem não tem conversa
+                                    tem telefone, e é o que serve para agir. */}
+                                {c.ultima_atividade
+                                  ? `última msg · ${dataHora(c.ultima_atividade)}`
+                                  : `sem conversa · ${c.telefone ?? "sem telefone"}`}
                               </div>
                             )}
                           </div>
@@ -2946,9 +2979,14 @@ export default function Page() {
                               <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[c.vendedor ?? ""] ?? CoresVendedor[c.vendedor ?? ""] ?? RD.grayLight }} />
                               {cap(c.vendedor) || "sem dono"}
                             </span>
-                            {!prospeccao && (
+                            {/* Só o tempo desde a última atividade. A palavra "parado"
+                                saiu: ela repetia, em vermelho, o que o próprio número
+                                já diz ("9 d"), e ninguém sabia o que significava. Sem
+                                data não se escreve "· —": um travessão solto é ruído,
+                                não informação. */}
+                            {!prospeccao && ultimaEf && (
                               <span style={{ color: recontactar && !viaDisparo ? "#d92d20" : RD.grayLight, fontSize: 11, fontWeight: recontactar && !viaDisparo ? 700 : 400 }}>
-                                · {tempoRelativo(ultimaEf)}{viaDisparo ? " · template enviado" : (recontactar ? " parado" : "")}
+                                · {tempoRelativo(ultimaEf)}{viaDisparo ? " · template enviado" : ""}
                               </span>
                             )}
                           </div>
@@ -3033,9 +3071,9 @@ export default function Page() {
                   <span title="Só existe no RD Conversas — ainda não cadastrado no WinThor." style={{ background: "#fff3e0", color: "#b45309", border: "1px solid #f0c987", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase" }}>sem cadastro</span>
                 )}
                 {zcodcli != null && (
-                  <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}/?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
+                  <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
-                <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>
+                {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
                 <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
                 {zDisparoRecente ? (
                   <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
@@ -3053,8 +3091,8 @@ export default function Page() {
             <div style={{ padding: "0 14px 9px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
               <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor ?? ""] ?? CoresVendedor[zc.vendedor ?? ""] ?? RD.grayLight }} />
               {cap(zc.vendedor) || "sem dono"}
-              {!zprospec && (
-                <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}{zRecontactar ? " parado" : ""}</span>
+              {!zprospec && zUltimaEf && (
+                <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}</span>
               )}
             </div>
             {/* A conversa inteira, com a mesma rolagem e o mesmo compositor do
