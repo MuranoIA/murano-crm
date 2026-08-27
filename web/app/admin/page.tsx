@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { aplicarVariaveis } from "../../lib/templateVars";
+import { textoPedidoDeDados } from "../../lib/cadastroCampos";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
 // Supabase: quem entra no sistema, quais são os vendedores, o horário de
@@ -1570,6 +1571,85 @@ const PERIODOS = [
   { k: "quinzena", r: "15 dias" }, { k: "mes", r: "Mês" },
 ] as const;
 
+// ---------------------------------------------------------------------------
+// Campos da ficha de cadastro (0109) - editor simples de lista.
+//
+// Texto puro, uma linha por campo, em vez de um construtor com botoes: sao 14
+// linhas que mudam uma vez por ano, e um editor de arrastar-e-soltar custaria
+// dez vezes mais para resolver o mesmo. Colar a lista inteira de uma vez e o
+// gesto mais provavel de quem vai corrigir isto olhando a tela do WinThor.
+//
+// Formato:  identificador | Rotulo que aparece | ajuda (opcional) | *
+//           o "*" no fim marca campo obrigatorio.
+// ---------------------------------------------------------------------------
+function CadastroCamposBloco({ info, salvar, ocupado, setOcupado }: {
+  info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
+  ocupado: boolean; setOcupado: (v: boolean) => void;
+}) {
+  const paraTexto = (cs: any[]) =>
+    (cs ?? []).map((c) => [c.k, c.rotulo, c.ajuda ?? ""].join(" | ") + (c.obrigatorio ? " | *" : "")).join("\n");
+
+  const [txt, setTxt] = useState<string>(() => paraTexto(info.campos));
+
+  const parse = (t: string) =>
+    t.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+      const p = l.split("|").map((x) => x.trim());
+      return {
+        k: p[0] ?? "",
+        rotulo: p[1] ?? p[0] ?? "",
+        ajuda: p[2] || undefined,
+        obrigatorio: p.slice(3).includes("*") || p.includes("*"),
+      };
+    }).filter((c) => c.k && c.rotulo);
+
+  const campos = parse(txt);
+  const mudou = paraTexto(campos) !== paraTexto(info.campos);
+
+  return (
+    <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2, marginBottom: 4 }}>{info.rotulo}</div>
+      <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{info.resumo}</p>
+
+      <Recado tipo="aviso">
+        Um campo por linha: <code>identificador | Rótulo | ajuda | *</code>. O <b>identificador</b> é
+        a chave onde o valor fica guardado (não repita, e evite trocar depois — fichas já salvas
+        usam o nome antigo). O <b>*</b> no fim marca campo obrigatório.
+      </Recado>
+
+      <textarea value={txt} onChange={(e) => setTxt(e.target.value)} rows={Math.max(6, campos.length + 1)}
+        spellCheck={false}
+        style={{ width: "100%", boxSizing: "border-box", marginTop: 10, padding: "9px 11px", fontSize: 12.5,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, color: M.ink,
+          background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9, outline: "none", resize: "vertical" }} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: M.muted }}>
+          {campos.length} campo(s) · {campos.filter((c) => c.obrigatorio).length} obrigatório(s)
+        </span>
+        <span style={{ marginLeft: "auto" }}>
+          <Botao disabled={ocupado || !mudou || !campos.length}
+            onClick={async () => { setOcupado(true); await salvar("cadastro_campos", campos); setOcupado(false); }}>
+            {ocupado ? "Salvando…" : "Salvar campos"}
+          </Botao>
+        </span>
+      </div>
+
+      {/* A previa e o ponto: e ela que a cliente vai ler no WhatsApp. Sem isso
+          o admin edita uma lista tecnica sem ver o resultado, e so descobre o
+          texto estranho depois que ele ja foi enviado a alguem. */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 5 }}>
+          O que a cliente recebe
+        </div>
+        <pre style={{ margin: 0, padding: "10px 12px", fontSize: 12, lineHeight: 1.55, whiteSpace: "pre-wrap",
+          fontFamily: "inherit", color: M.gray, background: M.roxoSoft, borderRadius: 9 }}>
+{textoPedidoDeDados(campos as any, "Maria")}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 function EnviosAba({ dados }: { dados: any }) {
   // Com o modo migracao ligado nao existe "fora daqui": todo template sai por
   // este CRM. O terceiro quadro e a coluna do RD deixam de ser informacao e
@@ -1808,6 +1888,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   const envio = d.envio ?? null;
   const pausa = d.pausa ?? null;
   const migracao = d.migracao ?? null;
+  const cadastro = d.cadastro ?? null;
   const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
@@ -2001,6 +2082,13 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             </div>
           </div>
         )}
+
+        {/* ---- campos da ficha de cadastro (0109) --------------------------
+            A lista mora no banco porque quem sabe o que o WinThor exige e quem
+            cadastra, nao quem faz deploy - se exigisse commit, ficaria errada
+            por meses. E a MESMA lista gera a mensagem que pede os dados a
+            cliente: corrigir aqui corrige os dois lugares de uma vez. */}
+        {cadastro && <CadastroCamposBloco info={cadastro} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
 
         {/* ---- número de ENVIO (0102) --------------------------------------
             Vem ANTES do seletor de visibilidade de propósito: "por qual número
