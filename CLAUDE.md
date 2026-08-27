@@ -3087,7 +3087,7 @@ Truncar em silencio seria a mesma doenca que a tela existe para curar.
 
 ### 36.4 Armadilha de edicao (custou dois ciclos de build)
 
-Ao gerar codigo TS por script, `"﻿"` e `"
+Ao gerar codigo TS por script, `"﻿"` e `"
 "` viraram **o BOM de
 verdade e uma quebra de linha real** dentro do literal — string nao terminada. O
 conserto foi montar os dois em runtime (`String.fromCharCode`), que e imune a
@@ -4242,7 +4242,7 @@ motivo está em `mensagens.erro` (0091) — número que não recebe no WhatsApp
 (131026) continua sendo re-disparado, e cada template é cobrado. O corte entra
 em `/api/admin/disparo-massa`, junto dos que já existem (§26.1).
 
-**Migrations aplicadas:** 0107 a 0112, todas confirmadas no banco.
+**Migrations aplicadas:** 0107 a 0113, todas confirmadas no banco.
 
 **Duas coisas do usuário, não de código:**
 - **Endereços de localização estão vazios** (`crm_config.locais = []`): o botão
@@ -4250,3 +4250,99 @@ em `/api/admin/disparo-massa`, junto dos que já existem (§26.1).
 - **Aviso de cobrança no painel do Supabase** ("Outstanding invoices"). Se aquele
   projeto suspender, cai o CRM inteiro — board, chat, webhook e o `pg_cron` do
   WinThor. É o maior risco isolado do projeto, e não é técnico.
+
+## 60. Bancada (Direção 4) — a primeira das três entregas está no ar (27/08/2026) — migration 0113
+
+O tema premium do §58 saiu do protótipo. **Entrega 1 do plano de 31 itens**
+(`prototipos/laudo-tema-premium.md` §11.4): paleta e escalas — itens 1-9, 13-14,
+19 e 24-26. As entregas 2 (densidade e agrupamento) e 3 (ícones, estados,
+acabamento) continuam pendentes.
+
+`bancada` já é **selecionável no /admin**, global ou em piloto por usuário. O
+global segue em `continuidade`: nada mudou para a equipe sem alguém decidir.
+
+### 60.1 A segunda alavanca: `G` e `GRADES`
+
+`M` resolve a cor; agora `G` resolve a **geometria**, com o mesmo padrão mutável
++ `Object.assign` que a paleta usa desde o board (§11.5). O motivo de existir
+está medido no §58.2: 65 combinações de padding e 15 raios num arquivo só.
+
+Duas regras que sustentam o rollback:
+
+- **`GRADES.original` reproduz os literais de hoje.** Trocar um literal por `G.x`
+  é uma mudança de zero pixel enquanto o layout for `original` — verificado no
+  navegador: a lista mede 341 px (340 + borda) nos dois desenhos anteriores e
+  321 em `bancada`.
+- **`Object.assign(G, GRADES.original, GRADES[layout])`** — a base SEMPRE
+  primeiro. As entradas são parciais; sem ela, o desenho novo herdaria as sobras
+  do anterior no mesmo carregamento.
+
+### 60.2 `d1` deixou de ser igualdade e virou conjunto
+
+```ts
+const CORRIGE = new Set(["continuidade", "bancada"]);
+const d1 = CORRIGE.has(layout);
+```
+
+A tese da 4 é grade, não informação nova — ela **pressupõe** a 1. Com o teste de
+igualdade anterior, escolher `bancada` apagaria a faixa da janela de 24h, a aba
+Resumo e o mobile resolvido. O `bc` guarda só o que é dela.
+
+`abaPadrao` foi reescrito pela negativa (`layout === "original" ? "perfil" :
+"resumo"`): assim uma direção futura nasce no resumo comercial em vez de nascer
+na aba do telefone por esquecimento.
+
+### 60.3 Dois tokens novos em `M`, com valor neutro nos desenhos antigos
+
+`lineStrong` (borda de **controle** — campo e botão, que a régua exige em 3:1 por
+ser elemento não-textual) e `ok` (o verde de "concluído", que estava literal em
+oito lugares). Em `original` e `continuidade` eles reproduzem o que o código já
+fazia cravado, então acrescentá-los não move um pixel.
+
+`bancada` paga também a **dívida de contraste registrada no §58.4**: o `muted`
+dela é `#6b6577`, que passa nos três fundos (5,60 · 5,02 · 4,65:1), contra os
+4,25/3,87:1 do `#7c7986` da D1 — sem mexer na D1, que está em produção.
+
+### 60.4 ⚠️ `minHeight`, nunca `height`, no cabeçalho da conversa
+
+O plano pedia `height: 56` para o cabeçalho da conversa alinhar com o da lista.
+**No navegador isso quebrou:** com o painel do cliente 52 px mais largo (268 →
+320, que é o ponto do item 26), a linha de metadados do nome passa a caber em
+duas linhas em alguns contatos, e altura fixa espremia justamente esses.
+
+Virou `minHeight` + 6 px de padding vertical. O alinhamento continua quando o
+conteúdo é curto, e cede quando não é — que é a troca certa: não vale cortar o
+telefone de quem tem nome comprido para ganhar uma régua.
+
+**Só o screenshot pegou isso.** `tsc` e `next build` passaram limpos, e as sondas
+numéricas diziam que estava tudo bem. É a mesma lição do §41.5.
+
+### 60.5 Como ver um desenho sem escrever no banco de produção
+
+O servidor local lê o Supabase real, então trocar `chat_layout` para olhar uma
+tela mudaria a tela da equipe. E editar o código para forçar o valor é o tipo de
+coisa que se esquece de reverter.
+
+O caminho usado, que não tem nenhum dos dois problemas: **interceptar a resposta
+de `/api/chat` no CDP** (`Fetch.enable` com `requestStage: "Response"`) e
+reescrever só o campo `layout`. O resto passa intacto, o código testado é o
+build de produção de verdade, e nada é escrito em lugar nenhum.
+`scripts` descartáveis ficaram no scratchpad, fora do repo.
+
+⚠️ Duas armadilhas de ambiente, ambas já pagas nesta sessão:
+- **`.next` não aguenta dois processos.** Um `next build` concorrente com outro,
+  ou um `next dev` sobre o `.next` de um build, produz `ENOENT` em manifesto
+  (`pages-manifest.json`, `middleware-manifest.json`, `500.html`) — erro que não
+  tem nada a ver com o código. Matar tudo, apagar `.next`, rodar um só.
+- **`BUILD_ID` aparece ANTES de o build terminar.** Esperar por ele para subir o
+  `next start` dá `ENOENT: prerender-manifest.json`. Esperar pelo
+  `prerender-manifest.json`, ou pelo fim do processo.
+
+### 60.6 O que ficou de fora desta entrega, e por quê
+
+- **Item 10 (o título-dropdown das filas some).** É o único que mexe em memória
+  muscular. Fica para o piloto por usuário, que existe exatamente para isso.
+- **Item 30 (a barra de chamada cobre o compositor).** É bug real e vale para
+  TODOS os desenhos, inclusive o `original` — não deve entrar escondido dentro
+  de um tema. Sai como correção à parte.
+- **Itens 11, 15-18, 27-29, 31**: entregas 2 e 3.
