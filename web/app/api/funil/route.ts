@@ -318,6 +318,36 @@ export async function GET() {
     c.ciclo = cicloDe(c);
   }
 
+  // ---- "sem conversa" era MENTIRA nestes cards --------------------------
+  // São os do ramo 1b (0100/§31.3): gente que FOI contatada, mas cuja conversa
+  // inteira está no número que a seleção de linhas esconde — e que a prospecção
+  // não alcança, por não ter vínculo nem telefone batendo no WinThor. O card
+  // dizia "sem conversa" ao lado de alguém com 91 mensagens.
+  //
+  // A contagem é feita AQUI, e não na view, por dois motivos: a view teria de
+  // ganhar coluna (migration, e o número muda a cada mensagem que chega), e
+  // isto custa UMA consulta só quando existem cards assim — hoje, seis.
+  const semVisivel = cardsOutros
+    .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string" && !c.cliente_id.includes(":"))
+    .map((c: any) => c.cliente_id);
+  if (semVisivel.length) {
+    const TETO = 4000;   // 6 clientes x ~90 mensagens hoje; o teto é rede, não regra
+    const { data: ocultas } = await sb
+      .from("mensagens").select("cliente_id")
+      .in("cliente_id", semVisivel.slice(0, 300))
+      .neq("tipo", "evento_sistema")
+      .limit(TETO);
+    const conta = new Map<string, number>();
+    for (const m of ocultas ?? []) {
+      const k = (m as any).cliente_id;
+      conta.set(k, (conta.get(k) ?? 0) + 1);
+    }
+    for (const c of cardsOutros) {
+      const n = conta.get(c.cliente_id);
+      if (n) c.msgs_ocultas = n;
+    }
+  }
+
   // As duas colunas de venda (0105). A `etapa` vem do banco; o card guarda
   // `dias` para a tela dizer "há 4 dias" sem recalcular. Enriquece com a
   // conversa, se houver, para o clique e a prévia.

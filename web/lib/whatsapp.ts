@@ -123,6 +123,29 @@ export function sendText(to: string, texto: string): Promise<EnvioOk> {
   return post({ to, type: "text", text: { body: texto, preview_url: false } });
 }
 
+/**
+ * Localização — chega como um cartão de mapa, com o pino já no lugar.
+ *
+ * `name` e `address` são opcionais para a Meta, mas não para quem recebe: sem
+ * eles o cartão mostra um pino sem nome, e a cliente não sabe se aquilo é a
+ * loja, o depósito ou um endereço qualquer.
+ *
+ * Só dentro da janela de 24h, como qualquer mensagem livre.
+ */
+export function sendLocation(
+  to: string,
+  loc: { lat: number; lng: number; nome?: string; endereco?: string },
+): Promise<EnvioOk> {
+  return post({
+    to, type: "location",
+    location: {
+      latitude: loc.lat, longitude: loc.lng,
+      ...(loc.nome ? { name: loc.nome } : {}),
+      ...(loc.endereco ? { address: loc.endereco } : {}),
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MÍDIA
 // ---------------------------------------------------------------------------

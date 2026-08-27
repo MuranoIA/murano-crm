@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import Link from "next/link";
 import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
+import { lerCoordenadas } from "../../lib/locais";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
 // Supabase: quem entra no sistema, quais são os vendedores, o horário de
@@ -1621,6 +1622,74 @@ const PERIODOS = [
 // Formato:  identificador | Rotulo que aparece | ajuda (opcional) | *
 //           o "*" no fim marca campo obrigatorio.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Enderecos de localizacao (0111).
+//
+// Uma linha por endereco: Nome | Endereco | coordenadas. As coordenadas sao
+// coladas do Google Maps do jeito que ele copia ("-1.4558, -48.5044") -- pedir
+// dois campos separados obrigaria a recortar a virgula a mao, que e onde a
+// pessoa erra.
+// ---------------------------------------------------------------------------
+function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
+  info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
+  ocupado: boolean; setOcupado: (v: boolean) => void;
+}) {
+  const paraTexto = (ls: any[]) =>
+    (ls ?? []).map((l) => `${l.nome} | ${l.endereco} | ${l.lat}, ${l.lng}`).join("\n");
+  const [txt, setTxt] = useState<string>(() => paraTexto(info.itens));
+
+  const linhas = txt.split("\n").map((l) => l.trim()).filter(Boolean);
+  const parse = linhas.map((l) => {
+    const p = l.split("|").map((x) => x.trim());
+    const c = lerCoordenadas(p[2] ?? "");
+    return { nome: p[0] ?? "", endereco: p[1] ?? "", lat: c?.lat ?? NaN, lng: c?.lng ?? NaN, ok: !!(p[0] && p[1] && c) };
+  });
+  const validos = parse.filter((x) => x.ok);
+  const mudou = paraTexto(validos) !== paraTexto(info.itens);
+
+  return (
+    <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2, marginBottom: 4 }}>{info.rotulo}</div>
+      <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{info.resumo}</p>
+
+      <Recado tipo="aviso">
+        Um por linha: <code>Nome | Endereço | -1.4558, -48.5044</code>. As coordenadas saem do
+        Google Maps — clique com o botão direito no ponto e escolha copiar; cole aqui do jeito
+        que vier. Linha com coordenada inválida <b>não é salva</b>: é melhor faltar o endereço
+        do que mandar a cliente para o lugar errado.
+      </Recado>
+
+      <textarea value={txt} onChange={(e) => setTxt(e.target.value)} rows={Math.max(3, linhas.length + 1)}
+        spellCheck={false}
+        style={{ width: "100%", boxSizing: "border-box", marginTop: 10, padding: "9px 11px", fontSize: 12.5,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, color: M.ink,
+          background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9, outline: "none", resize: "vertical" }} />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: parse.length !== validos.length ? M.laranja : M.muted }}>
+          {validos.length} válido(s){parse.length !== validos.length ? ` · ${parse.length - validos.length} com problema` : ""}
+        </span>
+        {validos.map((l, i) => (
+          <a key={i} href={`https://www.google.com/maps?q=${l.lat},${l.lng}`} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11.5, color: M.azul, fontWeight: 700, textDecoration: "none" }}>
+            conferir {l.nome} ↗
+          </a>
+        ))}
+        <span style={{ marginLeft: "auto" }}>
+          <Botao disabled={ocupado || !mudou}
+            onClick={async () => {
+              setOcupado(true);
+              await salvar("locais", validos.map(({ nome, endereco, lat, lng }) => ({ nome, endereco, lat, lng })));
+              setOcupado(false);
+            }}>
+            {ocupado ? "Salvando…" : "Salvar endereços"}
+          </Botao>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function CadastroCamposBloco({ info, salvar, ocupado, setOcupado }: {
   info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
   ocupado: boolean; setOcupado: (v: boolean) => void;
@@ -2117,6 +2186,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   const pausa = d.pausa ?? null;
   const migracao = d.migracao ?? null;
   const cadastro = d.cadastro ?? null;
+  const locais = d.locais ?? null;
   const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
@@ -2316,6 +2386,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             cadastra, nao quem faz deploy - se exigisse commit, ficaria errada
             por meses. E a MESMA lista gera a mensagem que pede os dados a
             cliente: corrigir aqui corrige os dois lugares de uma vez. */}
+        {locais && <LocaisBloco info={locais} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {cadastro && <CadastroCamposBloco info={cadastro} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
 
         {/* ---- número de ENVIO (0102) --------------------------------------

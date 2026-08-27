@@ -923,6 +923,21 @@ export default function Chat() {
   const [menuFila, setMenuFila] = useState(false);   // dropdown "Meus atendimentos"
   const [menuVend, setMenuVend] = useState(false);   // dropdown de vendedor (admin/home)
   const [maisAberto, setMaisAberto] = useState(false); // "⋯" do compositor na lupa
+  // O 📎 vira MENU, como no WhatsApp: anexo e localizacao no mesmo lugar. Assim
+  // a localizacao nao custa mais um icone na barra -- e o gesto ja e o que a
+  // pessoa conhece ("clipe = mandar alguma coisa que nao e texto").
+  const [anexoAberto, setAnexoAberto] = useState(false);
+  // Encaminhar: a mensagem escolhida, e para quem. A Cloud API nao tem
+  // "forward" -- e reenviar o conteudo, e a cliente NAO ve o selo
+  // "Encaminhada". A tela diz isso antes de confirmar.
+  const [encaminhando, setEncaminhando] = useState<any>(null);
+  const [buscaEnc, setBuscaEnc] = useState("");
+  const [locais, setLocais] = useState<{ nome: string; endereco: string; lat: number; lng: number }[]>([]);
+  useEffect(() => {
+    fetch("/api/chat/localizacao", { cache: "no-store" })
+      .then((r) => r.json()).then((j) => setLocais(j?.locais ?? []))
+      .catch(() => {});   // sem enderecos cadastrados a opcao simplesmente nao aparece
+  }, []);
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
   const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
@@ -1712,6 +1727,35 @@ export default function Chat() {
   // ---- notas internas ------------------------------------------------------
   // Não passam pelo WhatsApp: gravam em chat_nota e aparecem só aqui. É o recado
   // que antes ia parar no caderno do vendedor ou num grupo paralelo.
+  // Localizacao: um endereco SALVO, escolhido no menu do clipe. A posicao do
+  // navegador nao entra aqui de proposito -- ver o comentario da rota.
+  async function encaminhar(msg: any, paraId: string, paraNome: string) {
+    setEnviando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/encaminhar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensagem_id: msg.id, para: paraId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
+      else { setAviso(`Encaminhada para ${paraNome}.`); setEncaminhando(null); setBuscaEnc(""); }
+    } finally { setEnviando(false); }
+  }
+
+  async function enviarLocal(idx: number, nome: string) {
+    if (!sel || enviando) return;
+    setEnviando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/localizacao", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, local: idx }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) setAviso(j?.error ?? `erro ${r.status}`);
+      else { setAviso(null); carregarThread(sel, true); }
+    } finally { setEnviando(false); }
+  }
+
   async function enviarNota() {
     const t = texto.trim();
     if (!t || !sel || enviando) return;
@@ -2990,7 +3034,22 @@ export default function Chat() {
                               {(!m.midia_tipo || (m.conteudo && !/^(📷|🎬|🎤|📎|🙂)/.test(m.conteudo))) && (
                                 <div style={{ fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.conteudo}</div>
                               )}
+                              {/* Encaminhar. Fica DENTRO da bolha, na linha da
+                                  hora, e nao flutuando na borda: a bolha ja e
+                                  estreita, e um botao por fora empurraria o
+                                  texto. Aparece so em mensagem com conteudo --
+                                  marco de sistema e reacao nao se encaminham. */}
                               <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
+                                {(m.conteudo || m.midia_path) && m.tipo !== "evento_sistema" && (
+                                  <button
+                                    onClick={() => { setEncaminhando(m); setBuscaEnc(""); }}
+                                    title="Encaminhar para outro contato"
+                                    style={{ marginRight: "auto", background: "transparent", border: "none",
+                                      color: M.muted, fontSize: 12, lineHeight: 1, cursor: "pointer",
+                                      fontFamily: "inherit", padding: 0, opacity: 0.75 }}>
+                                    ↪
+                                  </button>
+                                )}
                                 {horaBR(m.criada_em)}
                                 {fora && <Ticks erro={m.erro} status={m.status} />}
                               </div>
@@ -3239,14 +3298,48 @@ export default function Chat() {
                     background: modoNota ? M.surface : M.bg,
                     border: `1px solid ${modoNota ? NOTA.borda : M.border}`,
                     borderRadius: compacto ? 16 : 22, transition: "border-color .15s" }}>
+                  <div style={{ position: "relative", flexShrink: 0 }}>
                   <button
-                    onClick={() => arquivoRef.current?.click()}
+                    onClick={() => (locais.length ? setAnexoAberto((v) => !v) : arquivoRef.current?.click())}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
                     style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
+                  {anexoAberto && (
+                    <>
+                      <div onClick={() => setAnexoAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
+                      <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201, minWidth: 210,
+                        background: M.surface, border: `1px solid ${M.border}`, borderRadius: 11,
+                        boxShadow: "0 12px 30px rgba(28,14,27,.20)", overflow: "hidden" }}>
+                        <button onClick={() => { setAnexoAberto(false); arquivoRef.current?.click(); }}
+                          style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
+                            padding: "10px 13px", fontSize: 13, fontWeight: 600, color: M.ink,
+                            background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                          <span style={{ fontSize: 16 }}>📎</span> Arquivo, foto ou vídeo
+                        </button>
+                        <div style={{ height: 1, background: M.bg }} />
+                        <div style={{ padding: "7px 13px 3px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
+                          textTransform: "uppercase", color: M.muted }}>Localização</div>
+                        {locais.map((l, i) => (
+                          <button key={i} onClick={() => { setAnexoAberto(false); void enviarLocal(i, l.nome); }}
+                            title={l.endereco}
+                            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
+                              padding: "9px 13px", fontSize: 13, fontWeight: 600, color: M.ink,
+                              background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                            <span style={{ fontSize: 16 }}>📍</span>
+                            <span style={{ minWidth: 0 }}>
+                              <span style={{ display: "block" }}>{l.nome}</span>
+                              <span style={{ display: "block", fontSize: 11, color: M.muted, whiteSpace: "nowrap",
+                                overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 }}>{l.endereco}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  </div>
                   {/* 🎤 gravar áudio — clica pra gravar, clica de novo pra enviar */}
                   <button
                     onClick={alternarGravacao}
@@ -3598,6 +3691,81 @@ export default function Chat() {
           })}
         </div>
       )}
+
+      {/* ---- ESCOLHER PARA QUEM ENCAMINHAR ------------------------------
+          Camada por cima da tela, e nao um menu dentro da bolha: e uma
+          escolha entre centenas de conversas, com busca. E o aviso do que a
+          cliente do outro lado vai ver fica ANTES da lista -- e a unica
+          diferenca entre isto e o "encaminhar" que a pessoa conhece. */}
+      {encaminhando && (() => {
+        const t = buscaEnc.trim().toLowerCase();
+        const alvos = conversas
+          .filter((c) => c.cliente_id !== encaminhando.cliente_id && !/^(winthor|venda):/.test(c.cliente_id))
+          .filter((c) => !t || (c.cliente ?? "").toLowerCase().includes(t) || String(c.telefone ?? "").includes(t.replace(/\D/g, "") || " "))
+          .slice(0, 60);
+        const previa = (encaminhando.conteudo || rotuloMidia(encaminhando.midia_tipo ?? "")).slice(0, 140);
+        return (
+          <>
+            <div onClick={() => setEncaminhando(null)}
+              style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(28,14,27,.34)" }} />
+            <div style={{ position: "fixed", zIndex: 401, top: "50%", left: "50%", transform: "translate(-50%,-50%)",
+              width: "min(420px, 92vw)", maxHeight: "78vh", display: "flex", flexDirection: "column",
+              background: M.surface, border: `1px solid ${M.border}`, borderRadius: 14,
+              boxShadow: "0 22px 60px rgba(28,14,27,.30)", overflow: "hidden" }}>
+              <div style={{ padding: "13px 16px", borderBottom: `1px solid ${M.border}` }}>
+                <b style={{ fontSize: 14.5, color: M.wine }}>Encaminhar para</b>
+                <div style={{ marginTop: 7, padding: "7px 10px", background: M.bg, borderRadius: 9,
+                  fontSize: 12, color: M.gray, lineHeight: 1.45, maxHeight: 62, overflow: "hidden" }}>
+                  {previa}
+                </div>
+                <div style={{ marginTop: 8, padding: "7px 10px", background: "#fff7e6", border: "1px solid #f3ddad",
+                  borderRadius: 9, fontSize: 11.5, color: "#8a5a00", lineHeight: 1.45 }}>
+                  A cliente recebe como uma mensagem normal — o WhatsApp não mostra
+                  “Encaminhada”. Só funciona se a conversa de destino estiver dentro
+                  das 24 h.
+                </div>
+                <input value={buscaEnc} onChange={(e) => setBuscaEnc(e.target.value)}
+                  placeholder="Buscar contato…" autoFocus
+                  style={{ width: "100%", boxSizing: "border-box", marginTop: 9, padding: "8px 11px",
+                    fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg,
+                    border: `1px solid ${M.border}`, borderRadius: 9, outline: "none" }} />
+              </div>
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {!alvos.length && (
+                  <div style={{ padding: 16, fontSize: 12.5, color: M.muted }}>Nenhuma conversa encontrada.</div>
+                )}
+                {alvos.map((c) => (
+                  <button key={c.cliente_id} disabled={enviando}
+                    onClick={() => void encaminhar(encaminhando, c.cliente_id, c.cliente)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
+                      padding: "10px 16px", fontSize: 13, color: M.ink, background: "transparent",
+                      border: "none", borderBottom: `1px solid ${M.bg}`, cursor: enviando ? "wait" : "pointer",
+                      fontFamily: "inherit" }}>
+                    <span style={{ width: 30, height: 30, borderRadius: 30, background: M.wine, color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
+                      fontWeight: 800, flexShrink: 0 }}>
+                      {(c.cliente ?? "?").trim().charAt(0).toUpperCase()}
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "block", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden",
+                        textOverflow: "ellipsis" }}>{nomeComCodigo(c.cliente, c.codcli)}</span>
+                      <span style={{ display: "block", fontSize: 11, color: M.muted }}>{c.telefone ?? "sem telefone"}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ padding: "10px 16px", borderTop: `1px solid ${M.border}`, textAlign: "right" }}>
+                <button onClick={() => setEncaminhando(null)}
+                  style={{ fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", color: M.gray,
+                    background: "transparent", border: `1px solid ${M.border}`, borderRadius: 9,
+                    padding: "6px 14px", cursor: "pointer" }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
