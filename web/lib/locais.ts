@@ -37,19 +37,55 @@ export function lerLocais(bruto: unknown): Local[] {
       !(l.lat === 0 && l.lng === 0));
 }
 
+/** Link curto do botão "Compartilhar" — é um redirecionador, não tem coordenada. */
+const LINK_CURTO = /(maps\.app\.goo\.gl|goo\.gl\/maps)/i;
+
 /**
- * Aceita o que se cola do Google Maps.
+ * Aceita o que se cola do Google Maps — as duas formas que as pessoas usam.
  *
- * O gesto real de quem cadastra é: abrir o Maps, clicar com o botão direito no
- * ponto, "copiar coordenadas" — e colar. Sai `-1.4558, -48.5044`. Pedir dois
- * campos separados obrigaria a pessoa a recortar a vírgula à mão, que é onde
- * ela erra.
+ * 1. **Coordenada crua** (`-1.4558, -48.5044`): botão direito no ponto do mapa,
+ *    o primeiro item do menu já é a coordenada, e clicar copia.
+ * 2. **O link inteiro da barra de endereço**, colado do jeito que vier.
+ *
+ * A 2 existe porque a 1 quase ninguém descobre sozinho. E o botão que todo
+ * mundo tenta primeiro — "Compartilhar" — devolve um link CURTO
+ * (`maps.app.goo.gl/…`) que **não carrega coordenada nenhuma**: é só um
+ * redirecionador. Recusamos explicitamente, para a tela poder dizer o que fazer
+ * em vez de mostrar "inválido" diante de um link que parece perfeito.
+ *
+ * ⚠️ A ordem de leitura do link importa. Num endereço do Maps o `@` é o
+ * **centro da tela** — muda se a pessoa arrastou o mapa antes de copiar. O pino
+ * de verdade está em `!3d…!4d…`. Ler o `@` primeiro daria um ponto plausível e
+ * levemente errado, que é o pior tipo de erro aqui: ninguém confere.
  */
 export function lerCoordenadas(txt: string): { lat: number; lng: number } | null {
-  const m = /(-?\d{1,3}[.,]\d+)\s*[,;]\s*(-?\d{1,3}[.,]\d+)/.exec(String(txt ?? ""));
+  const s = String(txt ?? "");
+  if (LINK_CURTO.test(s)) return null;
+
+  const m =
+    /!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/.exec(s) ??      // o pino
+    /[?&]q=(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)/.exec(s) ??   // ?q=lat,lng
+    /@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/.exec(s) ??           // centro do mapa
+    /(-?\d{1,3}[.,]\d+)\s*[,;]\s*(-?\d{1,3}[.,]\d+)/.exec(s); // colada à mão
   if (!m) return null;
+
   const lat = Number(m[1].replace(",", ".")), lng = Number(m[2].replace(",", "."));
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return { lat, lng };
+}
+
+/**
+ * Por que esta linha não foi aceita, em português.
+ *
+ * "1 com problema" não ajuda quem está cadastrando: o erro quase sempre é um
+ * caso conhecido, e dizer qual resolve na hora.
+ */
+export function problemaCoordenada(txt: string): string | null {
+  const s = String(txt ?? "").trim();
+  if (!s) return "falta a coordenada ou o link do Google Maps";
+  if (LINK_CURTO.test(s))
+    return "este é o link do botão Compartilhar, que não carrega a coordenada — copie o endereço da barra do navegador, ou clique com o botão direito no mapa e copie a coordenada";
+  if (lerCoordenadas(s)) return null;
+  return "não achei uma coordenada aqui — deve parecer com -1.4558, -48.5044";
 }
