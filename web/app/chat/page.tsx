@@ -70,7 +70,12 @@ const PALETAS: Record<string, Partial<typeof M>> = {
     surface: "#ffffff",
     border: "#e3e1e8",
     ink: "#241327",
-    muted: "#7c7986",       // 4,6:1 sobre o fundo — o #9a8098 antigo reprovava
+    // ⚠️ 4,25:1 sobre branco e 3,87:1 sobre o fundo da tela (#f4f4f6) --
+    // MEDIDO, e reprova para texto normal (a régua é 4,5:1). O comentário
+    // anterior dizia "4,6:1" e estava errado; melhora o #9a8098 antigo, mas
+    // não passa. Escurecer aqui muda a cara do D1 em produção, então fica
+    // como dívida nomeada para a decisão de tema, não corrigido de afogadilho.
+    muted: "#7c7986",
     gray: "#55555f",
     bolhaFora: "#e9f1fb",   // enviada = ação = azul
     bolhaDentro: "#ffffff",
@@ -3714,7 +3719,19 @@ export default function Chat() {
             some no aparelho que vai virar app (§29.2 item 3). A folha sobe
             sobre a conversa em vez de disputar largura com ela — não há 268px
             sobrando em 390. */}
-        {d1 && isMobile && mostraThread && sel && painelAberto && (
+        {/* ⚠️ `d1 || compacto`, e nao so `d1`. O botao "Cliente" renderiza
+            quando `(!isMobile || compacto)`; o painel de desktop exige
+            `!isMobile`. Logo, DENTRO DA LUPA (compacto, e isMobile porque o
+            iframe tem 500px) com o layout `original`, o botao aparecia e nao
+            tinha para onde abrir -- clique morto. Nao atinge ninguem hoje
+            porque o layout em vigor e o D1, mas `original` e o caminho de
+            ROLLBACK: aterrissar nele com um botao morto anula o proposito da
+            chave. Achado pelo laudo do tema premium.
+
+            No celular de verdade com `original` o botao nem renderiza, entao
+            esta condicao conserta exatamente o caso quebrado e deixa o
+            desenho antigo byte a byte como era. */}
+        {(d1 || compacto) && isMobile && mostraThread && sel && painelAberto && (
           <>
             <div onClick={() => setPainelAberto(false)}
               style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(28,14,27,.38)" }} />
