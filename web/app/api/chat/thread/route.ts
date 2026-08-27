@@ -34,14 +34,27 @@ export async function GET(req: Request) {
   const querHistorico = new URL(req.url).searchParams.get("historico") === "1"
     && cfgThread.historico_rd;
 
+  // ---- PAGINAÇÃO PARA TRÁS (item 4 da fila) -------------------------------
+  // A thread trazia 200 mensagens e **parava sem avisar**: numa cliente de anos,
+  // a conversa mais antiga simplesmente não existia para quem rolava. Agora a
+  // tela pede `?antes=<criada_em>` e recebe o lote anterior.
+  //
+  // Cursor por DATA e não por offset: o offset se desloca quando chega mensagem
+  // nova enquanto a pessoa rola, e o resultado é repetir ou pular uma bolha.
+  const antes = new URL(req.url).searchParams.get("antes");
+  const LOTE = 200;
+
   const COLS_MSG = "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro";
   let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
+  if (antes) msgsQ = msgsQ.lt("criada_em", antes);
   if (!querHistorico) msgsQ = filtroLinhas(msgsQ, cfgThread);
 
   const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([
     sb.from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle(),
-    msgsQ.order("criada_em", { ascending: false }).limit(200),
+    // pede UM a mais que o lote: é assim que se sabe que ainda há mais para
+    // trás sem uma segunda consulta de contagem
+    msgsQ.order("criada_em", { ascending: false }).limit(LOTE + 1),
     // notas internas (migration 0080) — vêm à parte e o front intercala pela data.
     // Todas, sem limite de janela: são poucas por conversa, e esconder uma nota
     // que caiu fora das 200 últimas mensagens seria perder um recado da equipe.
@@ -69,7 +82,10 @@ export async function GET(req: Request) {
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const mensagens = (data ?? [])
+  const bruto = data ?? [];
+  const temMais = bruto.length > LOTE;
+  const mensagens = bruto
+    .slice(0, LOTE)
     .filter((m: any) => m.tipo !== "evento_sistema")
     .reverse(); // cronológico (mais antiga em cima)
 
@@ -132,6 +148,12 @@ export async function GET(req: Request) {
     historico_oculto: historicoOculto,
     // veio COM o histórico? a tela usa para rotular as antigas e não reoferecer
     historico_carregado: querHistorico,
+    // ainda há mensagens mais antigas que este lote? a tela usa para oferecer
+    // "carregar anteriores" em vez de terminar em silêncio
+    tem_mais: temMais,
+    // este lote é uma continuação? nesse caso a tela NÃO recarrega notas,
+    // transferências e ligações — elas já vieram inteiras no primeiro
+    continuacao: !!antes,
     linha,
     mensagens,
     notas: notas ?? [],

@@ -28,17 +28,21 @@ export async function POST(req: Request) {
   let b: any;
   try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
   const cliente_id = String(b?.cliente_id ?? "").trim();
-  const para = String(b?.para ?? "").trim().toLowerCase();
+  // `devolver: true` é a devolução para a fila (0112): o destino vira NULO.
+  // Não é "transferir para ninguém" escrito com outra palavra — é o desfazer do
+  // ✋ Pegar, e sem ele quem pega a conversa errada não tem saída.
+  const devolver = b?.devolver === true;
+  const para = devolver ? null : String(b?.para ?? "").trim().toLowerCase();
   const observacao = String(b?.observacao ?? "").trim().slice(0, 500) || null;
   if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
-  if (!para) return Response.json({ error: "escolha para quem transferir" }, { status: 400 });
+  if (!devolver && !para) return Response.json({ error: "escolha para quem transferir" }, { status: 400 });
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
   // destino tem de ser vendedor ativo de verdade (carteira_config é a fonte única, §14.1)
-  const { data: destino } = await sb
+  const { data: destino } = devolver ? { data: { ativo: true } } : await sb
     .from("carteira_config").select("slug,ativo").eq("slug", para).maybeSingle();
   if (!destino || !destino.ativo) {
     return Response.json({ error: `“${para}” não é uma carteira ativa` }, { status: 400 });
@@ -59,7 +63,18 @@ export async function POST(req: Request) {
     return Response.json({ error: "essa conversa não está com você" }, { status: 403 });
   }
   if (de === para) {
-    return Response.json({ error: `a conversa já está com ${para}` }, { status: 409 });
+    return Response.json({
+      error: devolver ? "esta conversa já está na fila" : `a conversa já está com ${para}`,
+    }, { status: 409 });
+  }
+
+  // Só se pode devolver o que NÃO tem dono comercial. Cliente com carteira/RCA
+  // tem dono natural: devolvê-lo criaria um órfão que ninguém procura — o certo
+  // ali é transferir para alguém, com nome.
+  if (devolver && linha?.vendedor) {
+    return Response.json({
+      error: `este cliente é da carteira de ${linha.vendedor} — em vez de devolver, transfira para quem vai atender`,
+    }, { status: 422 });
   }
 
   const { data, error } = await sb
@@ -67,7 +82,21 @@ export async function POST(req: Request) {
     .insert({ cliente_id, de_carteira: de, para_carteira: para, por: usuario, observacao })
     .select("id,cliente_id,de_carteira,para_carteira,por,observacao,criada_em")
     .single();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Enquanto a 0112 não for aplicada, `para_carteira` ainda é NOT NULL e a
+    // devolução falha com 23502. Erro cru de Postgres na tela do vendedor não
+    // ajuda ninguém — o recado tem de dizer que é atualização pendente, não
+    // erro dele.
+    if (devolver && /para_carteira/.test(error.message ?? "")) {
+      return Response.json({
+        error: "devolver ainda não está disponível — falta aplicar a atualização 0112 no banco",
+      }, { status: 503 });
+    }
+    return Response.json({ error: error.message }, { status: 500 });
+  }
 
-  return Response.json({ ok: true, transferencia: data });
+  return Response.json({
+    ok: true, transferencia: data,
+    aviso: devolver ? "Conversa devolvida — voltou para a fila de espera." : undefined,
+  });
 }
