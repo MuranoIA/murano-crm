@@ -122,3 +122,28 @@ A pergunta a responder antes de escolher é essa, não qual tela é mais bonita.
   cor.
 - `100dvh`, área segura desenhada e alvos de toque ≥ 44 px nas telas mobile.
 - `prefers-reduced-motion` respeitado.
+
+---
+
+## Adendo (27/08/2026) — `/templates`, a tela do CONSULTOR
+
+Assunto diferente do redesenho do chat acima. Dois arquivos novos:
+
+| Arquivo | O que é |
+|---|---|
+| `laudo-templates-consultor.md` | laudo curto: tarefas reais, ordem dos blocos, o que NÃO entra, as seis formas de enganar a pessoa, e a lista do que a tela do ADMIN precisa ganhar para avaliar as sugestões |
+| `templates-consultor.html` | protótipo navegável — desktop e celular na mesma página, um abaixo do outro. Abre com duplo clique |
+
+O que dá para exercitar no protótipo: abrir o compositor (pela lista ou pelo
+botão fixo do celular), digitar e ver a prévia no balão do WhatsApp com o `{{1}}`
+já preenchido, inserir campos, estourar o limite de 1024, cair no aviso de
+numeração fora de sequência (`{{1}}` + `{{3}}`) e no de link encurtado, enviar
+para o administrador, e usar “corrigir e reenviar” numa sugestão recusada.
+Na barra do topo: tema escuro e os dois estados vazios (carteira sem template
+aprovado; ninguém nunca sugeriu nada).
+
+Os **cinco** estados de uma sugestão estão todos na tela, e essa é a tese do
+desenho: `em análise com o administrador` → `aprovada pelo administrador` →
+`criada na Meta` → `pronta para usar`, mais `recusada + motivo`. São dois
+vereditos em sequência (admin, depois Meta), e colapsá-los em “aprovada” faria a
+consultora procurar no chat um template que ainda não está lá.

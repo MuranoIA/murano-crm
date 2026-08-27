@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="claro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>/templates — a tela do consultor · Murano Professional</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   /templates — CONSULTOR
+   Tese: a tela responde primeiro "o que eu posso mandar hoje" e só depois
+   oferece "quero um novo". Criar tem a mesma sensação de criar um template
+   de verdade — nome, texto, campos, cabeçalho, prévia — mas o destino é o
+   ADMINISTRADOR, e a tela nunca finge que foi para a Meta.
+
+   Paleta: murano-app/src/app/globals.css (--color-murano-*).
+   Papéis: púrpura = marca · azul = ação · laranja = UM acento (a recusa).
+   Sem CDN, sem build. Inter com fallback de sistema.
+   ===================================================================== */
+:root{
+  --purple:#621244; --purple-deep:#3d0b2a; --purple-soft:#8a2a63; --purple-btn:#7a1755;
+  --blue:#2f7fd4; --blue-deep:#1a5fa8; --blue-soft:#8ec2f5;
+  --orange:#dd4222; --orange-deep:#a83015;
+  --pearl:#ded3d6; --gray:#9a9aa5; --gray-deep:#55555f;
+  --r-card:14px; --r-btn:10px;
+}
+/* superfícies claras — token oficial #f4f4f6, não o rosa #f5edf4 do CRM atual */
+:root{
+  --page:#f4f4f6; --surface:#ffffff; --raised:#fbfafc; --sunken:#eceaf0;
+  --line:#e3e1e8; --line-strong:#cdcad5;
+  --ink:#241327; --ink-2:#55555f; --ink-3:#7c7986;
+  --acao:#1a5fa8; --acao-fill:#2f7fd4; --acao-wash:#e9f1fb; --acao-line:#c9dff5;
+  --marca:#621244; --marca-wash:#f3ecf1; --marca-line:#e5d7e0;
+  --alerta:#a83015; --alerta-bg:#fdeee9; --alerta-line:#f2cabb;
+  --ok:#1f7a4d; --ok-bg:#e9f5ee; --ok-line:#bfe0cb;
+  --espera:#7a5b12; --espera-bg:#fdf6e3; --espera-line:#e8d9a8;
+  --sombra:0 1px 2px rgba(36,19,39,.05), 0 10px 28px rgba(36,19,39,.07);
+}
+[data-tema="escuro"]{
+  --page:#140a13; --surface:#1c0e1b; --raised:#241327; --sunken:#0e060d;
+  --line:rgba(222,211,214,.11); --line-strong:rgba(222,211,214,.22);
+  --ink:#ded3d6; --ink-2:#9a9aa5; --ink-3:#7d7b86;
+  --acao:#8ec2f5; --acao-fill:#2f7fd4; --acao-wash:rgba(47,127,212,.14); --acao-line:rgba(47,127,212,.38);
+  --marca:#c07aa4; --marca-wash:rgba(138,42,99,.18); --marca-line:rgba(222,211,214,.12);
+  --alerta:#ff9d78; --alerta-bg:rgba(221,66,34,.15); --alerta-line:rgba(221,66,34,.40);
+  --ok:#7fd6a5; --ok-bg:rgba(31,122,77,.18); --ok-line:rgba(31,122,77,.42);
+  --espera:#e8c874; --espera-bg:rgba(232,200,116,.12); --espera-line:rgba(232,200,116,.32);
+  --sombra:0 1px 2px rgba(0,0,0,.30), 0 12px 30px rgba(0,0,0,.34);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:"Inter","Inter Variable",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-optical-sizing:auto;
+  background:var(--page); color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+}
+button,input,textarea,select{font-family:inherit}
+.tab{font-variant-numeric:tabular-nums}
+
+/* ---------- moldura do protótipo (não faz parte da tela) ---------- */
+.proto-bar{
+  position:sticky; top:0; z-index:60;
+  display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+  padding:10px 18px; background:var(--purple-deep); color:var(--pearl);
+  border-bottom:1px solid rgba(222,211,214,.14);
+}
+.proto-bar b{font-size:13px; font-weight:800; letter-spacing:-.01em}
+.proto-bar span.sep{width:1px; height:18px; background:rgba(222,211,214,.22)}
+.proto-bar small{font-size:11.5px; color:#c3b2ba}
+.chip{
+  padding:5px 11px; border-radius:999px; font-size:11.5px; font-weight:700; cursor:pointer;
+  background:rgba(222,211,214,.10); color:var(--pearl); border:1px solid rgba(222,211,214,.22);
+}
+.chip[aria-pressed="true"]{background:var(--blue); border-color:var(--blue); color:#fff}
+.palco{max-width:1580px; margin:0 auto; padding:26px 18px 70px}
+.rotulo-palco{
+  font-size:.72rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink-3); margin:26px 0 10px;
+}
+.moldura-desktop{
+  border:1px solid var(--line-strong); border-radius:16px; overflow:hidden;
+  background:var(--surface); box-shadow:var(--sombra);
+}
+.moldura-mobile{
+  width:390px; height:844px; border:10px solid #14090f; border-radius:44px; overflow:hidden;
+  background:var(--surface); box-shadow:0 24px 60px rgba(20,10,15,.34); position:relative;
+}
+.moldura-mobile .rolagem{height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch}
+
+/* ---------- barra de navegação do CRM ---------- */
+.nav{
+  display:flex; align-items:center; gap:2px; padding:0 16px; height:52px;
+  background:var(--surface); border-bottom:1px solid var(--line);
+}
+.nav .marca-quad{
+  width:26px; height:26px; border-radius:8px; background:#57163f; color:#e7d7dc;
+  display:grid; place-items:center; font-size:13px; font-weight:900; margin-right:12px; flex:none;
+}
+.nav a{
+  color:var(--ink-2); font-weight:600; font-size:14px; text-decoration:none;
+  padding:0 10px; line-height:50px; border-bottom:2px solid transparent; white-space:nowrap;
+}
+.nav a.ativo{color:var(--ink); font-weight:800; border-bottom-color:var(--marca)}
+.nav a .badge{
+  display:inline-block; min-width:16px; padding:0 4px; margin-left:5px; border-radius:999px;
+  background:var(--acao-fill); color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center;
+  vertical-align:1px;
+}
+
+/* ---------- faixa de identidade ---------- */
+.stripe{height:4px; background:linear-gradient(90deg,var(--blue),var(--purple-soft),var(--purple-deep))}
+.cabeca{padding:20px 26px 4px; background:var(--surface)}
+.cabeca h1{margin:0; font-size:1.7rem; font-weight:800; letter-spacing:-.03em}
+.cabeca p{margin:6px 0 0; font-size:.95rem; line-height:1.6; color:var(--ink-2); max-width:74ch}
+.corpo{padding:18px 26px 40px; display:flex; flex-direction:column; gap:22px}
+
+/* ---------- blocos ---------- */
+.bloco{background:var(--surface); border:1px solid var(--line); border-radius:var(--r-card); box-shadow:var(--sombra)}
+.bloco > header{
+  display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+  padding:14px 18px 0;
+}
+.bloco > header h2{margin:0; font-size:1.02rem; font-weight:800; letter-spacing:-.015em}
+.bloco > header .conta{font-size:.78rem; font-weight:700; color:var(--ink-3)}
+.bloco > header .ajuda{flex-basis:100%; margin:5px 0 0; font-size:.82rem; line-height:1.55; color:var(--ink-3)}
+.bloco > .miolo{padding:14px 18px 18px}
+
+/* ---------- cartão de template aprovado ---------- */
+.tpl{border:1px solid var(--line); border-radius:12px; background:var(--raised); padding:13px 15px; margin-bottom:11px}
+.tpl:last-child{margin-bottom:0}
+.tpl-topo{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+.tpl-topo b{font-size:.95rem}
+.tpl-texto{
+  margin-top:9px; padding:11px 13px; border-radius:10px; background:var(--surface);
+  border:1px solid var(--line); font-size:.9rem; line-height:1.6; color:var(--ink);
+}
+/* só o corpo preserva as quebras — o container não, senão a indentação do
+   próprio HTML entraria na mensagem */
+.corpo-pre{white-space:pre-wrap}
+.tpl-rodape-msg{margin-top:6px; font-size:.76rem; color:var(--ink-3)}
+.tpl-acoes{display:flex; gap:8px; flex-wrap:wrap; margin-top:11px}
+.campo-marca{
+  background:var(--acao-wash); border:1px dashed var(--acao-line); color:var(--acao);
+  border-radius:6px; padding:0 5px; font-weight:700; font-size:.85em; white-space:nowrap;
+}
+
+/* ---------- selos ---------- */
+.selo{
+  display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px;
+  font-size:.7rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; border:1px solid;
+}
+.selo.ok{color:var(--ok); background:var(--ok-bg); border-color:var(--ok-line)}
+.selo.espera{color:var(--espera); background:var(--espera-bg); border-color:var(--espera-line)}
+.selo.acao{color:var(--acao); background:var(--acao-wash); border-color:var(--acao-line)}
+.selo.alerta{color:var(--alerta); background:var(--alerta-bg); border-color:var(--alerta-line)}
+.selo.neutro{color:var(--ink-3); background:var(--sunken); border-color:var(--line)}
+.selo.marca{color:var(--marca); background:var(--marca-wash); border-color:var(--marca-line)}
+
+/* ---------- botões ---------- */
+.btn{
+  display:inline-flex; align-items:center; gap:7px; border-radius:var(--r-btn); cursor:pointer;
+  font-weight:700; font-size:.85rem; padding:9px 16px; border:1px solid transparent; transition:.18s ease;
+}
+.btn:focus-visible{outline:3px solid var(--blue-soft); outline-offset:2px}
+.btn-acao{background:var(--acao-fill); color:#fff; border-color:var(--acao-fill)}
+.btn-acao:hover{background:var(--acao)}
+.btn-acao[disabled]{opacity:.45; cursor:not-allowed}
+.btn-contorno{background:transparent; color:var(--ink); border-color:var(--line-strong)}
+.btn-contorno:hover{border-color:var(--acao-line); background:var(--acao-wash); color:var(--acao)}
+.btn-leve{background:transparent; color:var(--acao); border-color:transparent; padding:7px 10px; font-size:.82rem}
+.btn-leve:hover{background:var(--acao-wash)}
+.btn-grande{font-size:.95rem; padding:13px 22px}
+
+/* ---------- convite ao compositor ---------- */
+.convite{
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  padding:18px; border:1px dashed var(--line-strong); border-radius:12px; background:var(--raised);
+}
+.convite .txt{flex:1; min-width:220px}
+.convite .txt b{display:block; font-size:1rem; margin-bottom:3px}
+.convite .txt span{font-size:.85rem; color:var(--ink-3); line-height:1.5}
+
+/* ---------- compositor ---------- */
+.comp-grade{display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:22px}
+.comp-grade.estreito{grid-template-columns:minmax(0,1fr)}
+.campo{display:flex; flex-direction:column; gap:5px; margin-bottom:15px}
+.campo label{font-size:.7rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3)}
+.campo .dica{font-size:.76rem; color:var(--ink-3); line-height:1.45}
+input[type=text], textarea, select{
+  background:var(--surface); color:var(--ink); border:1px solid var(--line-strong);
+  border-radius:var(--r-btn); padding:10px 12px; font-size:.92rem; width:100%;
+}
+input[type=text]:focus, textarea:focus, select:focus{
+  outline:none; border-color:var(--acao-fill); box-shadow:0 0 0 3px var(--acao-wash);
+}
+textarea{resize:vertical; line-height:1.55; min-height:118px}
+.linha-campos{display:flex; gap:14px; flex-wrap:wrap}
+.linha-campos > .campo{flex:1; min-width:180px}
+.contador{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:.76rem; color:var(--ink-3); margin-top:-9px; margin-bottom:15px}
+.contador.estourou{color:var(--alerta); font-weight:700}
+.opcoes{display:flex; gap:8px; flex-wrap:wrap}
+.opcao{
+  padding:8px 13px; border-radius:999px; font-size:.82rem; font-weight:700; cursor:pointer;
+  border:1px solid var(--line-strong); background:var(--surface); color:var(--ink-2);
+}
+.opcao[aria-pressed="true"]{border-color:var(--acao-fill); background:var(--acao-wash); color:var(--acao)}
+
+/* prévia */
+.previa{position:sticky; top:14px; align-self:start}
+.previa .tela{
+  border-radius:14px; border:1px solid var(--line); background:var(--sunken); padding:16px 14px 18px;
+}
+.previa .quem{font-size:.74rem; color:var(--ink-3); margin-bottom:10px; display:flex; align-items:center; gap:6px}
+.balao{
+  background:var(--surface); border:1px solid var(--line); border-radius:4px 12px 12px 12px;
+  padding:11px 13px; box-shadow:0 1px 2px rgba(36,19,39,.06); max-width:100%;
+}
+.balao .cab-txt{font-weight:800; font-size:.92rem; margin-bottom:6px}
+.balao .cab-img{
+  height:104px; border-radius:8px; margin:-2px -3px 9px; display:grid; place-items:center;
+  background:linear-gradient(135deg,var(--purple),var(--purple-soft)); color:#f0e2ea; font-size:.76rem; font-weight:700;
+}
+.balao .msg{font-size:.9rem; line-height:1.58; white-space:pre-wrap}
+.balao .rod{margin-top:8px; font-size:.76rem; color:var(--ink-3)}
+.balao .hora{margin-top:6px; text-align:right; font-size:.68rem; color:var(--ink-3)}
+.previa .nota{margin-top:11px; font-size:.76rem; line-height:1.5; color:var(--ink-3)}
+
+/* o que acontece depois */
+.destino{
+  border-left:3px solid var(--acao-fill); background:var(--acao-wash);
+  border-radius:0 10px 10px 0; padding:13px 15px; margin:6px 0 16px;
+}
+.destino b{font-size:.86rem; display:block; margin-bottom:7px}
+.destino ol{margin:0; padding-left:19px; font-size:.85rem; line-height:1.65; color:var(--ink-2)}
+.destino .recusa{
+  margin-top:9px; padding-top:9px; border-top:1px solid var(--acao-line);
+  font-size:.83rem; line-height:1.55; color:var(--ink-2);
+}
+.avisos{margin:0 0 14px; display:flex; flex-direction:column; gap:7px}
+.aviso{
+  font-size:.82rem; line-height:1.45; padding:9px 12px; border-radius:9px;
+  background:var(--alerta-bg); border:1px solid var(--alerta-line); color:var(--alerta); font-weight:600;
+}
+
+/* ---------- minhas sugestões ---------- */
+.sug{padding:14px 0; border-bottom:1px solid var(--line)}
+.sug:last-child{border-bottom:none; padding-bottom:0}
+.sug-topo{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+.sug-topo b{font-size:.94rem}
+.sug-quando{font-size:.76rem; color:var(--ink-3); margin-left:auto}
+.sug-texto{margin-top:7px; font-size:.86rem; line-height:1.55; color:var(--ink-2); white-space:pre-wrap}
+.sug-recado{
+  margin-top:9px; padding:10px 12px; border-radius:9px; font-size:.85rem; line-height:1.55;
+  background:var(--alerta-bg); border:1px solid var(--alerta-line); color:var(--ink);
+}
+.sug-recado b{color:var(--alerta)}
+.sug-recado.calmo{background:var(--acao-wash); border-color:var(--acao-line)}
+.sug-recado.calmo b{color:var(--acao)}
+.sug-acoes{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+.vazio{
+  padding:26px 18px; text-align:center; border:1px dashed var(--line-strong);
+  border-radius:12px; background:var(--raised);
+}
+.vazio b{display:block; font-size:.95rem; margin-bottom:5px}
+.vazio span{font-size:.85rem; color:var(--ink-3); line-height:1.55}
+
+/* ---------- mobile ---------- */
+.m-topo{
+  position:sticky; top:0; z-index:8; background:var(--surface); border-bottom:1px solid var(--line);
+  padding:calc(8px + env(safe-area-inset-top)) 14px 9px; display:flex; align-items:center; gap:10px;
+}
+.m-topo .marca-quad{width:26px;height:26px;border-radius:8px;background:#57163f;color:#e7d7dc;display:grid;place-items:center;font-size:13px;font-weight:900}
+.m-topo h1{margin:0; font-size:1.02rem; font-weight:800; letter-spacing:-.02em}
+.m-corpo{padding:14px 14px 108px; display:flex; flex-direction:column; gap:16px}
+.m-rodape{
+  position:absolute; left:0; right:0; bottom:0; z-index:9;
+  padding:11px 14px calc(11px + env(safe-area-inset-bottom));
+  background:var(--surface); border-top:1px solid var(--line);
+  box-shadow:0 -8px 24px rgba(36,19,39,.10);
+}
+.m-rodape .btn{width:100%; justify-content:center; min-height:48px}
+.m-abas{display:flex; gap:6px; padding:0 14px 2px; background:var(--surface); border-bottom:1px solid var(--line); overflow-x:auto}
+.m-aba{
+  flex:none; padding:9px 12px; font-size:.82rem; font-weight:700; cursor:pointer;
+  background:transparent; border:none; border-bottom:2px solid transparent; color:var(--ink-3);
+}
+.m-aba[aria-pressed="true"]{color:var(--ink); border-bottom-color:var(--marca)}
+
+/* ---------- torrada ---------- */
+.torrada{
+  position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+  background:var(--ink); color:var(--page); padding:12px 20px; border-radius:12px;
+  font-size:.87rem; font-weight:600; box-shadow:0 14px 34px rgba(0,0,0,.3);
+  opacity:0; pointer-events:none; transition:.22s ease; z-index:200; max-width:min(520px,88vw);
+}
+.torrada.ver{opacity:1; transform:translateX(-50%) translateY(0)}
+
+/* ---------- nota de rodapé do protótipo ---------- */
+.tese{
+  margin-top:36px; padding:20px 22px; border-radius:var(--r-card);
+  background:var(--surface); border:1px solid var(--line); box-shadow:var(--sombra);
+}
+.tese h3{margin:0 0 8px; font-size:1.02rem; font-weight:800; letter-spacing:-.015em}
+.tese p{margin:0 0 9px; font-size:.9rem; line-height:1.65; color:var(--ink-2); max-width:92ch}
+.tese p:last-child{margin-bottom:0}
+.tese code{background:var(--sunken); border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:.85em}
+
+@media (prefers-reduced-motion:reduce){*{transition:none !important; animation:none !important}}
+@media (max-width:900px){ .comp-grade{grid-template-columns:minmax(0,1fr)} }
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <b>Protótipo · /templates do consultor</b>
+  <span class="sep"></span>
+  <small>estados:</small>
+  <button class="chip" id="cx-vazio-aprov" aria-pressed="false">carteira sem template aprovado</button>
+  <button class="chip" id="cx-vazio-sug" aria-pressed="false">nunca sugeriu nada</button>
+  <span class="sep"></span>
+  <button class="chip" id="cx-tema" aria-pressed="false">tema escuro</button>
+  <span class="sep"></span>
+  <small>papel simulado: <b>vendedor · carteira kamilly</b></small>
+</div>
+
+<div class="palco">
+  <div class="rotulo-palco">Desktop — 1440 px</div>
+  <div class="moldura-desktop" id="desktop"></div>
+
+  <div class="rotulo-palco">Celular — 390 × 844</div>
+  <div class="moldura-mobile"><div class="rolagem" id="mobile"></div></div>
+
+  <div class="tese">
+    <h3>A tese desta direção — e o que ela sacrifica</h3>
+    <p>
+      <b>Tese.</b> A tela responde primeiro à pergunta diária — <i>“que texto eu posso mandar
+      agora?”</i> — e só depois oferece o compositor. Ler o que já existe é o antídoto da sugestão
+      duplicada: quem chega para pedir um template novo esbarra antes num quase igual. O compositor
+      entrega a <b>mesma sensação de criar um template de verdade</b> (nome, campos, cabeçalho,
+      rodapé, prévia ao vivo no balão do WhatsApp), mas cada palavra da tela deixa claro que o
+      destino é <b>o administrador</b>, e não a Meta.
+    </p>
+    <p>
+      <b>Honestidade embutida.</b> O botão diz “enviar para o administrador analisar”. O bloco
+      <i>o que acontece depois</i> fica acima do botão, não em nota de rodapé, e enuncia a recusa
+      como desfecho possível. “Aprovada pelo administrador” <b>não</b> vira “pronta para usar”:
+      existe um estado intermediário nomeado — <code>aprovada, ainda não criada na Meta</code> —
+      porque o veredito é duplo e esconder o segundo faria a consultora procurar no chat um
+      template que não está lá. Nenhum prazo é prometido; o que se mostra é há quanto tempo
+      a sugestão espera, que é verdade verificável.
+    </p>
+    <p>
+      <b>O que sacrifica.</b> (1) A lista de aprovados ocupa a dobra, então o compositor exige um
+      gesto a mais — aceitável porque sugerir é evento raro e usar é diário, mas quem quiser
+      medir “sugestões por mês” vai ver um número menor do que veria com o formulário aberto de
+      cara. (2) Mostrar o tempo de espera expõe o admin: uma fila parada fica visível para a
+      equipe. (3) O texto passa a existir em dois lugares — aqui e no dropdown do chat — e as
+      duas telas precisam ler <code>/api/templates</code>, ou vão divergir. (4) Não há “editar”
+      em template aprovado, só “partir deste”: é limitação da Meta, e fingir o contrário seria
+      pior que a ausência do botão.
+    </p>
+    <p style="color:var(--ink-3);font-size:.83rem">
+      Dados fictícios. Nenhum nome, telefone ou CPF de cliente real — o repositório é público (§15.5).
+    </p>
+  </div>
+</div>
+
+<div class="torrada" id="torrada"></div>
+
+<script>
+/* =====================================================================
+   Estado do protótipo. Um só, renderizado nas duas molduras.
+   ===================================================================== */
+const NOME_EXEMPLO = "Márcia";
+
+const APROVADOS = [
+  {
+    id: 1, nome: "Recontato de clientes", padrao: true, cab: "nenhum",
+    corpo: "Oi {{1}}, tudo bem? Aqui é a {{2}}, da Murano Professional.\n\nFaz um tempinho que a gente não conversa — separei algumas novidades que combinam com o perfil do seu salão. Posso te mandar?",
+    rodape: "Murano Professional"
+  },
+  {
+    id: 2, nome: "Novidade da semana", padrao: false, cab: "imagem",
+    corpo: "Oi {{1}}! Chegou {{2}} aqui na Murano e eu lembrei do seu salão.\n\nQuer que eu separe uma para você ver o preço?",
+    rodape: "Murano Professional"
+  },
+  {
+    id: 3, nome: "Reposição de coloração", padrao: false, cab: "texto", cabTexto: "Chegou reposição",
+    corpo: "Oi {{1}}, sua última compra foi da linha de coloração. Chegou reposição das cores que costumam faltar. Quer que eu monte um pedido para você conferir?",
+    rodape: ""
+  }
+];
+
+/* Cinco estados possíveis de uma sugestão — os dois vereditos em sequência
+   (admin, depois Meta) precisam de nome próprio na tela. */
+const SUGESTOES_BASE = [
+  {
+    id: 11, nome: "Retomada de janeiro", estado: "pendente", quando: "há 3 dias",
+    corpo: "Oi {{1}}, tudo bem? Começou o ano e o movimento no salão costuma disparar em janeiro.\n\nSeparei a lista do que mais sai nessa época — quer que eu envie com os preços?",
+    porque: "Janeiro é quando o salão repõe estoque depois das festas. Hoje eu mando o template de recontato, que é genérico demais para essa época."
+  },
+  {
+    id: 12, nome: "Kit escova progressiva", estado: "aprovado", quando: "há 6 dias",
+    corpo: "Oi {{1}}, o kit de escova progressiva {{2}} voltou para o estoque. Quer que eu reserve um para o seu salão?",
+    porque: "É o produto que mais me perguntam e some rápido. Perco venda esperando o admin liberar um texto.",
+    avaliadoPor: "Administração", avaliadoEm: "há 2 dias"
+  },
+  {
+    id: 13, nome: "Aniversário do salão", estado: "na_meta", quando: "há 9 dias",
+    corpo: "Oi {{1}}, parabéns pelo aniversário do {{2}}! Preparei uma condição especial para essa semana — posso te mostrar?",
+    porque: "Data com motivo real para reabrir conversa parada. Aumenta a chance de resposta.",
+    avaliadoPor: "Administração", avaliadoEm: "há 5 dias"
+  },
+  {
+    id: 14, nome: "Reativação 90 dias", estado: "pronta", quando: "há 21 dias",
+    corpo: "Oi {{1}}, faz um tempo que a gente não fecha um pedido. Aconteceu alguma coisa com o atendimento? Se preferir, me diga o melhor horário e eu te ligo.",
+    porque: "Texto direto para quem sumiu. Puxa resposta mesmo de quem não compra.",
+    avaliadoPor: "Administração", avaliadoEm: "há 18 dias", virou: "Reativação 90 dias"
+  },
+  {
+    id: 15, nome: "Promoção relâmpago 50%", estado: "recusado", quando: "há 12 dias",
+    corpo: "Oi {{1}}! HOJE tudo com 50% OFF na Murano. Corre que acaba: bit.ly/murano50",
+    porque: "Quero criar urgência.",
+    avaliadoPor: "Administração", avaliadoEm: "há 11 dias",
+    motivo: "O texto promete 50% em tudo, e a condição valia só para uma linha. Promessa que a marca não cumpre é a causa nº 1 de recusa na Meta — e derrubar um número por isso para o atendimento inteiro. Link encurtado também pesa contra. Reescreva citando a linha, o desconto real e o prazo, sem link encurtado, que eu aprovo."
+  }
+];
+
+const S = {
+  vazioAprovados: false,
+  vazioSugestoes: false,
+  compondo: { desktop: false, mobile: false },
+  abaMobile: "prontos",
+  enviado: false,
+  form: { nome: "", corpo: "", cab: "nenhum", cabTexto: "", rodape: "Murano Professional", porque: "" },
+  sugestoes: SUGESTOES_BASE.slice()
+};
+
+/* ---------------- utilidades de texto (espelham lib/templateVars.ts) ------- */
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function variaveisDe(corpo) {
+  const achados = String(corpo ?? "").match(/\{\{\s*\d+\s*\}\}/g) || [];
+  const nums = achados.map((m) => Number(m.replace(/\D/g, "")));
+  return [...new Set(nums)].filter((n) => n > 0).sort((a, b) => a - b);
+}
+function erroDeNumeracao(corpo) {
+  const v = variaveisDe(corpo);
+  const esperado = v.map((_, i) => i + 1);
+  return v.join(",") === esperado.join(",")
+    ? null
+    : "numere os campos em sequência a partir de {{1}} — a Meta recusa {{1}} seguido de {{3}}";
+}
+/* O texto FINAL, com o exemplo do {{1}} e um marcador para os demais.
+   É ele que conta contra os 1024, porque é o limite que a Meta aplica. */
+function textoFinal(corpo) {
+  return String(corpo ?? "").replace(/\{\{\s*(\d+)\s*\}\}/g, (bruto, n) =>
+    Number(n) === 1 ? NOME_EXEMPLO : "«campo " + n + "»");
+}
+function previaHtml(corpo) {
+  return esc(String(corpo ?? "")).replace(/\{\{\s*(\d+)\s*\}\}/g, (bruto, n) =>
+    Number(n) === 1
+      ? '<span class="campo-marca">' + NOME_EXEMPLO + "</span>"
+      : '<span class="campo-marca">campo ' + n + "</span>");
+}
+
+function torrar(msg) {
+  const t = document.getElementById("torrada");
+  t.textContent = msg;
+  t.classList.add("ver");
+  clearTimeout(torrar._t);
+  torrar._t = setTimeout(() => t.classList.remove("ver"), 3600);
+}
+
+/* ---------------- pedaços de tela reaproveitados --------------------------- */
+
+function cartaoAprovado(t, modo) {
+  const campos = variaveisDe(t.corpo);
+  return `
+  <div class="tpl">
+    <div class="tpl-topo">
+      <b>${esc(t.nome)}</b>
+      ${t.padrao ? '<span class="selo marca">padrão</span>' : ""}
+      ${t.cab === "imagem" ? '<span class="selo neutro">com imagem</span>' : ""}
+      ${campos.length
+        ? `<span class="selo acao">${campos.length} campo${campos.length === 1 ? "" : "s"} a preencher</span>`
+        : '<span class="selo neutro">sem campo</span>'}
+    </div>
+    <div class="tpl-texto">
+      ${t.cab === "imagem" ? '<div class="cab-img" style="height:74px;border-radius:8px;display:grid;place-items:center;background:linear-gradient(135deg,var(--purple),var(--purple-soft));color:#f0e2ea;font-size:.74rem;font-weight:700;margin-bottom:9px">imagem do cabeçalho</div>' : ""}
+      ${t.cab === "texto" ? `<div style="font-weight:800;margin-bottom:6px">${esc(t.cabTexto)}</div>` : ""}
+      <div class="corpo-pre">${previaHtml(t.corpo)}</div>
+      ${t.rodape ? `<div style="margin-top:8px;font-size:.78rem;color:var(--ink-3)">${esc(t.rodape)}</div>` : ""}
+    </div>
+    <div class="tpl-rodape-msg">
+      ${campos.length
+        ? `Você preenche ${campos.length === 1 ? "o campo" : "os campos"} na hora de enviar, no chat. O primeiro já chega com o nome da cliente.`
+        : "Vai exatamente assim, sem nada a preencher."}
+    </div>
+    <div class="tpl-acoes">
+      <button class="btn btn-acao" data-acao="usar" data-id="${t.id}">Usar no chat</button>
+      <button class="btn btn-contorno" data-acao="copiar" data-id="${t.id}">Copiar texto</button>
+      <button class="btn btn-leve" data-acao="partir" data-id="${t.id}" data-modo="${modo}">Sugerir um parecido</button>
+    </div>
+  </div>`;
+}
+
+const ESTADOS = {
+  pendente: { selo: "espera", rotulo: "em análise com o administrador" },
+  aprovado: { selo: "acao", rotulo: "aprovada pelo administrador" },
+  na_meta:  { selo: "acao", rotulo: "criada na Meta" },
+  pronta:   { selo: "ok", rotulo: "pronta para usar" },
+  recusado: { selo: "alerta", rotulo: "recusada" }
+};
+
+function linhaSugestao(s, modo) {
+  const e = ESTADOS[s.estado];
+  let recado = "";
+  if (s.estado === "pendente") {
+    recado = `<div class="sug-recado calmo"><b>Esperando o administrador ler.</b> Não há prazo definido —
+      esta sugestão está na fila ${esc(s.quando)}. Nada foi enviado para a Meta ainda.</div>`;
+  } else if (s.estado === "aprovado") {
+    recado = `<div class="sug-recado calmo"><b>Aprovada, mas ainda não dá para enviar.</b>
+      ${esc(s.avaliadoPor)} aprovou o texto ${esc(s.avaliadoEm)}. Falta ele criar o template na Meta,
+      que também analisa antes de liberar. Quando estiver liberado, aparece lá em cima em
+      “Prontos para usar”.</div>`;
+  } else if (s.estado === "na_meta") {
+    recado = `<div class="sug-recado calmo"><b>Criada na Meta, esperando a análise deles.</b>
+      Costuma levar de alguns minutos a algumas horas. Enquanto não for liberada, o template não
+      aparece na sua lista de envio.</div>`;
+  } else if (s.estado === "pronta") {
+    recado = `<div class="sug-recado calmo"><b>Já está na sua lista.</b> Virou o template
+      “${esc(s.virou)}” — dá para usar agora, no chat.</div>`;
+  } else if (s.estado === "recusado") {
+    recado = `<div class="sug-recado"><b>Motivo da recusa</b> — ${esc(s.avaliadoPor)}, ${esc(s.avaliadoEm)}:<br>${esc(s.motivo)}</div>`;
+  }
+
+  const acoes = s.estado === "recusado"
+    ? `<div class="sug-acoes">
+         <button class="btn btn-acao" data-acao="corrigir" data-id="${s.id}" data-modo="${modo}">Corrigir e reenviar</button>
+         <button class="btn btn-leve" data-acao="descartar" data-id="${s.id}">Descartar</button>
+       </div>`
+    : s.estado === "pronta"
+      ? `<div class="sug-acoes"><button class="btn btn-contorno" data-acao="usar" data-id="${s.id}">Ver na lista de prontos</button></div>`
+      : "";
+
+  return `
+  <div class="sug">
+    <div class="sug-topo">
+      <b>${esc(s.nome)}</b>
+      <span class="selo ${e.selo}">${e.rotulo}</span>
+      <span class="sug-quando tab">enviada ${esc(s.quando)}</span>
+    </div>
+    <div class="sug-texto">${previaHtml(s.corpo)}</div>
+    ${recado}
+    ${acoes}
+  </div>`;
+}
+
+function blocoProntos(modo) {
+  const vazio = S.vazioAprovados;
+  return `
+  <section class="bloco">
+    <header>
+      <h2>Prontos para usar</h2>
+      <span class="conta tab">${vazio ? "nenhum" : APROVADOS.length + " templates"}</span>
+      <p class="ajuda">Template é a única forma de <b>começar uma conversa</b> ou de responder depois de
+      24 h sem mensagem da cliente — regra do WhatsApp, não nossa. Estes já passaram pela análise
+      e podem ser enviados hoje.</p>
+    </header>
+    <div class="miolo">
+      ${vazio
+        ? `<div class="vazio">
+             <b>Ainda não há template liberado para o seu número.</b>
+             <span>Enquanto isso, você só consegue responder quem falou com você nas últimas 24 h.
+             Sugerir um texto abaixo é o caminho para mudar isso.</span>
+           </div>`
+        : APROVADOS.map((t) => cartaoAprovado(t, modo)).join("")}
+    </div>
+  </section>`;
+}
+
+function blocoConvite(modo) {
+  return `
+  <section class="bloco">
+    <div class="miolo">
+      <div class="convite">
+        <div class="txt">
+          <b>Falta um texto para uma situação sua?</b>
+          <span>Escreva do jeito que você mandaria para a cliente. Quem analisa é o
+          <b>administrador</b> — não a Meta, e não automaticamente.</span>
+        </div>
+        <button class="btn btn-acao btn-grande" data-acao="abrir-comp" data-modo="${modo}">✏️ Sugerir um template</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+function compositor(modo) {
+  const f = S.form;
+  const finalTxt = textoFinal(f.corpo);
+  const n = finalTxt.length;
+  const campos = variaveisDe(f.corpo);
+
+  const avisos = [];
+  const erroNum = erroDeNumeracao(f.corpo);
+  if (erroNum) avisos.push(erroNum);
+  if (n > 1024) avisos.push("o texto final ficou com " + n + " caracteres — o limite da Meta é 1024");
+  if (f.rodape.length > 60) avisos.push("o rodapé passa de 60 caracteres, o limite da Meta");
+  if (f.cab === "texto" && f.cabTexto.length > 60) avisos.push("o título passa de 60 caracteres, o limite da Meta");
+  if (/bit\.ly|tinyurl|encurta|goo\.gl/i.test(f.corpo)) avisos.push("link encurtado é a causa mais comum de recusa — prefira o endereço completo");
+
+  const podeEnviar = !!f.nome.trim() && !!f.corpo.trim() && !!f.porque.trim() && !erroNum && n <= 1024;
+
+  const previa = `
+    <div class="previa">
+      <div class="tela">
+        <div class="quem">Como a cliente vai ler · WhatsApp</div>
+        <div class="balao">
+          ${f.cab === "imagem" ? '<div class="cab-img">imagem do cabeçalho</div>' : ""}
+          ${f.cab === "texto" && f.cabTexto ? `<div class="cab-txt">${esc(f.cabTexto)}</div>` : ""}
+          <div class="msg">${f.corpo.trim() ? previaHtml(f.corpo) : '<span style="color:var(--ink-3)">O texto aparece aqui enquanto você escreve.</span>'}</div>
+          ${f.rodape ? `<div class="rod">${esc(f.rodape)}</div>` : ""}
+          <div class="hora tab">14:22</div>
+        </div>
+        <div class="nota">
+          O primeiro campo chega com o nome da cliente já dentro. <b>Os outros campos quem preenche
+          é você</b>, no chat, um por um, antes de enviar — não são preenchidos sozinhos.
+        </div>
+      </div>
+    </div>`;
+
+  const form = `
+    <div>
+      <div class="campo">
+        <label for="cp-nome-${modo}">Nome do template</label>
+        <input type="text" id="cp-nome-${modo}" data-campo="nome" value="${esc(f.nome)}"
+               placeholder="ex.: Retomada de janeiro">
+        <span class="dica">Só para você e o administrador se entenderem. O identificador técnico
+        quem define é quem publica.</span>
+      </div>
+
+      <div class="campo">
+        <label for="cp-corpo-${modo}">Texto da mensagem</label>
+        <textarea id="cp-corpo-${modo}" data-campo="corpo" rows="6"
+          placeholder="Oi {{1}}, tudo bem? …">${esc(f.corpo)}</textarea>
+      </div>
+      <div class="contador ${n > 1024 ? "estourou" : ""}">
+        <button class="opcao" data-acao="add-campo" data-modo="${modo}">+ campo a preencher</button>
+        <span class="tab">${n}/1024 caracteres</span>
+        <span>·</span>
+        <span>${campos.length ? campos.length + (campos.length === 1 ? " campo" : " campos") + " para você preencher a cada envio" : "nenhum campo"}</span>
+      </div>
+
+      <div class="campo">
+        <label>Cabeçalho (opcional)</label>
+        <div class="opcoes">
+          ${[["nenhum", "sem cabeçalho"], ["texto", "título de texto"], ["imagem", "imagem"]]
+            .map(([k, r]) => `<button class="opcao" data-acao="cab" data-cab="${k}" data-modo="${modo}" aria-pressed="${f.cab === k}">${r}</button>`)
+            .join("")}
+        </div>
+        <span class="dica">O WhatsApp aceita <b>um só</b> — imagem ou título, nunca os dois.</span>
+      </div>
+
+      ${f.cab === "texto"
+        ? `<div class="campo">
+             <label for="cp-cabt-${modo}">Título</label>
+             <input type="text" id="cp-cabt-${modo}" data-campo="cabTexto" maxlength="80" value="${esc(f.cabTexto)}" placeholder="ex.: Chegou reposição">
+             <span class="dica tab">${f.cabTexto.length}/60</span>
+           </div>`
+        : ""}
+      ${f.cab === "imagem"
+        ? `<div class="campo">
+             <label>Imagem</label>
+             <button class="btn btn-contorno" data-acao="fake-img">Escolher arquivo…</button>
+             <span class="dica">JPEG ou PNG, até 5 MB. Aparece acima do texto.</span>
+           </div>`
+        : ""}
+
+      <div class="campo">
+        <label for="cp-rod-${modo}">Rodapé (opcional)</label>
+        <input type="text" id="cp-rod-${modo}" data-campo="rodape" value="${esc(f.rodape)}" placeholder="Murano Professional">
+        <span class="dica tab">${f.rodape.length}/60 — linha pequena no fim da mensagem</span>
+      </div>
+
+      <div class="campo">
+        <label for="cp-pq-${modo}">Por que este texto ajuda a vender?</label>
+        <textarea id="cp-pq-${modo}" data-campo="porque" rows="3" style="min-height:72px"
+          placeholder="Em que situação você usaria, e o que o texto de hoje não resolve.">${esc(f.porque)}</textarea>
+        <span class="dica">É o que o administrador lê para decidir. Sem isso ele só tem o texto,
+        e texto sozinho não conta a situação.</span>
+      </div>
+
+      ${avisos.length ? `<div class="avisos">${avisos.map((a) => `<div class="aviso">${esc(a)}</div>`).join("")}</div>` : ""}
+
+      <div class="destino">
+        <b>O que acontece quando você enviar</b>
+        <ol>
+          <li><b>O administrador lê</b> o texto e a sua justificativa. Não há prazo definido — a tela
+              mostra há quanto tempo está esperando.</li>
+          <li>Se ele aprovar, <b>ele cria o template na Meta</b>, que analisa também. Leva de minutos
+              a algumas horas.</li>
+          <li>Só depois disso o template aparece em <b>“Prontos para usar”</b> e pode ser enviado.</li>
+        </ol>
+        <div class="recusa">
+          <b>Pode ser recusado.</b> Se for, o motivo aparece escrito em “Minhas sugestões”, e você
+          corrige e reenvia sem escrever tudo de novo. <b>Nada é enviado para nenhuma cliente aqui</b>
+          — esta tela não manda mensagem.
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-acao btn-grande" data-acao="enviar" data-modo="${modo}" ${podeEnviar ? "" : "disabled"}>
+          Enviar para o administrador analisar
+        </button>
+        <button class="btn btn-leve" data-acao="fechar-comp" data-modo="${modo}">Cancelar</button>
+        ${!podeEnviar && !avisos.length ? '<span class="dica" style="color:var(--ink-3)">preencha nome, texto e a justificativa</span>' : ""}
+      </div>
+    </div>`;
+
+  return `
+  <section class="bloco" id="comp-${modo}">
+    <header>
+      <h2>Sugerir um template</h2>
+      <span class="selo espera">vai para o administrador</span>
+      <p class="ajuda">Escreva como você mandaria para a cliente. Quem analisa é uma pessoa da casa —
+      esta tela <b>não</b> envia nada para a Meta nem para nenhuma cliente.</p>
+    </header>
+    <div class="miolo">
+      <div class="comp-grade ${modo === "mobile" ? "estreito" : ""}">
+        ${modo === "mobile" ? previa + form : form + previa}
+      </div>
+    </div>
+  </section>`;
+}
+
+function blocoSugestoes(modo) {
+  const lista = S.vazioSugestoes ? [] : S.sugestoes;
+  const pendentes = lista.filter((s) => s.estado === "pendente").length;
+  return `
+  <section class="bloco">
+    <header>
+      <h2>Minhas sugestões</h2>
+      <span class="conta tab">${lista.length ? lista.length + " no total" + (pendentes ? " · " + pendentes + " esperando" : "") : "nenhuma"}</span>
+      <p class="ajuda">O que você mandou para o administrador, e no que deu. São <b>dois vereditos em
+      sequência</b>: primeiro o administrador, depois a Meta — por isso “aprovada” ainda não quer
+      dizer “posso enviar”.</p>
+    </header>
+    <div class="miolo">
+      ${lista.length
+        ? lista.map((s) => linhaSugestao(s, modo)).join("")
+        : `<div class="vazio">
+             <b>Você ainda não sugeriu nenhum template.</b>
+             <span>Quando sugerir, o andamento aparece aqui — inclusive o motivo, se for recusado.</span>
+           </div>`}
+    </div>
+  </section>`;
+}
+
+/* ---------------- as duas molduras ---------------------------------------- */
+
+function renderDesktop() {
+  const nav = `
+    <nav class="nav">
+      <div class="marca-quad">M</div>
+      <a href="#">Negociações</a>
+      <a href="#">💬 Chat</a>
+      <a href="#">Relatórios</a>
+      <a href="#">Catálogo</a>
+      <a href="#">Tickets</a>
+      <a href="#" class="ativo">Templates${S.sugestoes.some((s) => s.estado === "recusado" || s.estado === "pronta") ? '<span class="badge">1</span>' : ""}</a>
+      <span style="flex:1"></span>
+      <span style="font-size:12.5px;color:var(--ink-3)">kamilly@muranoprofessional.com.br</span>
+    </nav>`;
+
+  document.getElementById("desktop").innerHTML = `
+    ${nav}
+    <div class="stripe"></div>
+    <div class="cabeca">
+      <h1>Templates</h1>
+      <p>O texto que reabre uma conversa parada há mais de 24 h. Aqui você vê o que já pode
+      mandar hoje e sugere textos novos — quem analisa a sugestão é o administrador.</p>
+    </div>
+    <div class="corpo">
+      ${blocoProntos("desktop")}
+      ${S.compondo.desktop ? compositor("desktop") : blocoConvite("desktop")}
+      ${blocoSugestoes("desktop")}
+    </div>`;
+}
+
+function renderMobile() {
+  const abas = [["prontos", "Prontos para usar"], ["minhas", "Minhas sugestões"]];
+  const conteudo = S.compondo.mobile
+    ? compositor("mobile")
+    : S.abaMobile === "prontos"
+      ? blocoProntos("mobile")
+      : blocoSugestoes("mobile");
+
+  document.getElementById("mobile").innerHTML = `
+    <div class="m-topo">
+      <div class="marca-quad">M</div>
+      <h1>${S.compondo.mobile ? "Sugerir template" : "Templates"}</h1>
+      <span style="flex:1"></span>
+      ${S.compondo.mobile
+        ? '<button class="btn btn-leve" data-acao="fechar-comp" data-modo="mobile">Fechar</button>'
+        : '<button class="btn btn-leve" data-acao="nada">☰</button>'}
+    </div>
+    ${S.compondo.mobile ? "" : `
+      <div class="m-abas">
+        ${abas.map(([k, r]) => `<button class="m-aba" data-acao="aba" data-aba="${k}" aria-pressed="${S.abaMobile === k}">${r}</button>`).join("")}
+      </div>`}
+    <div class="m-corpo">${conteudo}</div>
+    ${S.compondo.mobile ? "" : `
+      <div class="m-rodape">
+        <button class="btn btn-acao btn-grande" data-acao="abrir-comp" data-modo="mobile">✏️ Sugerir um template</button>
+      </div>`}`;
+}
+
+function render() { renderDesktop(); renderMobile(); }
+
+/* ---------------- interação ------------------------------------------------ */
+
+function foco(modo, campo) {
+  const el = document.getElementById("cp-" + campo + "-" + modo);
+  if (!el) return;
+  el.focus();
+  const v = el.value; el.value = ""; el.value = v;   // cursor no fim
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-acao]");
+  if (!b) return;
+  const acao = b.dataset.acao;
+  const modo = b.dataset.modo || "desktop";
+
+  if (acao === "abrir-comp") {
+    S.compondo[modo] = true; render();
+    if (modo === "mobile") document.getElementById("mobile").scrollTop = 0;
+    else document.getElementById("comp-desktop")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => foco(modo, "nome"), 60);
+    return;
+  }
+  if (acao === "fechar-comp") { S.compondo[modo] = false; render(); return; }
+
+  if (acao === "cab") { S.form.cab = b.dataset.cab; render(); return; }
+
+  if (acao === "add-campo") {
+    const jaTem = variaveisDe(S.form.corpo).length;
+    S.form.corpo += (S.form.corpo && !/\s$/.test(S.form.corpo) ? " " : "") + "{{" + (jaTem + 1) + "}}";
+    render(); setTimeout(() => foco(modo, "corpo"), 40);
+    return;
+  }
+
+  if (acao === "partir") {
+    const t = APROVADOS.find((x) => String(x.id) === b.dataset.id);
+    S.form = { nome: t.nome + " — minha versão", corpo: t.corpo, cab: t.cab, cabTexto: t.cabTexto || "", rodape: t.rodape || "", porque: "" };
+    S.compondo[modo] = true; render();
+    torrar("Texto copiado para o compositor. Ajuste e diga por que a sua versão vende melhor.");
+    return;
+  }
+
+  if (acao === "corrigir") {
+    const s = S.sugestoes.find((x) => String(x.id) === b.dataset.id);
+    S.form = { nome: s.nome, corpo: s.corpo, cab: "nenhum", cabTexto: "", rodape: "Murano Professional", porque: s.porque };
+    S.compondo[modo] = true; render();
+    torrar("Sugestão carregada para correção. O motivo da recusa continua na lista, abaixo.");
+    return;
+  }
+
+  if (acao === "descartar") {
+    S.sugestoes = S.sugestoes.filter((x) => String(x.id) !== b.dataset.id);
+    render(); torrar("Sugestão descartada. Nada muda para o administrador.");
+    return;
+  }
+
+  if (acao === "enviar") {
+    const f = S.form;
+    S.sugestoes = [{
+      id: Date.now(), nome: f.nome.trim(), corpo: f.corpo, porque: f.porque,
+      estado: "pendente", quando: "agora há pouco"
+    }].concat(S.sugestoes);
+    S.form = { nome: "", corpo: "", cab: "nenhum", cabTexto: "", rodape: "Murano Professional", porque: "" };
+    S.compondo[modo] = false;
+    if (modo === "mobile") S.abaMobile = "minhas";
+    render();
+    torrar("Enviado para o administrador. Ele ainda não criou nada na Meta — o andamento fica em “Minhas sugestões”.");
+    return;
+  }
+
+  if (acao === "usar") { torrar("Abriria o /chat com este template já escolhido no compositor. Enviar continua sendo um gesto com a cliente na frente."); return; }
+  if (acao === "copiar") { torrar("Texto copiado. Os campos entre colchetes você preenche na hora do envio."); return; }
+  if (acao === "fake-img") { torrar("No app real abriria o seletor de arquivo (JPEG ou PNG, até 5 MB)."); return; }
+  if (acao === "aba") { S.abaMobile = b.dataset.aba; render(); return; }
+});
+
+/* digitação: preserva foco e posição do cursor entre renders */
+document.addEventListener("input", (ev) => {
+  const el = ev.target.closest("[data-campo]");
+  if (!el) return;
+  const campo = el.dataset.campo;
+  const id = el.id, pos = el.selectionStart;
+  S.form[campo] = el.value;
+  render();
+  const novo = document.getElementById(id);
+  if (novo) { novo.focus(); try { novo.setSelectionRange(pos, pos); } catch (e) {} }
+});
+
+/* controles da moldura do protótipo */
+document.getElementById("cx-tema").addEventListener("click", (e) => {
+  const escuro = document.documentElement.dataset.tema !== "escuro";
+  document.documentElement.dataset.tema = escuro ? "escuro" : "claro";
+  e.currentTarget.setAttribute("aria-pressed", String(escuro));
+});
+document.getElementById("cx-vazio-aprov").addEventListener("click", (e) => {
+  S.vazioAprovados = !S.vazioAprovados;
+  e.currentTarget.setAttribute("aria-pressed", String(S.vazioAprovados));
+  render();
+});
+document.getElementById("cx-vazio-sug").addEventListener("click", (e) => {
+  S.vazioSugestoes = !S.vazioSugestoes;
+  e.currentTarget.setAttribute("aria-pressed", String(S.vazioSugestoes));
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

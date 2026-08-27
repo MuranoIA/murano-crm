@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { aplicarVariaveis } from "../../lib/templateVars";
+import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
@@ -691,7 +691,20 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   // lados — quem monta uma campanha está escolhendo entre os templates que
   // acabou de cadastrar. Por isso dividem uma aba só, com esta chavinha, em vez
   // de duas abas no topo que obrigariam a ir e voltar para comparar o texto.
-  const [vista, setVista] = useState<"cadastro" | "disparo" | "envios">("cadastro");
+  const [vista, setVista] = useState<"cadastro" | "disparo" | "envios" | "sugestoes">("cadastro");
+  // Sugestoes dos consultores (0110). Carregadas na montagem, e nao so ao abrir
+  // a vista, porque o CONTADOR precisa aparecer na chave -- uma sugestao que so
+  // se anuncia depois de alguem entrar e uma sugestao que morre (§36).
+  const [sugs, setSugs] = useState<any[] | null>(null);
+  const carregarSugs = useCallback(async () => {
+    try {
+      const r = await fetch("/api/templates/sugestoes", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) setSugs(j?.sugestoes ?? []);
+    } catch { /* a aba continua utilizavel sem o contador */ }
+  }, []);
+  useEffect(() => { void carregarSugs(); }, [carregarSugs]);
+  const pendentes = (sugs ?? []).filter((x: any) => x.status === "pendente").length;
   // a config do disparo (templates prontos p/ envio, carteiras, extrato) só é
   // buscada quando alguém abre a seção — não custa nada a quem veio cadastrar
   const [cfgDisparo, setCfgDisparo] = useState<any>(null);
@@ -789,7 +802,8 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
 
   const chave = (
     <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
-      {([["cadastro", "📨 Templates cadastrados"], ["disparo", "📣 Disparo em massa"], ["envios", "📊 Envios"]] as const).map(([v, r]) => (
+      {([["cadastro", "📨 Templates cadastrados"], ["disparo", "📣 Disparo em massa"], ["envios", "📊 Envios"],
+         ["sugestoes", pendentes ? `✍️ Sugestões (${pendentes})` : "✍️ Sugestões"]] as const).map(([v, r]) => (
         <button key={v} onClick={() => setVista(v)}
           style={{ padding: "7px 15px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
             color: vista === v ? "#fff" : M.gray, background: vista === v ? M.wine : M.surface,
@@ -799,6 +813,31 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
       ))}
     </div>
   );
+
+  if (vista === "sugestoes") {
+    return (
+      <>
+        {chave}
+        <SugestoesAba
+          sugs={sugs}
+          templates={templates}
+          recarregar={carregarSugs}
+          avisar={avisar}
+          // "Aprovar e publicar" preenche o formulario de cadastro e leva para
+          // ele. O gesto irreversivel (criar na Meta) continua sendo o botao do
+          // admin: aprovar e submeter num clique so misturaria a decisao ("este
+          // texto presta") com uma acao que bloqueia o nome por 30 dias se um
+          // dia for apagado.
+          publicar={(x: any) => {
+            setF({ nome: x.nome, categoria: "MARKETING", corpo: x.corpo,
+                   rodape: x.rodape ?? "", cabecalho_texto: x.cabecalho_texto ?? "" });
+            setVista("cadastro");
+            avisar("ok", `Formulário preenchido com a sugestão de ${x.carteira ?? "a equipe"}. Confira a categoria e o identificador antes de criar.`);
+          }}
+        />
+      </>
+    );
+  }
 
   if (vista === "envios") {
     return (
@@ -1647,6 +1686,195 @@ function CadastroCamposBloco({ info, salvar, ocupado, setOcupado }: {
         </pre>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sugestoes dos consultores (0110) - a fila que o admin avalia.
+//
+// Quarta posicao da chave DENTRO da aba Templates, e nao aba de topo: quem
+// avalia uma sugestao esta decidindo entre os templates que ja existem, e
+// separar obrigaria a ir e voltar so para comparar o texto (mesmo argumento da
+// §26). Por isso os aprovados aparecem ao lado, na mesma tela.
+//
+// ⚠️ APROVAR NAO CRIA NADA NA META. E o veredito de que o texto presta; criar
+// continua sendo o botao do admin na vista de cadastro. Enquanto `publicado_id`
+// for nulo, a sugestao aprovada fica numa faixa propria -- porque a sequencia
+// "aprovei, sumiu da fila, nunca publiquei" e facil de fazer sem perceber.
+// ---------------------------------------------------------------------------
+function SugestoesAba({ sugs, templates, recarregar, avisar, publicar }: {
+  sugs: any[] | null; templates: any[];
+  recarregar: () => Promise<void>;
+  avisar: (t: "erro" | "ok", m: string) => void;
+  publicar: (s: any) => void;
+}) {
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const [recusando, setRecusando] = useState<number | null>(null);
+  const [motivo, setMotivo] = useState("");
+
+  if (!sugs) return <p style={{ fontSize: 13, color: M.gray }}>Carregando…</p>;
+
+  // Mais ANTIGA primeiro: a fila e de espera, e quem esperou mais tempo tem de
+  // ser a primeira coisa que o admin ve.
+  const pend = sugs.filter((x) => x.status === "pendente")
+    .sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+  const aprovadasSemMeta = sugs.filter((x) => x.status === "aprovado" && !x.publicado_id);
+  const resto = sugs.filter((x) => !pend.includes(x) && !aprovadasSemMeta.includes(x));
+
+  const metaNomeDe = (nome: string) =>
+    nome.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+
+  async function avaliar(id: number, acao: string, motivoTxt?: string) {
+    setOcupado(id);
+    try {
+      const r = await fetch("/api/templates/sugestoes", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, acao, motivo: motivoTxt }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return false; }
+      avisar("ok", j?.aviso ?? "ok");
+      await recarregar();
+      return true;
+    } finally { setOcupado(null); }
+  }
+
+  const Cartao = ({ x, fila }: { x: any; fila: boolean }) => {
+    // Conferencias que ainda da para fazer ANTES de falar com a Meta. Cada uma
+    // delas, se passar, vira uma recusa que chega minutos depois e sem
+    // explicacao util -- ou, no caso do identificador, um 409 do indice unico
+    // depois do clique.
+    const campos = variaveisDe(x.corpo ?? "");
+    const previa = aplicarVariaveis(x.corpo ?? "", ["Maria"]);
+    const mn = metaNomeDe(x.nome ?? "");
+    const jaExiste = templates.some((t) => t.meta_nome === mn);
+    const avisos: string[] = [];
+    if (previa.length > 1024) avisos.push(`o texto final tem ${previa.length} caracteres (limite 1024)`);
+    if ((x.rodape ?? "").length > 60) avisos.push("o rodapé passa de 60 caracteres");
+    if ((x.cabecalho_texto ?? "").length > 60) avisos.push("o título passa de 60 caracteres");
+    if (x.cabecalho_texto && x.imagem_path) avisos.push("tem título E imagem — a Meta aceita um cabeçalho só");
+    if (campos.some((n, i) => n !== i + 1)) avisos.push("numeração dos campos fora de sequência");
+    if (/\b(bit\.ly|encurta|tinyurl|cutt\.ly|goo\.gl)\b/i.test(x.corpo ?? "")) avisos.push("link encurtado — é o que mais causa recusa na Meta");
+    if (jaExiste) avisos.push(`o identificador "${mn}" já existe — a criação falharia`);
+
+    const dias = Number(x.espera_dias ?? 0);
+    return (
+      <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+          <b style={{ fontSize: 15, color: M.wine }}>{x.nome}</b>
+          <span style={{ fontSize: 11.5, color: M.muted }}>
+            {x.carteira ?? "sem carteira"}{x.autor_email ? ` · ${x.autor_email}` : ""}
+          </span>
+          {fila && (
+            <span style={{ marginLeft: "auto", fontSize: 11.5, fontWeight: 700, color: dias >= 3 ? M.laranja : M.muted }}>
+              {dias === 0 ? "hoje" : `esperando há ${dias} dia${dias > 1 ? "s" : ""}`}
+            </span>
+          )}
+          {!fila && <span style={{ marginLeft: "auto" }}><Selo ok={x.status === "aprovado"} sim="aprovada" nao="recusada" /></span>}
+        </div>
+
+        {/* o texto COMO A CLIENTE VAI LER, nao o corpo cru: ninguem julga um
+            texto com chaves no meio */}
+        <div style={{ background: "#e8f6ff", border: "1px solid #cfeafb", borderRadius: 12, borderTopLeftRadius: 4, padding: "10px 13px", maxWidth: 560 }}>
+          {x.cabecalho_texto && <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 3 }}>{x.cabecalho_texto}</div>}
+          <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap", color: M.ink }}>{previa}</div>
+          {x.rodape && <div style={{ fontSize: 11.5, color: M.gray, marginTop: 5 }}>{x.rodape}</div>}
+        </div>
+        <p style={{ fontSize: 11, color: M.muted, margin: "5px 0 0" }}>
+          “Maria” é exemplo. {campos.length <= 1
+            ? "Sai num clique no card."
+            : `O consultor digita ${campos.length - 1} campo(s) a cada envio — atrito que reduz o uso.`}
+        </p>
+
+        {x.justificativa && (
+          <p style={{ fontSize: 12.5, color: M.ink, background: M.bg, borderRadius: 9, padding: "9px 12px", margin: "10px 0 0", lineHeight: 1.55 }}>
+            <b>Por que ajuda a vender:</b> {x.justificativa}
+          </p>
+        )}
+
+        {avisos.map((a) => (
+          <p key={a} style={{ fontSize: 12, color: M.laranja, margin: "7px 0 0" }}>• {a}</p>
+        ))}
+
+        {x.motivo && !fila && (
+          <p style={{ fontSize: 12.5, color: M.gray, margin: "8px 0 0" }}>
+            <b>Motivo registrado:</b> {x.motivo}
+          </p>
+        )}
+
+        {fila && (
+          recusando === x.id ? (
+            <div style={{ marginTop: 12 }}>
+              <Recado tipo="aviso">
+                O motivo é o que o consultor vai ler para corrigir. Recusa sem motivo faz
+                ele desistir ou mandar a mesma coisa de novo.
+              </Recado>
+              <textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2}
+                placeholder="Ex.: o texto promete desconto que não existe; troque por…"
+                style={{ ...inputBase, marginTop: 8, resize: "vertical" }} />
+              <div style={{ display: "flex", gap: 7, marginTop: 8 }}>
+                <Botao cor={M.laranja} disabled={ocupado === x.id || motivo.trim().length < 5}
+                  onClick={async () => { if (await avaliar(x.id, "recusar", motivo.trim())) { setRecusando(null); setMotivo(""); } }}>
+                  {ocupado === x.id ? "Recusando…" : "Confirmar recusa"}
+                </Botao>
+                <Botao cor={M.gray} onClick={() => { setRecusando(null); setMotivo(""); }}>Cancelar</Botao>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 7, marginTop: 12, flexWrap: "wrap" }}>
+              <Botao disabled={ocupado === x.id}
+                onClick={async () => { if (await avaliar(x.id, "aprovar")) publicar(x); }}>
+                Aprovar e publicar agora
+              </Botao>
+              <Botao cor={M.gray} disabled={ocupado === x.id} onClick={() => avaliar(x.id, "aprovar")}>
+                Aprovar sem publicar
+              </Botao>
+              <Botao cor={M.laranja} onClick={() => { setRecusando(x.id); setMotivo(""); }}>Recusar</Botao>
+            </div>
+          )
+        )}
+
+        {!fila && x.status === "aprovado" && !x.publicado_id && (
+          <div style={{ display: "flex", gap: 7, marginTop: 10, flexWrap: "wrap" }}>
+            <Botao onClick={() => publicar(x)}>Publicar agora</Botao>
+            <Botao cor={M.gray} onClick={() => avaliar(x.id, "reabrir")}>Voltar para a fila</Botao>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <Bloco
+        titulo={pend.length ? `Esperando você (${pend.length})` : "Esperando você"}
+        ajuda={<>
+          Templates escritos pelos consultores. <b>Aprovar não cria nada na Meta</b> — é o
+          veredito de que o texto presta; criar continua sendo o seu botão, na vista de
+          cadastro, com o formulário preenchido. Da mais antiga para a mais nova.
+        </>}
+      >
+        {!pend.length
+          ? <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Nenhuma sugestão esperando.</p>
+          : pend.map((x) => <Cartao key={x.id} x={x} fila />)}
+      </Bloco>
+
+      {aprovadasSemMeta.length > 0 && (
+        <Bloco
+          titulo={`Aprovadas, ainda não criadas na Meta (${aprovadasSemMeta.length})`}
+          ajuda="Você disse que o texto presta, mas o template ainda não existe — o consultor não consegue enviar. Enquanto estiverem aqui, é isso que ele lê na tela dele."
+        >
+          {aprovadasSemMeta.map((x) => <Cartao key={x.id} x={x} fila={false} />)}
+        </Bloco>
+      )}
+
+      {resto.length > 0 && (
+        <Bloco titulo="Já avaliadas" ajuda="Histórico. A recusa fica com o motivo, que é o que ensina a próxima tentativa.">
+          {resto.map((x) => <Cartao key={x.id} x={x} fila={false} />)}
+        </Bloco>
+      )}
+    </>
   );
 }
 
