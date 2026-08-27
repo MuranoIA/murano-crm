@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
+import { nomeComCodigo } from "../lib/nomeCliente";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -287,6 +288,128 @@ const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice
 const LOTE_INICIAL = 100;   // cards renderizados de cada coluna ao carregar
 const LOTE_INCREMENTO = 100; // quanto libera a cada vez que chega perto do fim da lista
 const CARD_ALTURA = 168;    // altura fixa do card (simétrico) — nome em até 2 linhas + selos + bolhas
+const CARD_ACOES = 28;      // a barra de ícones do rodapé (📞 🎤 📎 T 👤 C 🔍)
+
+/**
+ * Ícone da barra de ações do card. Existe como componente porque são sete no
+ * mesmo lugar: repetir o objeto de estilo sete vezes garante que o oitavo saia
+ * diferente dos outros.
+ */
+function BotaoCard({ children, t, onClick, cor = RD.gray, bg = "#f4f6f9", borda = "#e2e7ee", ativo, ocupado }: {
+  children: React.ReactNode; t: string; onClick: () => void;
+  cor?: string; bg?: string; borda?: string; ativo?: boolean; ocupado?: boolean;
+}) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); if (!ocupado) onClick(); }}
+      onMouseDown={(e) => e.stopPropagation()}
+      title={t} aria-label={t} disabled={ocupado}
+      style={{
+        flexShrink: 0, width: 22, height: 22, borderRadius: 6,
+        border: `1px solid ${ativo ? cor : borda}`, background: ativo ? cor : bg,
+        color: ativo ? "#fff" : cor, fontSize: 11, fontWeight: 800, lineHeight: 1,
+        cursor: ocupado ? "wait" : "pointer", display: "inline-flex",
+        alignItems: "center", justifyContent: "center", padding: 0,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * O painel do contato (ERP) dentro do card, em quatro abas. É a mesma pergunta
+ * que o painel do chat responde, mas aqui em popover sobre o card — cabe porque
+ * mostra números, não a tela inteira. Quem quiser o painel completo abre a lupa.
+ *
+ * Os dados vêm de /api/chat/contato, buscados UMA vez por card aberto e mantidos
+ * em cache pelo board. Nada é buscado para card que ninguém abriu.
+ */
+function PainelContatoCard({ dados, aba, setAba, cliente, fechar }: {
+  dados: any; aba: string; setAba: (a: any) => void; cliente: Card; fechar: () => void;
+}) {
+  const ABAS = [["resumo", "Resumo"], ["perfil", "Perfil"], ["compras", "Compras"], ["notas", "Notas fiscais"]] as const;
+  const cp = dados?.compras ?? null;
+  const Linha = ({ k, v }: { k: string; v: React.ReactNode }) => (
+    <div style={{ display: "flex", gap: 6, fontSize: 11, lineHeight: 1.5 }}>
+      <span style={{ color: RD.grayLight, flexShrink: 0 }}>{k}</span>
+      <span style={{ marginLeft: "auto", color: RD.navy, fontWeight: 700, textAlign: "right" }}>{v ?? "—"}</span>
+    </div>
+  );
+  return (
+    <>
+      {/* capa: clicar fora fecha. Fica ANTES do painel no DOM para o painel
+          continuar clicável por cima dela. */}
+      <div onClick={(e) => { e.stopPropagation(); fechar(); }} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: 0, right: 0, zIndex: 61,
+          background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10,
+          boxShadow: "0 14px 34px rgba(16,32,64,0.20)", overflow: "hidden",
+        }}
+      >
+        <div style={{ display: "flex", borderBottom: `1px solid ${RD.border}` }}>
+          {ABAS.map(([k, r]) => (
+            <button key={k} onClick={(e) => { e.stopPropagation(); setAba(k); }}
+              style={{ flex: 1, padding: "6px 2px", fontSize: 9.5, fontWeight: aba === k ? 800 : 600,
+                color: aba === k ? RD.wine : RD.gray, background: aba === k ? "#fbeef4" : "transparent",
+                border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: "9px 11px", maxHeight: 190, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+          {!dados ? (
+            <div style={{ fontSize: 11, color: RD.grayLight }}>Carregando…</div>
+          ) : dados.erro ? (
+            <div style={{ fontSize: 11, color: "#b45309" }}>{dados.erro}</div>
+          ) : aba === "resumo" ? (
+            <>
+              <Linha k="Código" v={cp?.codcli ?? cliente.codcli ?? null} />
+              <Linha k="Cidade" v={cp?.cidade} />
+              <Linha k="RCA oficial" v={cp?.rca_oficial ?? cliente.rca_num} />
+              <Linha k="Comprado (líq.)" v={cp?.total_liquido != null ? moedaBR(cp.total_liquido) : null} />
+              <Linha k="Compras" v={cp?.compras} />
+              <Linha k="Sem comprar" v={cp?.dias_sem_comprar != null ? `${cp.dias_sem_comprar} d` : null} />
+              <Linha k="Etapa" v={dados.funil?.etapa ?? cliente.etapa} />
+            </>
+          ) : aba === "perfil" ? (
+            <>
+              <Linha k="Nome" v={cliente.cliente} />
+              <Linha k="Telefone" v={cliente.telefone} />
+              <Linha k="Carteira" v={cliente.vendedor ? cliente.vendedor : "sem dono"} />
+              <Linha k="Última compra" v={cp?.ultima_compra ? new Date(cp.ultima_compra).toLocaleDateString("pt-BR") : null} />
+              {cliente.sem_cadastro && (
+                <div style={{ marginTop: 4, fontSize: 10.5, color: "#b45309" }}>
+                  Sem cadastro no WinThor — pedir o CPF na conversa liga o histórico de compra.
+                </div>
+              )}
+            </>
+          ) : aba === "compras" ? (
+            cp ? (
+              <>
+                <Linha k="Pedidos" v={cp.compras} />
+                <Linha k="Total líquido" v={cp.total_liquido != null ? moedaBR(cp.total_liquido) : null} />
+                <Linha k="Ticket médio" v={cp.compras ? moedaBR((cp.total_liquido ?? 0) / cp.compras) : null} />
+                <Linha k="Última compra" v={cp.ultima_compra ? new Date(cp.ultima_compra).toLocaleDateString("pt-BR") : null} />
+              </>
+            ) : <div style={{ fontSize: 11, color: RD.grayLight }}>Sem histórico de compra no ERP.</div>
+          ) : (
+            (dados.ultimas_notas ?? []).length ? (
+              (dados.ultimas_notas as any[]).map((n, i) => (
+                <Linha key={i}
+                  k={`${new Date(n.data_fat).toLocaleDateString("pt-BR")} · NF ${n.num_nota}`}
+                  v={moedaBR(n.valor ?? 0)} />
+              ))
+            ) : <div style={{ fontSize: 11, color: RD.grayLight }}>Nenhuma nota fiscal.</div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
 
 // Períodos de atividade. "hoje/semana/quinzena/mês" são janelas cumulativas; "ontem"
 // é o dia-calendário anterior (só no dropdown, não nos chips). "todos" = sem filtro.
@@ -368,6 +491,56 @@ export default function Page() {
   // ↻ do card: muda de valor e a <Conversa> recarrega a thread sem remontar
   // (remontar apagaria o texto que a pessoa está escrevendo)
   const [zoomRefresh, setZoomRefresh] = useState(0);
+  // Ação que a lupa deve executar assim que abrir (ligar / gravar áudio / anexar).
+  // O card NÃO reimplementa nada disso: WebRTC, gravador e upload já existem no
+  // /chat, e a lupa É o /chat embutido (§41). Duplicá-los aqui recriaria, em
+  // triplicata, a dívida que a §41 acabou de pagar ao apagar o conversa.tsx.
+  const [zoomAcao, setZoomAcao] = useState<string | null>(null);
+
+  // ---- painel do contato no card (dropdown 👤) ------------------------------
+  // Uma requisição POR CARD ABERTO, nunca por card desenhado: são ~380 cards na
+  // tela, e buscar o ERP de todos seria o vício que a §15.1 corrigiu no board.
+  // O resultado fica em cache para reabrir sem custo.
+  const [menuContato, setMenuContato] = useState<string | null>(null);
+  const [abaContato, setAbaContato] = useState<"resumo" | "perfil" | "compras" | "notas">("resumo");
+  const [contatos, setContatos] = useState<Record<string, any>>({});
+
+  // ---- thread completa no card ---------------------------------------------
+  // O card já nasce com as 3 últimas mensagens, que vêm de graça no payload do
+  // board. A conversa inteira é buscada só quando a pessoa pede — rolando até o
+  // topo da caixa ou clicando no aviso. Uma conversa por vez.
+  const [threads, setThreads] = useState<Record<string, Msg[]>>({});
+  const [threadCarregando, setThreadCarregando] = useState<string | null>(null);
+
+  async function abrirContato(clienteId: string) {
+    if (menuContato === clienteId) { setMenuContato(null); return; }
+    setMenuContato(clienteId);
+    setAbaContato("resumo");
+    if (contatos[clienteId]) return;                       // já em cache
+    try {
+      const r = await fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(clienteId)}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      setContatos((p) => ({ ...p, [clienteId]: r.ok ? j : { erro: j?.error ?? `HTTP ${r.status}` } }));
+    } catch (e: any) {
+      setContatos((p) => ({ ...p, [clienteId]: { erro: String(e?.message ?? e) } }));
+    }
+  }
+
+  async function carregarThread(clienteId: string) {
+    if (threads[clienteId] || threadCarregando === clienteId) return;
+    setThreadCarregando(clienteId);
+    try {
+      const r = await fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(clienteId)}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      // a thread do chat traz {id,enviada_por,conteudo,criada_em,...}; o card fala
+      // o dialeto enxuto do board ({e,c,t}) — converte aqui, num lugar só
+      const msgs: Msg[] = (j?.mensagens ?? []).map((m: any) => ({
+        e: m.enviada_por, c: m.conteudo, t: m.criada_em,
+      }));
+      setThreads((p) => ({ ...p, [clienteId]: msgs }));
+    } catch { /* silêncio: o card continua com as 3 do payload */ }
+    finally { setThreadCarregando(null); }
+  }
   // meta do dia do Ranking (admin define aqui; o Ranking só lê)
   const [metaModal, setMetaModal] = useState(false);
   const [metaAtual, setMetaAtual] = useState<number | null>(null);
@@ -791,7 +964,11 @@ export default function Page() {
 
   // abre o card ampliado (lupa). Quem busca e rola a conversa agora é o
   // componente <Conversa>, que usa a mesma rota do /chat.
-  function abrirZoom(c: Card) {
+  // `acao` viaja para dentro da lupa (`/chat?...&acao=`), que executa ligar,
+  // gravar áudio ou anexar assim que a conversa carrega. É como o card oferece
+  // essas três sem reimplementar nenhuma delas.
+  function abrirZoom(c: Card, acao?: string) {
+    setZoomAcao(acao ?? null);
     setCardZoom(c);
     try { const w = window.innerWidth; setZoomPos({ x: Math.max(20, Math.round(w / 2 - 330)), y: 70 }); } catch {}
   }
@@ -2786,9 +2963,21 @@ export default function Page() {
                       const pend = (pendentes[c.cliente_id] ?? []).filter(
                         (p) => !msgsRaw.some((m) => m.e === p.e && (m.c ?? "").trim() === (p.c ?? "").trim())
                       );
-                      const msgsChrono = [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
-                      // o selo COMPARA a carteira do RD com o RCA: sem RD nao ha o que comparar
-                      const selo = semRd ? null : seloAtribuicao(c, vendMeta);
+                      // Já buscamos a conversa inteira deste card? Então ela substitui a
+                      // prévia de 3 que veio no payload — mesma ordem, mesmo dialeto.
+                      const completa = threads[c.cliente_id];
+                      const msgsChrono = completa
+                        ? [...completa, ...pend]
+                        : [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
+                      // O selo COMPARA a carteira do RD com o RCA. Sem RD não há o que
+                      // comparar — mas o RCA em si continua sendo informação útil no
+                      // card, então em vez de sumir ele vira só "RCA n".
+                      const selo = semRd
+                        ? (c.rca_num != null
+                            ? { texto: `RCA ${c.rca_num}`, cor: "#64748b", bg: "#f1f5f9", borda: "#dbe3ec",
+                                title: `Vendedor oficial no WinThor: RCA ${c.rca_num}.` }
+                            : null)
+                        : seloAtribuicao(c, vendMeta);
                       return (
                         <article
                           key={c.cliente_id}
@@ -2798,7 +2987,7 @@ export default function Page() {
                           onClick={() => abrirConversa(c)}
                           title={prospeccao ? (c.rd_cliente_id ? "Abrir conversa no RD Conversas (já tem contato lá, mesmo sem atendimento)" : "Abrir WhatsApp com este número (ainda sem contato no RD Conversas)") : "Abrir conversa no RD Conversas (reconhece e silencia o alerta)"}
                           style={{
-                            cursor: "pointer", height: mostraInput ? CARD_ALTURA + 34 : CARD_ALTURA, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+                            cursor: "pointer", height: CARD_ALTURA + CARD_ACOES + (mostraInput ? 34 : 0), flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
                             ...(isMobile ? { width: "80vw", maxWidth: 340 } : {}),
                             background: disparoRecente ? RD.aguardaBg : recontactar ? RD.recontatoBg : RD.surface,
                             border: `1px solid ${disparoRecente ? RD.aguardaBorda : recontactar ? RD.recontatoBorda : RD.border}`,
@@ -2817,34 +3006,10 @@ export default function Page() {
                                 sem cadastro
                               </span>
                             )}
-                            {codcli != null && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${codcli}`, "consultaclientes"); }}
-                                title={`Ver cadastro completo na Consulta Clientes (código ${codcli})`}
-                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-                              >
-                                C
-                              </button>
-                            )}
-                            {temConversaReal && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); abrirZoom(c); }}
-                                title="Ampliar o card — ler a conversa e responder aqui mesmo"
-                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 10, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-                              >
-                                🔍
-                              </button>
-                            )}
-                            {temConversaReal && !semRd && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); atualizarCard(c.cliente_id); }}
-                                disabled={!!syncingCards[c.cliente_id]}
-                                title="Atualizar esta conversa — puxa do RD as mensagens novas (igual ao ↻ do card ampliado)"
-                                style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `1px solid #cfe3d6`, background: "#eef7f0", color: "#2e7d52", fontSize: 11, lineHeight: 1, cursor: syncingCards[c.cliente_id] ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-                              >
-                                {syncingCards[c.cliente_id] ? "…" : "↻"}
-                              </button>
-                            )}
+                            {/* C, 🔍, ↻ e TEMPLATE saíram desta linha: viraram ícones na
+                                barra de ações do rodapé, junto com ligar, áudio e anexo.
+                                Aqui em cima fica só ESTADO — o que o card é, não o que
+                                dá para fazer com ele. */}
                             <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                               {alerta && (
                                 <span
@@ -2864,26 +3029,11 @@ export default function Page() {
                                   <span style={{ width: 6, height: 6, borderRadius: 6, background: "#e08a00", animation: "pulse-alert 1.1s ease-in-out infinite" }} />
                                   AGUARDANDO
                                 </span>
-                              ) : recontactar ? (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); recontatar(idEnvio!, c.cliente, c); }}
-                                  disabled={enviando === idEnvio}
-                                  title="Enviar template (mensagem real no WhatsApp)"
-                                  style={{
-                                    cursor: enviando === idEnvio ? "wait" : "pointer",
-                                    display: "inline-flex", alignItems: "center", gap: 3,
-                                    background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2",
-                                    borderRadius: 5, padding: "2px 6px", fontSize: 8.5, fontWeight: 800, letterSpacing: 0.1, whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  <span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />
-                                  {enviando === idEnvio ? "ENVIANDO…" : "TEMPLATE"}
-                                </button>
                               ) : null}
                             </div>
                           </div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={c.cliente}>
-                            {c.cliente}
+                          <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={nomeComCodigo(c.cliente, codcli)}>
+                            {nomeComCodigo(c.cliente, codcli)}
                           </div>
                           {((c.venda_valor != null || col.key === "pedido_emitido") || (c.ciclo?.tipo && CICLO_LABEL[c.ciclo.tipo]) || selo) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
@@ -2920,11 +3070,31 @@ export default function Page() {
                           {/* área de mensagens: rola tipo chat, sempre com a mais recente embaixo
                               à vista (auto-scroll pro fim a cada render — ref inline dispara sempre) */}
                           <div
-                            ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
+                            ref={(el) => {
+                              // auto-scroll pro fim só enquanto o card mostra a prévia.
+                              // Depois de carregar a conversa inteira, forçar isso a cada
+                              // render arrancaria a pessoa de onde ela está lendo.
+                              if (el && !threads[c.cliente_id]) el.scrollTop = el.scrollHeight;
+                            }}
                             onClick={(e) => e.stopPropagation()}
                             onWheel={(e) => e.stopPropagation()}
+                            onScroll={(e) => {
+                              // Chegou ao topo? Traz o resto. UMA requisição por card, e
+                              // só do card que a pessoa está lendo — nunca dos ~380 que
+                              // estão desenhados na tela.
+                              if (e.currentTarget.scrollTop <= 4 && temConversaReal) void carregarThread(c.cliente_id);
+                            }}
                             style={{ flex: 1, minHeight: 0, marginTop: 6, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}
                           >
+                            {temConversaReal && !threads[c.cliente_id] && msgsChrono.length > 0 && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); void carregarThread(c.cliente_id); }}
+                                style={{ alignSelf: "center", flexShrink: 0, background: "transparent", border: "none",
+                                  color: RD.grayLight, fontSize: 9.5, fontWeight: 700, cursor: "pointer",
+                                  fontFamily: "inherit", padding: "1px 0" }}>
+                                {threadCarregando === c.cliente_id ? "carregando…" : "▲ conversa inteira"}
+                              </button>
+                            )}
                             {msgsChrono.length > 0 ? (
                               msgsChrono.map((m, i) => {
                                 const doCliente = m.e === "customer";
@@ -2990,10 +3160,63 @@ export default function Page() {
                               </span>
                             )}
                           </div>
+
+                          {/* ---- BARRA DE AÇÕES — o rodapé do chat, em miniatura ----
+                              Ícones em vez de palavras: a 330px de largura, "TEMPLATE"
+                              escrito comia a linha inteira e sobrava espaço para nada.
+                              Ligar, áudio e anexo abrem a LUPA já executando a ação
+                              (`?acao=`): a lupa é o /chat embutido, então o WebRTC, o
+                              gravador e o upload são os mesmos — nenhum deles é
+                              reimplementado aqui. */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 4, flexShrink: 0, position: "relative" }}
+                          >
+                            {temConversaReal && (
+                              <>
+                                <BotaoCard t="Ligar (chamada de voz)" onClick={() => abrirZoom(c, "ligar")}>📞</BotaoCard>
+                                <BotaoCard t="Gravar áudio — abre a conversa" onClick={() => abrirZoom(c, "audio")}>🎤</BotaoCard>
+                                <BotaoCard t="Anexar arquivo — abre a conversa" onClick={() => abrirZoom(c, "anexo")}>📎</BotaoCard>
+                              </>
+                            )}
+                            {idEnvio && !disparoRecente && (
+                              <BotaoCard
+                                t="Enviar template (mensagem real no WhatsApp)"
+                                cor="#9c1f47" bg="#f8e6ec" borda="#ecc6d2"
+                                ocupado={enviando === idEnvio}
+                                onClick={() => recontatar(idEnvio, c.cliente, c)}
+                              >
+                                {enviando === idEnvio ? "…" : "T"}
+                              </BotaoCard>
+                            )}
+                            <BotaoCard
+                              t="Cliente — resumo, perfil, compras e notas fiscais"
+                              ativo={menuContato === c.cliente_id}
+                              onClick={() => abrirContato(c.cliente_id)}
+                            >👤</BotaoCard>
+                            {codcli != null && (
+                              <BotaoCard t={`Consulta Clientes (código ${codcli})`} cor={RD.wine} bg="#fbeef4" borda="#e2c7d3"
+                                onClick={() => window.open(`${URL_CONSULTA}?codcli=${codcli}`, "consultaclientes")}>C</BotaoCard>
+                            )}
+                            {temConversaReal && (
+                              <BotaoCard t="Ampliar — a conversa inteira" cor="#0b7fb0" bg="#eaf6fd" borda="#bfe6f8"
+                                onClick={() => abrirZoom(c)}>🔍</BotaoCard>
+                            )}
+                            {menuContato === c.cliente_id && (
+                              <PainelContatoCard
+                                dados={contatos[c.cliente_id]}
+                                aba={abaContato}
+                                setAba={setAbaContato}
+                                cliente={c}
+                                fechar={() => setMenuContato(null)}
+                              />
+                            )}
+                          </div>
+
                           {mostraInput && (
                             <div
                               onClick={(e) => e.stopPropagation()}
-                              style={{ marginTop: 5, display: "flex", gap: 4 }}
+                              style={{ marginTop: 4, display: "flex", gap: 4 }}
                             >
                               <input
                                 value={respostaTexto[c.cliente_id] ?? ""}
@@ -3074,7 +3297,7 @@ export default function Page() {
                   <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
                 {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
-                <button onClick={() => setCardZoom(null)} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+                <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
                 {zDisparoRecente ? (
                   <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
                 ) : (zRecontactar && zid) ? (
@@ -3117,8 +3340,11 @@ export default function Page() {
                 "usuario bloqueou", mas nao ha nada que ele possa liberar no
                 cadeado. Foi a armadilha da §22.5, que ja custou uma hora. */}
             <iframe
-              key={`${zc.cliente_id}:${zoomRefresh}`}
-              src={`/chat?cliente=${encodeURIComponent(zc.cliente_id)}&embed=1`}
+              // a ação entra na key: sem ela, abrir a MESMA conversa duas vezes
+              // (uma para ligar, outra para anexar) reusaria o iframe e a segunda
+              // ação nunca seria executada
+              key={`${zc.cliente_id}:${zoomRefresh}:${zoomAcao ?? ""}`}
+              src={`/chat?cliente=${encodeURIComponent(zc.cliente_id)}&embed=1${zoomAcao ? `&acao=${zoomAcao}` : ""}`}
               title={`Conversa com ${zc.cliente}`}
               allow="microphone; autoplay; clipboard-write"
               style={{ width: "100%", flex: 1, minHeight: 300, border: "none", display: "block", background: RD.surface }}

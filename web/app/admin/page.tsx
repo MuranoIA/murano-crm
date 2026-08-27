@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { aplicarVariaveis } from "../../lib/templateVars";
 
@@ -19,6 +19,18 @@ const M = {
   laranja: "#dd4222", bg: "#f5edf4", surface: "#ffffff", border: "#e0cfdb",
   ink: "#241327", muted: "#9a8098", gray: "#6f5c6d", verde: "#1a6b3c",
 };
+
+// MODO MIGRACAO visto por TODAS as abas.
+//
+// Cada aba busca so os proprios dados, entao sem um contexto o /admin ficaria
+// com metade das telas escondendo o RD e a outra metade exibindo -- e a aba de
+// Envios, que compara "saiu daqui" com "saiu pelo painel do RD", seria a mais
+// gritante: um quadro inteiro nomeando o sistema que a chave diz nao existir.
+//
+// Valor padrao `false`: enquanto a config nao chega, a tela mostra tudo. O
+// contrario faria o RD piscar e sumir a cada carregamento.
+const ModoMigracao = createContext(false);
+const useSemRd = () => useContext(ModoMigracao);
 
 type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config" | "pendencias";
 const ABAS: { id: Aba; rotulo: string }[] = [
@@ -117,6 +129,14 @@ export default function Admin() {
   const [ok, setOk] = useState<string | null>(null);
   const [semPermissao, setSemPermissao] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  // lido uma vez: e config global, nao muda enquanto a pessoa navega pelas abas
+  const [semRd, setSemRd] = useState(false);
+  useEffect(() => {
+    fetch("/api/admin/crm-config", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setSemRd(j?.["crm-config"]?.migracao?.ligado === true))
+      .catch(() => {});
+  }, []);
 
   const [dados, setDados] = useState<any>(null);
   const [edicoes, setEdicoes] = useState<Record<string, any>>({});
@@ -196,6 +216,7 @@ export default function Admin() {
   }
 
   return (
+    <ModoMigracao.Provider value={semRd}>
     <Moldura aba={aba} setAba={(a) => { setAba(a); setOk(null); setErro(null); }}>
       {erro && <Recado tipo="erro">{erro}</Recado>}
       {ok && <Recado tipo="ok">{ok}</Recado>}
@@ -310,7 +331,7 @@ export default function Admin() {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                 <thead><tr>
                   <th style={th}>Apelido</th><th style={th}>RCA</th><th style={th}>Time</th>
-                  <th style={th}>ID no RD</th><th style={th}>Cor</th><th style={th}>Clientes</th>
+                  {!semRd && <th style={th}>ID no RD</th>}<th style={th}>Cor</th><th style={th}>Clientes</th>
                   <th style={th}>Situação</th><th style={th} />
                 </tr></thead>
                 <tbody>
@@ -368,8 +389,8 @@ export default function Admin() {
               <select value={novo.time ?? ""} onChange={(e) => setNovo({ ...novo, time: e.target.value })} style={inputBase}>
                 {TIMES.map((t) => <option key={t.v} value={t.v}>{t.r}</option>)}
               </select>
-              <input placeholder="ID no RD (opcional)" value={novo.employee_id ?? ""}
-                onChange={(e) => setNovo({ ...novo, employee_id: e.target.value })} style={{ ...inputBase, width: 200 }} />
+              {!semRd && <input placeholder="ID no RD (opcional)" value={novo.employee_id ?? ""}
+                onChange={(e) => setNovo({ ...novo, employee_id: e.target.value })} style={{ ...inputBase, width: 200 }} />}
               <Botao onClick={() => enviar("carteiras", "POST", novo, "Carteira criada.")}>Criar</Botao>
             </div>
           </Bloco>
@@ -499,6 +520,7 @@ export default function Admin() {
         />
       )}
     </Moldura>
+    </ModoMigracao.Provider>
   );
 }
 
@@ -662,6 +684,8 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   templates: any[]; avisoMeta: string | null;
   recarregar: () => Promise<void>; avisar: (t: "erro" | "ok", m: string) => void;
 }) {
+  // ponteiros para o painel do RD nao existem no modo migracao
+  const semRd = useSemRd();
   // Cadastrar template e disparar em massa são o mesmo assunto visto de dois
   // lados — quem monta uma campanha está escolhendo entre os templates que
   // acabou de cadastrar. Por isso dividem uma aba só, com esta chavinha, em vez
@@ -916,7 +940,7 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
         ))}
       </Bloco>
 
-      {doRd.length > 0 && (
+      {doRd.length > 0 && !semRd && (
         <Bloco
           titulo="Templates do RD Conversas"
           ajuda="Cadastrados antes, apontando para o painel do RD. Não temos o texto deles — só o nome e o identificador — e por isso não dá para editar aqui."
@@ -1547,6 +1571,10 @@ const PERIODOS = [
 ] as const;
 
 function EnviosAba({ dados }: { dados: any }) {
+  // Com o modo migracao ligado nao existe "fora daqui": todo template sai por
+  // este CRM. O terceiro quadro e a coluna do RD deixam de ser informacao e
+  // viram o nome de um sistema que a chave diz nao existir mais.
+  const semRd = useSemRd();
   const [per, setPer] = useState<(typeof PERIODOS)[number]["k"]>("mes");
   const linhas: any[] = dados.linhas ?? [];
   const tot = dados.total ?? { saiu: {}, crm: {} };
@@ -1568,8 +1596,9 @@ function EnviosAba({ dados }: { dados: any }) {
         titulo="Templates que saíram"
         ajuda={<>
           Template é a mensagem que <b>reabre uma conversa</b> passadas as 24 h — a única forma de
-          falar com quem parou de responder, e a única que tem <b>custo por envio</b>. Estes números
-          existem para responder duas perguntas: <i>quantos saíram</i> e <i>por onde</i>.
+          falar com quem parou de responder, e a única que tem <b>custo por envio</b>.{" "}
+          {semRd ? <>Estes números dizem <i>quantos saíram</i> no período.</>
+                 : <>Estes números existem para responder duas perguntas: <i>quantos saíram</i> e <i>por onde</i>.</>}
         </>}
       >
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
@@ -1588,8 +1617,8 @@ function EnviosAba({ dados }: { dados: any }) {
             {num(saiuTot, M.wine)}
             <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>chegaram à cliente</div>
             <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
-              Todo template entregue na conversa, tenha saído daqui ou do painel do RD. Contado nas
-              mensagens que o sistema tem espelhadas.
+              {semRd ? "Todo template entregue na conversa, contado nas mensagens que o sistema tem espelhadas."
+                     : "Todo template entregue na conversa, tenha saído daqui ou do painel do RD. Contado nas mensagens que o sistema tem espelhadas."}
             </div>
           </div>
           <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
@@ -1600,14 +1629,14 @@ function EnviosAba({ dados }: { dados: any }) {
               cliente, e a única que aparece no extrato do disparo em massa.
             </div>
           </div>
-          <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
+          {!semRd && <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
             {num(fora, M.laranja)}
             <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>pelo painel do RD</div>
             <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
               A diferença entre os dois: o que a equipe disparou fora daqui. Quanto menor, mais a
               operação já está acontecendo dentro do CRM.
             </div>
-          </div>
+          </div>}
         </div>
       </Bloco>
 
@@ -1621,7 +1650,7 @@ function EnviosAba({ dados }: { dados: any }) {
                 <th style={th}>Carteira</th>
                 <th style={th}>Chegaram</th>
                 <th style={th}>Por este CRM</th>
-                <th style={th}>Pelo painel do RD</th>
+                {!semRd && <th style={th}>Pelo painel do RD</th>}
               </tr></thead>
               <tbody>
                 {[...linhas]
@@ -1633,7 +1662,7 @@ function EnviosAba({ dados }: { dados: any }) {
                         <td style={{ ...td, fontWeight: 600 }}>{l.vendedor}</td>
                         <td style={td}>{s}</td>
                         <td style={td}>{c}</td>
-                        <td style={{ ...td, color: s - c > 0 ? M.laranja : M.muted }}>{Math.max(0, s - c)}</td>
+                        {!semRd && <td style={{ ...td, color: s - c > 0 ? M.laranja : M.muted }}>{Math.max(0, s - c)}</td>}
                       </tr>
                     );
                   })}
@@ -2363,6 +2392,8 @@ const item = { fontSize: 12.5, color: M.gray, lineHeight: 1.5 };
 function Moldura({ aba, setAba, esconderAbas, children }: {
   aba: Aba; setAba: (a: Aba) => void; esconderAbas?: boolean; children: React.ReactNode;
 }) {
+  // a Gestao de carteira escreve no RD Conversas: sem RD, sem link
+  const semRd = useSemRd();
   return (
     <div style={{ minHeight: "100vh", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
@@ -2382,12 +2413,12 @@ function Moldura({ aba, setAba, esconderAbas, children }: {
             {/* Gestão de carteira saiu do menu do board e passou a morar aqui. É LINK, não
                 aba: /carteira é uma tela própria de 700 linhas que já funciona, e transformá-la
                 em aba seria desmontá-la sem nenhum ganho para quem usa. */}
-            <Link href="/carteira"
+            {!semRd && <Link href="/carteira"
               title="Transferir contatos entre carteiras no RD Conversas, em massa"
               style={{ padding: "6px 13px", fontSize: 12.5, fontWeight: 700, borderRadius: 8, textDecoration: "none",
                 color: M.gray, background: M.bg, border: `1px solid ${M.border}` }}>
               🗂️ Gestão de carteira
-            </Link>
+            </Link>}
           </div>
         )}
       </div>
