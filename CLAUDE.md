@@ -4084,3 +4084,169 @@ ninguém mantém.
   que funciona porque subi o servidor local com as envs do WhatsApp e falei com
   a Graph de verdade — e depois plantei 3 mensagens presas no banco para ver o
   alarme disparar, removendo-as em seguida.
+
+## 56. Devolver conversa para a fila (0112) — e a armadilha do `??` outra vez
+
+Pegar da fila é um clique (✋ Pegar, §21), e **não havia saída**: quem pegava a
+conversa errada dependia de um admin. É o erro mais provável do desenho.
+
+**A migration é trivial** (`chat_transferencia.para_carteira` deixa de ser NOT
+NULL, e nulo passa a significar "de volta para a fila"). O risco estava em
+outro lugar — `donoEfetivo` era:
+
+```ts
+atrib.get(id)?.para ?? vendedorDoFunil ?? null
+```
+
+Com uma transferência de destino nulo, `?.para` é null e o `??` **cai para o
+`vendedorDoFunil`**: devolver traria de volta o dono da carteira, não a fila. A
+régua correta tem dois degraus, não uma coalescência — **existe transferência,
+vale o `para` dela mesmo nulo; não existe, vale a carteira**. É a mesma
+armadilha do `??` da §22.6.1.
+
+Duas decisões:
+
+- **Devolver é uma linha NOVA, não uma linha apagada.** `chat_transferencia` é
+  append-only de propósito (§18): apagar o registro do "pegar" devolveria a
+  conversa à fila **e apagaria a prova de que alguém a pegou por engano**.
+- **Só se devolve o que não tem dono comercial.** Cliente com carteira/RCA tem
+  dono natural; devolvê-lo criaria um órfão. O botão **nem aparece** nesse caso
+  — para isso `aplicaEscopo` passou a expor `carteira_dona` (o dono comercial
+  cru, antes da transferência), senão a tela não distingue "dono porque é a
+  carteira" de "dono porque peguei".
+
+## 57. A thread parava em 200 mensagens sem avisar
+
+Numa cliente de anos, a conversa mais antiga simplesmente não existia para quem
+rolava. Agora `/api/chat/thread` aceita `?antes=<criada_em>` e a tela tem
+"Carregar mensagens anteriores".
+
+- **Cursor por DATA, não offset.** O offset se desloca quando chega mensagem
+  nova durante a rolagem, e o resultado é repetir ou pular uma bolha.
+- **O lote pede UM a mais** que o limite — é assim que se sabe que ainda há
+  passado, sem uma segunda consulta de contagem.
+- **A posição de leitura** é preservada medindo `scrollHeight` antes e somando a
+  diferença ao `scrollTop` depois do render.
+
+Verificado com dado real (cliente de 238 mensagens): 193 + `tem_mais: true`,
+depois 38 + `tem_mais: false`, todas mais antigas que o cursor. 193 + 38 = 231,
+exatamente o total sem eventos de sistema.
+
+⚠️ **A preservação da rolagem NÃO foi exercitada em navegador** — ela só aparece
+com mais de 200 mensagens carregadas, o que nesta configuração exige o histórico
+do RD ligado, e ele está desligado de propósito. Fica dito, não afirmado.
+
+## 58. Tema "Bancada" (Direção 4) — projetado, NÃO implementado
+
+> Pedido do usuário (27/08): *"quero que ele crie mais um tema (visão ou layout)
+> que fique mais com cara de aplicativo premium; com mais simetria. quero que
+> realmente ele gaste energia nisso."*
+
+Rodei o subagente `ux-chat`. **Nada em `web/` foi tocado** — o material é
+decisão, não código:
+
+| arquivo | o quê |
+|---|---|
+| `prototipos/laudo-tema-premium.md` | raciocínio, escalas, contrastes, plano de 31 itens |
+| `prototipos/tema-premium.html` | protótipo navegável: desktop, celular e compacto 500px, claro e escuro |
+| `prototipos/README.md` | tabela comparativa das quatro direções, refeita |
+
+### 58.1 A tese, e por que ela não repete as outras
+
+- **D1 `continuidade`** respondeu *"o que falta aparecer"* (implementada, §29.7).
+- **D2** aposta em atender **mais conversas por dia**.
+- **D3** aposta em vender **mais por conversa**.
+- **D4 `bancada`** responde *"por que a tela parece improvisada mesmo mostrando
+  a coisa certa"*: **nenhuma informação nova, nada muda de lugar** — tudo passa
+  a obedecer a uma grade.
+
+É a única não-trivial que **não pede dado novo**: zero migration, zero rota. E
+**herda** as correções da D1, não as desfaz.
+
+### 58.2 "Premium" e "simetria" viraram números medidos no código
+
+Hoje `web/app/chat/page.tsx` tem **18 tamanhos de fonte** (231 declarações),
+**65 combinações de padding** (126 declarações), **15 raios**, **6 rampas de
+sombra**, peso 800 espalhado e **44 emoji distintos** usados como ícone.
+
+A proposta: 7 tokens de tipo · base-4 de espaço (7 degraus) · 3 raios · 3
+alturas de controle por contexto · 2 elevações · 5 famílias de cor com um
+trabalho cada.
+
+Simetria virou coisa verificável — a mais concreta: **a sidebar tem três bordas
+esquerdas hoje** (10 / 12 / 13 px, em `page.tsx:2269`, `:2663`, `:2754`) e a
+conversa tem duas (bolhas 18, compositor 14). Vira uma goteira só.
+
+### 58.3 Achados que valem independentemente do tema
+
+1. **O número que é nossa vantagem sobre o RD está truncado.** Painel de 268px
+   com três tiles iguais: sobram 55px de texto, e `R$ 12.480,00` a 17px/800 mede
+   112px. Quanto maior a cliente, mais cedo o valor some. A D4 troca por um
+   número herói e dois de apoio.
+2. **A barra de chamada cobre o compositor** — `fixed bottom:0` em largura total
+   (`ligacao.tsx:474`). Durante uma ligação não se digita.
+3. **`#2f7fd4` não serve de fundo de botão com texto branco: 4,11:1.** O azul
+   preenchido tem de ser `#1a5fa8` (6,47:1). `#2f7fd4` serve como cor de foco,
+   onde a régua é 3:1.
+4. **Nuance da skill `murano-brand`:** "púrpura como texto dá 2,3:1" vale sobre
+   o cartão **escuro** do hub. Sobre branco, `#8a2a63` dá 8,10:1.
+
+### 58.4 Dois defeitos achados e JÁ CORRIGIDOS
+
+- **Botão "Cliente" morto na lupa.** Ele renderiza com `(!isMobile || compacto)`,
+  o painel de desktop exige `!isMobile` e a folha exigia `d1`. Na lupa com o
+  layout `original`, aparecia e não tinha para onde abrir. Não atingia ninguém
+  (o layout em vigor é o D1), **mas `original` é o caminho de rollback** — e
+  aterrissar nele com um botão morto anula o propósito da chave. A folha passou
+  a aceitar `d1 || compacto`.
+- **Um número de contraste que eu documentei errado.** O comentário do `muted`
+  do D1 dizia "4,6:1". Medido: **4,25:1 sobre branco e 3,87:1 sobre o fundo real
+  (`#f4f4f6`)** — reprova para texto normal (régua 4,5:1). Melhora o `#9a8098`
+  antigo, mas não passa. Não escureci: mudaria a cara do D1 em produção sem
+  ninguém pedir. Fica como dívida nomeada no próprio comentário.
+
+### 58.5 O plano de implementação (quando alguém for construir)
+
+`bancada` entra em `lib/chatLayout.ts` com **`implementado: false`** — vira
+`true` só quando a tela existir (§29.3). Duas alavancas em `page.tsx`, ambas no
+padrão que a casa já usa:
+
+1. `PALETAS` ganha `bancada` (o objeto `M` já é mutável, §11.5);
+2. nasce um `GRADES` para geometria, com **`GRADES.original` reproduzindo os
+   literais de hoje** — é isso que torna o rollback exato, e não "quase igual".
+
+A lista "isto vira aquilo" tem **31 itens** com arquivo:linha, em três entregas
+que valem sozinhas.
+
+⚠️ **O risco nomeado:** o título-dropdown das filas **some**, absorvido pela
+faixa segmentada que a própria D1 criou — dois controles para a mesma escolha.
+É memória muscular que se perde. A recomendação (que endosso) é **entregar no
+piloto de uma pessoa** (`acesso.chat_layout`) antes de estabelecer para todos.
+
+O protótipo também está publicado como página clicável:
+`https://claude.ai/code/artifact/95e2ae58-5f11-45cf-8e94-d9478a99da66`
+
+## 59. Estado da fila combinada (fim de 27/08/2026)
+
+| | item | estado |
+|---|---|---|
+| 1 | localização e encaminhar | ✅ §49 |
+| 2 | alerta de canal caído | ✅ §52 |
+| 3 | devolver conversa para a fila | ✅ §56 |
+| 4 | scroll infinito na thread | ✅ §57 |
+| 5 | **excluir do disparo quem já falhou** | **PENDENTE** |
+| 6 | ~~apagar e editar mensagem~~ | cancelado pelo usuário (a API não tem) |
+
+**Item 5, o que falta:** o disparo em massa não exclui quem já falhou antes. O
+motivo está em `mensagens.erro` (0091) — número que não recebe no WhatsApp
+(131026) continua sendo re-disparado, e cada template é cobrado. O corte entra
+em `/api/admin/disparo-massa`, junto dos que já existem (§26.1).
+
+**Migrations aplicadas:** 0107 a 0112, todas confirmadas no banco.
+
+**Duas coisas do usuário, não de código:**
+- **Endereços de localização estão vazios** (`crm_config.locais = []`): o botão
+  📎 só mostra a opção depois que alguém cadastrar um em /admin → Mecanismos.
+- **Aviso de cobrança no painel do Supabase** ("Outstanding invoices"). Se aquele
+  projeto suspender, cai o CRM inteiro — board, chat, webhook e o `pg_cron` do
+  WinThor. É o maior risco isolado do projeto, e não é técnico.
