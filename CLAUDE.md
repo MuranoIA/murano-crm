@@ -3610,3 +3610,477 @@ todos, e quem atende precisa poder salvar — era o caso do pedido. Card sinteti
 do ERP (`winthor:`/`venda:`) e recusado com 422: nao e contato, e cliente.
 
 Verificado na rota: CPF incompleto recusa, card do ERP recusa, nome valido grava.
+
+## 44. O princípio que governa daqui em diante (27/08/2026)
+
+Declarado pelo usuário, e vale mais que qualquer seção anterior deste arquivo
+quando houver conflito:
+
+> *"considerar coisas do rd conversas atualmente ficou obsoleto. a única
+> importância que temos no momento relacionada com rd conversas é o etl
+> continuar alimentando o banco, para que, se quisermos, termos o histórico, se
+> eu quiser ligar uma chave mostrar histórico, então podemos, mas fora isso, não
+> há necessidade de considerar o rd conversas."*
+
+E, sobre as chaves de ligar/desligar que se acumularam:
+
+> *"o objetivo de ter chaves para ligar e desligar as coisas é porque estou me
+> preparando e testando aos poucos, para mudar, sair do rd conversas de vez e
+> ficar só com o murano professional... quero ver os comportamentos"*
+
+**Consequências práticas, para não reabrir discussões encerradas:**
+
+1. **Conversa que só existe no RD = não existe.** É essa a simulação. Nenhuma
+   tela deve anunciar "há N mensagens no outro número" a menos que a chave
+   `historico_rd` esteja ligada.
+2. **Não propor melhorias no lado do RD.** O usuário já recusou investir no 429
+   da cota (§37.6). Traduzir erro, sim; otimizar, não.
+3. **Pendências de carteira do RD e da Murano Shop foram descartadas** por ele
+   em 27/08. Não voltar com elas.
+4. O ETL continua rodando e **não deve ser desligado** — é o que garante o
+   histórico caso a chave seja ligada um dia.
+
+## 45. Modo migração — a Fase C simulada, com volta (27/08/2026)
+
+`/admin` → Mecanismos → **Modo migração — sem RD Conversas**.
+
+### 45.1 NÃO é uma quinta coluna no banco
+
+Esta é a decisão central. O modo **é** a leitura das quatro chaves que já
+existem, todas na posição de migração ao mesmo tempo:
+
+| chave | posição | efeito |
+|---|---|---|
+| `linhas_visiveis` | sem `rd` | nenhuma conversa do RD na tela |
+| `historico_rd` | `false` | nem sob demanda, pelo botão |
+| `carteira_rd_ativa` | `false` (0107) | dono é só o RCA do WinThor |
+| `numero_envio` | `cloud` | tudo sai pelo número próprio |
+
+Uma quinta coluna independente entraria em contradição com elas no primeiro
+ajuste — "modo migração ligado" convivendo com "RD marcado nas linhas visíveis"
+— e ninguém saberia qual vence. Mesma armadilha que a 0099 resolveu ao
+substituir `conversas_rd_visiveis` pelo seletor (§32).
+
+Dois efeitos colaterais bons: **não há snapshot para guardar** (desligado = o
+CRM de sempre) e **zero migration** para a chave em si. `modoMigracao()` e
+`POSICAO_MIGRACAO` vivem em `lib/crmConfig.ts`.
+
+Enquanto ligado, as quatro aparecem **travadas** no /admin ("definido pelo modo
+migração") e os dois seletores somem.
+
+### 45.2 `carteira_rd_ativa` (0107) — medido antes de escrever
+
+Desliga a tag `carteira <nome>` do painel do RD como critério de dono, deixando
+só o RCA. **Nasce ligada.**
+
+| | |
+|---|---|
+| RCA e tag concordam | 4.420 — nada muda |
+| divergem | 210 — o RCA passa a mandar |
+| só têm a tag do RD | **335 — perdem o dono** |
+
+Dos 335, **233 existem no WinThor sob RCA de outro time** — Francisco (2) 76,
+Jorge (53) 38, Maiara (9) 37, Henry (30) 29, Adm. Venus (11) 20. Ou seja, nunca
+foram do IS/ISR: estavam nas carteiras deles só porque alguém pôs a tag no
+painel do RD. Para devolvê-los a um dono, basta cadastrar aquele RCA em
+`carteira_config`. No board o efeito é menor: **78 cards** mudam de lugar, e
+nenhum teve atividade nos últimos 30 dias.
+
+### 45.3 O modo precisa alcançar TODAS as telas
+
+A aba Envios do /admin exibia "3.533 pelo painel do RD" com a chave ligada — um
+quadro inteiro nomeando o sistema que a chave diz não existir. Como cada aba
+busca só os próprios dados, foi preciso um **contexto React** (`ModoMigracao`
+em `app/admin/page.tsx`) para o modo chegar a todas.
+
+Somem com a chave: o terceiro quadro e a coluna "pelo painel do RD", o bloco
+"Templates do RD Conversas", a coluna e o campo "ID no RD", o link da Gestão de
+carteira, o selo `RCA n · RD x` dos cards, o toggle Sinc/Pause do ETL e o botão
+que puxa do RD. E `semMencaoRd()` troca a palavra nos textos de ajuda das
+colunas — trocar no render, e não manter duas versões de cada texto, porque
+duas cópias divergem no primeiro ajuste da régua.
+
+## 46. O WinThor manda no nome (0108) — e duas travas que salvaram
+
+Regra do usuário: *"se já existir no winthor então os dados cadastrados no
+winthor devem prevalecer na visualização"*. É a §10.8 finalmente aplicada ao
+NOME.
+
+**O que consertou:** o botão "Salvar contato" gravava `clientes.nome_completo`,
+que é o nome exibido. Num cliente já vinculado, digitar "rom" fazia o CRM
+inteiro chamar de "rom" quem o ERP chama de ROMULO ALBUQUERQUE — **e para
+sempre**, porque o ETL nunca reescreve contato já conhecido (§25.2). Havia um
+caso assim no banco.
+
+Também alinhou uma inconsistência antiga: `vw_venda_card` (0105) já usava o
+nome do WinThor e as views do funil usavam o nosso — o mesmo cliente podia
+aparecer com **dois nomes em duas colunas do mesmo board**.
+
+### A migration morreu duas vezes, e cada erro ensinou
+
+```
+1a tentativa (esperava n = 1)  -> "em vw_funil_visivel esperava 1, achei 2"
+2a tentativa (trocar todas)    -> "missing FROM-clause entry for table wcar"
+```
+
+A `vw_funil_visivel` é UNION de **três ramos**, e o padrão aparece em dois:
+
+| ramo | FROM | troca? |
+|---|---|---|
+| 1 conversas | `clientes ... LEFT JOIN wth_carteira wcar` | **sim** |
+| 1b ociosos (§31.3) | `clientes CROSS JOIN sel` (sem `wcar`) | **não** |
+| 2 prospecção | `wth_carteira w`, já usa `w.nome` | já ok |
+
+O ramo 1b **não pode** mudar, e não é detalhe técnico: o `WHERE` dele exige
+`NOT EXISTS` em `wth_vinculo` **e** em `wth_carteira` — ele é, por definição,
+quem **não existe no WinThor**. Não há nome do ERP para preferir. O Postgres
+estava certo pelo motivo certo.
+
+Solução: `position` + `overlay` para trocar só a **primeira** ocorrência, em vez
+de `replace` (que troca todas). E nada foi aplicado pela metade nas duas
+tentativas: `do $$` é uma transação só.
+
+**Do lado da tela:** cliente com vínculo não tem mais formulário de "salvar
+contato" — no lugar, a nota de que o cadastro vem do ERP e corrigir é lá.
+
+## 47. Ficha de cadastro para o WinThor (0109)
+
+`cadastro_cliente` (jsonb `dados`) + `crm_config.cadastro_campos`.
+
+O consultor pede os dados à cliente pelo botão **Pedir os dados** (o texto vai
+para a CAIXA DE MENSAGEM, não direto para o WhatsApp — quem envia é a pessoa),
+cola a resposta num formulário ao lado da conversa, e a ficha espera alguém
+digitar no ERP, com **Copiar** e **Já cadastrei**.
+
+### A lista de campos NÃO está no código, e isso é o centro
+
+**Não sabemos quais campos o WinThor exige.** O que temos é `wth_carteira`, uma
+**projeção de consulta** com 8 colunas (codcli, cpf, nome, telefone, cidade,
+estado, rca) — não a tela de cadastro do ERP, que pede endereço completo, IE,
+fantasia e o resto.
+
+Chutar no código faria o consultor pedir a lista errada e faltar campo na hora
+de digitar: **perguntar duas vezes**, que é o problema que a ficha existe para
+acabar. A lista mora em `crm_config.cadastro_campos`, editável em /admin (mesmo
+padrão de `paginas_legais` e `texto_pausa`), com 14 campos de partida.
+
+**A mensagem que pede os dados é GERADA da mesma lista** (`textoPedidoDeDados`
+em `lib/cadastroCampos.ts`). Se fossem dois textos, divergiriam — o consultor
+pediria oito coisas e o formulário teria dez.
+
+Cliente já vinculado não tem ficha: o cadastro existe no ERP e é ele que manda.
+
+## 48. Consultor cria template, administrador avalia (0110)
+
+Menu **Templates** (todos os papéis) e a tela `/templates`. No `/admin` →
+Templates, quarta posição da chave: **Sugestões (N)**.
+
+### 48.1 O laudo de UX achou o que eu não tinha visto
+
+Rodei o subagente `ux-chat` sobre o código antes de escrever a tela (laudo e
+protótipo em `prototipos/`). Dois achados mudaram o resultado:
+
+**1. "Aprovada" nao é "posso usar".** São **dois vereditos em sequência**: o
+admin diz que o texto presta, e só *depois* a Meta analisa o template. Um selo
+"Aprovada" logo após o admin faria a consultora procurar o template no chat e
+não achar, porque `/api/templates` só entrega o que a Meta marcou `APPROVED`.
+Daí **cinco estados**, não três:
+
+| estado na tela | de onde sai |
+|---|---|
+| Em análise com o administrador | `status=pendente` |
+| Aprovada — o administrador ainda vai criar na Meta | `aprovado` e `publicado_id` nulo |
+| Criada na Meta, esperando a análise deles | `publicado_id` + Meta `PENDING` |
+| **Pronta para usar** | Meta `APPROVED` |
+| Recusada + motivo | `status=recusado` |
+
+Os cinco são derivados **no servidor**, senão as duas telas nomeariam o mesmo
+caso diferente.
+
+**2. O consultor não lia um template fora de uma conversa.** `/api/templates`
+tinha **um único consumidor** no app: o dropdown do compositor, que exige uma
+cliente selecionada. Por isso a ordem da tela é **prontos para usar, criar,
+meus templates**: ler o que já existe é o antídoto do template duplicado.
+
+### 48.2 Tabela própria, não um `status` em `crm_templates`
+
+`crm_templates.status` guarda o veredito da **Meta**, reconsultado a cada
+abertura da tela (§24.3). Uma sugestão ali seria sobrescrita na primeira
+sincronização — ou, pior, apareceria na lista de escolha do envio e falharia
+com **132001 na cara da cliente**.
+
+### 48.3 Vocabulário: "criar", não "sugerir"
+
+Pedido do usuário: *"não é para ficar explícito para o consultor que é apenas
+uma sugestão"*. É coerente com o pedido original (a experiência deve ser a mesma
+de criar um template) e não custa honestidade: um template de verdade **também**
+vai para análise antes de existir. Some a palavra que rebaixa o trabalho; ficam
+as três coisas que importam — vai para análise, pode ser recusado com motivo, e
+só depois de criado dá para usar.
+
+Duas regras que o laudo cobrou e continuam valendo: **a palavra "Meta" não
+aparece em nenhuma tela do consultor** (faria esperar aprovação "em minutos" de
+algo que ainda nem foi lido por um humano), e **nenhum prazo é inventado** —
+mostra-se há quanto tempo espera, que é verdade verificável.
+
+### 48.4 Aprovar NÃO cria nada na Meta
+
+É o veredito; criar continua sendo o botão do admin, com o formulário
+preenchido. Juntar os dois num clique misturaria a decisão com uma ação
+irreversível (nome apagado na Meta fica bloqueado por 30 dias, §24.4). Enquanto
+`publicado_id` for nulo, a sugestão fica numa faixa **"aprovadas, ainda não
+criadas na Meta"** — porque "aprovei, sumiu da fila, nunca publiquei" é fácil de
+fazer sem perceber.
+
+O admin vê, por sugestão: quem sugeriu, **há quanto tempo espera (mais antiga
+primeiro)**, o texto como a cliente vai ler, a justificativa, quantos campos o
+consultor terá de digitar a cada envio, e as conferências que ainda dão para
+fazer antes de falar com a Meta — 1024/60/60, título **e** imagem juntos,
+numeração fora de sequência, link encurtado, e identificador já existente (que
+daria 409 só depois do clique).
+
+## 49. Localização e encaminhar (0111) — e o que a API não tem
+
+O usuário marcou quatro itens do checklist como fundamentais. **Dois não
+existem na Cloud API**, confirmado na documentação:
+
+| item | situação |
+|---|---|
+| Envio de localização | suportado (`type: location`) |
+| Encaminhar | não há "forward" — dá para **reenviar o conteúdo** |
+| Apagar mensagem | sem endpoint |
+| Editar enviada | sem endpoint |
+
+**O usuário cancelou apagar e editar** depois de eu explicar que a versão
+possível seria falsa: um botão "apagar" sumiria da nossa tela e a cliente
+continuaria vendo — e a pessoa clicaria nisso exatamente quando mandou algo
+errado, que é quando a ilusão de desfazer custa mais caro. **Não repropor.**
+
+### 49.1 Localização é por endereço SALVO, não pela posição do navegador
+
+Duas razões, e a segunda é dura:
+
+1. **Não é o caso de uso.** A cliente pergunta *onde fica a loja*, não onde o
+   consultor está — e mandar a posição do celular dele num sábado à noite é um
+   dado pessoal que ninguém pediu.
+2. **Não funcionaria.** A tela vive dentro de iframe (o hub embute o CRM, o
+   board embute o chat na lupa). Em iframe cross-origin o padrão para
+   `geolocation` é `self`: sem delegação no `allow` de **cada** nível o pedido é
+   recusado **sem prompt** — a armadilha do microfone da §22.5, e exigiria mexer
+   no repositório do hub.
+
+Os endereços moram em `crm_config.locais`, editáveis em /admin, colados do
+Google Maps do jeito que ele copia (`lerCoordenadas` aceita a vírgula). **Linha
+com coordenada inválida não é salva**, e a tela diz quantas foram descartadas:
+melhor faltar o botão do que mandar a cliente para o lugar errado. `lerLocais`
+também recusa `0,0` — é quase sempre campo vazio virando zero.
+
+O gesto ficou no clipe, como no WhatsApp: ele abre "Arquivo, foto ou vídeo" e os
+endereços. Não custou mais um ícone na barra.
+
+### 49.2 Encaminhar — e o que ele não é
+
+Reenvia o conteúdo, e **a cliente recebe como mensagem normal, sem o selo
+"Encaminhada"**. Isso está escrito na tela de confirmação, antes da lista de
+contatos. Do nosso lado a origem fica em `mensagens.encaminhada_de`, senão a
+thread fingiria que o consultor escreveu aquilo do zero. A janela de 24h vale
+para o **destino**: encaminhar é começar a falar com outra pessoa.
+
+Mídia é **baixada do bucket e reenviada** (`sendMedia` sobe para a Meta), e não
+por URL assinada — evita expor um link do bucket, mesmo temporário.
+
+A rota tolera a coluna ausente (tenta com, refaz sem): botão quebrado em
+produção é pior que botão ausente.
+
+## 50. Board: o card virou chat, e a coluna "Sem cadastro"
+
+### 50.1 O card é uma miniatura da conversa
+
+A palavra TEMPLATE saiu (a 330px comia a linha inteira). No lugar, barra de
+ícones no rodapé — ligar, áudio, anexo, template, cliente — e o maximizar no
+canto superior direito.
+
+**Ligar, áudio e anexo NÃO são reimplementados.** Abrem a lupa com `?acao=`, e a
+lupa **é** o `/chat` embutido (§41) — quem executa é o dono do WebRTC, do
+gravador e do upload. Reimplementá-los no board recriaria em triplicata a dívida
+que a §41 pagou ao apagar o `conversa.tsx`.
+
+O botão de cliente abre o painel do contato em quatro abas (Resumo, Perfil,
+Compras, Notas fiscais): **uma requisição por card ABERTO**, nunca por card
+desenhado — são ~400 na tela. A caixa de mensagens virou thread rolável: nasce
+com as 3 do payload (de graça) e busca a conversa inteira quando a pessoa rola
+ao topo.
+
+### 50.2 `temConversaReal` excluía os contatos do NOSSO número
+
+Era `!cliente_id.includes(":")`. Queria excluir os cards sintéticos do ERP
+(`winthor:`, `venda:`), mas também excluía **`wa:`** — o id dos contatos do
+número próprio (§16.3). Ligar, áudio, anexo, lupa e a thread rolável sumiam
+**justamente nas conversas da Cloud**, e apareciam nas do RD. E piora sozinho:
+todo contato novo nasce `wa:`. Agora o teste é por prefixo explícito.
+
+**Regra que fica:** ao excluir "ids sintéticos", listar os prefixos que se quer
+excluir — nunca testar por "tem dois-pontos".
+
+### 50.3 Coluna "Sem cadastro"
+
+Regra do usuário: sem conversa visível, quem decide a coluna é o **cadastro no
+ERP**.
+
+```
+tem cadastro no WinThor  ->  Lista de prospecção
+não tem                  ->  Sem cadastro
+```
+
+Antes esses caíam em Ociosos (ramo 1b, §31.3) e ficavam ao lado de quem parou de
+responder — dois problemas diferentes na mesma pilha. Medido depois:
+**Sem cadastro 95, Ociosos 4**. Ociosos volta a significar uma coisa só.
+
+A regra mora na **rota**, não na view: é decisão de apresentação, não muda o que
+o ETL enxerga (§32.2), e não custa migration.
+
+**`sem_cadastro` é um palpite**: a view só marca `true` depois de não achar por
+vínculo, por telefone **e** por nome normalizado. Por isso o texto diz "não
+encontrei no WinThor", nunca "não existe". A saída é automática — CPF
+preenchido, vínculo em até 10 min, o card migra sozinho.
+
+### 50.4 Nome do cliente igual a `código - NOME`
+
+`nomeComCodigo()` em `lib/nomeCliente.ts`. Custo zero: o `codcli` já vinha na
+view do board, e no chat foi só pedir a coluna que a view já tinha.
+
+### 50.5 O botão TEMPLATE do card falhava SEMPRE
+
+O template padrão (`recontato_de_clientes`) tem dois campos; o board só sabe
+mandar o primeiro nome, e a rota — com razão — recusa inventar texto em nome do
+vendedor. Agora o board **abre a conversa** quando o template pede mais de um
+campo. A rota devolve `comporNoChat`, marca legível por máquina: casar por
+substring da mensagem quebraria no dia em que o texto mudasse.
+
+E o board chamava `/api/sync-cliente` (que bate no RD) depois de **todo** envio
+bem-sucedido — inútil na Cloud, e o 429 daí voltava como "instabilidade" logo
+após um envio que tinha dado certo.
+
+## 51. Compositor estilo WhatsApp — duas armadilhas de layout
+
+**A caixa cresce com o texto**: 31px com uma linha, 88px com quatro, e volta a
+31 ao apagar.
+
+**Armadilha 1:** `height:"auto"` antes de ler `scrollHeight` **não invalida o
+layout** — o navegador devolve o valor anterior. Tem que ser `0px`.
+
+**Armadilha 2, a que custou mais:** o `scrollHeight` de um textarea **vazio**
+conta a altura do **placeholder**. O texto antigo ("Escreva uma mensagem… (/
+abre respostas rápidas, Enter envia)") quebrava em duas linhas num campo de
+300px, então a caixa nunca voltava ao tamanho de uma linha depois de enviar.
+Virou "Mensagem", com a dica no `title`.
+
+**Os ícones foram para dentro do campo** (a "pílula"), como no WhatsApp: a borda
+é do container, os botões ficam transparentes, e o enviar fica de fora. Antes
+cada botão era um quadrado com borda própria e o campo era mais um quadrado na
+fila — por isso parecia estreito tendo espaço. Campo passou de **22% para 56%**
+da barra. No modo compacto, pausa, respostas rápidas e nota interna vivem atrás
+de um botão de reticências.
+
+## 52. Alerta de canal mudo (27/08/2026)
+
+O modo de falha real, já vivido (§28.3): o app deixou de estar inscrito na WABA
+e o sistema ficou **mudo por horas**, sem nada quebrar na tela.
+
+**O sinal escolhido: recibo que não volta.** Quem promove
+`wait -> success -> read` é o webhook — a mesma porta por onde as mensagens das
+clientes entram. Mensagem nossa parada em `wait` há mais de 15 min significa que
+o caminho de volta está morto, e isso mata as duas direções de uma vez.
+
+Melhor que "faz X horas que ninguém escreve": isso acontece todo domingo, e
+alarme que dispara todo domingo deixa de ser lido. Para o canal morto há dias
+(quando ninguém mais tenta enviar e o contador zera) existe `sem_sinal`: 12h sem
+nenhum recibo.
+
+**Prova de que o sinal é o certo:** sobraram no banco 4 mensagens presas em
+`wait`, todas de **23 e 24/08** — a janela exata daquele apagão. São a impressão
+digital do incidente.
+
+| onde | o quê |
+|---|---|
+| faixa no board, acima das colunas | vem no payload do `/api/funil` (2 consultas baratas) — rota própria seria mais uma requisição por aba, o vício da §15.1 |
+| `/admin` → Mecanismos, no topo | vai à Graph API só quando alguém clica |
+
+O diagnóstico profundo responde as duas perguntas que o banco não sabe:
+`subscribed_apps` (o app está inscrito? — a causa de 24/08) e `health_status`
+(a Meta considera a linha apta?). Cada checagem falha por conta própria: saber
+**qual** das duas quebrou é o diagnóstico. E **não tenta consertar** — inscrever
+o app altera a conta, e a rota que faz isso tem allowlist.
+
+**Limitação declarada:** é alarme de tela. Avisa quem abrir o board; não manda
+notificação. Push proativo é possível (o projeto tem `pg_cron` e `chat_push`),
+mas é outra construção — se o canal cair de madrugada, ninguém sabe até alguém
+abrir o sistema.
+
+## 53. Erros da Meta em português (`lib/erroMeta.ts`)
+
+`"Meta 131047 — Re-engagement message — Re-engagement message — Message failed
+to send because more than 24 hours have passed…"` virava a mensagem de falha na
+bolha. Três defeitos num recado só: inglês, título repetido (a Meta manda
+`title` e `message` iguais em vários erros) e sem dizer o que fazer.
+
+Agora: frase em português mais a ação, e o botão vira **Template** em vez de
+Reenviar quando o código é 131047 (reenviar o mesmo texto falharia de novo).
+
+**O texto cru NÃO é jogado fora** — vai para o `title`. A §22.6.1 custou horas
+exatamente por ter perdido a explicação da Meta, e boa parte dos códigos de
+chamada não existe na documentação pública.
+
+## 54. `checklist_chat_crm.md` — auditoria contra o código
+
+Arquivo na raiz, auditado em 27/08 item a item, com o arquivo responsável de
+cada item pronto. Placar: **59 prontos, 18 parciais, 30 pendentes**.
+
+O rótulo de "parcial" foi usado muito de propósito: "meio pronto" descrito é
+acionável, "pronto" otimista vira surpresa na frente do cliente. Os parciais que
+mais importam: multi-número **recebe** por vários e **envia** por um só; reação e
+citação são **recebidas**, não enviadas; a thread para em 200 mensagens **sem
+avisar**; o SLA é medido mas não alertado.
+
+**A fila combinada com o usuário**, na ordem dele:
+
+1. FEITO — localização e encaminhar (§49)
+2. FEITO — alerta de canal caído (§52)
+3. devolver conversa para a fila — quem pega por engano não tem saída
+4. scroll infinito na thread — para em 200 sem avisar
+5. excluir do disparo quem já falhou — custa dinheiro toda semana
+6. apagar e editar — **cancelado pelo usuário**
+
+**O que provavelmente não vale construir** (registrado para não voltar como
+ideia nova): "digitando…" (a Cloud API não entrega esse evento — simular
+presença é mentir), editar mensagem enviada e apagar para todos.
+
+**Sobre tags** (seção 9 do checklist, tudo pendente): antes de construir, vale
+conferir se é necessário. Parte do que o RD resolvia com tag aqui já é estrutura
+— carteira/RCA, etapa do funil, status da conversa e motivo do encerramento. Tag
+livre em cima disso costuma virar um segundo sistema de classificação que
+ninguém mantém.
+
+## 55. Método — o que custou tempo em 27/08
+
+- **`python3` com heredoc quebra** quando o conteúdo tem certas combinações de
+  aspas. Escrever o script com a ferramenta Write e rodar `python3 arquivo.py` é
+  o caminho confiável. Vale também para blocos grandes de markdown.
+- **Line endings importam.** Boa parte dos arquivos é CRLF, mas alguns (os que
+  passaram pela ferramenta Edit) são LF. Um script de substituição precisa
+  normalizar os âncoras — `assert s.count(a)==1` pega isso na hora.
+- **`perl -pi -e` interpola `${VAR}`** dentro da string de substituição. Isso
+  comeu `${URL_CONSULTA}` de duas linhas de JSX. Para código com template
+  literals, usar Edit ou python.
+- **Comando encadeado longo estoura o timeout.** Build, start, chrome e teste
+  numa linha só passa dos 600s. Rodar em etapas.
+- **Sonda numérica engana em layout.** Medir o topo de botões de alturas
+  diferentes centralizados na mesma linha dá tops diferentes, e parece quebra de
+  linha. **Screenshot decide** (§41.5).
+- **Build verde não prova que a tela abre.** Todo hook precisa estar acima de
+  qualquer `return` condicional; um `useEffect` referenciando um `const`
+  declarado depois estoura em TDZ.
+- **Testar contra a API real vale o esforço.** O diagnóstico de canal só provou
+  que funciona porque subi o servidor local com as envs do WhatsApp e falei com
+  a Graph de verdade — e depois plantei 3 mensagens presas no banco para ver o
+  alarme disparar, removendo-as em seguida.

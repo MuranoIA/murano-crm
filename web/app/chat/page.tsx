@@ -146,6 +146,8 @@ type Conversa = {
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
   na_fila?: boolean;   // sem dono: qualquer um pode puxar
+  /** dono COMERCIAL cru (carteira/RCA), antes da transferência — governa o "devolver" */
+  carteira_dona?: string | null;
   // por qual NÚMERO a conversa corre (migration 0089): phone_number_id da Cloud
   // API, ou 'rd' para o número oficial, que é atendido pelo RD Conversas
   linha_id?: string;
@@ -927,6 +929,10 @@ export default function Chat() {
   // a localizacao nao custa mais um icone na barra -- e o gesto ja e o que a
   // pessoa conhece ("clipe = mandar alguma coisa que nao e texto").
   const [anexoAberto, setAnexoAberto] = useState(false);
+  // Paginação para trás: a thread trazia 200 mensagens e PARAVA SEM AVISAR --
+  // numa cliente de anos, a conversa mais antiga não existia para quem rolava.
+  const [temMais, setTemMais] = useState(false);
+  const [carregandoAntigas, setCarregandoAntigas] = useState(false);
   // Encaminhar: a mensagem escolhida, e para quem. A Cloud API nao tem
   // "forward" -- e reenviar o conteudo, e a cliente NAO ve o selo
   // "Encaminhada". A tela diz isso antes de confirmar.
@@ -1122,8 +1128,48 @@ export default function Chat() {
     setTransferencias(j?.transferencias ?? []);
     setLigacoes(j?.ligacoes ?? []);
     setLinha(j?.linha ?? null);
+    setTemMais(!!j?.tem_mais);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
+
+  /**
+   * Traz o lote anterior de mensagens (item 4 da fila).
+   *
+   * ⚠️ A parte delicada não é buscar, é **não arrancar a pessoa de onde ela
+   * está lendo**. Ao inserir mensagens ACIMA, o navegador mantém o `scrollTop`
+   * e o conteúdo desce — a leitura salta. O truque é medir `scrollHeight`
+   * antes, e depois somar a diferença ao `scrollTop`: o ponto que estava sob os
+   * olhos continua sob os olhos.
+   *
+   * O cursor é a DATA da mensagem mais antiga carregada, não um offset: com
+   * offset, uma mensagem nova chegando durante a rolagem faria repetir ou pular
+   * uma bolha.
+   */
+  async function carregarAntigas() {
+    const cx = rolagemRef.current;
+    const primeira = msgs?.[0];
+    if (!sel || !primeira || carregandoAntigas) return;
+    setCarregandoAntigas(true);
+    const alturaAntes = cx?.scrollHeight ?? 0;
+    const topoAntes = cx?.scrollTop ?? 0;
+    try {
+      const r = await fetch(
+        `/api/chat/thread?cliente_id=${encodeURIComponent(sel.cliente_id)}` +
+        `&antes=${encodeURIComponent(primeira.criada_em)}${comHistorico ? "&historico=1" : ""}`,
+        { cache: "no-store" });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      const lote = j?.mensagens ?? [];
+      setTemMais(!!j?.tem_mais);
+      if (!lote.length) return;
+      setMsgs((atual) => [...lote, ...(atual ?? [])]);
+      // depois do render, devolve a posição de leitura
+      setTimeout(() => {
+        const el = rolagemRef.current;
+        if (el) el.scrollTop = topoAntes + (el.scrollHeight - alturaAntes);
+      }, 0);
+    } finally { setCarregandoAntigas(false); }
+  }
 
   // catálogo de respostas rápidas: carrega uma vez por sessão (muda raramente).
   // Vendedor recebe as da casa + as dele; admin/home recebem todas.
@@ -1488,6 +1534,32 @@ export default function Chat() {
       await carregarThread(sel, false);
     } catch (e: any) {
       setAviso(`Não consegui puxar: ${e?.message ?? e}`);
+    } finally { setPuxando(false); }
+  }
+
+  /**
+   * Devolve a conversa para a fila de espera (0112) — o desfazer do ✋ Pegar.
+   *
+   * Pegar da fila é um clique, e até aqui **não havia saída**: quem pegava a
+   * conversa errada dependia de um admin. É o erro mais provável do desenho,
+   * porque a fila é de todos e o botão é grande.
+   */
+  async function devolverParaFila() {
+    if (!sel || puxando) return;
+    if (!confirm("Devolver esta conversa para a fila? Ela volta a ficar disponível para qualquer pessoa.")) return;
+    setPuxando(true); setAviso(null);
+    try {
+      const r = await fetch("/api/chat/transferir", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, devolver: true, observacao: "devolveu para a fila" }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      setSel({ ...sel, na_fila: true, vendedor: null });
+      setAviso(j?.aviso ?? "Devolvida.");
+      await carregarLista();
+    } catch (e: any) {
+      setAviso(`Não consegui devolver: ${e?.message ?? e}`);
     } finally { setPuxando(false); }
   }
 
@@ -2791,6 +2863,19 @@ export default function Chat() {
                     onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
                     compacto={compacto}
                   />
+                  {/* Devolver só aparece quando o cliente NÃO tem dono comercial
+                      (`carteira_dona` nula) e a conversa está comigo: é o desfazer
+                      do ✋ Pegar. Num cliente de carteira o botão certo é
+                      Transferir, com nome — e por isso ele nem é oferecido, em vez
+                      de aparecer e o servidor recusar depois do clique. */}
+                  {!sel.na_fila && !sel.carteira_dona && sel.vendedor
+                    && (sessao.role !== "vendedor" || sessao.carteira === sel.vendedor) && (
+                    <button onClick={devolverParaFila} disabled={puxando}
+                      title="Devolver para a fila de espera — volta a ficar disponível para qualquer pessoa"
+                      style={{ fontSize: fonteBotao, fontWeight: 700, color: M.gray, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 999, padding: padBotao, cursor: puxando ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {rot("↩", "↩ Devolver")}
+                    </button>
+                  )}
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
                     style={{ fontSize: fonteBotao, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -2921,6 +3006,23 @@ export default function Chat() {
                       Fica no TOPO porque é o que vem antes na linha do tempo. Sem
                       isto, uma conversa com 23 mensagens no RD dizia "Sem mensagens
                       ainda", e o vendedor ligava achando que era o primeiro contato. */}
+                  {/* Carregar as anteriores. Fica ACIMA do botão de histórico do
+                      outro número porque é o que vem antes na linha do tempo
+                      desta conversa; o outro é de OUTRO número. Sem isto a
+                      thread terminava em silêncio na 200a mensagem, e para quem
+                      rolava a conversa mais antiga simplesmente não existia. */}
+                  {temMais && (
+                    <div style={{ textAlign: "center", padding: "2px 0 10px" }}>
+                      <button onClick={() => void carregarAntigas()} disabled={carregandoAntigas}
+                        style={{ fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                          cursor: carregandoAntigas ? "wait" : "pointer",
+                          color: M.gray, background: M.surface, border: `1px solid ${M.border}`,
+                          borderRadius: 999, padding: "6px 16px" }}>
+                        {carregandoAntigas ? "carregando…" : "↑ Carregar mensagens anteriores"}
+                      </button>
+                    </div>
+                  )}
+
                   {ocultas > 0 && !comHistorico && sel && (
                     <div style={{ textAlign: "center", padding: "2px 0 10px" }}>
                       <button
