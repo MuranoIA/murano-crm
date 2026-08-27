@@ -22,7 +22,7 @@ export async function GET() {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const COLS = "cliente_id,cliente,vendedor,etapa,telefone,ultima_atividade,ultima_mensagem,ultima_enviada_por";
+  const COLS = "cliente_id,cliente,vendedor,etapa,telefone,ultima_atividade,ultima_mensagem,ultima_enviada_por,codcli";
 
   // Interruptor das conversas do RD (0098). Escondidas, a sidebar lista só o que
   // veio da Cloud: os ramos sem conversa da view irmã têm `ultima_atividade`

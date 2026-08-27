@@ -10,6 +10,8 @@ import {
 // mesma régua das variáveis do template usada pela rota de envio — a tela avisa
 // cedo, o servidor confere de novo (lib/templateVars.ts)
 import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
+import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
+import { nomeComCodigo } from "../../lib/nomeCliente";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
@@ -137,6 +139,8 @@ const ABAS: { k: AbaContato; rotulo: string; soD1?: boolean }[] = [
 
 type Conversa = {
   cliente_id: string; cliente: string; vendedor: string | null; etapa: string | null;
+  // codigo do cliente no WinThor: vem no mesmo SELECT do nome, sem consulta nova
+  codcli?: number | string | null;
   telefone: string | null; ultima_atividade: string | null;
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
@@ -327,6 +331,27 @@ function SalvarContato({ atual, salvar, temErp }: {
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
   const [ocupado, setOcupado] = useState(false);
+
+  // ---- Cliente JÁ cadastrado no WinThor: o ERP manda -----------------------
+  // O botão gravava `clientes.nome_completo`, que é o nome que o board e o chat
+  // exibem. Num cliente já vinculado isso deixava o CRM chamando de "rom" quem
+  // o ERP chama de "ROMULO ALBUQUERQUE" — e a divergência não voltaria sozinha,
+  // porque o ETL nunca reescreve contato conhecido (§25.2).
+  //
+  // A regra do projeto já era essa e só não estava aplicada aqui: "WinThor é
+  // fonte da verdade quando houver divergência de sync" (§10.8). Então, com
+  // vínculo, não há formulário — há o caminho para corrigir onde o dado nasce.
+  if (temErp) {
+    return (
+      <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
+        <div style={{ fontSize: 12.5, color: M.gray, lineHeight: 1.5 }}>
+          <b style={{ color: M.ink }}>Cadastro do WinThor.</b> Nome, CPF e endereço deste cliente
+          vêm do ERP e não são editados aqui — corrigir por lá vale para todo mundo,
+          e a mudança chega em até 10 minutos.
+        </div>
+      </div>
+    );
+  }
 
   if (!aberto) {
     return (
@@ -786,7 +811,8 @@ export default function Chat() {
     if (filtro === "carteira" && carteira === null && !carteiraCarregando) void carregarCarteira();
   }, [filtro, carteira, carteiraCarregando, carregarCarteira]);
 
-  const [menuFila, setMenuFila] = useState(false);      // dropdown "Meus atendimentos"
+  const [menuFila, setMenuFila] = useState(false);   // dropdown "Meus atendimentos"
+  const [menuVend, setMenuVend] = useState(false);   // dropdown de vendedor (admin/home)
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
   const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
@@ -1386,6 +1412,31 @@ export default function Chat() {
     const t = setInterval(() => setSegundos((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [gravando]);
+
+  // ---- ?acao= — o card do board pedindo uma ação ---------------------------
+  // Os ícones 📞 🎤 📎 do card abrem esta tela embutida já executando o gesto.
+  // É assim que o card os oferece SEM reimplementar WebRTC, gravador e upload:
+  // quem executa é o dono deles, aqui. Duplicá-los no board recriaria, em três
+  // cópias, a dívida que a §41 pagou ao apagar o conversa.tsx.
+  //
+  // Dispara UMA vez, quando a conversa já está aberta — antes disso `sel` é
+  // nulo e as três funções não teriam em quem agir.
+  const acaoFeita = useRef(false);
+  useEffect(() => {
+    if (acaoFeita.current || !sel) return;
+    let acao: string | null = null;
+    try { acao = new URLSearchParams(window.location.search).get("acao"); } catch {}
+    if (!acao) return;
+    acaoFeita.current = true;
+    // pequeno atraso: a thread ainda está pintando, e abrir o seletor de arquivo
+    // ou o microfone no meio disso deixa a tela piscando atrás do diálogo
+    const t = setTimeout(() => {
+      if (acao === "ligar") lig.ligar(sel.cliente_id, sel.cliente);
+      else if (acao === "audio") void alternarGravacao();
+      else if (acao === "anexo") arquivoRef.current?.click();
+    }, 350);
+    return () => clearTimeout(t);
+  }, [sel]);
 
   function cancelarGravacao() {
     const rec = recRef.current;
@@ -2164,33 +2215,69 @@ export default function Chat() {
                   de uma carteira por vez. Vendedor não vê estes chips — ele já
                   recebe só a própria carteira, filtrada no SERVIDOR (/api/chat),
                   então "Todos" e o próprio nome seriam a mesma lista. */}
-              {sessao.role !== "vendedor" && vendedoresComConversa.length > 1 && (
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
-                  <span title="Filtrar por vendedor" style={{ fontSize: 12, color: M.muted }}>🧑‍💼</span>
-                  {[{ slug: null as string | null, cor: null, total: baseLinha.filter((c) => !c.na_fila).length },
-                    ...vendedoresComConversa].map((v) => {
-                    const on = vendFiltro === v.slug;
-                    return (
-                      <button
-                        key={v.slug ?? "todos"}
-                        onClick={() => setVendFiltro(v.slug)}
-                        title={v.slug ? `Só as conversas de ${cap(v.slug)}` : "Todas as carteiras"}
-                        style={{
-                          display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px",
-                          fontSize: 11.5, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
-                          borderRadius: 999, whiteSpace: "nowrap",
-                          color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
-                          border: `1px solid ${on ? M.roxo : M.border}`,
-                        }}
-                      >
-                        {v.cor && <span style={{ width: 7, height: 7, borderRadius: 7, background: v.cor }} />}
-                        {v.slug ? cap(v.slug) : "Todos"}
-                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.85 : 0.6 }}>{v.total}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              {sessao.role !== "vendedor" && vendedoresComConversa.length > 1 && (() => {
+                // DROPDOWN, não mais uma fila de chips: com sete carteiras os chips
+                // quebravam em duas linhas e comiam a altura da lista, que é o que
+                // a sidebar tem de mais escasso. Um controle fechado diz a mesma
+                // coisa em uma linha — e diz também QUAL está escolhido, que era o
+                // que a fila de chips só mostrava por cor de fundo.
+                //
+                // Escolher um vendedor filtra TUDO que a sidebar mostra: as quatro
+                // filas e seus contadores (via `noEscopo`), a busca no conteúdo e a
+                // aba Minha carteira. É o mesmo alcance que o board tem.
+                const atual = vendedoresComConversa.find((v) => v.slug === vendFiltro) ?? null;
+                const totalGeral = baseLinha.filter((c) => !c.na_fila).length;
+                return (
+                  <div style={{ position: "relative" }}>
+                    <button
+                      onClick={() => setMenuVend((v) => !v)}
+                      title="Ver a operação de uma carteira por vez"
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "5px 10px",
+                        fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                        borderRadius: 9, whiteSpace: "nowrap",
+                        color: vendFiltro ? "#fff" : M.gray, background: vendFiltro ? M.roxo : M.bg,
+                        border: `1px solid ${vendFiltro ? M.roxo : M.border}`,
+                      }}
+                    >
+                      <span style={{ fontSize: 12 }}>🧑‍💼</span>
+                      {atual?.cor && <span style={{ width: 8, height: 8, borderRadius: 8, background: atual.cor }} />}
+                      {vendFiltro ? cap(vendFiltro) : "Todos os vendedores"}
+                      <span style={{ fontSize: 10.5, fontWeight: 800, opacity: 0.7 }}>
+                        {atual ? atual.total : totalGeral}
+                      </span>
+                      <span style={{ marginLeft: "auto", fontSize: 9, opacity: 0.8 }}>▾</span>
+                    </button>
+                    {menuVend && (
+                      <>
+                        <div onClick={() => setMenuVend(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
+                        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 101,
+                          background: M.surface, border: `1px solid ${M.border}`, borderRadius: 9,
+                          boxShadow: "0 10px 26px rgba(28,14,27,.18)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+                          {[{ slug: null as string | null, cor: null as string | null, total: totalGeral },
+                            ...vendedoresComConversa].map((v) => {
+                            const on = vendFiltro === v.slug;
+                            return (
+                              <button key={v.slug ?? "todos"}
+                                onClick={() => { setVendFiltro(v.slug); setMenuVend(false); }}
+                                style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left",
+                                  padding: "8px 11px", fontSize: 12.5, fontWeight: on ? 800 : 600,
+                                  color: on ? M.wine : M.ink, background: on ? M.roxoSoft : "transparent",
+                                  border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                                {v.cor
+                                  ? <span style={{ width: 8, height: 8, borderRadius: 8, background: v.cor, flexShrink: 0 }} />
+                                  : <span style={{ width: 8, flexShrink: 0 }} />}
+                                {v.slug ? cap(v.slug) : "Todos os vendedores"}
+                                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: M.muted }}>{v.total}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Esta faixa fala da lista de CONVERSAS: o contador e a ordem por
                   data. Na agenda ela mentia duas vezes — dizia "0 conversas" ao
@@ -2264,7 +2351,7 @@ export default function Chat() {
                           <span style={{ minWidth: 0, flex: 1 }}>
                             <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: M.ink,
                               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {k.cliente}
+                              {nomeComCodigo(k.cliente, k.codcli)}
                             </span>
                             <span style={{ display: "block", fontSize: 11.5, color: inerte ? M.laranja : M.gray,
                               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2321,7 +2408,7 @@ export default function Chat() {
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                        <b style={{ fontSize: 13.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, fontWeight: c.nao_lida ? 900 : 700 }}>{c.cliente}</b>
+                        <b style={{ fontSize: 13.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, fontWeight: c.nao_lida ? 900 : 700 }}>{nomeComCodigo(c.cliente, c.codcli)}</b>
                         {(c.status ?? "aberta") === "resolvida" && (
                           <span title="conversa resolvida" style={{ fontSize: 10, color: "#1a6b3c", flexShrink: 0 }}>✓</span>
                         )}
@@ -2381,7 +2468,7 @@ export default function Chat() {
                     <button key={`b:${c.cliente_id}`} onClick={() => abrir(c)}
                       style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", background: sel?.cliente_id === c.cliente_id ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
                       <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                        <b style={{ fontSize: 13, color: M.ink, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.cliente}</b>
+                        <b style={{ fontSize: 13, color: M.ink, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nomeComCodigo(c.cliente, c.codcli)}</b>
                         {(c.n ?? 1) > 1 && (
                           <span style={{ fontSize: 9.5, fontWeight: 800, color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>
                             {c.n}×
@@ -2439,7 +2526,7 @@ export default function Chat() {
                     {(sel.cliente ?? "?").trim().charAt(0).toUpperCase()}
                   </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
-                    <b style={{ display: "block", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sel.cliente}</b>
+                    <b style={{ display: "block", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nomeComCodigo(sel.cliente, sel.codcli)}</b>
                     <span style={{ fontSize: 11, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                       {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
@@ -2768,24 +2855,41 @@ export default function Chat() {
                                 num app mobile a mensagem que não chegou fica sem
                                 causa e sem saída (§29.2 item 5). Aqui o motivo é
                                 texto, e o reenvio é um botão ao lado dele. */}
-                            {d1 && fora && m.status === "failed" && (
-                              <div style={{ maxWidth: "76%", marginTop: 3, padding: "6px 10px", fontSize: 11,
+                            {d1 && fora && m.status === "failed" && (() => {
+                              // O que a Meta manda vem em inglês, com o título repetido
+                              // e sem dizer o que fazer. Aqui vira uma frase em português
+                              // mais a ação; o texto original continua no `title`, porque
+                              // em caso novo ele é a única pista que existe (§22.6.1).
+                              const e = traduzErroMeta(m.erro);
+                              // Fora da janela de 24h, reenviar o mesmo texto falha de
+                              // novo — o caminho é o template. O botão diz isso.
+                              const janelaFechada = codigoMeta(m.erro) === "131047";
+                              return (
+                              <div title={e.tecnico || undefined}
+                                style={{ maxWidth: "76%", marginTop: 3, padding: "6px 10px", fontSize: 11,
                                 lineHeight: 1.45, color: M.laranja, background: "#fdeee9",
                                 border: "1px solid #f2cabb", borderRadius: 8,
                                 display: "flex", alignItems: "center", gap: 8 }}>
                                 <span style={{ flex: 1 }}>
-                                  <b>Não entregue.</b> {m.erro || "A Meta não explicou o motivo."}
+                                  <b>Não entregue.</b> {e.texto}
+                                  {e.acao && <><br /><span style={{ opacity: 0.85 }}>{e.acao}</span></>}
                                 </span>
                                 <button
-                                  onClick={() => { setTexto(m.conteudo); setModoNota(false); }}
-                                  title="Copia o texto para a caixa de digitação para você enviar de novo"
+                                  onClick={() => {
+                                    if (janelaFechada) { setMenuTemplate(true); return; }
+                                    setTexto(m.conteudo); setModoNota(false);
+                                  }}
+                                  title={janelaFechada
+                                    ? "Abre a lista de templates — é o que reabre a conversa"
+                                    : "Copia o texto para a caixa de digitação para você enviar de novo"}
                                   style={{ flexShrink: 0, border: "none", borderRadius: 999, padding: "4px 11px",
                                     fontSize: 11, fontWeight: 800, fontFamily: "inherit", color: "#fff",
-                                    background: M.roxo, cursor: "pointer" }}>
-                                  Reenviar
+                                    background: M.roxo, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                  {janelaFechada ? "Template" : "Reenviar"}
                                 </button>
                               </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         );
                       })}
