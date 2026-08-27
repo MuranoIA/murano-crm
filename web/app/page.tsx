@@ -3023,6 +3023,9 @@ export default function Page() {
                                 barra de ações do rodapé, junto com ligar, áudio e anexo.
                                 Aqui em cima fica só ESTADO — o que o card é, não o que
                                 dá para fazer com ele. */}
+                            {/* Maximizar no CANTO SUPERIOR DIREITO, como em qualquer
+                                janela -- e nao no meio da fila de icones do rodape,
+                                onde ele competia com as acoes de conversar. */}
                             <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                               {alerta && (
                                 <span
@@ -3043,6 +3046,10 @@ export default function Page() {
                                   AGUARDANDO
                                 </span>
                               ) : null}
+                              {temConversaReal && (
+                                <BotaoCard t="Maximizar — a conversa inteira" cor="#0b7fb0" bg="#eaf6fd" borda="#bfe6f8"
+                                  onClick={() => abrirZoom(c)}>⛶</BotaoCard>
+                              )}
                             </div>
                           </div>
                           <div style={{ fontSize: 13.5, fontWeight: 700, color: RD.navy, lineHeight: 1.25, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }} title={nomeComCodigo(c.cliente, codcli)}>
@@ -3210,10 +3217,6 @@ export default function Page() {
                             {codcli != null && (
                               <BotaoCard t={`Consulta Clientes (código ${codcli})`} cor={RD.wine} bg="#fbeef4" borda="#e2c7d3"
                                 onClick={() => window.open(`${URL_CONSULTA}?codcli=${codcli}`, "consultaclientes")}>C</BotaoCard>
-                            )}
-                            {temConversaReal && (
-                              <BotaoCard t="Maximizar — a conversa inteira" cor="#0b7fb0" bg="#eaf6fd" borda="#bfe6f8"
-                                onClick={() => abrirZoom(c)}>⛶</BotaoCard>
                             )}
                             {menuContato === c.cliente_id && (
                               <PainelContatoCard
