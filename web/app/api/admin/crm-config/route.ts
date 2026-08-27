@@ -1,6 +1,7 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO } from "../../../../lib/crmConfig";
 import { lerCampos, type CampoCadastro } from "../../../../lib/cadastroCampos";
+import { lerLocais, type Local } from "../../../../lib/locais";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,8 @@ export async function GET() {
   const cfg = await lerCrmConfig(sb);
   const { data: cc } = await sb.from("crm_config").select("cadastro_campos").eq("id", 1).maybeSingle();
   const campos: CampoCadastro[] = lerCampos((cc as any)?.cadastro_campos);
+  const { data: cl } = await sb.from("crm_config").select("locais").eq("id", 1).maybeSingle();
+  const locais: Local[] = lerLocais((cl as any)?.locais);
 
   // `padrao` viaja junto para a tela poder dizer "este é o estado de fábrica"
   // sem repetir a regra do lado do navegador.
@@ -175,6 +178,18 @@ export async function GET() {
       // cadastra, nao quem faz deploy. O MESMO array gera a mensagem que pede
       // os dados a cliente -- uma fonte, dois usos, sem risco de o consultor
       // pedir oito coisas e o formulario ter dez.
+      // ---- enderecos que o consultor pode enviar como localizacao (0111) ---
+      // Lista VAZIA nao e erro: sem endereco cadastrado o menu do clipe nem
+      // mostra a opcao. E melhor faltar o botao do que ele mandar a cliente
+      // para uma coordenada errada.
+      locais: {
+        rotulo: "Endereços para enviar no chat",
+        resumo:
+          "O consultor manda pelo 📎 do chat, e chega como cartão de mapa. NÃO usa a " +
+          "localização do celular: o que a cliente pergunta é onde fica a loja, e a tela " +
+          "vive dentro de iframe, onde o navegador recusa geolocalização sem prompt.",
+        itens: locais,
+      },
       cadastro: {
         rotulo: "Ficha de cadastro do cliente novo",
         resumo:
@@ -232,6 +247,32 @@ export async function PUT(req: Request) {
 
   const sb = sbAdmin();
   const antes = await lerCrmConfig(sb);
+
+  // ---- enderecos de localizacao ---------------------------------------------
+  if (chave === "locais") {
+    if (!Array.isArray(valor)) return Response.json({ error: "informe a lista de endereços" }, { status: 400 });
+    // `lerLocais` descarta linha com coordenada invalida. Se o admin mandou 3 e
+    // sobraram 2, ele precisa SABER -- senao salva achando que cadastrou e o
+    // botao continua faltando no chat.
+    const limpos = lerLocais(valor);
+    if (valor.length && !limpos.length) {
+      return Response.json({ error: "nenhum endereço válido — confira nome, endereço e as coordenadas" }, { status: 400 });
+    }
+    const { error } = await sb.from("crm_config").upsert({
+      id: 1, locais: limpos,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    const perdidos = valor.length - limpos.length;
+    return Response.json({
+      ok: true,
+      aviso: perdidos > 0
+        ? `${limpos.length} endereço(s) salvos. ${perdidos} foram descartados por coordenada inválida.`
+        : limpos.length
+          ? `${limpos.length} endereço(s) salvos. Já aparecem no 📎 do chat.`
+          : "Nenhum endereço — a opção some do menu do chat.",
+    });
+  }
 
   // ---- campos da ficha de cadastro: lista, nao booleano ---------------------
   if (chave === "cadastro_campos") {

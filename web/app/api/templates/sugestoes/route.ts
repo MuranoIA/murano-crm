@@ -21,6 +21,8 @@ export const dynamic = "force-dynamic";
 // ---------------------------------------------------------------------------
 
 const LIM = { nome: 60, corpo: 1024, cabecalho: 60, rodape: 60, justificativa: 500 };
+const IMAGENS_ACEITAS = ["image/jpeg", "image/png"];
+const IMAGEM_MAX = 5 * 1024 * 1024;   // teto da Meta para imagem de cabecalho
 
 function sb() {
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -29,7 +31,7 @@ function sb() {
 }
 
 const COLS =
-  "id,carteira,autor_email,nome,corpo,cabecalho_tipo,cabecalho_texto,rodape," +
+  "id,carteira,autor_email,nome,corpo,cabecalho_tipo,cabecalho_texto,imagem_path,rodape," +
   "justificativa,status,motivo,avaliado_por,avaliado_em,publicado_id,criado_em";
 
 export async function GET() {
@@ -101,8 +103,25 @@ export async function POST(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
 
-  let b: any;
-  try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
+  // Aceita JSON (sem imagem) e multipart (com). A experiencia de criar um
+  // template inclui a imagem de cabecalho -- deixa-la "para o admin depois"
+  // fazia o consultor escrever meio template e ter de explicar o resto por
+  // fora, que e o corredor de onde a tela existe para tirar o assunto.
+  let b: any = {};
+  let arquivo: File | null = null;
+  const ct = req.headers.get("content-type") ?? "";
+  if (ct.includes("multipart/form-data")) {
+    let form: FormData;
+    try { form = await req.formData(); } catch { return Response.json({ error: "envio inválido" }, { status: 400 }); }
+    for (const k of ["nome", "corpo", "cabecalho_tipo", "cabecalho_texto", "rodape", "justificativa"]) {
+      const v = form.get(k);
+      if (typeof v === "string") b[k] = v;
+    }
+    const f = form.get("imagem");
+    if (f && typeof f !== "string" && (f as File).size > 0) arquivo = f as File;
+  } else {
+    try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
+  }
 
   const nome = String(b?.nome ?? "").trim();
   const corpo = String(b?.corpo ?? "").trim();
@@ -123,10 +142,33 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
-  const cab = b?.cabecalho_tipo === "texto" ? "texto" : null;   // imagem entra depois, pelo admin
+  const querTexto = b?.cabecalho_tipo === "texto" && String(b?.cabecalho_texto ?? "").trim();
+  // A Meta aceita UM cabecalho. Barrar aqui evita a recusa chegar minutos
+  // depois, sem explicacao util -- e antes disso evita o admin gastar a
+  // avaliacao num template que ja nasce invalido.
+  if (querTexto && arquivo) {
+    return Response.json({ error: "escolha imagem OU título — a Meta aceita um cabeçalho só" }, { status: 400 });
+  }
+  const cab = arquivo ? "imagem" : querTexto ? "texto" : null;
   const cabTxt = cab === "texto" ? String(b?.cabecalho_texto ?? "").trim().slice(0, LIM.cabecalho) : null;
-  if (cab === "texto" && !cabTxt) {
-    return Response.json({ error: "o cabeçalho está vazio — escreva ou remova" }, { status: 400 });
+
+  // A imagem vai para o MESMO bucket privado dos templates do admin. Nao vai
+  // para a Meta agora: quem publica e o admin, e o handle da Meta so faz
+  // sentido no momento da criacao la (§24.3).
+  let imagemPath: string | null = null;
+  if (arquivo) {
+    if (!IMAGENS_ACEITAS.includes(arquivo.type)) {
+      return Response.json({ error: "a imagem precisa ser JPEG ou PNG" }, { status: 400 });
+    }
+    if (arquivo.size > IMAGEM_MAX) {
+      return Response.json({ error: "a imagem passa de 5 MB, o limite da Meta" }, { status: 400 });
+    }
+    const ext = arquivo.type === "image/png" ? "png" : "jpg";
+    imagemPath = `sugestoes/${Date.now()}-${Math.abs(nome.length * 7919)}.${ext}`;
+    const bytes = new Uint8Array(await arquivo.arrayBuffer());
+    const { error: eUp } = await sb().storage.from("wa-midia")
+      .upload(imagemPath, bytes, { contentType: arquivo.type, upsert: true });
+    if (eUp) return Response.json({ error: `não consegui guardar a imagem: ${eUp.message}` }, { status: 500 });
   }
 
   const { data, error } = await sb().from("template_sugestao").insert({
@@ -135,6 +177,7 @@ export async function POST(req: Request) {
     nome, corpo,
     cabecalho_tipo: cab,
     cabecalho_texto: cabTxt,
+    imagem_path: imagemPath,
     rodape: b?.rodape ? String(b.rodape).trim().slice(0, LIM.rodape) : null,
     justificativa: b?.justificativa ? String(b.justificativa).trim().slice(0, LIM.justificativa) : null,
   }).select(COLS).single();
@@ -142,7 +185,7 @@ export async function POST(req: Request) {
 
   return Response.json({
     ok: true, sugestao: data,
-    aviso: "Enviado para análise do administrador. Você vê aqui quando ele responder.",
+    aviso: "Template enviado para análise. Você acompanha o resultado aqui mesmo.",
   });
 }
 

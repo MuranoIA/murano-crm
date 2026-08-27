@@ -17,6 +17,8 @@ type Card = {
   ultima_enviada_por: string | null;
   telefone: string | null;
   ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
+  /** mensagens que existem, mas na linha que a seleção esconde (ramo 1b, §31.3) */
+  msgs_ocultas?: number;
   venda_valor: number | null;      // valor faturado no período (R$), nota fiscal WinThor
   venda_data: string | null;       // data da última compra
   periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
@@ -3158,9 +3160,17 @@ export default function Page() {
                                 {/* Sem data isto virava "última msg · —", que promete uma
                                     informação e entrega um travessão. Quem não tem conversa
                                     tem telefone, e é o que serve para agir. */}
+                                {/* "sem conversa" era MENTIRA em parte destes cards: o
+                                    ramo 1b (§31.3) é gente contatada cuja conversa inteira
+                                    está no número escondido. Dizer "91 mensagens no outro
+                                    número" troca a linha que engana por uma que informa —
+                                    e explica por que o card está em Ociosos, não em
+                                    Prospecção. */}
                                 {c.ultima_atividade
                                   ? `última msg · ${dataHora(c.ultima_atividade)}`
-                                  : `sem conversa · ${c.telefone ?? "sem telefone"}`}
+                                  : c.msgs_ocultas
+                                    ? `${c.msgs_ocultas} mensagens no outro número · ${c.telefone ?? "sem telefone"}`
+                                    : `sem conversa · ${c.telefone ?? "sem telefone"}`}
                               </div>
                             )}
                           </div>

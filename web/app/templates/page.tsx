@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,12 @@ export default function Templates() {
   const [cab, setCab] = useState("");
   const [rodape, setRodape] = useState("");
   const [porque, setPorque] = useState("");
+  // Imagem de cabecalho. A Meta aceita UM cabecalho: escolher imagem apaga o
+  // titulo e vice-versa -- barrar aqui evita a recusa chegar depois, e evita o
+  // template nascer invalido.
+  const [imagem, setImagem] = useState<File | null>(null);
+  const [previaImg, setPreviaImg] = useState<string | null>(null);
+  const imgRef = useRef<HTMLInputElement>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -92,23 +98,43 @@ export default function Templates() {
   if (rodape.length > LIM.rodape) problemas.push(`o rodapé passa de ${LIM.rodape} caracteres`);
   const podeEnviar = nome.trim().length >= 3 && corpo.trim().length >= 10 && porque.trim().length >= 5 && !problemas.length;
 
+  function trocarImagem(f: File | null) {
+    setImagem(f);
+    setPreviaImg((antiga) => { if (antiga) URL.revokeObjectURL(antiga); return f ? URL.createObjectURL(f) : null; });
+    if (f) setCab("");            // um cabeçalho só
+  }
+
   function limpar() {
     setNome(""); setCorpo(""); setCab(""); setRodape(""); setPorque("");
+    trocarImagem(null);
+    if (imgRef.current) imgRef.current.value = "";
   }
 
   async function enviar() {
     setOcupado(true); setErro(null); setOk(null);
     try {
-      const r = await fetch("/api/templates/sugestoes", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nome: nome.trim(), corpo: corpo.trim(),
-          cabecalho_tipo: cab.trim() ? "texto" : null,
-          cabecalho_texto: cab.trim() || null,
-          rodape: rodape.trim() || null,
-          justificativa: porque.trim(),
-        }),
-      });
+      // multipart quando há imagem; JSON quando não há. A rota aceita os dois —
+      // mandar sempre multipart faria o caso comum (só texto) carregar um
+      // envelope que ninguém precisa.
+      const campos = {
+        nome: nome.trim(), corpo: corpo.trim(),
+        cabecalho_tipo: imagem ? "imagem" : cab.trim() ? "texto" : "",
+        cabecalho_texto: cab.trim(),
+        rodape: rodape.trim(),
+        justificativa: porque.trim(),
+      };
+      let r: Response;
+      if (imagem) {
+        const fd = new FormData();
+        Object.entries(campos).forEach(([k, v]) => fd.set(k, v));
+        fd.set("imagem", imagem);
+        r = await fetch("/api/templates/sugestoes", { method: "POST", body: fd });
+      } else {
+        r = await fetch("/api/templates/sugestoes", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(campos),
+        });
+      }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
       setOk(j?.aviso ?? "Enviado."); limpar(); setCompondo(false); void carregar();
@@ -176,16 +202,17 @@ export default function Templates() {
         {/* ---- 2. SUGERIR --------------------------------------------------- */}
         {d && (
           <section id="compositor" style={{ background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, padding: 18, marginBottom: 16 }}>
-            <h2 style={{ margin: "0 0 3px", fontSize: 16, fontWeight: 800, color: M.wine }}>Sugerir um template novo</h2>
+            <h2 style={{ margin: "0 0 3px", fontSize: 16, fontWeight: 800, color: M.wine }}>Criar um template</h2>
             <p style={{ margin: 0, fontSize: 12.5, color: M.gray, lineHeight: 1.55 }}>
-              Escreva o texto que você gostaria de mandar. Ele vai para o <b>administrador</b> analisar.
+              Escreva o texto e o título da mensagem. Todo template passa por <b>análise</b>
+              antes de entrar no ar — você acompanha o resultado aqui embaixo.
             </p>
 
             {!compondo ? (
               <button onClick={() => setCompondo(true)}
                 style={{ marginTop: 14, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit",
                   color: "#fff", background: M.azul, border: "none", borderRadius: 10, cursor: "pointer" }}>
-                Escrever um template
+                Criar template
               </button>
             ) : (
               <>
@@ -213,8 +240,44 @@ export default function Templates() {
                   </span>
                 </div>
 
-                <Rotulo conta={`${cab.length}/${LIM.cabecalho}`}>Título, no topo da mensagem (opcional)</Rotulo>
-                <input value={cab} onChange={(e) => setCab(e.target.value)} maxLength={LIM.cabecalho} style={inputBase} />
+                <Rotulo>Imagem no topo da mensagem (opcional)</Rotulo>
+                <input ref={imgRef} type="file" accept="image/jpeg,image/png" style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    if (f && f.size > 5 * 1024 * 1024) { setErro("a imagem passa de 5 MB, o limite do WhatsApp"); return; }
+                    trocarImagem(f);
+                  }} />
+                {previaImg ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <img src={previaImg} alt="" style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 10, border: `1px solid ${M.border}` }} />
+                    <div>
+                      <div style={{ fontSize: 12.5, color: M.ink, fontWeight: 600 }}>{imagem?.name}</div>
+                      <button onClick={() => { trocarImagem(null); if (imgRef.current) imgRef.current.value = ""; }}
+                        style={{ marginTop: 5, fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: M.laranja,
+                          background: "transparent", border: `1px solid ${M.border}`, borderRadius: 8,
+                          padding: "4px 11px", cursor: "pointer" }}>
+                        Remover imagem
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => imgRef.current?.click()}
+                    style={{ padding: "9px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
+                      color: M.wine, background: M.roxoSoft, border: `1px solid ${M.border}`,
+                      borderRadius: 9, cursor: "pointer" }}>
+                    🖼️ Escolher imagem
+                  </button>
+                )}
+                <p style={{ fontSize: 11, color: M.muted, margin: "5px 0 0" }}>
+                  JPEG ou PNG, até 5 MB. O WhatsApp aceita <b>um</b> cabeçalho: com imagem, o título fica de fora.
+                </p>
+
+                <Rotulo conta={`${cab.length}/${LIM.cabecalho}`}>
+                  {imagem ? "Título (indisponível com imagem)" : "Título, no topo da mensagem (opcional)"}
+                </Rotulo>
+                <input value={cab} onChange={(e) => setCab(e.target.value)} maxLength={LIM.cabecalho}
+                  disabled={!!imagem} placeholder={imagem ? "a imagem já é o cabeçalho" : ""}
+                  style={{ ...inputBase, opacity: imagem ? 0.5 : 1 }} />
 
                 <Rotulo conta={`${rodape.length}/${LIM.rodape}`}>Rodapé (opcional)</Rotulo>
                 <input value={rodape} onChange={(e) => setRodape(e.target.value)} maxLength={LIM.rodape}
@@ -230,7 +293,10 @@ export default function Templates() {
                     campos são digitados na hora do envio. */}
                 <Rotulo>Como a cliente vai ler</Rotulo>
                 <div style={{ background: "#e8f6ff", border: "1px solid #cfeafb", borderRadius: 12, borderTopLeftRadius: 4, padding: "10px 13px" }}>
-                  {cab.trim() && <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 3 }}>{cab}</div>}
+                  {previaImg && (
+                    <img src={previaImg} alt="" style={{ display: "block", width: "100%", maxHeight: 190, objectFit: "cover", borderRadius: 8, marginBottom: 7 }} />
+                  )}
+                  {cab.trim() && !previaImg && <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 3 }}>{cab}</div>}
                   <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                     {previa || <span style={{ color: M.muted }}>o texto aparece aqui</span>}
                   </div>
@@ -254,10 +320,10 @@ export default function Templates() {
                     gesto. Inclui a recusa: esconder que ela existe não protege
                     ninguém, só a transforma em surpresa. */}
                 <div style={{ marginTop: 16, padding: "11px 13px", background: M.roxoSoft, borderRadius: 10, fontSize: 12.5, color: M.ink, lineHeight: 1.6 }}>
-                  <b>O que acontece depois:</b> o administrador lê o texto e responde —
-                  aprovando ou recusando com um motivo, que você vê aqui e pode corrigir.
-                  Se ele aprovar, ainda precisa criar o template, e só então ele aparece
-                  para você usar na conversa.
+                  <b>O que acontece depois:</b> o texto passa por análise e você recebe a
+                  resposta aqui — aprovado, ou recusado com um motivo que dá para corrigir e
+                  reenviar. Depois de aprovado, o template ainda é registrado no WhatsApp
+                  antes de aparecer para você usar na conversa.
                 </div>
 
                 <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
@@ -265,7 +331,7 @@ export default function Templates() {
                     style={{ padding: "10px 18px", fontSize: 13.5, fontWeight: 700, fontFamily: "inherit", color: "#fff",
                       background: !podeEnviar || ocupado ? M.muted : M.azul, border: "none", borderRadius: 10,
                       cursor: !podeEnviar || ocupado ? "default" : "pointer" }}>
-                    {ocupado ? "Enviando…" : "Enviar para o administrador analisar"}
+                    {ocupado ? "Enviando…" : "Enviar para análise"}
                   </button>
                   <button onClick={() => { setCompondo(false); limpar(); }}
                     style={{ padding: "10px 16px", fontSize: 13, fontWeight: 600, fontFamily: "inherit", color: M.gray,
@@ -282,15 +348,15 @@ export default function Templates() {
         {d && (
           <section style={{ background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, padding: 18 }}>
             <h2 style={{ margin: "0 0 3px", fontSize: 16, fontWeight: 800, color: M.wine }}>
-              {d.sou_admin ? "Sugestões da equipe" : "Minhas sugestões"}
+              {d.sou_admin ? "Templates da equipe" : "Meus templates"}
             </h2>
             <p style={{ margin: "0 0 12px", fontSize: 12.5, color: M.gray }}>
               {d.sou_admin
                 ? "Você avalia em Administração → Templates → Sugestões."
-                : "Acompanhe aqui o que você enviou."}
+                : "Os que você criou, e em que pé estão."}
             </p>
             {!sugestoes.length ? (
-              <Vazio>Você ainda não sugeriu nenhum template.</Vazio>
+              <Vazio>Você ainda não criou nenhum template.</Vazio>
             ) : sugestoes.map((s) => {
               const c = CORES[s.estado.chave] ?? CORES.analise_admin;
               return (
@@ -320,7 +386,7 @@ export default function Templates() {
                   )}
                   {s.status === "pendente" && (
                     <button onClick={async () => {
-                      if (!confirm(`Apagar a sugestão "${s.nome}"?`)) return;
+                      if (!confirm(`Apagar o template "${s.nome}"?`)) return;
                       const r = await fetch(`/api/templates/sugestoes?id=${s.id}`, { method: "DELETE" });
                       const j = await r.json().catch(() => ({}));
                       if (!r.ok) setErro(j?.error ?? `erro ${r.status}`); else { setOk(j?.aviso ?? "Apagada."); void carregar(); }
