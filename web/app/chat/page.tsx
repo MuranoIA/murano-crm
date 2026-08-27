@@ -813,6 +813,7 @@ export default function Chat() {
 
   const [menuFila, setMenuFila] = useState(false);   // dropdown "Meus atendimentos"
   const [menuVend, setMenuVend] = useState(false);   // dropdown de vendedor (admin/home)
+  const [maisAberto, setMaisAberto] = useState(false); // "⋯" do compositor na lupa
   const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
   const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
@@ -3075,7 +3076,7 @@ export default function Chat() {
                     onClick={() => arquivoRef.current?.click()}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
@@ -3084,7 +3085,7 @@ export default function Chat() {
                     onClick={alternarGravacao}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
-                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
                       opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
                       border: `1px solid ${gravando ? M.laranja : M.border}`,
                       background: gravando ? "#fdeae3" : M.bg, color: gravando ? M.laranja : M.gray }}
@@ -3117,13 +3118,39 @@ export default function Chat() {
                   {/* Pausa (0106): só faz sentido com a janela aberta — fora
                       dela o envio falharia, e o aviso não vale um template. O
                       botão fica visível mas desabilitado, dizendo por quê. */}
+                  {/* ---- os tres secundarios ------------------------------
+                      Pausa, respostas rapidas e nota interna sao uteis, mas nao
+                      sao o gesto principal. Na LUPA (500px) eles somavam 90px e
+                      deixavam a caixa de texto com 41% da barra -- fora do padrao
+                      de qualquer chat, onde o campo domina. No modo compacto eles
+                      passam a viver atras de "⋯"; na tela cheia continuam todos a
+                      vista, porque la sobra largura. */}
+                  {compacto ? (
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      <button
+                        onClick={() => setMaisAberto((v) => !v)}
+                        title="Mais: pausa, respostas rapidas e nota interna"
+                        style={{ width: 30, height: 30, borderRadius: 9,
+                          border: `1px solid ${maisAberto ? M.roxo : M.border}`,
+                          background: maisAberto ? M.roxo : M.bg, color: maisAberto ? "#fff" : M.gray,
+                          fontSize: 15, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                        ⋯
+                      </button>
+                      {maisAberto && (
+                        <>
+                          <div onClick={() => setMaisAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
+                          <div onClick={() => setMaisAberto(false)}
+                            style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, zIndex: 201,
+                              display: "flex", gap: 5, padding: 6, background: M.surface,
+                              border: `1px solid ${M.border}`, borderRadius: 10,
+                              boxShadow: "0 10px 26px rgba(28,14,27,.18)" }}>
                   <button
                     onClick={avisarPausa}
                     disabled={pausando || modoNota || !janelaAberta}
                     title={!janelaAberta
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
-                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12,
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
                       border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
@@ -3134,7 +3161,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -3142,10 +3169,47 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: compacto ? 34 : 42, height: compacto ? 34 : 42, borderRadius: compacto ? 10 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                  <button
+                    onClick={avisarPausa}
+                    disabled={pausando || modoNota || !janelaAberta}
+                    title={!janelaAberta
+                      ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
+                      : "Avisar a cliente que você vai se ausentar por alguns minutos"}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
+                      border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 15,
+                      opacity: modoNota || !janelaAberta ? 0.4 : 1,
+                      cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
+                      fontFamily: "inherit", flexShrink: 0 }}>
+                    {pausando ? "…" : "⏸"}
+                  </button>
+                  <button
+                    onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
+                    disabled={modoNota}
+                    title="Respostas rápidas (ou digite / na caixa)"
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    ⚡
+                  </button>
+                  {/* 🗒️ nota interna — o cliente NUNCA vê o que for escrito aqui */}
+                  <button
+                    onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
+                    title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    🗒️
+                  </button>
+                    </>
+                  )}
                   {!modoNota && (() => {
                     // Só os templates do canal DESTA conversa: oferecer um da
                     // Cloud numa conversa do RD (ou o contrário) manda um id que
@@ -3159,9 +3223,12 @@ export default function Chat() {
                           onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
                           disabled={enviando}
                           title="Escolher um template — reabre a conversa fora da janela de 24h"
-                          style={{ height: 42, padding: "0 12px", borderRadius: 12, border: `1px solid ${menuTemplate ? M.roxo : M.border}`, background: menuTemplate ? M.roxo : M.bg, color: menuTemplate ? "#fff" : M.wine, fontSize: 11.5, fontWeight: 800, letterSpacing: 0.3, cursor: "pointer", fontFamily: "inherit" }}
+                          style={{ height: compacto ? 30 : 42, width: compacto ? 30 : undefined, padding: compacto ? 0 : "0 12px", borderRadius: compacto ? 9 : 12, border: `1px solid ${menuTemplate ? M.roxo : M.border}`, background: menuTemplate ? M.roxo : M.bg, color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                         >
-                          TEMPLATE{doCanal.length > 0 && <span style={{ fontSize: 9, marginLeft: 4, opacity: .8 }}>▾</span>}
+                          {/* Na lupa a palavra sozinha comia ~90px de um compositor
+                              de 500px. Vira "T", como os demais icones da barra —
+                              o que ela faz ja esta no title. */}
+                          {compacto ? "T" : <>TEMPLATE{doCanal.length > 0 && <span style={{ fontSize: 9, marginLeft: 4, opacity: .8 }}>▾</span>}</>}
                         </button>
 
                         {menuTemplate && doCanal.length > 0 && (
@@ -3236,13 +3303,13 @@ export default function Chat() {
                       ? "Nota interna — só a equipe vê (Enter salva)"
                       : "Escreva uma mensagem… (/ abre respostas rápidas, Enter envia)"}
                     rows={1}
-                    style={{ flex: 1, resize: "none", padding: "10px 13px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: modoNota ? M.surface : M.bg, border: `1px solid ${modoNota ? NOTA.borda : M.border}`, borderRadius: 12, outline: "none", lineHeight: 1.4, maxHeight: 110 }}
+                    style={{ flex: 1, minWidth: compacto ? 110 : 160, resize: "none", padding: compacto ? "7px 10px" : "10px 13px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: modoNota ? M.surface : M.bg, border: `1px solid ${modoNota ? NOTA.borda : M.border}`, borderRadius: compacto ? 9 : 12, outline: "none", lineHeight: 1.4, maxHeight: 110 }}
                   />
                   <button
                     onClick={() => (modoNota ? enviarNota() : enviar())}
                     disabled={enviando || !texto.trim()}
                     title={modoNota ? "Salvar nota interna (Enter)" : "Enviar (Enter)"}
-                    style={{ width: 44, height: 42, borderRadius: 12, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
+                    style={{ width: compacto ? 32 : 44, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
                   >
                     {enviando ? "…" : modoNota ? "🗒️" : "➤"}
                   </button>

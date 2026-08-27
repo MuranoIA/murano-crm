@@ -39,24 +39,31 @@
 --
 -- Substituicao cirurgica com verificacao, como nas 0104/0105/0107.
 --
--- ⚠️ AQUI A CONTAGEM NAO E 1 EM CADA VIEW, e a primeira versao deste arquivo
--- morreu por isso -- a trava disparou com `em vw_funil_visivel esperava 1
--- ocorrencia, achei 2`. As duas views NAO tem a mesma estrutura:
+-- ⚠️ SO O PRIMEIRO RAMO MUDA. As duas primeiras versoes deste arquivo morreram
+-- aqui, e cada erro ensinou uma coisa:
 --
---   vw_funil          1 ocorrencia   (ramo das conversas)
---   vw_funil_visivel  2 ocorrencias  (conversas + o ramo 1b da §31.3, os
---                                     contatados que a prospeccao nao alcanca)
+--   1a tentativa (`n = 1`)  -> `em vw_funil_visivel esperava 1, achei 2`
+--   2a tentativa (trocar todas) -> `missing FROM-clause entry for table "wcar"`
 --
--- Todos os ramos que saem de `clientes` devem preferir o nome do ERP -- senao o
--- mesmo cliente apareceria com um nome numa coluna e outro na vizinha, que e
--- justamente o defeito que esta migration existe para acabar. Entao substitui
--- TODAS as ocorrencias, e a trava passa a cobrar `>= 1`: zero continua sendo
--- erro (alguem ja mexeu na view, ou o padrao mudou), mas duas nao sao mais.
+-- A `vw_funil_visivel` e uma UNION de tres ramos, e o padrao aparece em dois:
 --
--- A seguranca nao se perde com isso. Se algum ramo nao tiver `wcar` no escopo,
--- o `create or replace view` falha com "column wcar.nome does not exist" e o
--- bloco inteiro volta atras -- `do $$` e uma transacao so. Nao ha caminho para
--- aplicar pela metade em silencio, que e o que a trava protege.
+--   ramo 1  conversas    FROM clientes ... LEFT JOIN wth_carteira wcar   <- TROCA
+--   ramo 1b ociosos      FROM clientes CROSS JOIN sel (sem wcar)         <- NAO
+--   ramo 2  prospeccao   FROM wth_carteira w, ja usa `w.nome`            <- ja ok
+--
+-- O ramo 1b **nao pode** mudar, e nao e detalhe tecnico: o WHERE dele exige
+-- `NOT EXISTS` em `wth_vinculo` E em `wth_carteira`. Ele e, por definicao,
+-- quem NAO existe no WinThor (§31.3) -- nao ha nome do ERP para preferir, e o
+-- nosso e o unico que existe. O erro do Postgres estava certo pelo motivo
+-- certo.
+--
+-- Dai a substituicao ser da PRIMEIRA ocorrencia, via `position` + `overlay`,
+-- em vez de `replace` (que troca todas). A trava continua cobrando pelo menos
+-- uma: zero significa que alguem ja mexeu na view.
+--
+-- Nada disso chegou a ser aplicado pela metade nas duas tentativas: `do $$` e
+-- uma transacao so, e a excecao devolveu tudo. E exatamente para isso que a
+-- verificacao existe.
 --
 -- As duas views mudam juntas pelo motivo de sempre (§32.2): se so uma mudasse,
 -- o ETL e a tela discordariam sobre o nome do mesmo cliente.
@@ -66,18 +73,18 @@ do $$
 declare
   alvo constant text := 'c.nome_completo AS cliente';
   novo constant text := 'COALESCE(wcar.nome, c.nome_completo) AS cliente';
-  v text; def text; n int;
+  v text; def text; pos int;
 begin
   foreach v in array array['vw_funil','vw_funil_visivel'] loop
     def := pg_get_viewdef(('public.' || v)::regclass, true);
-    n := (length(def) - length(replace(def, alvo, ''))) / length(alvo);
-    if n < 1 then
+    pos := position(alvo in def);
+    if pos = 0 then
       raise exception 'em % nao achei "%" -- a view mudou desde a 0108', v, alvo;
     end if;
-    raise notice '% : % ocorrencia(s) trocadas', v, n;
-    -- `wcar` (wth_carteira) ja esta no FROM das duas views: e de la que sai o
-    -- `rca_num` exposto desde a 0093. Nenhum join novo, nenhum custo novo.
-    execute 'create or replace view public.' || v || ' as ' || replace(def, alvo, novo);
+    -- `overlay`, nao `replace`: so o PRIMEIRO ramo tem `wcar` no escopo.
+    def := overlay(def placing novo from pos for length(alvo));
+    execute 'create or replace view public.' || v || ' as ' || def;
+    raise notice '% : nome do ERP aplicado no ramo das conversas', v;
   end loop;
 end $$;
 
