@@ -4,7 +4,7 @@ import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
-import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, modoMigracao } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -199,6 +199,9 @@ export async function GET() {
     // vem 'original' — está aqui para a tela nova poder ler no dia em que
     // existir, sem mexer nesta rota outra vez.
     layout: layoutEfetivo(cfgLayout.data?.layout, meuAcesso.data?.chat_layout),
+    // Fase C simulada: some o filtro por numero e a etiqueta da linha no
+    // cabecalho -- com uma linha so, os dois viram enfeite que nomeia o RD.
+    modo_migracao: modoMigracao(cfg),
     atualizado_em: new Date().toISOString(),
   });
 }

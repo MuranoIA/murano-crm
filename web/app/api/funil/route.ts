@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
-import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -362,6 +362,9 @@ export async function GET() {
 
   return Response.json({
     ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false
+    // Fase C simulada: o board tira o selo RCA-RD, o toggle Sinc/Pause do ETL e
+    // o ↻ que puxa do RD. Derivado das quatro chaves, nao e coluna (crmConfig).
+    modo_migracao: modoMigracao(cfg),
     linhas_visiveis: cfg.linhas_visiveis,
     linhas: cfg.linhas,
     tudo_visivel: tudoVisivel(cfg),

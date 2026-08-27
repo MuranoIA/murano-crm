@@ -1778,6 +1778,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   const linhasInfo = d.linhas ?? { opcoes: [], selecionadas: [] };
   const envio = d.envio ?? null;
   const pausa = d.pausa ?? null;
+  const migracao = d.migracao ?? null;
   const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
@@ -1821,9 +1822,81 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
           </>
         }
       >
+        {/* ---- CHAVE MESTRA: modo migração ---------------------------------
+            Vem antes de tudo porque governa os quatro controles abaixo. Não é
+            uma quinta chave no banco: é o estado deles lidos juntos (ver
+            `modoMigracao()` em lib/crmConfig.ts). Por isso, enquanto ligada, os
+            controles que ela governa aparecem TRAVADOS — dois controles sobre a
+            mesma coisa acabam se contradizendo, e ninguém sabe qual vence. */}
+        {migracao && (
+          <div style={{ border: `2px solid ${migracao.ligado ? M.roxo : M.border}`, borderRadius: 12,
+            padding: 16, marginBottom: 16, background: migracao.ligado ? M.roxoSoft : "transparent" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{migracao.rotulo}</div>
+              <Selo ok={migracao.ligado} sim="Ligado" nao="Desligado" />
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                {migracao.ligado ? (
+                  <Botao cor={M.laranja} disabled={ocupado}
+                    onClick={async () => { setOcupado(true); await salvar("modo_migracao", false); setOcupado(false); }}>
+                    {ocupado ? "Voltando…" : "Voltar a usar o RD"}
+                  </Botao>
+                ) : confirmando === "modo_migracao" ? (
+                  <>
+                    <Botao cor={M.laranja} disabled={ocupado}
+                      onClick={async () => {
+                        setOcupado(true);
+                        const deu = await salvar("modo_migracao", true);
+                        setOcupado(false);
+                        if (deu) setConfirmando(null);
+                      }}>
+                      {ocupado ? "Migrando…" : "Confirmar: migrar"}
+                    </Botao>
+                    <Botao cor={M.gray} onClick={() => setConfirmando(null)}>Cancelar</Botao>
+                  </>
+                ) : (
+                  <Botao onClick={() => setConfirmando("modo_migracao")}>Ligar modo migração</Botao>
+                )}
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{migracao.resumo}</p>
+
+            {confirmando === "modo_migracao" && (
+              <div style={{ margin: "0 0 12px" }}>
+                <Recado tipo="aviso">
+                  Isto tira o RD Conversas da tela de <b>toda a equipe</b> de uma vez. Nada é apagado
+                  e voltar é um clique — mas no primeiro dia o chat fica quase vazio, porque quase
+                  toda conversa de hoje ainda é do RD. Essa é a foto real do dia seguinte ao corte.
+                </Recado>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+              <Lista titulo={migracao.ligado ? "Está fora do ar" : "Ligar tira do ar"} itens={migracao.desliga} cor={M.laranja} />
+              <Lista titulo="Continua funcionando" itens={migracao.mantem} cor={M.verde} />
+            </div>
+            {migracao.nota && (
+              <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{migracao.nota}</p>
+            )}
+          </div>
+        )}
+
         {mecanismos.map((m: any) => {
           const on = ligado(m.chave);
           const confirmandoEste = confirmando === m.chave;
+          // travado pelo modo migração: mostra o estado, não deixa mexer
+          const travado = !!migracao?.ligado && (migracao.controla ?? []).includes(m.chave);
+          if (travado) return (
+            <div key={m.chave} style={{ border: `1px dashed ${M.border}`, borderRadius: 10, padding: "12px 15px", marginBottom: 12, opacity: 0.7 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: M.gray }}>{m.rotulo}</div>
+                <Selo ok={on} sim="Ligado" nao="Desligado" />
+                <span style={{ marginLeft: "auto", fontSize: 11.5, color: M.muted }}>
+                  definido pelo modo migração
+                </span>
+              </div>
+            </div>
+          );
           return (
             <div key={m.chave} style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
@@ -1905,7 +1978,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             eu falo" é a pergunta que o vendedor sente; "o que eu vejo" é a que
             o supervisor ajusta. E o texto precisa separar as duas, senão o
             admin muda uma achando que mudou a outra. */}
-        {envio && (
+        {envio && !migracao?.ligado && (
           <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{envio.rotulo}</div>
@@ -1946,8 +2019,13 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
           </div>
         )}
 
-        {/* ---- seletor de linhas ------------------------------------------- */}
-        <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+        {/* ---- seletor de linhas -------------------------------------------
+            Some enquanto o modo migração está ligado: quem escolhe as linhas
+            ali é o modo, e deixar o seletor editável abriria a porta para
+            "modo migração ligado" com o RD marcado — dois controles decidindo a
+            mesma coisa. `display:none` em vez de desmontar para não mexer na
+            estrutura de quem já lê `sel` mais acima. */}
+        <div style={{ display: migracao?.ligado ? "none" : "block", border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{linhasInfo.rotulo}</div>
             <Selo ok={!!linhasInfo.tudo} sim="Todos os números" nao="Filtrado" />

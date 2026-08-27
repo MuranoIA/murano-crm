@@ -157,6 +157,43 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
 }
 
 /**
+ * MODO MIGRAÇÃO — a Fase C (§16.5) simulada, com volta.
+ *
+ * O sistema como será quando o RD Conversas não existir mais: nenhuma conversa,
+ * linha, histórico ou carteira vindos de lá, nenhuma menção a ETL na tela. Os
+ * clientes vêm do espelho do WinThor (`wth_carteira`) e o dono é só o RCA.
+ *
+ * ⚠️ NÃO é uma quinta coluna no banco, e isso é a decisão central. É a leitura
+ * das quatro que já existem, todas na posição de migração ao mesmo tempo:
+ *
+ *   linhas_visiveis   sem a linha 'rd'   → nenhuma conversa do RD na tela
+ *   historico_rd      false              → nem sob demanda, pelo botão
+ *   carteira_rd_ativa false              → dono é só o RCA do WinThor
+ *   numero_envio      'cloud'            → tudo sai pelo número próprio
+ *
+ * Uma quinta coluna independente entraria em contradição com elas no primeiro
+ * ajuste — "modo migração ligado" convivendo com "RD marcado nas linhas
+ * visíveis" — e ninguém saberia qual vence. É a mesma armadilha que a 0099
+ * resolveu ao substituir `conversas_rd_visiveis` pelo seletor (§32), e a razão
+ * de `layoutEfetivo()` existir (§29.3): uma verdade, não duas.
+ *
+ * Consequência prática boa: ligar e desligar é escrever as quatro, e o estado
+ * "desligado" é o CRM de sempre — não há snapshot para guardar nem restaurar.
+ */
+export const modoMigracao = (cfg: CrmConfig): boolean =>
+  !cfg.carteira_rd_ativa
+  && !cfg.historico_rd
+  && cfg.numero_envio === "cloud"
+  && !linhasVisiveis(cfg).includes("rd");
+
+/** As quatro chaves na posição de migração, para o PUT escrever de uma vez. */
+export const POSICAO_MIGRACAO = {
+  historico_rd: false,
+  carteira_rd_ativa: false,
+  numero_envio: "cloud" as const,
+};
+
+/**
  * O canal que o admin escolheu, já traduzido para o vocabulário do envio.
  * `null` = nenhuma escolha feita, então quem decide segue sendo a conversa.
  */
