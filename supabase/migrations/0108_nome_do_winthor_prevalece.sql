@@ -37,11 +37,29 @@
 -- seja o nome do WinThor. As views do funil usavam o nosso. O mesmo cliente
 -- podia aparecer com dois nomes em duas colunas do MESMO board. Isto alinha.
 --
--- Substituicao cirurgica com verificacao, como nas 0104/0105/0107: o bloco
--- FALHA se o padrao nao aparecer exatamente uma vez em cada view, entao nao ha
--- como aplicar pela metade em silencio. As duas views do funil mudam juntas
--- pelo motivo de sempre (§32.2) -- se so uma mudasse, o ETL e a tela
--- discordariam sobre o nome do mesmo cliente.
+-- Substituicao cirurgica com verificacao, como nas 0104/0105/0107.
+--
+-- ⚠️ AQUI A CONTAGEM NAO E 1 EM CADA VIEW, e a primeira versao deste arquivo
+-- morreu por isso -- a trava disparou com `em vw_funil_visivel esperava 1
+-- ocorrencia, achei 2`. As duas views NAO tem a mesma estrutura:
+--
+--   vw_funil          1 ocorrencia   (ramo das conversas)
+--   vw_funil_visivel  2 ocorrencias  (conversas + o ramo 1b da §31.3, os
+--                                     contatados que a prospeccao nao alcanca)
+--
+-- Todos os ramos que saem de `clientes` devem preferir o nome do ERP -- senao o
+-- mesmo cliente apareceria com um nome numa coluna e outro na vizinha, que e
+-- justamente o defeito que esta migration existe para acabar. Entao substitui
+-- TODAS as ocorrencias, e a trava passa a cobrar `>= 1`: zero continua sendo
+-- erro (alguem ja mexeu na view, ou o padrao mudou), mas duas nao sao mais.
+--
+-- A seguranca nao se perde com isso. Se algum ramo nao tiver `wcar` no escopo,
+-- o `create or replace view` falha com "column wcar.nome does not exist" e o
+-- bloco inteiro volta atras -- `do $$` e uma transacao so. Nao ha caminho para
+-- aplicar pela metade em silencio, que e o que a trava protege.
+--
+-- As duas views mudam juntas pelo motivo de sempre (§32.2): se so uma mudasse,
+-- o ETL e a tela discordariam sobre o nome do mesmo cliente.
 -- =============================================================================
 
 do $$
@@ -53,9 +71,10 @@ begin
   foreach v in array array['vw_funil','vw_funil_visivel'] loop
     def := pg_get_viewdef(('public.' || v)::regclass, true);
     n := (length(def) - length(replace(def, alvo, ''))) / length(alvo);
-    if n <> 1 then
-      raise exception 'em % esperava 1 ocorrencia de "%", achei %', v, alvo, n;
+    if n < 1 then
+      raise exception 'em % nao achei "%" -- a view mudou desde a 0108', v, alvo;
     end if;
+    raise notice '% : % ocorrencia(s) trocadas', v, n;
     -- `wcar` (wth_carteira) ja esta no FROM das duas views: e de la que sai o
     -- `rca_num` exposto desde a 0093. Nenhum join novo, nenhum custo novo.
     execute 'create or replace view public.' || v || ' as ' || replace(def, alvo, novo);
