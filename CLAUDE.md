@@ -4136,7 +4136,12 @@ exatamente o total sem eventos de sistema.
 com mais de 200 mensagens carregadas, o que nesta configuração exige o histórico
 do RD ligado, e ele está desligado de propósito. Fica dito, não afirmado.
 
-## 58. Tema "Bancada" (Direção 4) — projetado, NÃO implementado
+## 58. Tema "Bancada" (Direção 4) — o projeto
+
+> Escrito em 27/08/2026, quando nada em `web/` tinha sido tocado. As entregas
+> 1 e 2 do plano da §11 saíram no mesmo dia — ver **§60**. Esta seção continua
+> valendo como o RACIOCÍNIO (escalas medidas, contrastes, riscos); o estado do
+> que está construído mora na §60, não aqui.
 
 > Pedido do usuário (27/08): *"quero que ele crie mais um tema (visão ou layout)
 > que fique mais com cara de aplicativo premium; com mais simetria. quero que
@@ -4346,6 +4351,164 @@ build de produção de verdade, e nada é escrito em lugar nenhum.
   TODOS os desenhos, inclusive o `original` — não deve entrar escondido dentro
   de um tema. Sai como correção à parte.
 - **Itens 11, 15-18, 27-29, 31**: entregas 2 e 3.
+
+### 60.7 Entrega 2 — densidade e agrupamento (itens 12, 20-23, 27)
+
+| Item | O que mudou em `bancada` |
+|---|---|
+| 12 | A linha da conversa comeca na goteira (16 px), tem 52 px, avatar 36 — e a **hora saiu da linha do nome** para uma coluna fixa de 38 px a direita, com o ponto de nao-lida embaixo dela |
+| 20 | **Agrupamento por autor**: 2 px entre bolhas do mesmo grupo, 10 entre grupos |
+| 21 | **Hora e tique so na ULTIMA bolha do grupo** — cinco mensagens seguidas mostravam cinco vezes o mesmo minuto |
+| 22 | Bolha em `min(72%, 560px)`, raio 14, padding 8/12; a quina que aponta para o autor so na ultima do grupo |
+| 23 | A linha da hora das bolhas do meio volta no `:hover` |
+| 27 | Painel do cliente: **um numero heroi** (26 px, coluna inteira) + os de apoio embaixo |
+
+#### O unico `<style>` do chat, e por que ele existe
+
+A tela e estilo inline de ponta a ponta, e inline nao faz `:hover`. O item 21
+esconde a linha da hora — mas o botao de **encaminhar** mora nessa mesma linha, e
+some-lo tornaria metade das mensagens nao-encaminhaveis. Entao a linha volta no
+hover, por uma regra CSS de verdade, e **em aparelho de toque ela fica sempre
+visivel** (`@media(hover:none)`): ali o desenho e o de hoje e nada se perde.
+
+Isso e um desvio consciente do laudo, que mandava esconder no toque assumindo
+"toque longo, que e outra construcao". Toque longo nao existe, e ficar sem o
+gesto no aparelho que vai virar o app e pior que a densidade que se ganharia.
+
+Se o CSS nao carregar, a regra deixa de valer e a linha aparece sempre: degrada
+para o desenho de hoje, nunca para uma bolha sem hora.
+
+#### Mensagem que falhou fecha o grupo
+
+Descoberto olhando a tela: a mensagem com `status='failed'` pendura abaixo de si
+o recado "nao entregue", que e uma barra larga cortando a conversa. Sem regra, o
+grupo atravessava essa barra e a hora ia parar longe das bolhas que datava.
+`falhou()` entra no calculo de `abreGrupo`/`fechaGrupo`.
+
+#### ⚠️ `minHeight` de novo, e o preco disso
+
+O laudo pede altura FIXA na linha da conversa, por ser o pre-requisito barato da
+virtualizacao que a lista vai precisar acima de 3.900 conversas. Ficou
+`minHeight`: virtualizacao nao e esta entrega, e altura fixa espremeria quem tem
+selo de transferencia ou de vendedor na segunda linha. **Quando a virtualizacao
+entrar, isto precisa virar `height`.**
+
+#### O que a coluna de horas custou
+
+A regua vertical reserva 38 px + 12 de respiro em TODA a linha, inclusive na
+segunda, onde mora a previa da conversa — que e o que o vendedor le para decidir
+se abre. A previa encurta em cerca de uma dezena de caracteres. Foi mitigado
+levando a coluna de 46 (o laudo) para 38, e o padding direito de 16 para 12 (a
+goteira e da aresta ESQUERDA; cada pixel a direita e caractere na previa).
+
+Fica registrado como troca, nao como defeito: se a leitura da previa pesar mais
+que a regua, tirar a coluna e reverter tres blocos de JSX, sem tocar no resto.
+
+#### O susto que nao era bug
+
+Por meia hora as medicoes disseram que `continuidade` e `bancada` renderizavam
+IGUAL. Passei por service worker (o chat e PWA e realmente guarda a resposta de
+`/api/chat`), cache do navegador e sonda de DOM mal escrita — tudo hipotese, tudo
+errado. A resposta veio de `curl` na propria rota: **o servidor estava mandando
+`bancada` porque o usuario tinha marcado `bancada` no /admin no meio da sessao.**
+
+Licao, que e a mesma da §35.1: quando a medicao contradiz o codigo, **perguntar
+ao servidor antes de acusar o navegador.** Uma linha de `curl` teria poupado
+quatro rodadas de build.
+
+⚠️ **E o efeito colateral, que e o registro importante:** com `chat_layout` em
+`bancada` e o codigo do `bancada` AINDA NAO no ar, o build da Vercel nao conhece
+o valor e `layoutEfetivo` cai no padrao — a equipe inteira foi parar no
+`original`, sem as correcoes da Direcao 1, **em silencio**. A rede de protecao
+funcionou (tela degradada, nao quebrada), mas a ordem importa:
+
+> **marcar um desenho novo no /admin so DEPOIS de o codigo estar em producao.**
+
+Devolvido para `continuidade` no mesmo dia, com linha em `chat_layout_historico`.
+
+### 60.8 Entrega 3 — icones, estados e acabamento (itens 17, 18, 28-31)
+
+Com ela o plano de 31 itens do laudo fecha, menos o item 10, que continua fora
+de proposito (§60.6).
+
+| Item | O que mudou |
+|---|---|
+| 18 | Emoji de interface viram **traco monocromatico** em `app/chat/icones.tsx` — 15 icones, caixa de 24, `currentColor` |
+| 17 | **Resolver fica VERDE** em `bancada`: verde e "concluido" nesta paleta, e cada familia de cor tem um trabalho so |
+| 28 | Os quatro estados vazios viram **um componente `Estado`**, e o vazio passa a dizer a CAUSA |
+| 29 | Ja estava coberto: a folha do ERP no celular aceita `d1 \|\| compacto`, e `d1` agora inclui `bancada` |
+| 30 | **A barra de chamada sobe para o topo** — vale para TODOS os desenhos |
+| 31 | Rolagem fina nas tres colunas, foco visivel, e `prefers-reduced-motion` |
+
+#### Por que icone proprio, se emoji funciona
+
+Emoji e desenhado pelo SISTEMA, nao por nos. Cada um tem peso, cor e alinhamento
+optico proprios — 📊 e azul e cheio, ✋ e amarelo, ↪ e uma seta fina de texto — e
+num cabecalho com sete acoes lado a lado o resultado sao sete pesos visuais
+brigando. E o que o laudo chama de "improvisado mesmo mostrando a coisa certa".
+
+Com traco em `currentColor`, quem decide a cor passa a ser o botao. E isso que
+torna possivel a regra de **um acento por regiao**.
+
+O dicionario e fechado: 15 nomes, os que a tela usa. Icone nao usado e peso morto
+que ninguem percebe estar quebrado.
+
+⚠️ **Nos outros desenhos os emoji continuam.** `icones.tsx` nao e importado por
+eles. Trocar o icone de quem nao pediu quebraria o rollback exato.
+
+#### O `BotaoLigar` quase ficou de fora — e isso teria anulado o item
+
+Ele mora em `ligacao.tsx`, nao em `page.tsx`, entao escapou da troca do `rot()`.
+O cabecalho ficou com quatro SVG monocromaticos e **um emoji colorido no meio** —
+exatamente a inconsistencia que o item 18 existe para acabar. So apareceu no
+recorte ampliado.
+
+Licao: quando uma mudanca e "trocar todos os X da tela", conferir se algum X mora
+em outro arquivo. `grep` no arquivo que se esta editando nao encontra o de fora.
+
+#### Dois icones redesenhados depois de ver, nao de escrever
+
+Ambos pareciam certos no codigo e errados na tela ampliada:
+
+- **grafico** (Cliente): as barras estavam `alta no meio`, e o desenho lia como
+  sinal de antena. Viraram ascendentes.
+- **pausa**: duas linhas finas liam como cursor de texto. Viraram duas barras
+  fechadas, que e o botao de pausa que todo mundo reconhece.
+
+Vale a regra da §41.5: **para desenho, captura de tela decide.** Nenhuma sonda
+numerica diria que um icone esta com a leitura errada.
+
+#### Item 30 — a barra de chamada NAO e tema
+
+Era `position: fixed; bottom: 0` em largura total, ou seja, ficava **em cima da
+caixa de texto**: durante uma ligacao nao se digitava. E e justamente durante uma
+ligacao que se anota o pedido, se manda o catalogo, se confirma o preco.
+
+A correcao e trocar a ancora para `top`, e **vale para todos os desenhos** —
+inclusive o `original`. Bug nao entra escondido dentro de um tema, senao quem
+fizer rollback herda o bug de volta.
+
+Efeito colateral aceito: no topo ela cobre a barra de navegacao do produto (e, na
+lupa, o cabecalho da conversa). Durante uma chamada isso custa menos que perder o
+compositor.
+
+#### O que e acessibilidade nao ficou preso ao tema
+
+`prefers-reduced-motion` vale para **todos** os desenhos: quem liga "reduzir
+movimento" no sistema costuma faze-lo por enxaqueca ou vertigem — nao e
+preferencia estetica e nao deve depender de qual tema esta ativo.
+
+Ja a rolagem fina e o anel de foco ficaram so em `bancada`, porque mudam
+aparencia. O anel usa **`#2f7fd4`**, que passa os 3:1 exigidos de elemento
+nao-textual — e e justamente por isso que ele NAO serve de fundo de botao com
+texto branco (4,11:1). A mesma cor, dois papeis, e so um deles valido.
+
+#### Desvio conhecido, deixado a decisao
+
+A regra do laudo diz **um preenchimento por regiao**. O cabecalho ficou com
+**dois**: Cliente (purpura) e Resolver (verde). Tirar o preenchimento do Cliente
+nao estava em nenhum item do plano, e mexer nele por conta propria seria
+redesenhar fora do combinado. Fica anotado para quem for julgar a tela.
 
 ## 61. Item 5 e a tela de Envios (27/08/2026) — dois defeitos maiores que a feature
 
