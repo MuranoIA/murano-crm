@@ -2,6 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
 import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao } from "../../../lib/crmConfig";
+import { diagnosticar } from "../../../lib/saudeCanal";
+import { linhaDeEnvio } from "../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -421,12 +423,20 @@ export async function GET() {
   }
 
   const cfg = await cfgP;
+  // Falha aqui não pode derrubar o board: um alerta que quebra a tela que ele
+  // deveria proteger é pior que nenhum alerta.
+  const saude = await diagnosticar(sb, linhaDeEnvio()).catch(() => null);
 
   return Response.json({
     ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false
     // Fase C simulada: o board tira o selo RCA-RD, o toggle Sinc/Pause do ETL e
     // o ↻ que puxa do RD. Derivado das quatro chaves, nao e coluna (crmConfig).
     modo_migracao: modoMigracao(cfg),
+    // Saúde do canal (2 consultas baratas). Vai JUNTO do board porque o board
+    // já é chamado a cada 60s -- uma rota própria seria mais uma requisição por
+    // aba aberta, que é o vício que a §15.1 corrigiu. O diagnóstico profundo
+    // (Graph API) mora no /admin, sob demanda.
+    saude,
     linhas_visiveis: cfg.linhas_visiveis,
     linhas: cfg.linhas,
     tudo_visivel: tudoVisivel(cfg),

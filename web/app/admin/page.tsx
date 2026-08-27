@@ -1630,6 +1630,91 @@ const PERIODOS = [
 // dois campos separados obrigaria a recortar a virgula a mao, que e onde a
 // pessoa erra.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Saude do canal (§28.3) - o diagnostico que nao existia.
+//
+// Fica no TOPO da aba Mecanismos: canal mudo e mais urgente que qualquer
+// interruptor de comportamento. E so carrega quando alguem clica -- vai a Graph
+// API, e nao se poe a tela do admin na dependencia da latencia da Meta a cada
+// abertura.
+// ---------------------------------------------------------------------------
+function SaudeCanalBloco() {
+  const [d, setD] = useState<any>(null);
+  const [indo, setIndo] = useState(false);
+
+  async function checar() {
+    setIndo(true);
+    try {
+      const r = await fetch("/api/admin/saude-canal", { cache: "no-store" });
+      setD(await r.json().catch(() => ({ veredito: ["não consegui ler a resposta"] })));
+    } catch (e: any) {
+      setD({ veredito: [String(e?.message ?? e)] });
+    } finally { setIndo(false); }
+  }
+
+  const grave = d && (d.meta?.inscrito === false || d.meta?.saudavel === false || d.banco?.estado === "mudo");
+
+  return (
+    <div style={{ border: `2px solid ${grave ? "#f2c4c0" : M.border}`, borderRadius: 10, padding: 15,
+      marginBottom: 12, background: grave ? "#fdeae9" : "transparent" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>Saúde do canal</div>
+        <span style={{ marginLeft: "auto" }}>
+          <Botao disabled={indo} onClick={checar}>{indo ? "Checando…" : d ? "Checar de novo" : "Checar agora"}</Botao>
+        </span>
+      </div>
+      <p style={{ fontSize: 13, color: M.ink, margin: "0 0 6px", lineHeight: 1.55 }}>
+        Se o app deixar de estar inscrito na conta do WhatsApp, <b>nenhuma mensagem chega e nenhum
+        recibo volta</b> — e nada quebra na tela. Foi o que aconteceu em 24/08, e o sistema ficou
+        mudo por horas sem ninguém saber.
+      </p>
+
+      {!d ? (
+        <p style={{ fontSize: 12, color: M.muted, margin: 0 }}>
+          O board já vigia o sintoma (mensagem enviada sem confirmação) e avisa sozinho. Aqui vai à
+          Meta perguntar a causa.
+        </p>
+      ) : (
+        <>
+          {(d.veredito ?? []).map((v: string, i: number) => (
+            <p key={i} style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.55,
+              color: grave ? "#b3261e" : M.verde, margin: "8px 0 0" }}>
+              {grave ? "🔴" : "✅"} {v}
+            </p>
+          ))}
+
+          <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginTop: 12 }}>
+            <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase",
+                color: M.muted, marginBottom: 6 }}>Do nosso lado</div>
+              <ul style={{ margin: 0, paddingLeft: 17, fontSize: 12.5, color: M.gray, lineHeight: 1.65 }}>
+                <li>enviadas sem confirmação: <b>{d.banco?.presas ?? 0}</b></li>
+                <li>último recibo há: <b>{d.banco?.minutos_sem_recibo == null ? "—" : `${d.banco.minutos_sem_recibo} min`}</b></li>
+                <li>linha de envio: <b>{d.linha ?? "não configurada"}</b></li>
+              </ul>
+            </div>
+            <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase",
+                color: M.muted, marginBottom: 6 }}>Na Meta</div>
+              <ul style={{ margin: 0, paddingLeft: 17, fontSize: 12.5, color: M.gray, lineHeight: 1.65 }}>
+                <li>app inscrito na conta: <b>{d.meta?.inscrito === true ? "sim" : d.meta?.inscrito === false ? "NÃO" : "?"}</b>
+                  {d.meta?.apps?.length ? ` (${d.meta.apps.join(", ")})` : ""}</li>
+                <li>número: <b>{d.meta?.numero?.nome ?? "?"}</b>{d.meta?.numero?.modo ? ` · ${d.meta.numero.modo}` : ""}</li>
+                <li>qualidade: <b>{d.meta?.numero?.qualidade ?? "?"}</b></li>
+              </ul>
+              {(d.meta?.pode_enviar ?? []).map((x: any, i: number) => (
+                <p key={i} style={{ fontSize: 12, color: M.laranja, margin: "6px 0 0" }}>
+                  • {x.o_que}: {x.situacao}
+                </p>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
   info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
   ocupado: boolean; setOcupado: (v: boolean) => void;
@@ -2386,6 +2471,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             cadastra, nao quem faz deploy - se exigisse commit, ficaria errada
             por meses. E a MESMA lista gera a mensagem que pede os dados a
             cliente: corrigir aqui corrige os dois lugares de uma vez. */}
+        <SaudeCanalBloco />
         {locais && <LocaisBloco info={locais} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {cadastro && <CadastroCamposBloco info={cadastro} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
 
