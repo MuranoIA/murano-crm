@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import Link from "next/link";
 import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
-import { lerCoordenadas } from "../../lib/locais";
+import { lerCoordenadas, problemaCoordenada } from "../../lib/locais";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
 // Supabase: quem entra no sistema, quais são os vendedores, o horário de
@@ -1730,9 +1730,18 @@ function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
   const parse = linhas.map((l) => {
     const p = l.split("|").map((x) => x.trim());
     const c = lerCoordenadas(p[2] ?? "");
-    return { nome: p[0] ?? "", endereco: p[1] ?? "", lat: c?.lat ?? NaN, lng: c?.lng ?? NaN, ok: !!(p[0] && p[1] && c) };
+    return {
+      nome: p[0] ?? "", endereco: p[1] ?? "", lat: c?.lat ?? NaN, lng: c?.lng ?? NaN,
+      ok: !!(p[0] && p[1] && c),
+      // o que exatamente faltou nesta linha — "1 com problema" nao ajuda quem
+      // esta cadastrando, e o erro quase sempre e um caso conhecido
+      porque: !p[0] ? "falta o nome (antes do primeiro |)"
+            : !p[1] ? "falta o endereco (entre os dois |)"
+            : problemaCoordenada(p[2] ?? ""),
+    };
   });
   const validos = parse.filter((x) => x.ok);
+  const primeiroRuim = parse.find((x) => !x.ok);
   const mudou = paraTexto(validos) !== paraTexto(info.itens);
 
   return (
@@ -1741,10 +1750,16 @@ function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
       <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{info.resumo}</p>
 
       <Recado tipo="aviso">
-        Um por linha: <code>Nome | Endereço | -1.4558, -48.5044</code>. As coordenadas saem do
-        Google Maps — clique com o botão direito no ponto e escolha copiar; cole aqui do jeito
-        que vier. Linha com coordenada inválida <b>não é salva</b>: é melhor faltar o endereço
-        do que mandar a cliente para o lugar errado.
+        Um por linha, com duas barras separando: <code>Nome | Endereço | ponto no mapa</code>.
+        <br />
+        No lugar do ponto vale <b>qualquer um dos dois</b>: o endereço que aparece na
+        barra do navegador com o Maps aberto no lugar certo, colado inteiro; ou a coordenada,
+        que sai clicando com o <b>botão direito</b> em cima do ponto no mapa — o primeiro item
+        do menu já é ela, e clicar copia.
+        <br />
+        <b>Não use o botão Compartilhar:</b> ele gera um link curto que não carrega o ponto.
+        Linha inválida <b>não é salva</b> — é melhor faltar o endereço do que mandar a cliente
+        para o lugar errado.
       </Recado>
 
       <textarea value={txt} onChange={(e) => setTxt(e.target.value)} rows={Math.max(3, linhas.length + 1)}
@@ -1757,6 +1772,11 @@ function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
         <span style={{ fontSize: 11.5, color: parse.length !== validos.length ? M.laranja : M.muted }}>
           {validos.length} válido(s){parse.length !== validos.length ? ` · ${parse.length - validos.length} com problema` : ""}
         </span>
+        {primeiroRuim?.porque && (
+          <span style={{ fontSize: 11.5, color: M.laranja, flexBasis: "100%", lineHeight: 1.5 }}>
+            {primeiroRuim.nome ? <b>{primeiroRuim.nome}: </b> : null}{primeiroRuim.porque}
+          </span>
+        )}
         {validos.map((l, i) => (
           <a key={i} href={`https://www.google.com/maps?q=${l.lat},${l.lng}`} target="_blank" rel="noreferrer"
             style={{ fontSize: 11.5, color: M.azul, fontWeight: 700, textDecoration: "none" }}>
