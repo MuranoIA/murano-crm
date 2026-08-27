@@ -1169,12 +1169,15 @@ const ETAPAS: { key: string; rotulo: string; ajuda: string }[] = [
   { key: "pedido_emitido", rotulo: "Pedido emitido", ajuda: "comprou no mês corrente" },
 ];
 const CORTE_ROTULO: Record<string, string> = {
-  sem_contato: "sem contato no RD Conversas",
+  sem_contato: "cliente do ERP sem contato aberto",
   sem_telefone: "sem telefone",
   descartado: "na lixeira",
   disparo_recente: "receberam template há pouco",
   ativo_demais: "parados há menos dias que o pedido",
   canal: "atendem pelo RD (o template é da Cloud)",
+  // O texto diz "não recebe", e não "falhou": quem falhou por janela fechada
+  // continua no público -- é justamente quem o template alcança.
+  numero_morto: "o número não recebe no WhatsApp (falha confirmada)",
 };
 
 function DisparoMassaAba({ cfg, avisar, recarregar }: {
@@ -2036,6 +2039,18 @@ function EnviosAba({ dados }: { dados: any }) {
   // Com o modo migracao ligado nao existe "fora daqui": todo template sai por
   // este CRM. O terceiro quadro e a coluna do RD deixam de ser informacao e
   // viram o nome de um sistema que a chave diz nao existir mais.
+  //
+  // ⚠️ Esconder o terceiro quadro NAO bastava, e por um motivo que so aparece
+  // olhando de onde cada numero vem:
+  //
+  //   "chegaram"  <- mensagens, agora com o filtro de linha (rota)  -> limpo
+  //   "por este CRM" <- disparos_template, que NAO tem coluna de linha
+  //
+  // O segundo seguia carregando os disparos feitos pelo RD, dentro de uma tela
+  // que a chave manda ficar cega para ele. Como nao ha como recorta-lo, e como
+  // no nosso numero os dois contam o MESMO evento por duas fontes (a WABA e
+  // nossa, nao ha outro painel), o certo e mostrar UM numero — nao dois quase
+  // iguais convidando a pergunta "por que nao batem?".
   const semRd = useSemRd();
   const [per, setPer] = useState<(typeof PERIODOS)[number]["k"]>("mes");
   const linhas: any[] = dados.linhas ?? [];
@@ -2059,7 +2074,7 @@ function EnviosAba({ dados }: { dados: any }) {
         ajuda={<>
           Template é a mensagem que <b>reabre uma conversa</b> passadas as 24 h — a única forma de
           falar com quem parou de responder, e a única que tem <b>custo por envio</b>.{" "}
-          {semRd ? <>Estes números dizem <i>quantos saíram</i> no período.</>
+          {semRd ? <>Este número diz <i>quantos saíram</i> pelo nosso número, no período.</>
                  : <>Estes números existem para responder duas perguntas: <i>quantos saíram</i> e <i>por onde</i>.</>}
         </>}
       >
@@ -2077,20 +2092,22 @@ function EnviosAba({ dados }: { dados: any }) {
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
             {num(saiuTot, M.wine)}
-            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>chegaram à cliente</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>
+              {semRd ? "templates enviados" : "chegaram à cliente"}
+            </div>
             <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
-              {semRd ? "Todo template entregue na conversa, contado nas mensagens que o sistema tem espelhadas."
+              {semRd ? "Pelo número em uso, no período. Todo template que sai por ele sai por este CRM — a conta do WhatsApp é nossa, não há outro painel."
                      : "Todo template entregue na conversa, tenha saído daqui ou do painel do RD. Contado nas mensagens que o sistema tem espelhadas."}
             </div>
           </div>
-          <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
+          {!semRd && <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
             {num(crmTot, M.roxo)}
             <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>saíram por este CRM</div>
             <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
               Botão do card, chat e disparo em massa. É a parte que este sistema registra por
               cliente, e a única que aparece no extrato do disparo em massa.
             </div>
-          </div>
+          </div>}
           {!semRd && <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
             {num(fora, M.laranja)}
             <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>pelo painel do RD</div>
@@ -2110,8 +2127,8 @@ function EnviosAba({ dados }: { dados: any }) {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 460 }}>
               <thead><tr>
                 <th style={th}>Carteira</th>
-                <th style={th}>Chegaram</th>
-                <th style={th}>Por este CRM</th>
+                <th style={th}>{semRd ? "Enviados" : "Chegaram"}</th>
+                {!semRd && <th style={th}>Por este CRM</th>}
                 {!semRd && <th style={th}>Pelo painel do RD</th>}
               </tr></thead>
               <tbody>
@@ -2123,7 +2140,7 @@ function EnviosAba({ dados }: { dados: any }) {
                       <tr key={l.vendedor}>
                         <td style={{ ...td, fontWeight: 600 }}>{l.vendedor}</td>
                         <td style={td}>{s}</td>
-                        <td style={td}>{c}</td>
+                        {!semRd && <td style={td}>{c}</td>}
                         {!semRd && <td style={{ ...td, color: s - c > 0 ? M.laranja : M.muted }}>{Math.max(0, s - c)}</td>}
                       </tr>
                     );

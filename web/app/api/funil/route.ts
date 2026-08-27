@@ -348,7 +348,9 @@ export async function GET() {
   // achar por vínculo, por telefone e por nome normalizado. É o melhor sinal que
   // temos — por isso o card diz "não encontrei no WinThor", nunca "não existe".
   for (const c of cardsOutros) {
-    if (!c.ultima_atividade && c.sem_cadastro && !String(c.cliente_id).includes(":")) {
+    // prefixo explícito, não "tem dois-pontos": `wa:` é contato de verdade
+    // (§50.2). Aqui o que não é contato são os cards sintéticos do ERP.
+    if (!c.ultima_atividade && c.sem_cadastro && !/^(winthor|venda):/.test(String(c.cliente_id))) {
       c.etapa = "sem_cadastro";
     }
   }
@@ -361,7 +363,8 @@ export async function GET() {
   // o botão que abre esse histórico existe na conversa.
   const semVisivel = (await cfgP).historico_rd   // `cfg` só é resolvido mais abaixo
     ? cardsOutros
-        .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string" && !c.cliente_id.includes(":"))
+        .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string"
+          && !/^(winthor|venda):/.test(c.cliente_id))
         .map((c: any) => c.cliente_id)
     : [];
   if (semVisivel.length) {

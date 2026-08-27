@@ -1,6 +1,7 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig } from "../../../../lib/crmConfig";
+import { codigoMeta, FALHA_DO_NUMERO } from "../../../../lib/erroMeta";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -42,7 +43,16 @@ const tel8 = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-8);
 function idDeEnvio(c: any): string | null {
   if (c.rd_cliente_id) return String(c.rd_cliente_id);
   const id = c.cliente_id;
-  return typeof id === "string" && !id.includes(":") ? id : null;
+  if (typeof id !== "string") return null;
+  // ⚠️ NÃO é "sem dois-pontos". Era, e por isso TODO contato do nosso próprio
+  // número (`wa:<telefone>`, §16.3) ficava fora do disparo em massa -- contado
+  // como "sem contato", que é o rótulo de quem não dá para alcançar. Eles dão:
+  // `/api/send-template` roteia `wa:` para a Cloud sem hesitar.
+  //
+  // É o mesmo defeito que o board tinha em `temConversaReal` (§50.2), e piora
+  // sozinho: todo contato novo nasce `wa:`, e depois do corte serão todos. O que
+  // precisa ficar de fora é só o que não tem contato: `winthor:` e `venda:`.
+  return /^(winthor|venda):/.test(id) ? null : id;
 }
 
 const codDeId = (id: any): number | null => {
@@ -174,8 +184,17 @@ export async function POST(req: Request) {
   // 2) contexto: último disparo, lixeira, ciclo de compra e quem já conversa
   //    pela Cloud. Nenhum depende do outro, então vão em paralelo.
   const desdeDisparo = new Date(Date.now() - Math.max(diasRecontato, 1) * 86_400_000).toISOString();
+  // ⚠️ A memória de FALHA tem janela própria, e não a do anti-repetição.
+  // Um número que não recebe no WhatsApp continua não recebendo amanhã — com a
+  // janela do anti-repetição (que pode ser 1 dia), esqueceríamos uma falha de
+  // anteontem e queimaríamos outro template no mesmo número morto.
+  //
+  // 90 dias, e não "sempre", porque a pessoa pode ter instalado o WhatsApp
+  // nesse meio tempo: condenar um número para sempre pelo pior dia dele seria
+  // o erro simétrico.
+  const desdeFalha = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const cfg = await lerCrmConfig(db);
-  const [dispRes, descRes, cicloRes, linhaRes] = await Promise.all([
+  const [dispRes, descRes, cicloRes, linhaRes, desfRes] = await Promise.all([
     db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo),
     db.from("wth_descartados").select("cliente_id,codcli,tel8"),
     // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
@@ -184,6 +203,21 @@ export async function POST(req: Request) {
       ? db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade")
       : Promise.resolve({ data: [] as any[] }),
     db.from("vw_chat_linha_cliente").select("cliente_id"),
+    // Só as FALHAS. Medido em 27/08: 32 linhas em 90 dias.
+    //
+    // ⚠️ A primeira versão pedia falhas E entregas na mesma consulta, com
+    // `limit(8000)` — de um universo de **59.956** linhas. O PostgREST devolveu
+    // as 8.000 MAIS ANTIGAS e não avisou que truncou: as falhas, todas de
+    // agosto, ficaram de fora e o corte nunca disparou. Sem erro, sem log, o
+    // recurso simplesmente não existia. Um `limit` sobre um universo que não se
+    // mediu antes é um filtro invisível.
+    db.from("mensagens")
+      .select("cliente_id,erro,criada_em")
+      .eq("enviada_por", "operator")
+      .eq("status", "failed")
+      .gte("criada_em", desdeFalha)
+      .order("criada_em", { ascending: true })
+      .limit(2000),
   ]);
 
   const ultimoDisparo = new Map<string, string>();
@@ -192,6 +226,53 @@ export async function POST(req: Request) {
     const atual = ultimoDisparo.get(id);
     if (!atual || String(d.criada_em) > atual) ultimoDisparo.set(id, String(d.criada_em));
   }
+
+  // ---- NÚMERO QUE NÃO RECEBE (item 5) ------------------------------------
+  // Re-disparar para um número que não existe no WhatsApp custa um template a
+  // cada tentativa, para sempre. O motivo já estava gravado; ninguém lia.
+  //
+  // ⚠️ DUAS distinções, e sem elas o corte sabotaria o próprio disparo:
+  //
+  // 1. **Nem toda falha é do número.** Medido no banco em 27/08: 131047 (janela
+  //    fechada) atinge 6 clientes — e é EXATAMENTE quem o template existe para
+  //    alcançar; 131042 é problema de pagamento NOSSO — cortar puniria o cliente
+  //    por erro da nossa conta. Só entra o que significa "este número não
+  //    recebe" (`FALHA_DO_NUMERO`, hoje 131026 e 131051).
+  //
+  // 2. **Vale o ÚLTIMO desfecho, não "já falhou alguma vez".** Um número que
+  //    falhou em junho e recebeu em agosto passou a existir no WhatsApp — a
+  //    pessoa instalou. Cortar por histórico condenaria o cliente para sempre
+  //    pelo pior dia dele.
+  // Candidatos: quem levou uma falha permanente, e QUANDO foi a última delas.
+  const falhaEm = new Map<string, string>();
+  for (const m of desfRes.data ?? []) {          // já vem em ordem crescente
+    const id = String((m as any).cliente_id ?? "");
+    if (!id) continue;
+    const cod = codigoMeta((m as any).erro);
+    if (cod && FALHA_DO_NUMERO.has(cod)) falhaEm.set(id, String((m as any).criada_em));
+    else falhaEm.delete(id);   // falha de outro tipo depois: não é o número
+  }
+
+  // A regra 2 acima, agora com uma consulta dirigida em vez de uma varredura:
+  // os candidatos são poucos (2, na medição), então perguntar "houve entrega
+  // DEPOIS?" custa uma consulta pequena — e é a única forma de não condenar
+  // para sempre quem instalou o WhatsApp mais tarde.
+  const morto = new Set(falhaEm.keys());
+  if (morto.size) {
+    const ids = [...morto].slice(0, 300);        // teto de tamanho de URL
+    const { data: vivos } = await db.from("mensagens")
+      .select("cliente_id,criada_em")
+      .eq("enviada_por", "operator")
+      .in("status", ["success", "read"])
+      .in("cliente_id", ids)
+      .gte("criada_em", desdeFalha)
+      .limit(3000);
+    for (const v of vivos ?? []) {
+      const id = String((v as any).cliente_id ?? "");
+      if (String((v as any).criada_em) > (falhaEm.get(id) ?? "")) morto.delete(id);
+    }
+  }
+  const desfecho = { get: (id: string) => (morto.has(id) ? "morto" : "ok") };
 
   const descCli = new Set((descRes.data ?? []).map((d: any) => d.cliente_id).filter(Boolean));
   const descCod = new Set((descRes.data ?? []).map((d: any) => d.codcli).filter((x: any) => x != null).map(Number));
@@ -216,7 +297,7 @@ export async function POST(req: Request) {
 
   // 3) peneira, contando o motivo de CADA corte — número sem motivo vira
   //    discussão ("por que só 12?") que ninguém resolve olhando a tela.
-  const cortes = { sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0, ativo_demais: 0, canal: 0 };
+  const cortes = { sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0, ativo_demais: 0, canal: 0, numero_morto: 0 };
   const elegiveis: any[] = [];
   const vistos = new Set<string>();
 
@@ -230,6 +311,11 @@ export async function POST(req: Request) {
     if (descCli.has(c.cliente_id) || descCli.has(envio)
       || (cod != null && descCod.has(Number(cod)))
       || (t.length === 8 && descTel.has(t))) { cortes.descartado++; continue; }
+
+    // Antes dos cortes de tempo: não adianta ranquear quem não pode receber.
+    if (desfecho.get(envio) === "morto" || desfecho.get(String(c.cliente_id)) === "morto") {
+      cortes.numero_morto++; continue;
+    }
 
     const ud = ultimoDisparo.get(envio) ?? ultimoDisparo.get(String(c.cliente_id));
     if (diasRecontato > 0 && ud && diasDesde(ud) < diasRecontato) { cortes.disparo_recente++; continue; }

@@ -80,6 +80,25 @@ const TABELA: Record<string, Traducao> = {
   "138018": { texto: "A linha não está pronta para chamadas.", acao: "Avisar o administrador." },
 };
 
+/**
+ * Códigos que significam **"este número não recebe"** — e só eles.
+ *
+ * A distinção decide se o disparo em massa acerta ou se sabota a si mesmo.
+ * Medido no banco em 27/08, entre TODAS as falhas que existem:
+ *
+ *   131047 · 6 clientes · janela de 24h fechada
+ *            -> é EXATAMENTE quem o template existe para alcançar. Excluir
+ *               seria o oposto do objetivo.
+ *   131042 · 2 clientes · problema de pagamento NOSSO
+ *            -> punir o cliente por erro da nossa conta.
+ *   131026 · 2 clientes · o número não recebe no WhatsApp
+ *            -> permanente. É este.
+ *
+ * Por isso a lista é curta e cresce só com evidência: um código entra aqui
+ * quando se sabe que reenviar não muda o resultado.
+ */
+export const FALHA_DO_NUMERO = new Set(["131026", "131051"]);
+
 /** O código da Meta que a string guardada carrega, se carregar. */
 export function codigoMeta(erro: string | null | undefined): string | null {
   const m = /\bMeta\s+(\d{2,6})\b/.exec(String(erro ?? ""));

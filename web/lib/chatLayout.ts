@@ -15,7 +15,7 @@
 // Ao implementar uma direção: virar `implementado: true` aqui é o último passo,
 // depois de a tela existir. É o gesto que a torna selecionável no /admin.
 
-export type LayoutId = "original" | "continuidade" | "fila" | "balcao";
+export type LayoutId = "original" | "continuidade" | "bancada" | "fila" | "balcao";
 
 export const LAYOUT_PADRAO: LayoutId = "original";
 
@@ -93,6 +93,45 @@ export const LAYOUTS: Layout[] = [
     // Construída em 24/08/2026. Tudo o que ela muda está atrás da flag `d1` em
     // `app/chat/page.tsx` — não há uma segunda árvore de JSX, e o desenho
     // original ficou intacto para o rollback ser exato.
+    implementado: true,
+  },
+  {
+    id: "bancada",
+    rotulo: "4 · Bancada",
+    resumo: "Nada de novo na tela. Tudo no mesmo ritmo.",
+    tese:
+      "Herda todas as correções da Direção 1 e não acrescenta nenhuma informação nova. " +
+      "O que muda é que a tela passa a obedecer a uma grade: sete degraus de espaço, sete " +
+      "de tipografia, três de raio, três alturas de controle, dois de elevação e cinco " +
+      "famílias de cor com um trabalho cada. A 1 respondeu 'o que falta aparecer'; esta " +
+      "responde 'por que a tela parece improvisada mesmo mostrando a coisa certa'.",
+    ganhos: [
+      "Uma régua vertical por coluna — hoje a sidebar tem três bordas esquerdas e a conversa duas",
+      "Uma goteira só: tudo que tem borda começa em 16 px no desktop e 12 no compacto",
+      "Contrastes acima do mínimo em todo o texto, inclusive o metadado que hoje reprova",
+      "O painel do ERP mais largo, para o valor comprado parar de truncar",
+      "Alvos de toque no piso de 44 px no celular; 28 e 32 no compacto, e nada fora disso",
+    ],
+    sacrificios: [
+      "Peso 800 é abolido: a primeira impressão pode ser de tela mais 'apagada'",
+      "A lista fica 20 px mais estreita para o painel do cliente respirar",
+      "Não muda a forma do dia nem vende mais por conversa — isso continua sendo a 2 e a 3",
+      "Entregue por partes: a densidade (agrupar mensagens) e os ícones ainda são os de hoje",
+    ],
+    risco: "baixo",
+    prazo: "curto",
+    prototipo: "prototipos/tema-premium.html",
+    // Construída em 27/08/2026, na PRIMEIRA das três entregas do plano
+    // (`prototipos/laudo-tema-premium.md` §11.4): paleta e escalas — itens 1-9,
+    // 13-14, 19 e 24-26. Herda as correções da D1 pelo conjunto `CORRIGE` em
+    // `app/chat/page.tsx`, e a geometria vem da tabela `GRADES` do mesmo
+    // arquivo, cuja entrada `original` reproduz os literais de hoje para o
+    // rollback ser exato.
+    //
+    // AINDA NÃO ENTREGUES, e por isso ausentes dos `ganhos` acima: agrupar
+    // mensagens por autor (itens 12, 20-23, 27) e os ícones em SVG com os
+    // estados e o acabamento (18, 28-31). Prometer nos `ganhos` o que a tela
+    // não faz é o mesmo erro que `implementado` no banco evitaria.
     implementado: true,
   },
   {

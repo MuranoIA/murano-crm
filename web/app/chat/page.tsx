@@ -45,6 +45,15 @@ const M = {
   gray: "#6f5c6d",
   bolhaFora: "#ecdcf0",   // mensagem enviada (operator) — púrpura bem claro
   bolhaDentro: "#ffffff", // mensagem recebida (customer)
+  // Dois tokens que nasceram com a Direção 4 e valem para todos os desenhos.
+  // Em `original` e `continuidade` eles reproduzem o que o código já fazia
+  // cravado, então acrescentá-los é uma mudança de zero pixels:
+  //   `lineStrong` = a borda de CONTROLE (campo, botão), que a régua exige em
+  //   3:1 por ser elemento não-textual — hoje ela é a mesma linha decorativa
+  //   das divisórias, e some contra o fundo;
+  //   `ok` = o verde de "concluído", literal em oito lugares deste arquivo.
+  lineStrong: "#e0cfdb",
+  ok: "#1a6b3c",
 };
 
 // A paleta de cada desenho (migration 0095, catálogo em lib/chatLayout.ts).
@@ -79,6 +88,111 @@ const PALETAS: Record<string, Partial<typeof M>> = {
     gray: "#55555f",
     bolhaFora: "#e9f1fb",   // enviada = ação = azul
     bolhaDentro: "#ffffff",
+    lineStrong: "#e3e1e8",  // = a borda da D1: acrescentar o token não a muda
+  },
+  // `bancada` (Direção 4). Mesma rampa do hub que a D1 usa, com uma diferença
+  // que é decisão e não gosto: cada família tem UM trabalho, e os valores foram
+  // medidos, não escolhidos de olho (laudo §4.4).
+  //
+  //   marca (púrpura)  #7a1755   ação (azul) #1a5fa8   urgência #a83015
+  //   concluído (verde) #1a6b3c  — e um acento por região da tela
+  //
+  // Três correções de contraste que vêm junto:
+  //   · `muted` #6b6577 passa nos TRÊS fundos (5,60:1 sobre branco, 5,02:1 sobre
+  //     a página, 4,65:1 sobre a conversa). O #7c7986 da D1 dá 4,25:1 e 3,87:1 —
+  //     reprova para texto normal, e está registrado como dívida no comentário
+  //     dela. Aqui a dívida é paga, sem mexer na D1 que está em produção.
+  //   · `lineStrong` #8d8599 é a borda de controle: 3,53:1, acima do mínimo de
+  //     3:1 para elemento não-textual. A divisória decorativa continua clara.
+  //   · o azul preenchido é #1a5fa8 (6,47:1) e nunca #2f7fd4, que dá 4,11:1 com
+  //     texto branco e reprova — este último só serve como cor de foco.
+  bancada: {
+    wine: "#7a1755",
+    roxo: "#7a1755",
+    roxoSoft: "#f2ecf1",
+    azul: "#1a5fa8",
+    laranja: "#a83015",
+    ok: "#1a6b3c",
+    bg: "#f3f2f5",
+    bgThread: "#ebe9ef",
+    surface: "#ffffff",
+    border: "#e4e2e9",
+    lineStrong: "#8d8599",
+    ink: "#221826",
+    gray: "#4d4757",
+    muted: "#6b6577",
+    bolhaFora: "#e9f1fb",   // enviada = ação = azul, como na D1
+    bolhaDentro: "#ffffff",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// A GRADE (Direção 4) — a segunda alavanca, irmã de `PALETAS`.
+//
+// `M` resolve a cor; `G` resolve a geometria. Mesmo padrão e mesmo motivo: o
+// objeto é mutável e recebe `Object.assign` no início do componente, então
+// trocar o desenho alcança todos os estilos inline sem refatorar nenhum deles.
+//
+// A razão de existir: hoje o arquivo tem 65 combinações de padding e 15 raios,
+// e é isso que faz a tela parecer improvisada mesmo mostrando a coisa certa.
+// A sidebar chega a ter TRÊS bordas esquerdas diferentes (10, 12 e 13 px), o
+// que se vê como uma goteira torta de cima a baixo.
+//
+// ⚠️ `GRADES.original` reproduz os literais de HOJE. É isso que torna a troca de
+// um literal por `G.x` uma mudança de zero pixel enquanto o layout for
+// `original` — e o rollback exato, não "quase igual".
+const G = {
+  lista: 340,             // largura da coluna de conversas
+  painel: 268,            // largura do painel do contato
+  cabPad: "8px 10px 6px", // cabeçalho da lista
+  rodapePad: "8px 13px",  // rodapé "Online ●"
+  cabConvPad: "9px 14px", // cabeçalho da conversa (desktop)
+  msgsPad: "14px 18px",   // a thread
+  compPad: "10px 14px",   // o compositor (desktop)
+  pilPad: "4px 6px",      // a pílula do compositor (desktop)
+  pilBtn: 42,             // botão dentro da pílula (desktop)
+  pilBtnC: 30,            // idem, no compacto (a lupa do board)
+  raioPil: 12,            // raio desses botões (desktop)
+  raioPilC: 9,            // idem, no compacto
+  envAlt: 42,             // o enviar — o controle PRIMÁRIO da tela
+  envAltC: 30,
+  envLarg: 44,
+  envLargC: 32,
+};
+/** Desenhos que carregam as correções da Direção 1 (a faixa da janela de 24h, a
+ *  aba Resumo, o mobile com o ERP). A 4 herda todas — a tese dela é grade, não
+ *  informação nova. Um Set, e não `layout !== "original"`, porque as direções 2
+ *  e 3 têm arranjo próprio e não devem ser arrastadas por esta régua. */
+const CORRIGE = new Set(["continuidade", "bancada"]);
+
+const GRADES: Record<string, Partial<typeof G>> = {
+  original: { ...G },
+  continuidade: { ...G },
+  // Goteira de 16 px no desktop: tudo que tem borda começa na mesma aresta.
+  // A lista cede 20 px para o painel do ERP, que é onde mora a vantagem sobre
+  // o RD e onde `R$ 12.480,00` (112 px) não cabia em tile de 55.
+  bancada: {
+    lista: 320,
+    painel: 320,
+    cabPad: "12px 16px",
+    rodapePad: "12px 16px",
+    // 6 px em cima e embaixo, e não zero: com `minHeight` o conteúdo pode
+    // passar de 56 px, e aí sem padding ele encostaria na divisória.
+    cabConvPad: "6px 16px",
+    msgsPad: "16px 16px",
+    compPad: "12px 16px",
+    pilPad: "4px 4px",
+    pilBtn: 32,
+    pilBtnC: 28,
+    raioPil: 10,
+    raioPilC: 10,
+    // O primário é um degrau acima do secundário, e quadrado: 40 contra 32.
+    // Hoje ele é mais LARGO que alto (44 × 42), o que o faz parecer torto ao
+    // lado dos botões redondos da pílula.
+    envAlt: 40,
+    envAltC: 36,
+    envLarg: 40,
+    envLargC: 36,
   },
 };
 
@@ -850,7 +964,11 @@ export default function Chat() {
   // declarada aqui, e não junto de `d1` lá embaixo, porque `abrir()` a usa e
   // fica acima no arquivo — depender da ordem de declaração dentro do render
   // é o tipo de acoplamento que quebra em silêncio numa refatoração
-  const abaPadrao: AbaContato = layout === "continuidade" ? "resumo" : "perfil";
+  // Só o `original` abre no telefone: é a aba que repete o cabeçalho. Todo
+  // desenho novo abre no resumo comercial, que é a vantagem sobre o RD.
+  // Escrito pela negativa (`=== "original"`) de propósito — assim uma direção
+  // futura nasce no resumo em vez de nascer na aba errada por esquecimento.
+  const abaPadrao: AbaContato = layout === "original" ? "perfil" : "resumo";
   // ---- novo contato: "digitar o número e conversar", como num WhatsApp -----
   // O contato criado ainda NÃO tem mensagem, então não entra na `vw_funil_visivel`
   // (que exige conversa) — por isso ele é adicionado à lista LOCALMENTE e
@@ -2051,8 +2169,18 @@ export default function Chat() {
   // lugar, coisas passam a aparecer" — então não existe uma segunda árvore de
   // JSX: são adições pontuais nos quatro pontos que o laudo mediu como caros,
   // mais a paleta. Manter uma tela só é o que torna o rollback confiável.
-  const d1 = layout === "continuidade";
+  //
+  // A Direção 4 ("bancada") HERDA a 1 em vez de repeti-la: `d1` deixou de ser
+  // um teste de igualdade e virou "este desenho tem as correções da D1". Sem
+  // isso, escolher a 4 apagaria a faixa da janela de 24h, a aba Resumo e o
+  // mobile resolvido — que são justamente as correções que ela pressupõe.
+  // `bc` guarda só o que é dela: a grade.
+  const d1 = CORRIGE.has(layout);
+  const bc = layout === "bancada";
   Object.assign(M, PALETAS[layout] ?? PALETAS.original);
+  // `GRADES.original` primeiro, sempre: as entradas são PARCIAIS, então sem a
+  // base o desenho novo herdaria as sobras do anterior no mesmo carregamento.
+  Object.assign(G, GRADES.original, GRADES[layout] ?? {});
 
   // Abas do painel do contato que este usuário enxerga agora: "Resumo" só no
   // desenho D1 (0095), "Ciclo" só com o motor ligado (crm_config, 0097). Uma
@@ -2125,6 +2253,14 @@ export default function Chat() {
   // para o nome antes das reticencias.
   const padBotao = compacto ? "4px 7px" : "5px 11px";
   const fonteBotao = compacto ? 9.5 : 11.5;
+  // Os nove botões de dentro da pílula repetiam o mesmo par de literais. Aqui
+  // eles passam a sair da grade — uma altura por contexto, e nada fora dela:
+  // 42/30 no desenho de hoje, 32/28 em `bancada`. No celular o piso de toque é
+  // 44 px, que é a régua de acessibilidade e não uma preferência.
+  const pilBtn = isMobile && !compacto ? 44 : compacto ? G.pilBtnC : G.pilBtn;
+  const raioPilBtn = compacto ? G.raioPilC : G.raioPil;
+  const envAlt = isMobile && !compacto ? 52 : compacto ? G.envAltC : G.envAlt;
+  const envLarg = isMobile && !compacto ? 52 : compacto ? G.envLargC : G.envLarg;
 
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
@@ -2266,12 +2402,12 @@ export default function Chat() {
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* ---- sidebar: lista de conversas ---- */}
         {mostraLista && (
-          <div style={{ width: isMobile ? "100%" : 340, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
+          <div style={{ width: isMobile ? "100%" : G.lista, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
             {/* ---- cabeçalho da lista, no arranjo do RD ----
                 1) título-dropdown com as filas e seus contadores
                 2) campo de busca (lupa à direita)
                 3) ordenação alinhada à direita ("Mais recente") */}
-            <div style={{ padding: "8px 10px 6px", borderBottom: `1px solid ${M.border}`, display: "flex", flexDirection: "column", gap: 7 }}>
+            <div style={{ padding: G.cabPad, borderBottom: `1px solid ${M.border}`, display: "flex", flexDirection: "column", gap: bc ? 8 : 7 }}>
               <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8 }}>
                 <button onClick={() => setMenuFila((v) => !v)} title="Trocar de fila"
                   style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0", minWidth: 0 }}>
@@ -2756,7 +2892,7 @@ export default function Chat() {
                  disponibilidade do operador; aqui é o estado da conexão em tempo
                  real, que é o que existe de verdade — e serve de diagnóstico
                  quando o chat parece parado (sem Realtime, sobra o poll de 60s). ---- */}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 13px", borderTop: `1px solid ${M.border}`, background: M.surface, flexShrink: 0 }}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: G.rodapePad, borderTop: `1px solid ${M.border}`, background: M.surface, flexShrink: 0 }}
                  title={conectado
                    ? "Tempo real ligado — mensagens novas chegam sozinhas"
                    : "Sem tempo real — a lista ainda atualiza sozinha a cada 60 segundos"}>
@@ -2782,7 +2918,18 @@ export default function Chat() {
             {sel && (
               <>
                 {/* cabeçalho da conversa */}
-                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : "9px 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "nowrap" }}>
+                {/* Em `bancada` o padding vertical zera e a altura passa a ser
+                    56 px: é isso que faz este cabeçalho alinhar com o da lista,
+                    do outro lado da divisória, em vez de cada um encontrar a
+                    própria altura pelo conteúdo.
+                    ⚠️ `minHeight`, NUNCA `height`. Com o painel do cliente 52 px
+                    mais largo, a linha de metadados do nome passa a caber em
+                    duas linhas em alguns contatos — medido no navegador. Altura
+                    fixa espremeria justamente esses, e o alinhamento não vale o
+                    preço de cortar o telefone de quem tem nome comprido.
+                    No compacto ele segue medindo o que precisa: 56 comeria a
+                    conversa, que é o motivo de a lupa existir. */}
+                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "nowrap" }}>
                   {isMobile && !compacto && (
                     <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
@@ -3003,7 +3150,7 @@ export default function Chat() {
                 )}
 
                 {/* mensagens */}
-                <div ref={rolagemRef} style={{ position: "relative", flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <div ref={rolagemRef} style={{ position: "relative", flex: 1, overflowY: "auto", padding: G.msgsPad, display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
                   {msgs?.length === 0 && !notas.length && ocultas === 0 && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
 
@@ -3381,7 +3528,7 @@ export default function Chat() {
                 )}
 
                 {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
-                <div style={{ display: "flex", gap: 8, padding: compacto ? "8px 10px" : "10px 14px", background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
+                <div style={{ display: "flex", gap: 8, padding: compacto ? "8px 10px" : G.compPad, background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
                   {/* anexo: foto, áudio, documento — o texto digitado vira legenda
                       da PRIMEIRA. `multiple`: dá para escolher várias fotos de uma vez */}
                   <input
@@ -3401,16 +3548,19 @@ export default function Chat() {
                       passa para o container, os botoes ficam transparentes, e o
                       campo ocupa o que sobra. O enviar fica de FORA, como la. */}
                   <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "flex-end", gap: 2,
-                    padding: compacto ? "3px 4px" : "4px 6px",
+                    padding: compacto ? "3px 4px" : G.pilPad,
                     background: modoNota ? M.surface : M.bg,
-                    border: `1px solid ${modoNota ? NOTA.borda : M.border}`,
+                    // A borda da pílula é de CONTROLE, não divisória: é ela que
+                    // diz onde se digita. Por isso `lineStrong` (3,53:1) e não
+                    // a linha clara das seções, que some contra o fundo.
+                    border: `1px solid ${modoNota ? NOTA.borda : M.lineStrong}`,
                     borderRadius: compacto ? 16 : 22, transition: "border-color .15s" }}>
                   <div style={{ position: "relative", flexShrink: 0 }}>
                   <button
                     onClick={() => (locais.length ? setAnexoAberto((v) => !v) : arquivoRef.current?.click())}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
@@ -3452,7 +3602,7 @@ export default function Chat() {
                     onClick={alternarGravacao}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
                       opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
                       border: "none",
                       background: gravando ? "#fdeae3" : "transparent", color: gravando ? M.laranja : M.gray }}
@@ -3517,7 +3667,7 @@ export default function Chat() {
                     title={!janelaAberta
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn,
                       border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
@@ -3528,7 +3678,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -3536,7 +3686,7 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>
@@ -3552,7 +3702,7 @@ export default function Chat() {
                     title={!janelaAberta
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn,
                       border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
@@ -3563,7 +3713,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -3571,7 +3721,7 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>
@@ -3590,7 +3740,7 @@ export default function Chat() {
                           onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
                           disabled={enviando}
                           title="Escolher um template — reabre a conversa fora da janela de 24h"
-                          style={{ height: compacto ? 30 : 42, width: compacto ? 30 : undefined, padding: compacto ? 0 : "0 12px", borderRadius: compacto ? 9 : 12, border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                          style={{ height: pilBtn, width: compacto ? pilBtn : undefined, padding: compacto ? 0 : "0 12px", borderRadius: raioPilBtn, border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: bc ? 700 : 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                         >
                           {/* Na lupa a palavra sozinha comia ~90px de um compositor
                               de 500px. Vira "T", como os demais icones da barra —
@@ -3685,7 +3835,10 @@ export default function Chat() {
                     onClick={() => (modoNota ? enviarNota() : enviar())}
                     disabled={enviando || !texto.trim()}
                     title={modoNota ? "Salvar nota interna (Enter)" : "Enviar (Enter)"}
-                    style={{ width: compacto ? 32 : 44, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
+                    // Em `bancada` o enviar é o ÚNICO azul preenchido da tela —
+                    // é o que faz "a ação" ter um lugar só. Nos outros desenhos
+                    // ele segue púrpura, como sempre foi.
+                    style={{ width: envLarg, height: envAlt, borderRadius: raioPilBtn, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : bc ? M.azul : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
                   >
                     {enviando ? "…" : modoNota ? "🗒️" : "➤"}
                   </button>
@@ -3697,7 +3850,7 @@ export default function Chat() {
 
         {/* ---- painel do contato (desktop): o ERP ao lado da conversa ---- */}
         {mostraThread && sel && painelAberto && !isMobile && (
-          <div style={{ width: 268, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
+          <div style={{ width: G.painel, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
             <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
               <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaAtual)?.rotulo}</b>
               <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>
