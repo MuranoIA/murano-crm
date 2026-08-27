@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LigacaoRtc, explicarErroMicrofone } from "../../lib/webrtcLigacao";
+import { Icone } from "./icones";
 
 // ---------------------------------------------------------------------------
 // LIGAÇÃO NO CHAT — estado, sinalização e telas.
@@ -426,9 +427,14 @@ export function useLigacao(opts: {
 // seria pior — convida a clicar e ensina que o sistema não funciona. Quem manda
 // de verdade é o servidor, que barra a chamada de qualquer jeito.
 // ---------------------------------------------------------------------------
-export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, compacto }: {
+export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, compacto, bancada }: {
   onLigar: () => void;
   ocupado: boolean; emChamada: boolean; temTelefone: boolean; naCloud: boolean;
+  /** desenho `bancada`: icone de traco no lugar do emoji. Sem isto, este
+   *  botao ficaria sendo o UNICO emoji colorido numa fileira de sete acoes
+   *  monocromaticas -- que e exatamente a inconsistencia que o item 18 do
+   *  laudo existe para acabar. */
+  bancada?: boolean;
   /** dentro da lupa do board a largura util e ~500px: so o icone, com o texto
    *  no `title` que este botao ja tinha (§41.5) */
   compacto?: boolean;
@@ -443,7 +449,11 @@ export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, 
         border: "1px solid #bfe0cb", borderRadius: 999, padding: compacto ? "5px 9px" : "5px 11px",
         cursor: travado ? "default" : "pointer", opacity: travado ? 0.55 : 1,
         fontFamily: "inherit", whiteSpace: "nowrap" }}>
-      {ocupado ? "…" : compacto ? "📞" : "📞 Ligar"}
+      {ocupado ? "…" : bancada ? (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: compacto ? 0 : 6 }}>
+          <Icone n="telefone" />{!compacto && "Ligar"}
+        </span>
+      ) : compacto ? "📞" : "📞 Ligar"}
     </button>
   );
 }
@@ -471,10 +481,15 @@ export function BarraChamada({ c, estadoRtc, mudo, onMudo, onDesligar }: {
     : "Conectando o áudio…";
 
   return (
-    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 60,
+    // ⚠️ TOPO, não rodapé — e isto vale para TODOS os desenhos, não é tema.
+    // Ela era `bottom: 0` em largura total, ou seja, ficava EM CIMA da caixa de
+    // texto: durante uma ligação não se digitava. E é justamente durante uma
+    // ligação que se anota o pedido, se manda o catálogo, se confirma o preço.
+    // O laudo mediu isso (§29.2 item 4); a correção é trocar a âncora.
+    <div style={{ position: "fixed", left: 0, right: 0, top: 0, zIndex: 60,
       background: M.wine, color: "#fff", padding: "10px 16px",
       display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
-      boxShadow: "0 -4px 16px rgba(28,14,27,0.28)" }}>
+      boxShadow: "0 4px 16px rgba(28,14,27,0.28)" }}>
       <span style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0,
         background: estadoRtc === "conectado" ? "#5cd68a" : "#ffce4f" }} />
       <span style={{ fontSize: 13, fontWeight: 800, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

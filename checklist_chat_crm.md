@@ -5,7 +5,12 @@
 > lado — foi o rótulo mais usado, e é o mais útil: "meio pronto" descrito é
 > acionável, "pronto" otimista vira surpresa na frente do cliente.
 >
-> Placar: **59 prontos · 18 parciais · 30 pendentes** (107 itens).
+> **Revisado em 27/08/2026 (fim do dia)**, depois da fila de 5 itens combinada
+> com o usuário. Placar: **56 prontos · 19 parciais · 19 pendentes · 2 cancelados**
+> — 96 itens.
+>
+> ⚠️ O cabeçalho anterior dizia "59 · 18 · 30 (107 itens)". Estava errado: são
+> 96 caixas no arquivo, não 107. Contado com script, não no olho.
 
 ## 1. Canais e Conexão
 
@@ -14,7 +19,7 @@
 - [x] Roteamento de mensagens recebidas por número de origem — o webhook carimba `linha_id`; filtro na sidebar (0089)
 - [~] Status de conexão do canal — `api/whatsapp/diag` mostra `health_status` sob demanda, mas é rota **temporária** de admin e a allowlist dela está desatualizada (§28.8)
 - [x] Webhook de recebimento (texto, mídia, status de entrega) — `api/whatsapp/webhook`; recibos `wait→success→read` (§16.3)
-- [ ] Reconexão automática / alerta quando o canal cai — **nada vigia.** `vw_etl_trigger_saude` é do ETL, não do webhook. O sintoma hoje é mensagem parada em `wait` para sempre (§28.3)
+- [~] Reconexão automática / alerta quando o canal cai — **alerta feito** (`lib/saudeCanal.ts`, §52): faixa no board e diagnóstico à Meta em /admin, pelo sintoma "recibo que não volta". Reconexão automática, não — inscrever o app altera a conta, e isso é gesto consciente
 - [~] Outros canais além do WhatsApp — há um segundo canal (RD Conversas), mas não webchat, Instagram ou e-mail
 
 ## 2. Caixa de Entrada (Inbox)
@@ -38,16 +43,16 @@
 - [x] Vídeo — mesmo caminho
 - [x] Áudio (gravação e envio de PTT) — `alternarGravacao`, MediaRecorder
 - [x] Documento/PDF — mesmo caminho
-- [ ] Envio de localização — o webhook **recebe** (`webhook/route.ts:275`), mas não há como enviar
+- [x] Envio de localização — por endereço SALVO (`crm_config.locais`, 0111), no clipe. Não usa a posição do navegador: não é o caso de uso, e em iframe seria recusado sem prompt (§49.1)
 - [x] Recebimento e exibição de toda mídia — bucket privado `wa-midia` (0079)
 - [x] Download/visualização de mídia recebida — `api/chat/midia`, URL assinada
 - [~] Emojis e formatação — emoji pelo teclado; `*negrito*` funciona porque o WhatsApp interpreta, mas **não há botão** nem prévia da formatação
 - [~] Responder mensagem específica — a **citação recebida** aparece (0086); citar ao enviar, não
 - [~] Reagir a mensagem — reação **recebida** vira atributo da bolha (0086); reagir, não
-- [ ] Encaminhar mensagem
-- [ ] Apagar mensagem (local e/ou para todos)
-- [ ] Editar mensagem enviada
-- [~] Histórico completo com scroll infinito — a thread traz **200** e para (`api/chat/thread:44`). Há o botão "ver histórico anterior" (0103), que é outra coisa: traz o do número escondido
+- [x] Encaminhar mensagem — `api/chat/encaminhar` (0111). Reenvia o conteúdo; **a cliente recebe sem o selo "Encaminhada"** (a API não tem forward), e a tela diz isso antes de confirmar
+- [—] Apagar mensagem — **cancelado pelo usuário** em 27/08: a API não tem, e a versão possível sumiria da nossa tela sem sumir da dela
+- [—] Editar mensagem enviada — **cancelado pelo usuário**, mesma razão
+- [x] Histórico completo com scroll infinito — `?antes=<criada_em>` + "Carregar mensagens anteriores" (§57). Cursor por DATA, não offset. ⚠️ a preservação da rolagem não foi exercitada em navegador
 - [x] Notas internas — `chat_nota` (0082), papel amarelo na thread
 - [x] Janela de 24 h com aviso visual — faixa com tempo restante e barra, contada **pelo canal de envio** (§37.2)
 
@@ -59,14 +64,14 @@
 - [x] Variáveis de texto livre no disparo — o compositor do chat pede campo a campo; o disparo em massa pede uma vez para a campanha (§26.5)
 - [x] Preview antes de enviar — no compositor e no cadastro
 - [x] Status de aprovação (aprovado/rejeitado/em análise) — reconsultado a cada abertura da tela (§24.3)
-- [ ] Log de falhas por template, para reprocessar — o motivo fica em `mensagens.erro` (0091) e aparece na bolha, mas **não há agrupamento por template nem reenvio em lote**
+- [~] Log de falhas por template, para reprocessar — o motivo fica em `mensagens.erro` (0091), aparece na bolha traduzido (`lib/erroMeta.ts`) e agora **corta do disparo em massa** quem não recebe (§61). Falta agrupar **por template** e reenviar em lote
 - [x] *(novo)* Consultor sugere template, admin avalia — `/templates` + `api/templates/sugestoes` (0110)
 
 ## 5. Disparos em Massa / Broadcast
 
 - [x] Lista de destinatários por segmento/filtro — `/admin` → Templates → Disparo em massa (§26)
 - [x] Excluir contatos com conversa já aberta — corte `ativo_demais` + anti-repetição
-- [ ] Excluir contatos com falha de template anterior — a falha é conhecida (`mensagens.erro`), mas não entra nos cortes
+- [x] Excluir contatos com falha de template anterior — corte `numero_morto` (§61). Só falha do NÚMERO (131026/131051): 131047 é quem o template existe para alcançar e 131042 é erro nosso. Vale o **último** desfecho, em janela própria de 90 dias
 - [ ] Agendamento (data/hora futura) — o laço roda **no navegador** (§26.2); agendar exige mover o envio para o servidor, e a cota do RD não cabe no tempo de uma rota da Vercel
 - [~] Limite por lote — dá para escolher a quantidade; **não há teto por consultor**
 - [~] Acompanhamento do disparo — `disparos_template` + aba Envios dão *enviado*; **entregue/lido/falhou por campanha, não**
@@ -80,7 +85,7 @@
 - [x] Transferência entre atendentes — append-only, com histórico e motivo na thread
 - [ ] Transferência entre filas/setores — `carteira_config.time` (IS/ISR/GC) existe, mas não é destino de transferência
 - [x] Assumir conversa (self-assign) — ✋ Pegar, na fila de não atribuídos (§21)
-- [ ] Devolver conversa para a fila — a transferência exige um destino; não há "para ninguém"
+- [x] Devolver conversa para a fila — `devolver: true` grava destino NULO (0112). Só aparece para conversa **sem dono comercial**; append-only, então a prova de quem pegou por engano não se apaga
 - [x] Múltiplos atendentes vendo o mesmo chat — presença por Realtime, "👀 fulano está aqui" (§21)
 - [x] Fechar/encerrar com motivo — `chat_conversa` (0079); o motivo **é a nossa tabulação**
 - [x] Reabrir conversa encerrada — automático, pelo webhook, quando a cliente responde
@@ -150,16 +155,21 @@
 
 **Primeiro — o que dói sem ninguém perceber**
 
-1. **Alerta de canal caído** (1). Hoje o sintoma é mensagem parada em `wait` e ninguém avisado. Já aconteceu: `subscribed_apps` vazio deixou o sistema mudo por horas (§28.3). Uma view de saúde + um aviso no /admin resolvem.
-2. **Devolver conversa para a fila** (6). Quem pega por engano não tem saída — e é o gesto mais provável numa fila que qualquer um puxa. Uma linha em `chat_transferencia` com destino nulo.
-3. **Scroll infinito na thread** (3). Para em 200 mensagens **sem dizer**. A conversa mais antiga simplesmente não existe para quem rola.
+> ✅ **A fila de 5 combinada em 27/08 está fechada:** localização e encaminhar
+> (§49), alerta de canal caído (§52), devolver para a fila (§56), scroll infinito
+> (§57) e excluir do disparo quem já falhou (§61). O item 6 (apagar/editar) foi
+> cancelado pelo usuário.
 
-**Segundo — o que a operação vai pedir em semanas**
-
-4. **Excluir de disparo quem falhou antes** (5). O dado já está em `mensagens.erro`; hoje o CRM re-dispara para número que não recebe no WhatsApp, e cada tentativa custa.
-5. **Taxa de resposta pós-disparo** (5/11). É a única métrica que diz se o template presta — e vira o critério para aprovar as sugestões que a 0110 acabou de criar.
-6. **Tempo médio de resolução** (11). `chat_conversa` já guarda o que falta contar.
-7. **Encaminhar mensagem** (3). Pedido comum quando o assunto é de outra pessoa.
+1. **Taxa de resposta pós-disparo** (5/11). É a única métrica que diz se o
+   template presta — e é o critério que falta para o admin julgar as sugestões
+   que a 0110 criou. Hoje aprova-se no olho.
+2. **Tempo médio de resolução** (11). `chat_conversa` já guarda abertura e
+   encerramento; falta só a conta e uma faixa na tela de indicadores.
+3. **Alerta de estouro de SLA** (6). Os indicadores **medem** o tempo de
+   resposta; ninguém é avisado quando uma conversa passa do limite. É o mesmo
+   desenho do alerta de canal, aplicado ao atendimento.
+4. **Entregue/lido/falhou por campanha** (5). Hoje o acompanhamento diz
+   *enviado*; o recibo já chega pelo webhook, falta agrupar por disparo.
 
 **Terceiro — precisa de decisão antes de código**
 
@@ -171,5 +181,5 @@
 **O que provavelmente NÃO vale construir**
 
 - **"Digitando…"** (2): a Cloud API não entrega esse evento. Só daria para simular, e simular presença é mentir.
-- **Editar mensagem enviada** (3): a Meta não oferece para mensagens de negócio.
-- **Apagar para todos** (3): existe na API, mas some da tela sem sumir do print da cliente — cria a ilusão de desfazer.
+- **Editar mensagem enviada** (3): a Meta não oferece para mensagens de negócio. **Cancelado pelo usuário** em 27/08 — não repropor.
+- **Apagar para todos** (3): some da nossa tela sem sumir do print da cliente — cria a ilusão de desfazer, justamente quando a pessoa mais precisa que seja verdade. **Cancelado pelo usuário** — não repropor.

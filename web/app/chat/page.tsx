@@ -9,6 +9,7 @@ import {
 } from "./ligacao";
 // mesma régua das variáveis do template usada pela rota de envio — a tela avisa
 // cedo, o servidor confere de novo (lib/templateVars.ts)
+import { Icone, type NomeIcone } from "./icones";
 import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
@@ -158,6 +159,19 @@ const G = {
   envAltC: 30,
   envLarg: 44,
   envLargC: 32,
+  // ---- entrega 2: densidade -------------------------------------------------
+  linhaPad: "10px 12px",  // a linha da conversa na sidebar
+  linhaAlt: 0,            // 0 = sem altura mínima (o conteúdo manda)
+  gapLinha: 10,           // avatar ↔ texto
+  avatar: 38,
+  gapDia: 4,              // entre itens do mesmo dia na thread
+  bolhaMax: "72%",
+  raioBolha: 12,
+  bolhaPad: "7px 11px",
+  /** o painel do cliente mostra um número herói + dois de apoio, em vez de três
+   *  tiles iguais. É lido por `PainelContato`, que mora FORA de `Chat()` — pelo
+   *  mesmo caminho que ele já lê `M`. */
+  numeroHeroi: false,
 };
 /** Desenhos que carregam as correções da Direção 1 (a faixa da janela de 24h, a
  *  aba Resumo, o mobile com o ERP). A 4 herda todas — a tese dela é grade, não
@@ -193,6 +207,28 @@ const GRADES: Record<string, Partial<typeof G>> = {
     envAltC: 36,
     envLarg: 40,
     envLargC: 36,
+    // A linha da conversa começa na goteira (16) como todo o resto, e ganha
+    // 52 px de altura.
+    // ⚠️ `minHeight`, não `height`. O laudo pede altura FIXA por ser o
+    // pré-requisito barato da virtualização — que a lista vai precisar quando
+    // passar de 3.900 conversas. Mas virtualização não é esta entrega, e altura
+    // fixa espreme quem tem selo de transferência ou de vendedor na segunda
+    // linha. Quando a virtualização entrar, isto precisa virar `height`; até lá,
+    // ceder é melhor que cortar (mesma lição do cabeçalho da conversa, §60.4).
+    // 16 à esquerda (a goteira), 12 à direita: a régua é da aresta ESQUERDA, e
+    // cada pixel à direita é caractere a mais na prévia, que é o que o vendedor
+    // lê para decidir se abre a conversa.
+    linhaPad: "8px 12px 8px 16px",
+    linhaAlt: 52,
+    gapLinha: 12,
+    avatar: 36,
+    gapDia: 2,
+    // 72% num monitor largo dá linha de 100+ caracteres. 560 px a 13,5 dá ~75,
+    // que é a faixa confortável de leitura.
+    bolhaMax: "min(72%, 560px)",
+    raioBolha: 14,
+    bolhaPad: "8px 12px",
+    numeroHeroi: true,
   },
 };
 
@@ -634,6 +670,36 @@ function FichaCadastro({ clienteId, temErp, pedirDados, avisar }: {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Estado vazio, carregando ou sem resultado — UMA anatomia (item 28 do laudo).
+//
+// A tela tinha quatro: um bloco centrado com emoji de 44 px, dois avisos de uma
+// linha em cinza com padding 14 e um terceiro com padding 20 e centrado. São o
+// mesmo momento da experiência — "não há nada aqui" — contado de quatro jeitos,
+// e é o tipo de coisa que faz um sistema parecer montado por pessoas
+// diferentes, porque foi.
+//
+// Só `bancada` usa este componente; os outros desenhos mantêm o markup literal
+// de antes, para o rollback continuar exato.
+//
+// `texto` é a CAUSA, não enfeite: um vazio que não diz por que está vazio faz
+// quem olha desconfiar do sistema em vez de entender a situação.
+function Estado({ glifo, titulo, texto, alto }: {
+  glifo: string; titulo: string; texto?: string;
+  /** ocupa a área toda (thread sem conversa) em vez de uma faixa na lista */
+  alto?: boolean;
+}) {
+  return (
+    <div style={{ ...(alto ? { flex: 1 } : null), display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", textAlign: "center",
+      gap: 6, padding: alto ? 24 : "28px 20px", color: M.muted }}>
+      <div style={{ fontSize: alto ? 40 : 26, opacity: 0.5, lineHeight: 1 }}>{glifo}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: M.gray, letterSpacing: -0.2 }}>{titulo}</div>
+      {texto && <div style={{ fontSize: 12, lineHeight: 1.5, maxWidth: 260 }}>{texto}</div>}
+    </div>
+  );
+}
+
 function PainelContato({ c, aba, extra, fichaDe }: {
   c: Contato | null; aba: AbaContato; extra?: any;
   /** a ficha de cadastro (0109); ausente em card sintetico do ERP */
@@ -676,11 +742,18 @@ function PainelContato({ c, aba, extra, fichaDe }: {
   // que dizer — quanto ela compra, há quanto tempo sumiu, onde está no ciclo —
   // ficavam a um ou dois cliques. Aqui eles são a primeira coisa, em corpo
   // grande, porque são lidos de relance no meio de uma conversa.
-  const Numero = ({ r, v, cor, dica }: { r: string; v: string; cor?: string; dica?: string }) => (
-    <div title={dica} style={{ flex: 1, minWidth: 0, padding: "9px 10px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10 }}>
-      <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.4, fontVariantNumeric: "tabular-nums",
+  // `heroi` = o número que decide a conversa (quanto ela compra) ocupa a coluna
+  // inteira, em corpo 26. Os outros dois ficam lado a lado embaixo, em 17.
+  //
+  // Não é preferência estética: três tiles iguais num painel de 268 px deixam
+  // ~55 px de texto para cada, e `R$ 12.480,00` precisa de 112. Ou seja, quanto
+  // MAIOR a cliente, mais cedo o número sumia — exatamente ao contrário do que
+  // deveria. O painel foi a 320 na entrega 1; a hierarquia fecha a conta.
+  const Numero = ({ r, v, cor, dica, heroi }: { r: string; v: string; cor?: string; dica?: string; heroi?: boolean }) => (
+    <div title={dica} style={{ flex: 1, minWidth: 0, padding: heroi ? "10px 12px" : "9px 10px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 10 }}>
+      <div style={{ fontSize: heroi ? 26 : 17, fontWeight: G.numeroHeroi ? 700 : 800, letterSpacing: heroi ? -0.8 : -0.4, lineHeight: heroi ? 1.05 : 1.2, fontVariantNumeric: "tabular-nums",
         color: cor ?? M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</div>
-      <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: M.gray, marginTop: 1 }}>{r}</div>
+      <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: M.gray, marginTop: heroi ? 2 : 1 }}>{r}</div>
     </div>
   );
 
@@ -691,16 +764,20 @@ function PainelContato({ c, aba, extra, fichaDe }: {
           <Vazio t="Este contato não tem vínculo com o cadastro do WinThor, então não há histórico de compra para resumir. O CPF no painel do RD é o que cria o vínculo." />
         ) : (
           <>
-            <div style={{ display: "flex", gap: 7, padding: "12px 14px 10px" }}>
-              <Numero r="comprado" v={moedaBR(compras?.total_liquido)} dica="Faturamento líquido — já descontadas as devoluções" />
-              <Numero r="sem comprar"
-                v={compras?.dias_sem_comprar == null ? "—" : `${compras.dias_sem_comprar}d`}
-                cor={pct != null && pct >= 100 ? M.laranja : undefined}
-                dica="Dias desde a última nota faturada" />
-              {cicloOn && (
-                <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
-                  dica="Quanto do intervalo médio de recompra desta cliente já passou" />
-              )}
+            <div style={{ display: "flex", flexDirection: G.numeroHeroi ? "column" : "row", gap: 7, padding: "12px 14px 10px" }}>
+              <Numero r="comprado" v={moedaBR(compras?.total_liquido)} heroi={G.numeroHeroi}
+                dica="Faturamento líquido — já descontadas as devoluções" />
+              {/* os dois de apoio dividem uma linha só quando há herói acima */}
+              <div style={{ display: "flex", gap: 7, ...(G.numeroHeroi ? null : { display: "contents" as const }) }}>
+                <Numero r="sem comprar"
+                  v={compras?.dias_sem_comprar == null ? "—" : `${compras.dias_sem_comprar}d`}
+                  cor={pct != null && pct >= 100 ? M.laranja : undefined}
+                  dica="Dias desde a última nota faturada" />
+                {cicloOn && (
+                  <Numero r="do ciclo" v={pct == null ? "—" : `${Math.round(pct)}%`} cor={corCiclo}
+                    dica="Quanto do intervalo médio de recompra desta cliente já passou" />
+                )}
+              </div>
             </div>
             {ciclo?.acao_recomendada && (
               <div style={{ margin: "0 14px 12px", padding: "9px 12px", fontSize: 12, lineHeight: 1.5,
@@ -2247,7 +2324,18 @@ export default function Chat() {
   // so, senao a conversa — que e o motivo da janela existir — fica espremida.
   // Viram icone; o `title` que cada botao ja tinha vira a legenda no hover.
   const compacto = embutido;
-  const rot = (icone: string, texto: string) => (compacto ? icone : texto);
+  // `bancada` troca o emoji por traço monocromático (item 18 do laudo): sete
+  // emoji lado a lado são sete pesos e sete cores decididos pela fonte do
+  // sistema, não por nós. Os outros desenhos seguem com o emoji — trocar o
+  // ícone de quem não pediu quebraria o rollback exato.
+  const rot = (icone: string, texto: string, n?: NomeIcone, limpo?: string) => {
+    if (!bc || !n) return compacto ? icone : texto;
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: compacto ? 0 : 6 }}>
+        <Icone n={n} />{!compacto && (limpo ?? texto)}
+      </span>
+    );
+  };
   // -20% no compacto: sao 4 pilulas de icone competindo com o nome na MESMA
   // linha desde a mudanca anterior; cada pixel a menos aqui e um pixel a mais
   // para o nome antes das reticencias.
@@ -2259,6 +2347,10 @@ export default function Chat() {
   // 44 px, que é a régua de acessibilidade e não uma preferência.
   const pilBtn = isMobile && !compacto ? 44 : compacto ? G.pilBtnC : G.pilBtn;
   const raioPilBtn = compacto ? G.raioPilC : G.raioPil;
+  // SVG dentro de <button> nao se centraliza sozinho como texto se centraliza.
+  // So em `bancada`, onde o filho e um <svg>: nos outros o filho e emoji e o
+  // alinhamento de hoje ja esta certo.
+  const CENTRO = { display: "flex", alignItems: "center", justifyContent: "center" } as const;
   const envAlt = isMobile && !compacto ? 52 : compacto ? G.envAltC : G.envAlt;
   const envLarg = isMobile && !compacto ? 52 : compacto ? G.envLargC : G.envLarg;
 
@@ -2297,8 +2389,37 @@ export default function Chat() {
     // sobrando para a caixa de texto num aparelho de 390px (§29.2 item 6).
     // `paddingBottom` com safe-area tira o compositor de cima da barra de
     // gestos do iPhone.
-    <div style={{ height: d1 ? "100dvh" : "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif",
+    <div className="chat-raiz" style={{ height: d1 ? "100dvh" : "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif",
       ...(d1 && isMobile ? { paddingBottom: "env(safe-area-inset-bottom)" } : null) }}>
+      {/* A tela inteira é estilo inline, e inline não faz `:hover`. Este é o
+          único lugar do chat que precisa de uma regra de verdade: a linha da
+          hora das bolhas do meio de um grupo, que fica escondida e volta quando
+          o ponteiro entra na bolha (item 21/23 do laudo).
+          Só existe em `bancada` — nos outros desenhos a classe nem é aplicada.
+          Se o CSS não carregar, a regra deixa de valer e a linha aparece sempre:
+          degrada para o desenho de hoje, nunca para uma bolha sem hora. */}
+      {/* Movimento: vale para TODOS os desenhos. Quem liga "reduzir movimento"
+          no sistema costuma fazê-lo por enxaqueca ou vertigem — não é
+          preferência estética, e não deve depender de qual tema está ativo. */}
+      <style dangerouslySetInnerHTML={{ __html:
+        "@media(prefers-reduced-motion:reduce){.chat-raiz *,.chat-raiz *::before,.chat-raiz *::after"
+        + "{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}" }} />
+      {bc && (
+        <style dangerouslySetInnerHTML={{ __html:
+          ".bc-meta{display:none}.bc-bolha:hover .bc-meta{display:flex}"
+          + "@media(hover:none){.bc-meta{display:flex}}"
+          // Barra de rolagem fina nas três colunas. A larga do Windows come 15 px
+          // da lista — e é justamente a lista que já cedeu largura para a coluna
+          // das horas.
+          + ".bc-rolagem{scrollbar-width:thin;scrollbar-color:#c9c4d0 transparent}"
+          + ".bc-rolagem::-webkit-scrollbar{width:8px;height:8px}"
+          + ".bc-rolagem::-webkit-scrollbar-thumb{background:#c9c4d0;border-radius:8px}"
+          + ".bc-rolagem::-webkit-scrollbar-track{background:transparent}"
+          // Foco visível de verdade. O azul de FOCO é o #2f7fd4, que passa os 3:1
+          // exigidos de elemento não-textual — e não serve como fundo de botão
+          // (4,11:1 com texto branco), que é onde o #1a5fa8 entra.
+          + ".chat-raiz :focus-visible{outline:2px solid #2f7fd4;outline-offset:2px;border-radius:4px}" }} />
+      )}
       {/* ---- LIGAÇÃO (0087) — camadas flutuantes, fora do fluxo da tela --------
           Ficam aqui, no topo do componente, e não dentro da thread: a chamada
           sobrevive à troca de conversa e continua visível se o vendedor for
@@ -2709,7 +2830,7 @@ export default function Chat() {
                 )}
               </div>
             </div>
-            <div style={{ flex: 1, overflowY: "auto" }}>
+            <div className={bc ? "bc-rolagem" : undefined} style={{ flex: 1, overflowY: "auto" }}>
               {erro && <div style={{ padding: 14, fontSize: 12.5, color: M.laranja }}>{erro}</div>}
 
               {/* ---- MINHA CARTEIRA: a agenda, não uma fila de conversas ----
@@ -2793,7 +2914,9 @@ export default function Chat() {
                 )
               ) : (
               <>
-              {!erro && !conversas.length && <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando conversas…</div>}
+              {!erro && !conversas.length && (bc
+                ? <Estado glifo="⏳" titulo="Carregando conversas…" />
+                : <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando conversas…</div>)}
               {ordenadas.map((c) => {
                 const ativa = sel?.cliente_id === c.cliente_id;
                 const doCliente = c.ultima_enviada_por === "customer";
@@ -2801,9 +2924,9 @@ export default function Chat() {
                   <button
                     key={c.cliente_id}
                     onClick={() => abrir(c)}
-                    style={{ display: "flex", gap: 10, width: "100%", textAlign: "left", padding: "10px 12px", background: ativa ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}
+                    style={{ display: "flex", alignItems: "center", gap: G.gapLinha, width: "100%", textAlign: "left", padding: G.linhaPad, minHeight: G.linhaAlt || undefined, background: ativa ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit", boxSizing: "border-box" }}
                   >
-                    <span style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 38, background: ativa ? M.roxo : M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800 }}>
+                    <span style={{ width: G.avatar, height: G.avatar, flexShrink: 0, borderRadius: G.avatar, background: ativa ? M.roxo : M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: bc ? 700 : 800 }}>
                       {(c.cliente ?? "?").trim().charAt(0).toUpperCase()}
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -2812,7 +2935,13 @@ export default function Chat() {
                         {(c.status ?? "aberta") === "resolvida" && (
                           <span title="conversa resolvida" style={{ fontSize: 10, color: "#1a6b3c", flexShrink: 0 }}>✓</span>
                         )}
-                        <span style={{ fontSize: 10.5, color: c.nao_lida ? M.roxo : M.muted, fontWeight: c.nao_lida ? 800 : 400, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{rotuloTempo(c.ultima_atividade)}</span>
+                        {/* em `bancada` a hora sai daqui e vai para a coluna da
+                            direita, junto do ponto de não-lida — é isso que faz
+                            as horas formarem uma régua vertical em vez de
+                            dançarem conforme o comprimento de cada nome */}
+                        {!bc && (
+                          <span style={{ fontSize: 10.5, color: c.nao_lida ? M.roxo : M.muted, fontWeight: c.nao_lida ? 800 : 400, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{rotuloTempo(c.ultima_atividade)}</span>
+                        )}
                       </span>
                       <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                         <span style={{ fontSize: 12, color: M.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
@@ -2831,16 +2960,31 @@ export default function Chat() {
                           <span title={`${presentes[c.cliente_id].join(", ")} com esta conversa aberta`}
                             style={{ fontSize: 10, flexShrink: 0 }}>👀</span>
                         )}
-                        {c.nao_lida && (
+                        {!bc && c.nao_lida && (
                           <span title="não lida" style={{ width: 9, height: 9, borderRadius: 9, background: M.roxo, flexShrink: 0 }} />
                         )}
                       </span>
                     </span>
+                    {/* a coluna das horas: largura FIXA, para a régua existir.
+                        Se ela medisse o conteúdo, "09:18" e "26/08" teriam
+                        larguras diferentes e nada alinharia. */}
+                    {bc && (
+                      <span style={{ width: 38, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+                        <span style={{ fontSize: 10.5, color: c.nao_lida ? M.roxo : M.muted, fontWeight: c.nao_lida ? 700 : 400, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                          {rotuloTempo(c.ultima_atividade)}
+                        </span>
+                        {c.nao_lida
+                          ? <span title="não lida" style={{ width: 9, height: 9, borderRadius: 9, background: M.roxo }} />
+                          : <span style={{ width: 9, height: 9 }} />}
+                      </span>
+                    )}
                   </button>
                 );
               })}
               {busca && !ordenadas.length && !buscandoMsgs && !achadosNovos.length && (
-                <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Nada encontrado para “{busca}”.</div>
+                bc
+                  ? <Estado glifo="🔍" titulo={`Nada encontrado para “${busca}”`} texto="A busca por nome e telefone é local; procurar dentro das mensagens exige três letras e roda no servidor, logo abaixo." />
+                  : <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Nada encontrado para “{busca}”.</div>
               )}
 
               {/* ---- busca no CONTEÚDO das mensagens (servidor) ---- */}
@@ -2909,11 +3053,16 @@ export default function Chat() {
         {mostraThread && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: M.bgThread }}>
             {!sel && (
+              bc ? (
+                <Estado alto glifo="💬" titulo="Selecione uma conversa ao lado"
+                  texto="Mensagem livre só sai dentro da janela de 24h depois da última resposta da cliente; fora dela, só template." />
+              ) : (
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: M.muted }}>
                 <div style={{ fontSize: 44 }}>💬</div>
                 <div style={{ fontSize: 14.5, fontWeight: 700, color: M.gray }}>Selecione uma conversa ao lado</div>
                 <div style={{ fontSize: 12 }}>mensagens dentro da janela de 24h são enviadas na hora</div>
               </div>
+              )
             )}
             {sel && (
               <>
@@ -2988,7 +3137,7 @@ export default function Chat() {
                       <button onClick={puxarDaFila} disabled={puxando} title="Assumir este atendimento"
                         style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: "#1a6b3c", border: "none",
                           borderRadius: 999, padding: "6px 13px", cursor: puxando ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                        {puxando ? "…" : rot("✋", "✋ Pegar atendimento")}
+                        {puxando ? "…" : rot("✋", "✋ Pegar atendimento", "pegar", "Pegar atendimento")}
                       </button>
                     ) : (
                       <span title="admin/supervisão não têm carteira: use Transferir para designar alguém"
@@ -3001,7 +3150,7 @@ export default function Chat() {
                   {(!isMobile || compacto) && (
                     <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente (ERP)"}
                       style={{ fontSize: fonteBotao, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      {rot("📊", "📊 Cliente")}
+                      {rot("📊", "📊 Cliente", "cliente", "Cliente")}
                     </button>
                   )}
                   {/* ligar: só nas conversas do piloto (Cloud API). `linha.canal`
@@ -3014,6 +3163,7 @@ export default function Chat() {
                     emChamada={!!lig.chamada}
                     onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
                     compacto={compacto}
+                    bancada={bc}
                   />
                   {/* Devolver só aparece quando o cliente NÃO tem dono comercial
                       (`carteira_dona` nula) e a conversa está comigo: é o desfazer
@@ -3025,28 +3175,32 @@ export default function Chat() {
                     <button onClick={devolverParaFila} disabled={puxando}
                       title="Devolver para a fila de espera — volta a ficar disponível para qualquer pessoa"
                       style={{ fontSize: fonteBotao, fontWeight: 700, color: M.gray, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 999, padding: padBotao, cursor: puxando ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      {rot("↩", "↩ Devolver")}
+                      {rot("↩", "↩ Devolver", "devolver", "Devolver")}
                     </button>
                   )}
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
                     style={{ fontSize: fonteBotao, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                    {rot("↪", "↪ Transferir")}
+                    {rot("↪", "↪ Transferir", "transferir", "Transferir")}
                   </button>
                   {(sel.status ?? "aberta") === "resolvida" ? (
                     <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
                       style={{ fontSize: fonteBotao, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      {rot("↺", "✓ Resolvida — reabrir")}
+                      {rot("↺", "✓ Resolvida — reabrir", "reabrir", "Resolvida — reabrir")}
                     </button>
                   ) : (
+                    /* item 17 do laudo: em `bancada` o Resolver e VERDE, porque
+                       verde e "concluido" nesta paleta e cada familia de cor tem um
+                       trabalho so. Roxo aqui competia com a marca; e liberar o azul
+                       preenchido para o enviar, que passa a ser o unico da tela. */
                     <button onClick={() => setResolvendo((v) => !v)} title="Encerrar atendimento com um motivo"
-                      style={{ fontSize: fonteBotao, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: compacto ? "4px 8px" : "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      {rot("✓", "Resolver")}
+                      style={{ fontSize: fonteBotao, fontWeight: 700, color: "#fff", background: bc ? M.ok : M.roxo, border: "none", borderRadius: 999, padding: compacto ? "4px 8px" : "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      {rot("✓", "Resolver", "resolver", "Resolver")}
                     </button>
                   )}
                   {sel.telefone && (
                     <a href={`https://wa.me/${String(sel.telefone).replace(/\D/g, "").length <= 11 ? "55" : ""}${String(sel.telefone).replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" title="Abrir no WhatsApp" style={{ fontSize: 12, fontWeight: 700, color: M.azul, textDecoration: "none", whiteSpace: "nowrap" }}>
-                      {rot("↗", "WhatsApp ↗")}
+                      {rot("↗", "WhatsApp ↗", "externo", "WhatsApp")}
                     </a>
                   )}
                   {/* D1 · no celular não há faixa de abas: este é o caminho
@@ -3150,9 +3304,12 @@ export default function Chat() {
                 )}
 
                 {/* mensagens */}
-                <div ref={rolagemRef} style={{ position: "relative", flex: 1, overflowY: "auto", padding: G.msgsPad, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div ref={rolagemRef} className={bc ? "bc-rolagem" : undefined} style={{ position: "relative", flex: 1, overflowY: "auto", padding: G.msgsPad, display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
-                  {msgs?.length === 0 && !notas.length && ocultas === 0 && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>}
+                  {msgs?.length === 0 && !notas.length && ocultas === 0 && (bc
+                    ? <Estado glifo="✉️" titulo="Sem mensagens ainda"
+                        texto="Este contato existe no cadastro, mas ainda não trocou nenhuma mensagem por este número." />
+                    : <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>)}
 
                   {/* Histórico do outro número, a um clique — como o RD faz (0103).
                       Fica no TOPO porque é o que vem antes na linha do tempo. Sem
@@ -3199,11 +3356,11 @@ export default function Chat() {
                   )}
 
                   {grupos.map((g) => (
-                    <div key={g.dia} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div key={g.dia} style={{ display: "flex", flexDirection: "column", gap: G.gapDia }}>
                       <div style={{ alignSelf: "center", fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px", margin: "8px 0 4px" }}>
                         {g.dia.split("-").reverse().join("/")}
                       </div>
-                      {g.itens.map((it) => {
+                      {g.itens.map((it, iIt) => {
                         // ligação: mesmo tratamento de marco — o contato por voz
                         // aparece na conversa, no ponto em que aconteceu (0087)
                         if (it.k === "l") return <MarcoLigacao key={`l${it.l.id}`} l={it.l} />;
@@ -3253,10 +3410,35 @@ export default function Chat() {
                         }
                         const m = it.m;
                         const fora = m.enviada_por !== "customer"; // operator/bot = lado direito
+                        // ---- agrupamento por autor (bancada) -----------------
+                        // Hoje cada mensagem carrega a própria hora e o próprio
+                        // tique, o que enche a coluna direita de repetição —
+                        // cinco mensagens seguidas da mesma pessoa mostram cinco
+                        // vezes o mesmo minuto. Aqui a hora aparece só na ÚLTIMA
+                        // bolha do grupo, e o grupo respira 10 px enquanto as
+                        // bolhas de dentro ficam a 2.
+                        //
+                        // "Mesmo grupo" = mesmo LADO da conversa em itens
+                        // consecutivos. Marco de ligação, nota e transferência
+                        // quebram o grupo por serem outra coisa — e devem
+                        // quebrar: são o assunto mudando.
+                        const ladoDe = (x: any) => (x && x.k === "m" ? (x.m.enviada_por !== "customer") : null);
+                        // Mensagem que FALHOU sempre fecha o grupo, e a seguinte
+                        // abre outro: ela pendura o recado "não entregue" abaixo
+                        // de si, que é uma barra larga cortando a conversa ao
+                        // meio. Sem esta regra, a hora do grupo iria parar do
+                        // outro lado dessa barra, longe das bolhas que ela datava.
+                        const falhou = (x: any) => !!(x && x.k === "m" && x.m.status === "failed");
+                        const abreGrupo = ladoDe(g.itens[iIt - 1]) !== fora || falhou(g.itens[iIt - 1]);
+                        const fechaGrupo = ladoDe(g.itens[iIt + 1]) !== fora || falhou(it);
                         return (
                           // empilha em coluna quando há um recado abaixo da bolha
                           // (a falha do D1): em `row` ele iria PARA O LADO dela
                           <div key={m.id} style={{ display: "flex", position: "relative",
+                            // 8 px somados ao `gap` de 2 dão os 10 entre grupos.
+                            // No primeiro item do dia não, porque a pastilha da
+                            // data já traz a própria margem.
+                            marginTop: bc && abreGrupo && iIt > 0 ? 8 : undefined,
                             // só o D1 empilha: ele pendura um recado de falha
                             // abaixo da bolha, e em `row` ele iria para o LADO.
                             // O desenho original fica byte a byte como era —
@@ -3264,7 +3446,16 @@ export default function Chat() {
                             ...(d1
                               ? { flexDirection: "column" as const, alignItems: fora ? "flex-end" : "flex-start" }
                               : { justifyContent: fora ? "flex-end" : "flex-start" }) }}>
-                            <div style={{ maxWidth: "72%", background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? (d1 ? "#c9dff5" : "#dcc8e2") : M.border}`, borderRadius: fora ? "12px 12px 3px 12px" : "12px 12px 12px 3px", padding: "7px 11px", boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
+                            <div className={bc ? "bc-bolha" : undefined}
+                              style={{ maxWidth: G.bolhaMax, background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? (d1 ? "#c9dff5" : "#dcc8e2") : M.border}`,
+                              // a quina que aponta para o autor só existe na
+                              // ÚLTIMA bolha do grupo: no meio dele, as quatro
+                              // pontas iguais é que fazem as bolhas lerem como
+                              // uma fala só, em vez de cinco recados soltos.
+                              borderRadius: bc && !fechaGrupo
+                                ? G.raioBolha
+                                : fora ? `${G.raioBolha}px ${G.raioBolha}px 3px ${G.raioBolha}px` : `${G.raioBolha}px ${G.raioBolha}px ${G.raioBolha}px 3px`,
+                              padding: G.bolhaPad, boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
                               {m.tipo === "template" && (
                                 <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.roxo, marginBottom: 3 }}>template</div>
                               )}
@@ -3293,7 +3484,19 @@ export default function Chat() {
                                   estreita, e um botao por fora empurraria o
                                   texto. Aparece so em mensagem com conteudo --
                                   marco de sistema e reacao nao se encaminham. */}
-                              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
+                              {/* Em `bancada`, a linha da hora some das bolhas do
+                                  MEIO do grupo — mas some só visualmente: ela
+                                  reaparece no hover (classe `bc-meta`), porque o
+                                  encaminhar mora aqui dentro e sumir com ele
+                                  tornaria metade das mensagens não-encaminháveis.
+                                  Em aparelho de toque, onde não há hover, a linha
+                                  fica sempre visível: ali o desenho é o de hoje,
+                                  e nada se perde. */}
+                              <div className={bc && !fechaGrupo ? "bc-meta" : undefined}
+                                style={{ justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums",
+                                  // sem `display` inline quando a classe manda —
+                                  // estilo inline venceria a regra do CSS
+                                  ...(bc && !fechaGrupo ? {} : { display: "flex" }) }}>
                                 {(m.conteudo || m.midia_path) && m.tipo !== "evento_sistema" && (
                                   <button
                                     onClick={() => { setEncaminhando(m); setBuscaEnc(""); }}
@@ -3560,9 +3763,9 @@ export default function Chat() {
                     onClick={() => (locais.length ? setAnexoAberto((v) => !v) : arquivoRef.current?.click())}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
+                    {!enviandoArquivo ? (bc ? <Icone n="clipe" /> : "📎") : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
                   {anexoAberto && (
                     <>
@@ -3602,12 +3805,12 @@ export default function Chat() {
                     onClick={alternarGravacao}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), flexShrink: 0, fontFamily: "inherit", fontSize: 17,
                       opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
                       border: "none",
                       background: gravando ? "#fdeae3" : "transparent", color: gravando ? M.laranja : M.gray }}
                   >
-                    {gravando ? "⏹" : "🎤"}
+                    {bc ? <Icone n={gravando ? "parar" : "microfone"} /> : gravando ? "⏹" : "🎤"}
                   </button>
                   {gravando && (
                     <span style={{ display: "flex", alignItems: "center", gap: 7, alignSelf: "center", whiteSpace: "nowrap" }}>
@@ -3667,28 +3870,28 @@ export default function Chat() {
                     title={!janelaAberta
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null),
                       border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
                       fontFamily: "inherit", flexShrink: 0 }}>
-                    {pausando ? "…" : "⏸"}
+                    {pausando ? "…" : bc ? <Icone n="pausa" /> : "⏸"}
                   </button>
                   <button
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    ⚡
+                    {bc ? <Icone n="raio" /> : "⚡"}
                   </button>
                   {/* 🗒️ nota interna — o cliente NUNCA vê o que for escrito aqui */}
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    🗒️
+                    {bc ? <Icone n="nota" /> : "🗒️"}
                   </button>
                           </div>
                         </>
@@ -3702,28 +3905,28 @@ export default function Chat() {
                     title={!janelaAberta
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn,
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null),
                       border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
                       fontFamily: "inherit", flexShrink: 0 }}>
-                    {pausando ? "…" : "⏸"}
+                    {pausando ? "…" : bc ? <Icone n="pausa" /> : "⏸"}
                   </button>
                   <button
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    ⚡
+                    {bc ? <Icone n="raio" /> : "⚡"}
                   </button>
                   {/* 🗒️ nota interna — o cliente NUNCA vê o que for escrito aqui */}
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    🗒️
+                    {bc ? <Icone n="nota" /> : "🗒️"}
                   </button>
                     </>
                   )}
@@ -3740,7 +3943,7 @@ export default function Chat() {
                           onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
                           disabled={enviando}
                           title="Escolher um template — reabre a conversa fora da janela de 24h"
-                          style={{ height: pilBtn, width: compacto ? pilBtn : undefined, padding: compacto ? 0 : "0 12px", borderRadius: raioPilBtn, border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: bc ? 700 : 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                          style={{ height: pilBtn, width: compacto ? pilBtn : undefined, padding: compacto ? 0 : "0 12px", borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: bc ? 700 : 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                         >
                           {/* Na lupa a palavra sozinha comia ~90px de um compositor
                               de 500px. Vira "T", como os demais icones da barra —
@@ -3838,9 +4041,9 @@ export default function Chat() {
                     // Em `bancada` o enviar é o ÚNICO azul preenchido da tela —
                     // é o que faz "a ação" ter um lugar só. Nos outros desenhos
                     // ele segue púrpura, como sempre foi.
-                    style={{ width: envLarg, height: envAlt, borderRadius: raioPilBtn, border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : bc ? M.azul : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
+                    style={{ width: envLarg, height: envAlt, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: !texto.trim() ? M.roxoSoft : modoNota ? NOTA.ink : bc ? M.azul : M.roxo, color: texto.trim() ? "#fff" : M.muted, fontSize: 17, cursor: texto.trim() ? "pointer" : "default", fontFamily: "inherit", transition: "background .15s", flexShrink: 0 }}
                   >
-                    {enviando ? "…" : modoNota ? "🗒️" : "➤"}
+                    {enviando ? "…" : bc ? <Icone n={modoNota ? "nota" : "enviar"} /> : modoNota ? "🗒️" : "➤"}
                   </button>
                 </div>
               </>
@@ -3850,7 +4053,7 @@ export default function Chat() {
 
         {/* ---- painel do contato (desktop): o ERP ao lado da conversa ---- */}
         {mostraThread && sel && painelAberto && !isMobile && (
-          <div style={{ width: G.painel, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
+          <div className={bc ? "bc-rolagem" : undefined} style={{ width: G.painel, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
             <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
               <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaAtual)?.rotulo}</b>
               <div style={{ fontSize: 10.5, color: M.gray, marginTop: 1 }}>
