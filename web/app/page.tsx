@@ -2944,7 +2944,15 @@ export default function Page() {
                         : ((col.key === "tentativa_contato" && diasInativo(c.ultima_atividade) >= DIAS_RECONTATO) || col.key === "ociosos");
                       const ultimoDisparo = ((col.key === "tentativa_contato" || col.key === "ociosos" || prospeccao) && idEnvio) ? disparos[idEnvio] : undefined;
                       // input de msg livre (24h): negociação sempre; pedido emitido só quando tem conversa real
-                      const temConversaReal = !String(c.cliente_id).includes(":");
+                      // ⚠️ NAO e "sem dois-pontos". Era, e por isso Maria e Ronaldo
+                      // apareciam com dois icones enquanto o vizinho tinha seis: os
+                      // contatos do NOSSO numero tem id `wa:<telefone>` (§16.3), e o
+                      // teste antigo os tratava como card sintetico do ERP. Ligar,
+                      // audio, anexo, lupa e a thread rolavel sumiam justamente nas
+                      // conversas da Cloud -- que sao o futuro do sistema, e serao
+                      // TODAS depois do corte. O que precisa ficar de fora e so o que
+                      // nao tem conversa nenhuma: `winthor:` e `venda:`.
+                      const temConversaReal = !/^(winthor|venda):/.test(String(c.cliente_id));
                       const mostraInput = col.key === "negociacao" || (col.key === "pedido_emitido" && temConversaReal && dentro24h(c.ultima_atividade));
                       // disparo há MENOS de 4 dias => botão desativado (aguardando resposta).
                       // após 4 dias sem resposta, o botão TEMPLATE volta a liberar.
@@ -3298,26 +3306,28 @@ export default function Page() {
                 )}
                 {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
                 <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
-                {zDisparoRecente ? (
-                  <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "2px 7px", fontSize: 9, fontWeight: 800 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO RESPOSTA</span>
-                ) : (zRecontactar && zid) ? (
-                  <button onClick={(e) => { e.stopPropagation(); recontatar(zid!, zc.cliente, zc); }} onMouseDown={(e) => e.stopPropagation()} disabled={enviando === zid} title="Enviar template (usa o template padrão)" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#f8e6ec", color: "#9c1f47", border: "1px solid #ecc6d2", borderRadius: 5, padding: "2px 8px", fontSize: 9, fontWeight: 800, cursor: enviando === zid ? "wait" : "pointer" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#b02350" }} />{enviando === zid ? "ENVIANDO…" : "TEMPLATE"}</button>
-                ) : null}
+                {/* Ciclo e tempo entram AQUI, na mesma linha: sao a unica coisa
+                    do card que a conversa embaixo nao mostra. */}
+                {zciclo && (
+                  <span title={`Ciclo de compra: ${zciclo.label}`} style={{ display: "inline-flex", alignItems: "center", background: zciclo.bg, color: zciclo.cor, border: `1px solid ${zciclo.cor}44`, borderRadius: 5, padding: "1px 6px", fontSize: 9.5, fontWeight: 800, whiteSpace: "nowrap" }}>{zciclo.label}</span>
+                )}
+                {!zprospec && zUltimaEf && (
+                  <span title="Tempo desde a ultima atividade" style={{ fontSize: 10.5, color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 500, whiteSpace: "nowrap" }}>{tempoRelativo(zUltimaEf)}</span>
+                )}
+                {zDisparoRecente && (
+                  <span title="Template enviado — aguardando resposta" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "1px 6px", fontSize: 8.5, fontWeight: 800, whiteSpace: "nowrap" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO</span>
+                )}
               </div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: RD.navy, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cap(zc.cliente)}</div>
-              {zciclo && (
-                <span style={{ display: "inline-flex", alignItems: "center", marginTop: 5, background: zciclo.bg, color: zciclo.cor, border: `1px solid ${zciclo.cor}44`, borderRadius: 6, padding: "1px 8px", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2 }}>{zciclo.label}{zc.ciclo?.acao === "LIGAR HOJE" ? " ·hoje" : ""}</span>
-              )}
             </div>
-            {/* dono da carteira + tempo parado: sobe para cá porque a conversa
-                agora traz o próprio compositor colado no rodapé */}
-            <div style={{ padding: "0 14px 9px", display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: RD.gray, fontWeight: 600 }}>
-              <span style={{ width: 7, height: 7, borderRadius: 7, background: vendCores[zc.vendedor ?? ""] ?? CoresVendedor[zc.vendedor ?? ""] ?? RD.grayLight }} />
-              {cap(zc.vendedor) || "sem dono"}
-              {!zprospec && zUltimaEf && (
-                <span style={{ color: zRecontactar ? "#d92d20" : RD.grayLight, fontWeight: zRecontactar ? 700 : 400 }}> · {tempoRelativo(zUltimaEf)}</span>
-              )}
-            </div>
+            {/* ---- o que SAIU deste cabecalho, e por que ---------------------
+                Tres linhas viraram uma. O nome do cliente aparecia aqui em corpo
+                grande, o vendedor logo abaixo, e a conversa embaixo repetia os
+                dois -- "Romulo" tres vezes na mesma janela, comendo quase metade
+                da altura util de um quadro que existe para mostrar CONVERSA.
+                  · nome, telefone, carteira e linha: ja no cabecalho do chat;
+                  · botao TEMPLATE: ja no compositor do chat, logo ali embaixo.
+                Ficou so o que a conversa nao diz: em que coluna o card esta, o
+                ciclo, o tempo parado e os botoes da janela. */}
             {/* A conversa inteira, com a mesma rolagem e o mesmo compositor do
                 /chat. A janela de 24h é decidida DENTRO do componente, pela
                 última mensagem recebida — não pela etapa do card, que podia
