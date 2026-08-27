@@ -3326,7 +3326,6 @@ export default function Page() {
                   <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
                 {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
-                <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Fechar a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>✕</button>
                 {/* Ciclo e tempo entram AQUI, na mesma linha: sao a unica coisa
                     do card que a conversa embaixo nao mostra. */}
                 {zciclo && (
@@ -3338,6 +3337,11 @@ export default function Page() {
                 {zDisparoRecente && (
                   <span title="Template enviado — aguardando resposta" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, background: "#fff7e6", color: "#b76e00", border: "1px solid #f3ddad", borderRadius: 5, padding: "1px 6px", fontSize: 8.5, fontWeight: 800, whiteSpace: "nowrap" }}><span style={{ width: 5, height: 5, borderRadius: 5, background: "#e08a00" }} />AGUARDANDO</span>
                 )}
+                {/* O fechar vai para a EXTREMIDADE DIREITA, como em qualquer
+                    janela: e onde a mao procura. `marginLeft:auto` empurra ele
+                    para la; quando o selo AGUARDANDO existe, e o selo que ja
+                    carrega o auto, e o botao so o acompanha. */}
+                <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Fechar a janela ampliada" style={{ marginLeft: zDisparoRecente ? 6 : "auto", width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>✕</button>
               </div>
             </div>
             {/* ---- o que SAIU deste cabecalho, e por que ---------------------

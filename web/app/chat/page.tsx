@@ -1999,7 +1999,11 @@ export default function Chat() {
   // Viram icone; o `title` que cada botao ja tinha vira a legenda no hover.
   const compacto = embutido;
   const rot = (icone: string, texto: string) => (compacto ? icone : texto);
-  const padBotao = compacto ? "5px 9px" : "5px 11px";
+  // -20% no compacto: sao 4 pilulas de icone competindo com o nome na MESMA
+  // linha desde a mudanca anterior; cada pixel a menos aqui e um pixel a mais
+  // para o nome antes das reticencias.
+  const padBotao = compacto ? "4px 7px" : "5px 11px";
+  const fonteBotao = compacto ? 9.5 : 11.5;
 
   const mostraLista = !isMobile || !sel;
   const mostraThread = !isMobile || !!sel;
@@ -2667,11 +2671,17 @@ export default function Chat() {
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <b style={{ display: "block", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nomeComCodigo(sel.cliente, sel.codcli)}</b>
                     <span style={{ fontSize: 11, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
-                      {sel.telefone ?? "sem telefone"}{sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
+                      {/* No compacto so o telefone. A carteira e o selo da linha
+                          empurravam a sub-linha para uma segunda linha num quadro
+                          de 500px -- e as duas ja aparecem no rodape da conversa,
+                          logo abaixo ("Carteira Milene | Murano Pro"). Repetir ali
+                          em cima custava exatamente a linha que o cabecalho tinha
+                          acabado de ganhar. */}
+                      {sel.telefone ?? "sem telefone"}{!compacto && sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
                           ativa, é o que evita responder pela linha errada (a janela
                           de 24h é por par número+cliente) */}
-                      {linha && (
+                      {linha && !compacto && (
                         <span title={`Esta conversa corre pelo ${linha.rotulo}`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
                           color: linha.canal === "rd" ? M.gray : M.roxo,
                           background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
@@ -2722,7 +2732,7 @@ export default function Chat() {
                   )}
                   {(!isMobile || compacto) && (
                     <button onClick={() => setPainelAberto((v) => !v)} title={painelAberto ? "Ocultar dados do cliente" : "Mostrar dados do cliente (ERP)"}
-                      style={{ fontSize: 11.5, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      style={{ fontSize: fonteBotao, fontWeight: 700, color: painelAberto ? "#fff" : M.wine, background: painelAberto ? M.wine : M.bg, border: `1px solid ${painelAberto ? M.wine : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                       {rot("📊", "📊 Cliente")}
                     </button>
                   )}
@@ -2739,17 +2749,17 @@ export default function Chat() {
                   />
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
-                    style={{ fontSize: 11.5, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    style={{ fontSize: fonteBotao, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                     {rot("↪", "↪ Transferir")}
                   </button>
                   {(sel.status ?? "aberta") === "resolvida" ? (
                     <button onClick={() => mudarStatus("aberta")} title="Voltar para a fila"
-                      style={{ fontSize: 11.5, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      style={{ fontSize: fonteBotao, fontWeight: 700, color: "#1a6b3c", background: "#eaf5ee", border: "1px solid #bfe0cb", borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                       {rot("↺", "✓ Resolvida — reabrir")}
                     </button>
                   ) : (
                     <button onClick={() => setResolvendo((v) => !v)} title="Encerrar atendimento com um motivo"
-                      style={{ fontSize: 11.5, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: compacto ? "5px 10px" : "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                      style={{ fontSize: fonteBotao, fontWeight: 700, color: "#fff", background: M.roxo, border: "none", borderRadius: 999, padding: compacto ? "4px 8px" : "6px 12px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                       {rot("✓", "Resolver")}
                     </button>
                   )}
