@@ -327,9 +327,41 @@ export async function GET() {
   // A contagem é feita AQUI, e não na view, por dois motivos: a view teria de
   // ganhar coluna (migration, e o número muda a cada mensagem que chega), e
   // isto custa UMA consulta só quando existem cards assim — hoje, seis.
-  const semVisivel = cardsOutros
-    .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string" && !c.cliente_id.includes(":"))
-    .map((c: any) => c.cliente_id);
+  // ---- COLUNA "SEM CADASTRO" -------------------------------------------
+  // Regra do usuário (27/08/2026): com o RD escondido, conversa que só existe
+  // lá **é o mesmo que não haver conversa** — é essa a simulação. Então, sem
+  // conversa visível, o que decide a coluna é o cadastro no ERP:
+  //
+  //     tem cadastro no WinThor  ->  Lista de prospecção
+  //     não tem                  ->  Sem cadastro
+  //
+  // Antes esses 79 caíam em Ociosos (ramo 1b, §31.3) e ficavam ao lado de quem
+  // parou de responder — dois problemas diferentes na mesma pilha. Ociosos volta
+  // a significar uma coisa só: conversou e parou.
+  //
+  // ⚠️ A regra mora AQUI e não na view de propósito: é decisão de apresentação,
+  // não muda o que o ETL enxerga (§32.2), e não custa migration.
+  //
+  // `sem_cadastro` é um PALPITE, não um fato: a view só marca true depois de não
+  // achar por vínculo, por telefone e por nome normalizado. É o melhor sinal que
+  // temos — por isso o card diz "não encontrei no WinThor", nunca "não existe".
+  for (const c of cardsOutros) {
+    if (!c.ultima_atividade && c.sem_cadastro && !String(c.cliente_id).includes(":")) {
+      c.etapa = "sem_cadastro";
+    }
+  }
+
+  // ⚠️ A contagem só existe enquanto a chave "Histórico do outro número" estiver
+  // LIGADA — que é a única coisa que ainda liga este sistema ao RD Conversas.
+  // Desligada, a conversa que só existe lá **é o mesmo que não existir**: é essa
+  // a simulação, e anunciar "91 mensagens no outro número" reintroduziria na
+  // tela o que a chave acabou de tirar. Com ela ligada, o número é útil porque
+  // o botão que abre esse histórico existe na conversa.
+  const semVisivel = (await cfgP).historico_rd   // `cfg` só é resolvido mais abaixo
+    ? cardsOutros
+        .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string" && !c.cliente_id.includes(":"))
+        .map((c: any) => c.cliente_id)
+    : [];
   if (semVisivel.length) {
     const TETO = 4000;   // 6 clientes x ~90 mensagens hoje; o teto é rede, não regra
     const { data: ocultas } = await sb
