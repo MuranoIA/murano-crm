@@ -1,0 +1,1120 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="claro">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Murano · Chat — Direção 4 “Bancada” (tema premium)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ===========================================================================
+   TEMA "BANCADA" — protótipo standalone. Nada aqui é código de produção.
+   Tese: nenhuma informação nova na tela. Tudo passa a obedecer a uma grade.
+   ---------------------------------------------------------------------------
+   As três escalas abaixo são o conteúdo real desta direção. Elas substituem,
+   na tela de hoje, 18 tamanhos de fonte, 65 combinações de padding, 15 raios
+   e 6 níveis de sombra medidos em web/app/chat/page.tsx.
+   =========================================================================== */
+
+:root{
+  /* --- ESPAÇO: base 4. Sete degraus, e nada fora deles. ------------------ */
+  --s1:2px; --s2:4px; --s3:8px; --s4:12px; --s5:16px; --s6:24px; --s7:32px;
+
+  /* Goteira da coluna. TUDO que tem borda começa aqui. */
+  --gut:16px;      /* desktop */
+  --gut-c:12px;    /* compacto 500px e celular */
+
+  /* --- ALTURA DE CONTROLE: três degraus por contexto -------------------- */
+  --h-sec:32px;    /* ação secundária, desktop */
+  --h-pri:40px;    /* ação primária e compositor, desktop */
+  --h-toque:44px;  /* piso de toque, celular */
+  --h-comp-m:52px; /* compositor no celular */
+  --h-sec-c:28px;  /* ação secundária, compacto */
+  --h-pri-c:36px;  /* compositor no compacto */
+
+  /* --- RAIO: a rampa da casa (murano-brand §4). Três, não quinze. ------- */
+  --r-ctl:10px;    /* botão e campo */
+  --r-card:14px;   /* cartão, bolha, folha */
+  --r-pill:999px;  /* pílula e selo */
+
+  /* --- ELEVAÇÃO: dois níveis. Todo o resto é borda. --------------------- */
+  --e1:0 1px 2px rgba(24,16,26,.06);
+  --e2:0 12px 32px rgba(24,16,26,.18);
+
+  /* --- TIPO: sete tokens ------------------------------------------------ */
+  --t-micro:10px;  /* rótulo de seção e selo — 700, +0.06em, caixa alta */
+  --t-meta:11.5px; /* hora, contador, metadado */
+  --t-c2:12.5px;   /* prévia da lista, linha de painel */
+  --t-corpo:13.5px;/* mensagem e campo de texto */
+  --t-titulo:14.5px;/* nome do cliente, título de painel */
+  --t-tela:17px;   /* título da fila */
+  --t-num:26px;    /* o número herói do painel */
+  --t-num2:17px;   /* números de apoio */
+
+  /* --- COR: cinco famílias, um trabalho cada --------------------------- */
+  --page:#f3f2f5;        /* fundo da aplicação */
+  --surf:#ffffff;        /* superfície de trabalho */
+  --sunken:#ebe9ef;      /* fundo da conversa e de campo */
+  --line:#e4e2e9;        /* divisória decorativa */
+  --line-strong:#8d8599; /* borda de controle — 3,53:1 sobre branco */
+
+  --ink:#221826;         /* texto primário    17,12:1 */
+  --ink2:#4d4757;        /* texto secundário   8,92:1 */
+  --ink3:#6b6577;        /* metadado           5,60:1 (5,02 sobre --page) */
+
+  --marca:#7a1755;       /* PÚRPURA = marca   10,09:1 com branco */
+  --marca-fraca:#f4ecf2;
+  --acao:#1a5fa8;        /* AZUL = ação        6,47:1 com branco */
+  --acao-fraca:#e9f1fb;
+  --acao-borda:#c9dff5;
+  --urg:#a83015;         /* LARANJA = urgência 6,78:1 com branco */
+  --urg-fraca:#fdeee9;
+  --urg-borda:#f2cabb;
+  --ok:#1a6b3c;          /* VERDE = concluído  6,54:1 com branco */
+  --ok-fraca:#e9f5ee;
+  --nota:#fdf6e3; --nota-borda:#e8d9a8; --nota-ink:#5f5017;
+
+  --bolha-in:#ffffff;
+  --bolha-out:var(--acao-fraca);
+  --bolha-out-borda:var(--acao-borda);
+
+  --foco:#2f7fd4;
+
+  --mov:160ms;
+  font-synthesis-weight:none;
+}
+
+html[data-tema="escuro"]{
+  --page:#14101a;
+  --surf:#201826;
+  --sunken:#191322;
+  --line:#332a3a;
+  --line-strong:#786a86;   /* 3,45:1 sobre a superfície */
+
+  --ink:#e2d8dc;           /* pérola — 12,37:1 */
+  --ink2:#c3b8c2;
+  --ink3:#a89dab;          /* 6,62:1 */
+
+  --marca:#c98bb0;
+  --marca-fraca:#2c1f2e;
+  --acao:#8ec2f5;          /* 9,17:1 */
+  --acao-fraca:#16324f;
+  --acao-borda:#2b4d70;
+  --urg:#f2a68f;           /* 8,71:1 */
+  --urg-fraca:#3a201a;
+  --urg-borda:#5b3227;
+  --ok:#86cba1;
+  --ok-fraca:#1a2f24;
+  --nota:#2f2a1a; --nota-borda:#4c4327; --nota-ink:#e5d7a6;
+
+  --bolha-in:#2a2031;
+  --bolha-out:var(--acao-fraca);
+  --bolha-out-borda:var(--acao-borda);
+
+  --e1:0 1px 2px rgba(0,0,0,.35);
+  --e2:0 14px 36px rgba(0,0,0,.55);
+  --foco:#8ec2f5;
+}
+
+/* Barra de rolagem: fina, sem trilho, e da cor do texto terciario. E o tipo de
+   acabamento que ninguem nota quando esta certo e incomoda o dia inteiro
+   quando esta errado. */
+.rolo,.msgs,.painel,.folha .conteudo,.abas{scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.rolo::-webkit-scrollbar,.msgs::-webkit-scrollbar,.painel::-webkit-scrollbar,
+.folha .conteudo::-webkit-scrollbar,.abas::-webkit-scrollbar{width:8px;height:8px}
+.rolo::-webkit-scrollbar-thumb,.msgs::-webkit-scrollbar-thumb,.painel::-webkit-scrollbar-thumb,
+.folha .conteudo::-webkit-scrollbar-thumb{background:var(--line-strong);opacity:.5;border-radius:var(--r-pill);
+  border:2px solid transparent;background-clip:content-box}
+.rolo::-webkit-scrollbar-track,.msgs::-webkit-scrollbar-track{background:transparent}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  background:var(--page); color:var(--ink);
+  font-size:var(--t-corpo); line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer;background:none;border:none;padding:0}
+b,strong{font-weight:600}
+
+/* Foco visível, um só desenho, em tudo. */
+:where(button,input,textarea,a,[tabindex]):focus-visible{
+  outline:2px solid var(--foco); outline-offset:2px; border-radius:var(--r-ctl);
+}
+
+/* MOVIMENTO — o que anima e por quanto. Nada repete, nada pisca. */
+.mov{transition:background var(--mov) ease, color var(--mov) ease, border-color var(--mov) ease}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{transition-duration:1ms !important;animation-duration:1ms !important}
+}
+
+/* =================== CROMO DA PÁGINA DO PROTÓTIPO ========================= */
+.topo{
+  position:sticky;top:0;z-index:50;background:var(--surf);
+  border-bottom:1px solid var(--line);padding:var(--s4) var(--s6);
+  display:flex;flex-wrap:wrap;gap:var(--s4) var(--s6);align-items:center;
+}
+.topo h1{margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em}
+.topo h1 span{color:var(--ink3);font-weight:500}
+.grp{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
+.grp>.rot{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.seg{display:inline-flex;background:var(--sunken);border:1px solid var(--line);border-radius:var(--r-ctl);padding:2px}
+.seg button{height:28px;padding:0 12px;border-radius:8px;font-size:var(--t-meta);font-weight:600;color:var(--ink2)}
+.seg button[aria-pressed="true"]{background:var(--surf);color:var(--ink);box-shadow:var(--e1)}
+.chk{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--line);
+  border-radius:var(--r-pill);font-size:var(--t-meta);font-weight:500;color:var(--ink2);background:var(--surf)}
+.chk[aria-pressed="true"]{background:var(--marca);border-color:var(--marca);color:#fff;font-weight:600}
+html[data-tema="escuro"] .chk[aria-pressed="true"]{color:#1a1020}
+.palco{padding:var(--s6);display:flex;flex-direction:column;gap:var(--s7);align-items:center}
+.caixa{width:100%;max-width:1320px}
+.caixa>h2{margin:0 0 var(--s3);font-size:var(--t-titulo);font-weight:600;letter-spacing:-.01em}
+.caixa>h2 em{font-style:normal;color:var(--ink3);font-weight:500;font-size:var(--t-c2)}
+.moldura{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;box-shadow:var(--e2);background:var(--surf)}
+.moldura.tel{width:390px;height:844px;border-radius:34px;padding:10px;background:#0e0a10;border-color:#0e0a10}
+.moldura.tel .app{height:100%;border-radius:26px;overflow:hidden}
+.moldura.cmp{width:500px;height:620px}
+.rodape{max-width:1320px;width:100%;border-top:1px solid var(--line);padding-top:var(--s5);
+  font-size:var(--t-c2);color:var(--ink2);line-height:1.7}
+.rodape h3{font-size:var(--t-titulo);margin:0 0 var(--s3)}
+.rodape ul{margin:var(--s2) 0 var(--s5);padding-left:18px}
+.rodape code{background:var(--sunken);border-radius:5px;padding:1px 5px;font-size:12px}
+
+/* =================== A TELA ============================================== */
+/* `position:relative` em TODA moldura: a camada de chamada e a folha do ERP sao
+   `absolute`, e sem um ancestral posicionado elas escapam para a pagina — foi o
+   que aconteceu no quadro do desktop ate esta linha existir. */
+.app{position:relative;display:flex;flex-direction:column;height:100%;background:var(--page);color:var(--ink);overflow:hidden}
+.app.d{height:760px}
+.app.c{height:100%}
+
+/* --- barra de navegação do produto (só desktop) --- */
+.nav{height:52px;flex:0 0 52px;display:flex;align-items:center;gap:var(--s4);
+  padding:0 var(--gut);background:var(--surf);border-bottom:1px solid var(--line)}
+.nav .marca{display:flex;align-items:center;gap:var(--s3);font-weight:700;letter-spacing:-.01em;font-size:var(--t-titulo)}
+.nav nav{display:flex;align-items:center;gap:2px;height:100%;margin-left:var(--s2)}
+.nav nav a{display:inline-flex;align-items:center;height:100%;padding:0 12px;font-size:var(--t-c2);
+  font-weight:500;color:var(--ink3);text-decoration:none;border-bottom:2px solid transparent}
+.nav nav a.on{color:var(--ink);font-weight:600;border-bottom-color:var(--marca)}
+.nav .dir{margin-left:auto;display:flex;align-items:center;gap:var(--s3)}
+.av{border-radius:var(--r-pill);background:var(--marca);color:#fff;display:flex;align-items:center;
+  justify-content:center;font-weight:600;flex:none}
+html[data-tema="escuro"] .av{color:#1a1020}
+.av.n24{width:24px;height:24px;font-size:var(--t-meta)}
+.av.n32{width:32px;height:32px;font-size:var(--t-c2)}
+.av.n36{width:36px;height:36px;font-size:var(--t-titulo)}
+
+.corpo{flex:1;display:flex;min-height:0}
+
+/* --- SIDEBAR ------------------------------------------------------------- */
+.lista{width:320px;flex:none;display:flex;flex-direction:column;background:var(--surf);border-right:1px solid var(--line)}
+.app.m .lista{width:100%;border-right:none}
+.cab{padding:var(--s4) var(--gut);display:flex;flex-direction:column;gap:var(--s3);border-bottom:1px solid var(--line)}
+.app.m .cab{padding:var(--s4) var(--gut-c)}
+
+/* a faixa de filas É o título: um controle no lugar de dois (§ dropdown + faixa) */
+.filas{display:flex;gap:var(--s1);background:var(--sunken);border:1px solid var(--line);border-radius:var(--r-ctl);padding:3px}
+.filas button{flex:1;min-width:0;height:40px;border-radius:8px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:1px;color:var(--ink3)}
+.filas button .n{font-size:var(--t-titulo);font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1}
+.filas button .r{font-size:var(--t-micro);font-weight:600;letter-spacing:.02em;line-height:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.filas button[aria-pressed="true"]{background:var(--surf);box-shadow:var(--e1);color:var(--ink)}
+.filas button[aria-pressed="true"] .n{color:var(--ink)}
+.filas button.urg .n{color:var(--urg)}
+.filas button.zero .n{color:var(--ink3);opacity:.55}
+
+/* No celular a faixa de filas vira barra inferior; aqui fica so o titulo. */
+.tituloFila{display:flex;align-items:baseline;gap:var(--s3);height:32px}
+.tituloFila b{font-size:var(--t-tela);font-weight:700;letter-spacing:-.02em}
+.tituloFila span{font-size:var(--t-c2);color:var(--ink3);font-variant-numeric:tabular-nums}
+
+.buscaLinha{display:flex;gap:var(--s3);align-items:center}
+.campo{flex:1;min-width:0;height:var(--h-sec);display:flex;align-items:center;gap:var(--s3);
+  padding:0 10px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--r-ctl)}
+.campo svg{flex:none;color:var(--ink3)}
+.campo input{flex:1;min-width:0;background:none;border:none;outline:none;font-size:var(--t-c2)}
+.campo input::placeholder{color:var(--ink3)}
+.ico{flex:none;width:var(--h-sec);height:var(--h-sec);border-radius:var(--r-ctl);display:flex;align-items:center;
+  justify-content:center;color:var(--ink2);border:1px solid var(--line);background:var(--surf)}
+.ico:hover{background:var(--sunken)}
+.ico[aria-pressed="true"]{background:var(--marca);border-color:var(--marca);color:#fff}
+html[data-tema="escuro"] .ico[aria-pressed="true"]{color:#1a1020}
+/* Piso de toque no celular: campo e icones sobem para 44 px. */
+.app.m .campo{height:var(--h-toque)}
+.app.m .ico{width:var(--h-toque);height:var(--h-toque)}
+.subLinha{display:flex;align-items:center;gap:var(--s3);font-size:var(--t-meta);color:var(--ink3)}
+.subLinha .ordem{margin-left:auto;display:inline-flex;align-items:center;gap:4px;height:24px;
+  padding:0 6px;margin-right:-6px;border-radius:8px;color:var(--ink2);font-weight:600}
+.subLinha .ordem:hover{background:var(--sunken)}
+.app.m .subLinha .ordem{height:var(--h-toque);padding:0 10px;margin-right:-10px}
+
+.rolo{flex:1;overflow-y:auto;overscroll-behavior:contain}
+
+/* linha da conversa: 52px, e a coluna da hora tem largura FIXA — é o que faz
+   as horas formarem uma régua vertical em vez de dançar */
+.conv{display:flex;align-items:center;gap:var(--s4);width:100%;text-align:left;
+  padding:var(--s3) var(--gut);border-bottom:1px solid var(--line);height:52px}
+.app.m .conv{padding:10px var(--gut-c);height:60px}
+.conv:hover{background:var(--sunken)}
+.conv[aria-current="true"]{background:var(--marca-fraca)}
+.conv[aria-current="true"]::before{content:"";position:absolute;left:0;width:3px;height:36px;
+  border-radius:0 3px 3px 0;background:var(--marca)}
+.conv{position:relative}
+.conv .txt{flex:1;min-width:0}
+.conv .nome{display:block;font-size:var(--t-corpo);font-weight:500;line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv.naolida .nome{font-weight:600}
+.conv .prev{display:block;font-size:var(--t-c2);color:var(--ink3);line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv .col{flex:none;width:46px;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.conv .hora{font-size:var(--t-meta);color:var(--ink3);font-variant-numeric:tabular-nums;line-height:1}
+.conv.naolida .hora{color:var(--urg);font-weight:600}
+.ponto{width:8px;height:8px;border-radius:var(--r-pill);background:var(--urg);flex:none}
+.selo{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);
+  font-size:var(--t-micro);font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.selo.marca{background:var(--marca-fraca);color:var(--marca)}
+.selo.acao{background:var(--acao-fraca);color:var(--acao)}
+.selo.urg{background:var(--urg-fraca);color:var(--urg)}
+.selo.ok{background:var(--ok-fraca);color:var(--ok)}
+.selo.neutro{background:var(--sunken);color:var(--ink3)}
+
+.pe{display:flex;align-items:center;gap:var(--s3);height:36px;flex:none;
+  padding:0 var(--gut);border-top:1px solid var(--line);background:var(--surf);font-size:var(--t-meta);color:var(--ink3)}
+.pe .luz{width:8px;height:8px;border-radius:var(--r-pill);background:var(--ok)}
+
+/* --- THREAD -------------------------------------------------------------- */
+.conversa{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--sunken)}
+.cabConv{flex:none;display:flex;align-items:center;gap:var(--s4);height:56px;padding:0 var(--gut);
+  background:var(--surf);border-bottom:1px solid var(--line)}
+.app.c .cabConv,.app.m .cabConv{padding:0 var(--gut-c);height:48px;gap:var(--s3)}
+.cabConv .quem{flex:1;min-width:0}
+.cabConv .quem b{display:block;font-size:var(--t-titulo);font-weight:600;letter-spacing:-.01em;line-height:1.25;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cabConv .quem > span{display:block;font-size:var(--t-meta);color:var(--ink3);line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.cabConv .pres{color:var(--urg);font-weight:600}
+.acoes{display:flex;align-items:center;gap:var(--s2);flex:none}
+
+/* TODA ação do cabeçalho tem a mesma altura. Sem exceção, inclusive o link. */
+.bt{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:var(--h-sec);
+  padding:0 12px;border-radius:var(--r-ctl);font-size:var(--t-meta);font-weight:600;
+  border:1px solid var(--line-strong);color:var(--ink2);background:var(--surf);white-space:nowrap}
+.bt:hover{background:var(--sunken)}
+.bt.so-ico{width:var(--h-sec);padding:0}
+.bt.pri{background:var(--acao);border-color:var(--acao);color:#fff}
+html[data-tema="escuro"] .bt.pri{color:#11151b}
+.bt.pri:hover{filter:brightness(1.08)}
+.bt.mar{background:var(--marca);border-color:var(--marca);color:#fff}
+html[data-tema="escuro"] .bt.mar{color:#1a1020}
+.bt[aria-pressed="true"]{background:var(--marca-fraca);border-color:var(--marca);color:var(--marca)}
+.bt.fantasma{border-color:transparent;background:none}
+.bt.fantasma:hover{background:var(--sunken)}
+.app.c .bt,.app.c .bt.so-ico{height:var(--h-sec-c);font-size:var(--t-micro);padding:0 9px}
+.app.c .bt.so-ico{width:var(--h-sec-c);padding:0}
+.app.m .bt{height:var(--h-toque);padding:0 14px;font-size:var(--t-c2)}
+.app.m .bt.so-ico{width:var(--h-toque)}
+
+.abas{flex:none;display:flex;align-items:center;gap:0;height:36px;padding:0 var(--gut);
+  background:var(--surf);border-bottom:1px solid var(--line);overflow-x:auto}
+.abas button{height:100%;padding:0 12px;font-size:var(--t-c2);font-weight:500;color:var(--ink3);
+  border-bottom:2px solid transparent;white-space:nowrap}
+.abas button.on{color:var(--ink);font-weight:600;border-bottom-color:var(--marca)}
+.abas .fecha{margin-left:auto;color:var(--ink3);font-size:var(--t-meta);padding:0 4px;border:none}
+
+.msgs{flex:1;overflow-y:auto;padding:var(--s5) var(--gut);display:flex;flex-direction:column}
+.app.c .msgs,.app.m .msgs{padding:var(--s4) var(--gut-c)}
+.dia{align-self:center;margin:var(--s4) 0 var(--s3);height:22px;display:inline-flex;align-items:center;
+  padding:0 10px;border-radius:var(--r-pill);background:var(--surf);border:1px solid var(--line);
+  font-size:var(--t-micro);font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3)}
+
+/* AGRUPAMENTO: 2px dentro do grupo, 10px entre grupos. É o que mais densifica
+   a conversa sem encolher nenhuma letra. */
+.msg{display:flex;flex-direction:column;margin-top:2px}
+.msg.grupo{margin-top:10px}
+.msg.out{align-items:flex-end}
+.msg.in{align-items:flex-start}
+.bolha{max-width:min(72%,560px);padding:var(--s3) var(--s4);border:1px solid var(--line);
+  border-radius:var(--r-card);background:var(--bolha-in);box-shadow:var(--e1);position:relative}
+.msg.out .bolha{background:var(--bolha-out);border-color:var(--bolha-out-borda)}
+.msg.in.fim .bolha{border-bottom-left-radius:var(--s2)}
+.msg.out.fim .bolha{border-bottom-right-radius:var(--s2)}
+.bolha .corpo{font-size:var(--t-corpo);line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.bolha .rod{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin-top:var(--s2);
+  font-size:var(--t-meta);color:var(--ink3);font-variant-numeric:tabular-nums;line-height:1}
+.bolha .rod .enc{margin-right:auto;color:var(--ink3);display:inline-flex;align-items:center;
+  justify-content:center;width:24px;height:24px;margin:-4px auto -4px -4px;border-radius:8px;opacity:0;
+  transition:opacity var(--mov) ease}
+.msg:hover .bolha .rod .enc,.bolha .rod .enc:focus-visible{opacity:.8}
+.bolha .rod .enc:hover{opacity:1;background:rgba(122,23,85,.08)}
+/* No toque nao ha hover: encaminhar vive no menu da mensagem (toque longo),
+   que este prototipo nao simula. Melhor ausente que como alvo de 16 px. */
+.app.m .bolha .rod .enc,.app.c .bolha .rod .enc{display:none}
+.tick{display:inline-flex;color:var(--ink3)}
+.tick.lida{color:var(--acao)}
+.tick.falha{color:var(--urg)}
+.rotulo{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--marca);margin-bottom:var(--s2)}
+.rotulo.cinza{color:var(--ink3)}
+.mid{border-radius:var(--r-ctl);margin-bottom:var(--s2);display:block;overflow:hidden}
+.mid.img{width:220px;height:150px;background:
+   linear-gradient(135deg,#d8c7d6,#efe6ee 45%,#cbd9ea);position:relative}
+.mid.img::after{content:"foto · Máscara Nutritiva 1 kg";position:absolute;left:8px;bottom:8px;
+  font-size:var(--t-micro);font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.audio{display:flex;align-items:center;gap:var(--s3);width:230px;height:36px;padding:0 10px;
+  border-radius:var(--r-pill);background:var(--sunken);border:1px solid var(--line);margin-bottom:var(--s2)}
+html[data-tema="escuro"] .msg.out .audio{background:rgba(255,255,255,.06)}
+.audio .onda{flex:1;height:14px;display:flex;align-items:center;gap:2px}
+.audio .onda i{flex:1;background:var(--ink3);border-radius:var(--r-pill);opacity:.55}
+.audio .dur{font-size:var(--t-meta);color:var(--ink3);font-variant-numeric:tabular-nums}
+.doc{display:flex;align-items:center;gap:var(--s3);width:230px;padding:var(--s3);border-radius:var(--r-ctl);
+  background:var(--sunken);border:1px solid var(--line);margin-bottom:var(--s2);text-decoration:none;color:inherit}
+
+.marco{align-self:center;max-width:80%;margin:var(--s3) 0;padding:var(--s2) var(--s4);
+  border-radius:var(--r-pill);border:1px dashed var(--line-strong);background:var(--surf);
+  font-size:var(--t-meta);color:var(--ink3);text-align:center}
+.marco b{color:var(--ink2);font-weight:600}
+.notaInt{align-self:center;max-width:78%;margin:var(--s3) 0;padding:var(--s3) var(--s4);
+  border-radius:var(--r-card);background:var(--nota);border:1px solid var(--nota-borda);color:var(--nota-ink)}
+.notaInt .cab2{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s2)}
+.notaInt .cab2 .rotulo{color:inherit;margin:0}
+
+/* a falha mora ABAIXO da bolha, com motivo em texto e a ação certa */
+.app.m .falha,.app.c .falha{max-width:92%}
+.falha{max-width:min(72%,560px);margin-top:var(--s2);padding:var(--s3) var(--s4);border-radius:var(--r-ctl);
+  background:var(--urg-fraca);border:1px solid var(--urg-borda);color:var(--urg);
+  font-size:var(--t-meta);line-height:1.5;display:flex;align-items:center;gap:var(--s4)}
+.falha .txt2{flex:1}
+.falha b{font-weight:700}
+
+/* --- FAIXA DA JANELA DE 24H --------------------------------------------- */
+.janela{flex:none;display:flex;align-items:center;gap:var(--s3);margin:0 var(--gut) var(--s3);
+  min-height:34px;padding:var(--s2) var(--s4);border-radius:var(--r-ctl);font-size:var(--t-meta);font-weight:500}
+.app.c .janela,.app.m .janela{margin:0 var(--gut-c) var(--s2);min-height:30px}
+/* Sem largura para a frase, ela some: o botao ao lado ja diz o que fazer, e
+   texto que vaza da propria faixa e pior que texto ausente. */
+.app.c .janela .cresce,.app.m .janela .cresce{display:none}
+.app.c .janela .bt,.app.m .janela .bt{margin-left:auto}
+.janela.aberta{background:var(--acao-fraca);border:1px solid var(--acao-borda);color:var(--acao)}
+.janela.fechada{background:var(--urg-fraca);border:1px solid var(--urg-borda);color:var(--urg)}
+.janela .barra{flex:1;max-width:160px;height:4px;border-radius:var(--r-pill);background:currentColor;opacity:.22}
+.janela .barra i{display:block;height:100%;border-radius:var(--r-pill);background:currentColor;opacity:1}
+.janela .cresce{flex:1;color:var(--ink3);font-weight:400}
+
+/* --- COMPOSITOR (a pílula) ---------------------------------------------- */
+.comp{flex:none;display:flex;align-items:flex-end;gap:var(--s3);padding:var(--s4) var(--gut);
+  background:var(--surf);border-top:1px solid var(--line)}
+.app.c .comp,.app.m .comp{padding:var(--s3) var(--gut-c)}
+.comp.notaModo{background:var(--nota);border-top-color:var(--nota-borda)}
+.pilula{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;padding:var(--s2);
+  min-height:var(--h-pri);background:var(--sunken);border:1px solid var(--line-strong);border-radius:var(--r-card)}
+.app.c .pilula{min-height:var(--h-pri-c)}
+.app.m .pilula{min-height:var(--h-comp-m)}
+.pilula .b{flex:none;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;
+  justify-content:center;color:var(--ink2)}
+.pilula .b:hover{background:rgba(122,23,85,.08)}
+.app.c .pilula .b{width:28px;height:28px}
+.app.m .pilula .b{width:44px;height:44px}
+.pilula textarea{flex:1;min-width:0;resize:none;border:none;outline:none;background:none;
+  padding:var(--s3) var(--s2);font-size:var(--t-corpo);line-height:1.4;height:32px;overflow:hidden}
+.app.m .pilula textarea{height:44px;padding-top:12px}
+.enviar{flex:none;width:var(--h-pri);height:var(--h-pri);border-radius:var(--r-card);
+  background:var(--acao);color:#fff;display:flex;align-items:center;justify-content:center}
+html[data-tema="escuro"] .enviar{color:#11151b}
+.app.c .enviar{width:var(--h-pri-c);height:var(--h-pri-c)}
+.app.m .enviar{width:var(--h-comp-m);height:var(--h-comp-m);border-radius:var(--r-pill)}
+.enviar.vazio{background:var(--sunken);color:var(--ink3);border:1px solid var(--line)}
+.enviar.nota{background:var(--nota-ink);color:var(--nota)}
+
+/* --- PAINEL DO CONTATO --------------------------------------------------- */
+.painel{width:320px;flex:none;background:var(--surf);border-left:1px solid var(--line);
+  overflow-y:auto;display:flex;flex-direction:column}
+.painel .tit{position:sticky;top:0;z-index:2;background:var(--surf);border-bottom:1px solid var(--line);
+  padding:var(--s4) var(--gut)}
+.painel .tit b{font-size:var(--t-titulo);font-weight:600;letter-spacing:-.01em}
+.painel .tit span{display:block;font-size:var(--t-meta);color:var(--ink3)}
+.bloco{padding:var(--s4) var(--gut);border-bottom:1px solid var(--line)}
+.bloco>.rot{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink3);margin-bottom:var(--s3)}
+.lin{display:flex;justify-content:space-between;gap:var(--s4);padding:3px 0;font-size:var(--t-c2)}
+.lin span{color:var(--ink3)}
+.lin b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+
+/* HIERARQUIA em vez de três tiles iguais: um número herói e dois de apoio.
+   Três iguais em 240px truncavam "R$ 12.480,00" na tela de hoje. */
+.heroi{padding:var(--s5) var(--gut) var(--s4)}
+.heroi .v{font-size:var(--t-num);font-weight:700;letter-spacing:-.03em;line-height:1.05;
+  font-variant-numeric:tabular-nums}
+.heroi .r{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-top:var(--s2)}
+.dupla{display:flex;gap:var(--s3);padding:0 var(--gut) var(--s4)}
+.dupla>div{flex:1;min-width:0;padding:var(--s3) var(--s4);border:1px solid var(--line);
+  border-radius:var(--r-ctl);background:var(--sunken)}
+.dupla .v{font-size:var(--t-num2);font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.15}
+.dupla .r{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-top:2px}
+.sugestao{margin:0 var(--gut) var(--s4);padding:var(--s3) var(--s4);border-radius:0 var(--r-ctl) var(--r-ctl) 0;
+  background:var(--marca-fraca);border-left:3px solid var(--marca);font-size:var(--t-c2);line-height:1.5}
+.sugestao b{color:var(--marca)}
+
+/* --- ESTADO: uma anatomia só para carregando, vazio e erro --------------- */
+.estado{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--s3);padding:var(--s6);text-align:center;color:var(--ink3)}
+.estado .g{width:40px;height:40px;border-radius:var(--r-card);display:flex;align-items:center;
+  justify-content:center;background:var(--surf);border:1px solid var(--line);color:var(--ink3)}
+.estado h4{margin:0;font-size:var(--t-titulo);font-weight:600;color:var(--ink2)}
+.estado p{margin:0;max-width:280px;font-size:var(--t-c2);line-height:1.55}
+.estado.erro .g{background:var(--urg-fraca);border-color:var(--urg-borda);color:var(--urg)}
+.estado.erro h4{color:var(--urg)}
+/* esqueleto: blocos SÓLIDOS, sem brilho correndo. Movimento que se repete e
+   não carrega informação é o oposto de premium numa ferramenta de trabalho. */
+.esq{width:100%;display:flex;flex-direction:column;gap:2px;padding:0}
+.esq .l{display:flex;align-items:center;gap:var(--s4);height:52px;padding:0 var(--gut);border-bottom:1px solid var(--line)}
+.esq .c{border-radius:var(--r-pill);background:var(--sunken)}
+.esq .b1{width:36px;height:36px;flex:none}
+.esq .b2{height:10px;border-radius:5px;background:var(--sunken)}
+
+/* --- FOLHA (painel no celular e no compacto) ----------------------------- */
+.veu{position:absolute;inset:0;background:rgba(24,16,26,.42);z-index:30}
+.folha{position:absolute;left:0;right:0;bottom:0;z-index:31;max-height:82%;display:flex;flex-direction:column;
+  background:var(--surf);border-radius:var(--r-card) var(--r-card) 0 0;box-shadow:var(--e2);overflow:hidden}
+.folha .alca{padding:var(--s3) 0 var(--s2);display:flex;justify-content:center}
+.folha .alca i{width:36px;height:4px;border-radius:var(--r-pill);background:var(--line-strong);opacity:.5}
+.folha .conteudo{overflow-y:auto}
+.pos{position:relative;overflow:hidden}
+
+/* --- barra inferior do celular ------------------------------------------ */
+.barraTel{flex:none;display:flex;background:var(--surf);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom)}
+.barraTel button{flex:1;min-width:0;height:56px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:3px;color:var(--ink3);border-top:2px solid transparent}
+.barraTel button.on{color:var(--marca);border-top-color:var(--marca)}
+.barraTel .r{font-size:var(--t-micro);font-weight:600}
+.barraTel .n.quieto{background:var(--ink3)}
+.barraTel .n{position:absolute;transform:translate(14px,-10px);min-width:16px;height:16px;padding:0 4px;
+  border-radius:var(--r-pill);background:var(--urg);color:#fff;font-size:9.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+.barraTel .env{position:relative;display:inline-flex}
+
+/* --- camada de chamada recebida ----------------------------------------- */
+.chamada{position:absolute;top:var(--s4);left:50%;transform:translateX(-50%);z-index:40;width:min(340px,90%);
+  background:var(--surf);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--e2);
+  padding:var(--s4);display:flex;align-items:center;gap:var(--s4)}
+.chamada .q{flex:1;min-width:0}
+.chamada .q b{display:block;font-size:var(--t-c2);font-weight:600}
+.chamada .q span{font-size:var(--t-meta);color:var(--ink3)}
+.chamada .bts{display:flex;gap:var(--s2)}
+.bt.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+html[data-tema="escuro"] .bt.ok{color:#0e1a13}
+.bt.rec{background:var(--urg);border-color:var(--urg);color:#fff}
+html[data-tema="escuro"] .bt.rec{color:#1c0f0b}
+
+/* --- lista de templates -------------------------------------------------- */
+.tmpl{margin:0 var(--gut) var(--s3);background:var(--surf);border:1px solid var(--line);
+  border-radius:var(--r-card);overflow:hidden;box-shadow:var(--e1)}
+.tmpl .h{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s4);
+  background:var(--marca-fraca);border-bottom:1px solid var(--line)}
+.tmpl .h b{font-size:var(--t-micro);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--marca)}
+.tmpl .h span{margin-left:auto;font-size:var(--t-meta);color:var(--ink3)}
+.tmpl button.it{display:block;width:100%;text-align:left;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
+.tmpl button.it:last-child{border-bottom:none}
+.tmpl button.it:hover{background:var(--sunken)}
+.tmpl .n2{font-size:var(--t-c2);font-weight:600}
+.tmpl .p2{font-size:var(--t-meta);color:var(--ink3);line-height:1.45;margin-top:2px}
+.custo{margin-left:auto;font-size:var(--t-micro);font-weight:700;color:var(--urg)}
+</style>
+</head>
+<body>
+
+<div class="topo">
+  <h1>Murano · Chat <span>— Direção 4 “Bancada”</span></h1>
+
+  <div class="grp">
+    <span class="rot">Tema</span>
+    <div class="seg" id="segTema">
+      <button data-t="claro" aria-pressed="true">Claro</button>
+      <button data-t="escuro" aria-pressed="false">Escuro</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <span class="rot">Cenários</span>
+    <button class="chk" data-c="janela" aria-pressed="false">Janela 24h fechada</button>
+    <button class="chk" data-c="falha" aria-pressed="false">Falha de envio</button>
+    <button class="chk" data-c="ligacao" aria-pressed="false">Ligação recebida</button>
+    <button class="chk" data-c="nota" aria-pressed="false">Nota interna</button>
+    <button class="chk" data-c="template" aria-pressed="false">Escolher template</button>
+    <button class="chk" data-c="notaModo" aria-pressed="false">Escrevendo nota</button>
+  </div>
+
+  <div class="grp">
+    <span class="rot">Estado</span>
+    <div class="seg" id="segEstado">
+      <button data-e="ok" aria-pressed="true">Normal</button>
+      <button data-e="carregando" aria-pressed="false">Carregando</button>
+      <button data-e="vazio" aria-pressed="false">Vazio</button>
+      <button data-e="erro" aria-pressed="false">Erro</button>
+    </div>
+  </div>
+</div>
+
+<div class="palco">
+
+  <div class="caixa">
+    <h2>Desktop <em>— 1280 × 760 · colunas 320 / fluida / 320</em></h2>
+    <div class="moldura"><div class="app d" id="app-d"></div></div>
+  </div>
+
+  <div class="caixa" style="display:flex;flex-direction:column;align-items:center">
+    <h2 style="align-self:flex-start">Celular <em>— 390 × 844 · toque ≥ 44 px, 100dvh, área segura</em></h2>
+    <div class="moldura tel"><div class="app m pos" id="app-m"></div></div>
+  </div>
+
+  <div class="caixa" style="display:flex;flex-direction:column;align-items:center">
+    <h2 style="align-self:flex-start">Compacto <em>— 500 × 620 · a lupa do board, embutida</em></h2>
+    <div class="moldura cmp"><div class="app c pos" id="app-c"></div></div>
+  </div>
+
+  <div class="rodape">
+    <h3>A tese desta direção, e o que ela sacrifica</h3>
+    <p><b>Tese.</b> Nenhuma informação nova entra na tela e nada muda de lugar. O que muda é
+    que tudo passa a obedecer a uma grade: sete degraus de espaço, sete de tipografia,
+    três de raio, três alturas de controle, dois de sombra e cinco famílias de cor com um
+    trabalho cada. A Direção 1 respondeu “o que falta aparecer”; esta responde
+    “por que a tela parece improvisada mesmo mostrando a coisa certa”. Premium, numa
+    ferramenta que sete pessoas usam o dia inteiro, não é ornamento — é previsibilidade:
+    o mesmo objeto tem sempre o mesmo tamanho, no mesmo lugar, com a mesma cor.</p>
+
+    <p><b>Os quatro gestos concretos.</b></p>
+    <ul>
+      <li><b>Uma régua vertical por coluna.</b> Tudo que tem borda começa na goteira
+      (16 px no desktop, 12 px no compacto e no celular). Hoje a sidebar tem três bordas
+      esquerdas diferentes — 10, 12 e 13 px — e a conversa tem duas: as bolhas em 18 px e o
+      compositor em 14 px.</li>
+      <li><b>Uma altura por papel.</b> Toda ação do cabeçalho mede 32 px, inclusive o link
+      do WhatsApp, que hoje é texto solto sem caixa ao lado de botões de 28 e 30 px.</li>
+      <li><b>Agrupamento de mensagens</b> — 2 px dentro do grupo, 10 px entre grupos, hora
+      só na última bolha. Densifica a conversa sem encolher uma letra sequer.</li>
+      <li><b>Hierarquia no painel do ERP</b> — um número herói e dois de apoio, no lugar de
+      três iguais. Em 268 px de coluna, três iguais dão 78 px cada e truncam
+      “R$ 12.480,00”, que é justamente a informação que o RD não tem.</li>
+    </ul>
+
+    <p><b>Sacrifica.</b> (1) Não muda a forma do dia: continua sendo caça cronológica, como
+    o original e a Direção 1 — quem quer que o sistema diga qual é a próxima conversa
+    precisa da Direção 2. (2) Não vende mais por conversa: não há catálogo nem ação
+    recomendada como botão — isso é a Direção 3. (3) O título-dropdown das filas some,
+    absorvido pela faixa segmentada; é o único elemento que muda de forma, e é memória
+    muscular que se perde. (4) Ícones de interface deixam de ser emoji e viram SVG
+    monocromático: ganha-se alinhamento e peso consistente, perde-se o reconhecimento
+    imediato de silhuetas coloridas que a equipe já conhece. (5) Peso 800 é abolido — para
+    quem está acostumado com a tela atual, a primeira impressão pode ser de “apagado”,
+    embora todos os contrastes subam.</p>
+
+    <p style="color:var(--ink3)"><b>Dados fictícios.</b> Nomes de salão, produtos, valores e
+    telefones foram inventados para este protótipo. Nenhum dado de cliente real aparece
+    aqui — o repositório é público.</p>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   Ícones — SVG inline, 16 px, traço 1.6. A casa não usa biblioteca de ícones
+   (murano-brand §6), então tudo é caminho cru. Um só desenho, uma só espessura:
+   é isto que faz a barra de ações parecer um conjunto e não uma colagem.
+   ========================================================================= */
+const P = {
+  sino:'M6 8a6 6 0 1 1 12 0c0 6 3 7 3 7H3s3-1 3-7M10.5 20a2 2 0 0 0 3 0',
+  balao:'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-5a8.4 8.4 0 0 1-.9-4A8.4 8.4 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5z',
+  mao:'M12 21a7 7 0 0 0 7-7V9.5a1.5 1.5 0 0 0-3 0v-2a1.5 1.5 0 0 0-3 0v-1a1.5 1.5 0 0 0-3 0v1a1.5 1.5 0 0 0-3 0V13l-1.6-1.6A1.6 1.6 0 0 0 3 13.7L8 19a7 7 0 0 0 4 2z',
+  check:'M20 6 9 17l-5-5',
+  check2:'M18 7 9.5 15.5 6 12M22 7l-8.5 8.5',
+  agenda:'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
+  lupa:'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
+  mais:'M12 5v14M5 12h14',
+  clipe:'M21.4 11 12.3 20.2a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5',
+  mic:'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3',
+  aviao:'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
+  raio:'M13 2 3 14h8l-1 8 11-12h-8l1-8z',
+  nota:'M4 4h16v11l-5 5H4zM20 15h-5v5',
+  fone:'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z',
+  troca:'M16 3l4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16',
+  checkc:'M22 11.1V12a10 10 0 1 1-5.9-9.1M22 4 12 14l-3-3',
+  grafico:'M3 3v18h18M7 15v3M12 9v9M17 5v13',
+  tres:'M5.5 12h.01M12 12h.01M18.5 12h.01',
+  seta:'m6 9 6 6 6-6',
+  cadeado:'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+  relogio:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 7v5l3.5 2',
+  alerta:'M12 9v4.5M12 17.2h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  volta:'M19 12H5M12 19l-7-7 7-7',
+  x:'M18 6 6 18M6 6l12 12',
+  sair:'M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
+  play:'m7 4 12 8-12 8V4z',
+  arq:'M14 2H6v20h12V8zM14 2v6h6',
+  olhos:'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  volta2:'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
+  enc:'M15 5l6 6-6 6M21 11H9a5 5 0 0 0-5 5v3'
+};
+function ic(n, t){
+  return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '+
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'+
+    (t?' ><title>'+t+'</title>':' >')+'<path d="'+P[n]+'"/></svg>';
+}
+function tick(st){
+  if(st==='falha') return '<span class="tick falha" title="não entregue">'+ic('alerta')+'</span>';
+  if(st==='lida')  return '<span class="tick lida">'+ic('check2')+'</span>';
+  if(st==='entregue') return '<span class="tick">'+ic('check2')+'</span>';
+  return '<span class="tick">'+ic('check')+'</span>';
+}
+
+/* =========================================================================
+   Dados fictícios — distribuição de cosmético para salão, DDD 91.
+   ========================================================================= */
+const CONVS = [
+ {id:'belle', nome:'Salão Belle Époque', cod:30412, tel:'(91) 98811-4027', cidade:'Ananindeua',
+  dono:'milene', prev:'Áudio · 0:14', hora:'09:21', naoLida:true, fila:'esperando'},
+ {id:'lumine', nome:'Studio Lumine', cod:31877, tel:'(91) 98455-2190', cidade:'Belém',
+  dono:'milene', prev:'Pode mandar o valor do kit?', hora:'09:04', naoLida:true, fila:'esperando'},
+ {id:'raizes', nome:'Salão Raízes Naturais', cod:29740, tel:'(91) 99127-6633', cidade:'Marituba',
+  dono:'anne', prev:'Foto', hora:'08:52', naoLida:true, fila:'esperando'},
+ {id:'aurora', nome:'Espaço Aurora Hair', cod:32760, tel:'(91) 98330-1176', cidade:'Barcarena',
+  dono:'milene', prev:'Vocês entregam em Barcarena?', hora:'08:44', naoLida:true, fila:'esperando'},
+ {id:'gloss', nome:'Gloss Studio Beleza', cod:30955, tel:'(91) 99011-8834', cidade:'Belém',
+  dono:'milene', prev:'Chegou a reposição do selante?', hora:'08:30', naoLida:true, fila:'esperando'},
+ {id:'trama', nome:'Trama Cabeleireiros', cod:29118, tel:'(91) 98512-4407', cidade:'Ananindeua',
+  dono:'milene', prev:'Foto', hora:'08:12', naoLida:true, fila:'esperando'},
+ {id:'fio', nome:'Atelier do Fio', cod:33018, tel:'(91) 98220-7741', cidade:'Belém',
+  dono:'milene', prev:'Você: Fechado! Já lanço o pedido.', hora:'ontem', naoLida:false, fila:'meus'},
+ {id:'capilar', nome:'Casa Capilar Icoaraci', cod:28654, tel:'(91) 98903-1188', cidade:'Icoaraci',
+  dono:'milene', prev:'Você: Bom dia! Passando pra saber…', hora:'ontem', naoLida:false, fila:'meus', selo:'template'},
+ {id:'vitoria', nome:'Espaço Vitória Beleza', cod:32290, tel:'(91) 99544-0072', cidade:'Castanhal',
+  dono:'milene', prev:'Amanhã eu confirmo com a sócia', hora:'seg', naoLida:false, fila:'meus'},
+ {id:'karla', nome:'Studio Karla Nunes', cod:31105, tel:'(91) 98177-3320', cidade:'Ananindeua',
+  dono:'milene', prev:'Você: Segue a tabela atualizada', hora:'seg', naoLida:false, fila:'meus', olhos:'Anne'},
+ {id:'nova', nome:'Salão Nova Face', cod:31644, tel:'(91) 98255-9081', cidade:'Belém',
+  dono:'milene', prev:'Você: Vou verificar e te retorno', hora:'ontem', naoLida:false, fila:'meus'},
+ {id:'mirante', nome:'Espaço Mirante', cod:33427, tel:'(91) 99677-2213', cidade:'Castanhal',
+  dono:'milene', prev:'Você: Segue o boleto do pedido', hora:'ontem', naoLida:false, fila:'meus'},
+ {id:'luar', nome:'Salão Luar Cabelos', cod:30201, tel:'(91) 98844-6650', cidade:'Marituba',
+  dono:'milene', prev:'Ok, obrigada!', hora:'seg', naoLida:false, fila:'meus'},
+ {id:'raizforte', nome:'Studio Raiz Forte', cod:34112, tel:'(91) 98190-3345', cidade:'Belém',
+  dono:'milene', prev:'Você: Bom dia! Tudo bem com você?', hora:'seg', naoLida:false, fila:'meus', selo:'template'},
+ {id:'donna', nome:'Donna Beleza Marituba', cod:28873, tel:'(91) 99233-7708', cidade:'Marituba',
+  dono:'milene', prev:'Preciso de 3 caixas da máscara', hora:'sex', naoLida:false, fila:'meus'},
+ {id:'novo1', nome:'(91) 98066-2415', cod:null, tel:'(91) 98066-2415', cidade:null,
+  dono:null, prev:'Oi, vocês vendem pra salão?', hora:'09:18', naoLida:true, fila:'semdono'},
+ {id:'novo2', nome:'Bella Hair Ananindeua', cod:34990, tel:'(91) 98701-5529', cidade:'Ananindeua',
+  dono:null, prev:'Bom dia, queria fazer um cadastro', hora:'08:31', naoLida:false, fila:'semdono'},
+ {id:'cabelo', nome:'Espaço Cabelo & Cia', cod:27431, tel:'(91) 99388-4410', cidade:'Belém',
+  dono:'milene', prev:'Você: Obrigada pela parceria!', hora:'ter', naoLida:false, fila:'encerradas', motivo:'venda realizada'},
+ {id:'point', nome:'Beauty Point Marituba', cod:30088, tel:'(91) 98644-9902', cidade:'Marituba',
+  dono:'milene', prev:'Vou deixar pro mês que vem', hora:'23/08', naoLida:false, fila:'encerradas', motivo:'sem interesse'}
+];
+
+const FILAS = [
+ {k:'esperando', r:'Esperando', ic:'sino', urg:true},
+ {k:'meus',      r:'Meus',      ic:'balao'},
+ {k:'semdono',   r:'Sem dono',  ic:'mao'},
+ {k:'encerradas',r:'Encerradas',ic:'check'}
+];
+
+/* A conversa aberta. As bolhas trazem tudo que a thread real tem:
+   texto, imagem, áudio, documento, template, citação, nota, marco e falha. */
+const THREAD = [
+ {t:'dia', v:'25 de agosto'},
+ {t:'m', de:'in',  txt:'Bom dia! Vocês têm a máscara nutritiva de 1 kg?', h:'09:12'},
+ {t:'m', de:'out', txt:'Bom dia, Ana! Temos sim.', h:'09:14', st:'lida'},
+ {t:'m', de:'out', txt:'Máscara Nutritiva 1 kg — R$ 92,00 na caixa com 6 unidades. Sai R$ 552,00 a caixa fechada, com entrega grátis em Ananindeua.', h:'09:14', st:'lida'},
+ {t:'m', de:'in',  img:true, txt:'É essa aqui que acabou 😅', h:'09:20'},
+ {t:'m', de:'in',  audio:'0:14', h:'09:21'},
+ {t:'marco', v:'<b>Anne</b> transferiu para <b>Milene</b> · 09:22 — “cliente da carteira dela”'},
+ {t:'m', de:'out', doc:'Tabela Murano · agosto.pdf', txt:'', h:'09:26', st:'entregue'},
+ {t:'m', de:'out', txt:'Mandei a tabela do mês. Se fechar hoje ainda entra na entrega de amanhã.', h:'09:26', st:'entregue'}
+];
+
+const S = {
+  tema:'claro', conv:'belle', fila:'esperando', estado:'ok',
+  telVista:'lista', painel:true, folha:false, aba:'resumo',
+  cen:{janela:false, falha:false, ligacao:false, nota:false, template:false, notaModo:false}
+};
+
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const convAtual = () => CONVS.find(c=>c.id===S.conv) || CONVS[0];
+const contaFila = k => CONVS.filter(c=>c.fila===k).length;
+
+/* ---------- SIDEBAR ------------------------------------------------------ */
+function sidebar(modo){
+  const tel = modo==='m';
+  const filas = FILAS.map(f=>{
+    const n = contaFila(f.k), on = S.fila===f.k;
+    const cls = ['', n===0?'zero':'', (f.urg&&n>0)?'urg':''].join(' ');
+    return '<button class="'+cls+'" aria-pressed="'+on+'" data-fila="'+f.k+'" title="'+f.r+'">'+
+      '<span class="n">'+n+'</span><span class="r">'+f.r+'</span></button>';
+  }).join('');
+
+  let linhas;
+  if(S.estado==='carregando'){
+    linhas = '<div class="esq">'+Array.from({length:8},(_,i)=>
+      '<div class="l"><div class="c b1"></div><div style="flex:1"><div class="b2" style="width:'+(52+((i*13)%34))+'%"></div>'+
+      '<div class="b2" style="width:'+(30+((i*17)%40))+'%;margin-top:7px;opacity:.6"></div></div></div>').join('')+'</div>';
+  } else if(S.estado==='vazio'){
+    linhas = estado('agenda','Nenhuma conversa nesta fila',
+      'Quando uma cliente escrever, ela aparece aqui — e a faixa acima passa a contar.');
+  } else if(S.estado==='erro'){
+    linhas = estado('alerta','Não consegui carregar a lista',
+      'A conexão com o servidor falhou. A tela tenta de novo sozinha a cada 60 segundos.','erro','Tentar agora');
+  } else {
+    linhas = CONVS.filter(c=>c.fila===S.fila).map(c=>{
+      const on = c.id===S.conv;
+      return '<button class="conv '+(c.naoLida?'naolida':'')+'" aria-current="'+on+'" data-conv="'+c.id+'">'+
+        '<span class="av '+(modo==='d'?'n36':'n36')+'">'+esc(c.nome.trim()[0])+'</span>'+
+        '<span class="txt"><span class="nome">'+esc(c.cod? c.cod+' - '+c.nome : c.nome)+'</span>'+
+        '<span class="prev">'+esc(c.prev)+'</span></span>'+
+        '<span class="col"><span class="hora">'+esc(c.hora)+'</span>'+
+          (c.naoLida?'<span class="ponto"></span>':
+           c.motivo?'<span class="selo ok">'+ic('check')+'</span>':
+           c.olhos?'<span class="selo neutro" title="'+esc(c.olhos)+' está aqui">'+ic('olhos')+'</span>':
+           c.selo?'<span class="selo marca">tpl</span>':'')+
+        '</span></button>';
+    }).join('') || estado('agenda','Nenhuma conversa nesta fila','Nada esperando por aqui.');
+  }
+
+  return '<div class="lista">'+
+   '<div class="cab">'+
+     /* No celular a faixa de filas NAO se repete aqui: a barra inferior ja e o
+        controle, e duas copias do mesmo controle e exatamente o defeito que
+        esta direcao corrige na tela de hoje (dropdown + faixa). */
+     (tel
+       ? '<div class="tituloFila"><b>'+(FILAS.find(f=>f.k===S.fila)||FILAS[0]).r+'</b>'+
+         '<span>'+contaFila(S.fila)+'</span></div>'
+       : '<div class="filas" role="group" aria-label="Filas">'+filas+'</div>')+
+     '<div class="buscaLinha">'+
+       '<label class="campo">'+ic('lupa')+'<input placeholder="Buscar conversa ou cliente" />'+'</label>'+
+       '<button class="ico" data-agenda="1" title="Minha carteira — todos os clientes do seu RCA">'+ic('agenda')+'</button>'+
+       '<button class="ico" title="Nova conversa pelo número">'+ic('mais')+'</button>'+
+     '</div>'+
+     /* o contador ja esta no titulo (celular) ou na faixa (desktop) — repetir
+        e o mesmo defeito, em miniatura */
+     '<div class="subLinha">'+(tel?'':'<span>'+contaFila(S.fila)+' conversas</span>')+
+       '<button class="ordem">Mais recente '+ic('seta')+'</button></div>'+
+   '</div>'+
+   '<div class="rolo">'+linhas+'</div>'+
+   '<div class="pe"><span class="luz"></span><b style="font-weight:600;color:var(--ink2)">Online</b>'+
+     '<span style="margin-left:auto">Milene</span></div>'+
+  '</div>';
+}
+
+function estado(icone, titulo, texto, tipo, acao){
+  return '<div class="estado '+(tipo||'')+'"><span class="g">'+ic(icone)+'</span>'+
+    '<h4>'+esc(titulo)+'</h4><p>'+esc(texto)+'</p>'+
+    (acao?'<button class="bt" style="margin-top:4px">'+esc(acao)+'</button>':'')+'</div>';
+}
+
+/* ---------- THREAD ------------------------------------------------------- */
+function thread(modo){
+  const c = convAtual();
+  const compacto = modo==='c', tel = modo==='m';
+
+  /* --- cabeçalho: nome + ações. TODAS na mesma altura, e a partir da terceira
+         em diante elas moram no “⋯”, que é o que faz o compacto sobreviver. */
+  const acaoIco = (n,t,cls)=> '<button class="bt so-ico '+(cls||'')+'" title="'+t+'">'+ic(n)+'</button>';
+  let acoes;
+  if(compacto){
+    acoes = acaoIco('grafico','Dados do cliente')+acaoIco('checkc','Resolver','ok')+acaoIco('tres','Mais ações');
+  } else if(tel){
+    acoes = acaoIco('grafico','Dados do cliente')+acaoIco('tres','Mais ações');
+  } else {
+    acoes = (c.fila==='semdono'
+        ? '<button class="bt pri">'+ic('mao')+'Pegar atendimento</button>'
+        : '<button class="bt" aria-pressed="'+S.painel+'" data-painel="1">'+ic('grafico')+'Cliente</button>')+
+      acaoIco('fone','Ligar para a cliente')+
+      acaoIco('troca','Transferir a conversa')+
+      '<button class="bt ok">'+ic('checkc')+'Resolver</button>'+
+      acaoIco('sair','Abrir no WhatsApp');
+  }
+
+  const cab = '<div class="cabConv">'+
+    (tel?'<button class="bt so-ico fantasma" data-voltar="1" title="Voltar">'+ic('volta')+'</button>':'')+
+    '<span class="av '+(compacto?'n32':tel?'n36':'n36')+'">'+esc(c.nome.trim()[0])+'</span>'+
+    '<span class="quem"><b>'+esc(c.cod? c.cod+' - '+c.nome : c.nome)+'</b>'+
+      /* a presenca vem PRIMEIRO: e o que e transitorio e urgente, e nao pode
+         ser justamente o pedaco que as reticencias comem quando falta largura */
+      '<span>'+(c.olhos?'<span class="pres">'+esc(c.olhos)+' está aqui</span> · ':'')+
+      esc(c.tel)+(compacto?'':' · Murano Professional')+'</span></span>'+
+    '<span class="acoes">'+acoes+'</span></div>';
+
+  const abas = (modo==='d')
+    ? '<div class="abas">'+['resumo','Perfil','Compras','Ciclo','Funil','Notas fiscais']
+        .map((r,i)=>{const k=i===0?'resumo':r.toLowerCase();
+          return '<button class="'+(S.aba===k?'on':'')+'" data-aba="'+k+'">'+(i===0?'Resumo':r)+'</button>';}).join('')+
+      '<button class="fecha" data-painel="0">ocultar painel</button></div>'
+    : '';
+
+  /* --- corpo --- */
+  let corpo;
+  if(S.estado==='carregando'){
+    corpo = '<div class="msgs">'+estado('relogio','Carregando a conversa',
+      'Buscando as últimas mensagens deste número.')+'</div>';
+  } else if(S.estado==='vazio'){
+    corpo = '<div class="msgs">'+estado('balao','Nenhuma mensagem neste número',
+      'Este contato ainda não conversou pelo Murano Professional. O histórico do número antigo está desligado nas configurações.')+'</div>';
+  } else if(S.estado==='erro'){
+    corpo = '<div class="msgs">'+estado('alerta','Não consegui abrir a conversa',
+      'O servidor respondeu com erro ao buscar as mensagens. Nada foi perdido — tente de novo.','erro','Tentar de novo')+'</div>';
+  } else {
+    corpo = '<div class="msgs">'+bolhas()+'</div>';
+  }
+
+  /* --- rodapé de contexto: carteira e número --- */
+  const rodape = compacto ? '' :
+    '<div style="flex:none;display:flex;justify-content:center;gap:8px;padding:4px var(--gut);'+
+    'font-size:var(--t-meta);color:var(--ink3);background:var(--sunken)">'+
+    '<span>'+(c.dono?'Carteira Milene':'Sem dono')+'</span><span style="opacity:.4">·</span>'+
+    '<span>Murano Professional</span></div>';
+
+  /* --- faixa da janela de 24h --- */
+  const janela = S.cen.janela
+    ? '<div class="janela fechada">'+ic('cadeado')+'<b style="font-weight:600">Janela fechada</b>'+
+      '<span class="cresce">só um template reabre a conversa</span>'+
+      '<button class="bt mar" style="height:24px;padding:0 10px;font-size:var(--t-micro)" data-cen="template">Enviar template</button></div>'
+    : '<div class="janela aberta">'+ic('relogio')+'<b style="font-weight:600">Janela aberta · fecha em 14 h 38</b>'+
+      (compacto?'':'<span class="barra"><i style="width:61%"></i></span>')+'</div>';
+
+  const tmpl = S.cen.template ? listaTemplate() : '';
+
+  /* --- compositor --- */
+  const nm = S.cen.notaModo;
+  const comp = '<div class="comp '+(nm?'notaModo':'')+'">'+
+    '<div class="pilula">'+
+      '<button class="b" title="Anexar arquivo, foto ou local">'+ic('clipe')+'</button>'+
+      (compacto?'':'<button class="b" title="Respostas rápidas (/)">'+ic('raio')+'</button>')+
+      (compacto?'':'<button class="b" title="Nota interna" '+(nm?'style="color:var(--nota-ink)"':'')+'>'+ic('nota')+'</button>')+
+      '<textarea rows="1" placeholder="'+(nm?'Nota interna — só a equipe vê':'Mensagem')+'"></textarea>'+
+      '<button class="b" title="Gravar áudio">'+ic('mic')+'</button>'+
+      (compacto?'<button class="b" title="Mais: respostas rápidas, nota interna, pausa">'+ic('tres')+'</button>':'')+
+    '</div>'+
+    '<button class="enviar '+(nm?'nota':'')+'" title="'+(nm?'Salvar nota interna (Enter)':'Enviar (Enter)')+'">'+ic(nm?'nota':'aviao')+'</button>'+
+  '</div>';
+
+  const chamada = S.cen.ligacao ? camadaChamada() : '';
+
+  return '<div class="conversa">'+cab+abas+corpo+rodape+
+    (S.estado==='ok'?janela:'')+tmpl+(S.estado==='ok'?comp:'')+'</div>'+chamada;
+}
+
+function bolhas(){
+  const out = [];
+  let anterior = null;
+  THREAD.forEach((it, i) => {
+    if(it.t==='dia'){ out.push('<div class="dia">'+esc(it.v)+'</div>'); anterior=null; return; }
+    if(it.t==='marco'){ out.push('<div class="marco">'+it.v+'</div>'); anterior=null; return; }
+    const prox = THREAD[i+1];
+    const grupo = !anterior || anterior!==it.de;      /* primeira do grupo */
+    const fim = !prox || prox.t!=='m' || prox.de!==it.de;  /* última do grupo */
+    anterior = it.de;
+
+    let interno = '';
+    if(it.img)   interno += '<span class="mid img"></span>';
+    if(it.audio) interno += '<span class="audio">'+ic('play')+'<span class="onda">'+
+        Array.from({length:26},(_,k)=>'<i style="height:'+(4+((k*7)%11))+'px"></i>').join('')+
+        '</span><span class="dur">'+it.audio+'</span></span>';
+    if(it.doc)   interno += '<a class="doc">'+ic('arq')+'<span style="min-width:0"><b style="display:block;font-size:var(--t-c2);'+
+        'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(it.doc)+'</b>'+
+        '<span style="font-size:var(--t-meta);color:var(--ink3)">PDF · 214 KB</span></span></a>';
+    if(it.txt)   interno += '<span class="corpo">'+esc(it.txt)+'</span>';
+
+    /* a hora só aparece na ÚLTIMA bolha do grupo — é o que tira o ruído */
+    const rod = fim ? '<span class="rod"><button class="enc" title="Encaminhar">'+ic('enc')+'</button>'+
+      esc(it.h)+(it.de==='out'?tick(it.st):'')+'</span>' : '';
+
+    out.push('<div class="msg '+it.de+' '+(grupo?'grupo':'')+' '+(fim?'fim':'')+'">'+
+      '<div class="bolha">'+interno+rod+'</div></div>');
+  });
+
+  if(S.cen.nota){
+    out.push('<div class="notaInt"><div class="cab2"><span class="rotulo">'+ic('nota')+' nota interna</span>'+
+      '<span style="font-size:var(--t-meta);opacity:.75;flex:1">Milene · 09:31</span>'+
+      '<button title="Apagar" style="opacity:.6">'+ic('x')+'</button></div>'+
+      '<div style="font-size:var(--t-corpo);line-height:1.45">Só fecha com prazo de 21 dias. Conferir limite antes de lançar.</div></div>');
+  }
+
+  if(S.cen.template){
+    out.push('<div class="msg out grupo fim"><div class="bolha">'+
+      '<span class="rotulo">template</span>'+
+      '<span class="corpo">Oi, Ana! Tudo bem com você? Faz um tempo que a gente não conversa — posso te mandar as novidades de agosto?</span>'+
+      '<span class="rod">09:40'+tick('entregue')+'</span></div></div>');
+  }
+
+  if(S.cen.falha){
+    out.push('<div class="msg out grupo fim"><div class="bolha">'+
+      '<span class="corpo">Consegui liberar mais 5% se fechar hoje. Posso lançar?</span>'+
+      '<span class="rod">09:44'+tick('falha')+'</span></div>'+
+      '<div class="falha" title="Meta 131047 — Re-engagement message: Message failed to send because more than 24 hours have passed since the customer last replied.">'+
+      '<span class="txt2"><b>Não entregue.</b> Passaram-se mais de 24 horas desde a última mensagem da cliente.<br>'+
+      '<span style="opacity:.85">Só um template reabre a conversa.</span></span>'+
+      '<button class="bt mar" style="height:26px;padding:0 10px;font-size:var(--t-micro)" data-cen="template">Template</button></div></div>');
+  }
+  return out.join('');
+}
+
+function listaTemplate(){
+  return '<div class="tmpl"><div class="h">'+ic('raio')+'<b>Template — reabre a janela</b>'+
+    '<span>2 aprovados</span></div>'+
+    '<button class="it"><div style="display:flex;align-items:center;gap:8px">'+
+      '<span class="n2">recontato_de_clientes</span><span class="selo marca">padrão</span>'+
+      '<span class="custo">R$ 0,43</span></div>'+
+      '<div class="p2">Oi, Ana! Tudo bem com você? Faz um tempo que a gente não conversa — ———</div></button>'+
+    '<button class="it"><div style="display:flex;align-items:center;gap:8px">'+
+      '<span class="n2">tudo_bem</span><span class="custo">R$ 0,43</span></div>'+
+      '<div class="p2">Oi, Ana! Passando pra saber se está tudo bem por aí 🙂</div></button>'+
+    '</div>';
+}
+
+function camadaChamada(){
+  return '<div class="chamada"><span class="av n36" style="background:var(--ok)">'+ic('fone')+'</span>'+
+    '<span class="q"><b>Salão Belle Époque</b><span>chamada recebida · WhatsApp</span></span>'+
+    '<span class="bts"><button class="bt rec so-ico" title="Recusar">'+ic('x')+'</button>'+
+    '<button class="bt ok">Atender</button></span></div>';
+}
+
+/* ---------- PAINEL DO CONTATO ------------------------------------------- */
+function painel(){
+  const abas = ['Resumo','Perfil','Compras','Ciclo','Funil','Notas fiscais'];
+  if(S.aba!=='resumo'){
+    return '<div class="painel"><div class="tit"><b>'+esc(abas.find(a=>a.toLowerCase()===S.aba)||'Perfil')+'</b>'+
+      '<span>direto do WinThor</span></div>'+
+      '<div class="bloco"><div class="rot">Contato</div>'+
+      lin('Telefone','(91) 98811-4027')+lin('Carteira','Milene')+lin('Número','Murano Professional')+
+      lin('Situação','Em atendimento')+'</div>'+
+      '<div class="bloco"><div class="rot">Cliente no WinThor</div>'+
+      lin('Código','30412')+lin('Cidade','Ananindeua')+lin('RCA oficial','28 — Milene')+'</div></div>';
+  }
+  return '<div class="painel">'+conteudoResumo()+'</div>';
+}
+function conteudoResumo(){
+  return '<div class="tit"><b>Resumo</b><span>direto do WinThor · 12 meses</span></div>'+
+    '<div class="heroi"><div class="v">R$ 12.480,00</div><div class="r">comprado em 12 meses</div></div>'+
+    '<div class="dupla">'+
+      '<div><div class="v" style="color:var(--urg)">47 d</div><div class="r">sem comprar</div></div>'+
+      '<div><div class="v" style="color:var(--urg)">118%</div><div class="r">do ciclo</div></div>'+
+    '</div>'+
+    '<div class="sugestao"><b>Sugestão · </b>Passou do ciclo de recompra. Ela repete a linha de nutrição a cada 40 dias.</div>'+
+    '<div class="bloco"><div class="rot">Compra</div>'+
+      lin('Última','11/07/2026')+lin('Notas','9')+lin('Ciclo médio','40 dias')+lin('Ticket médio','R$ 1.386,67')+
+    '</div>'+
+    '<div class="bloco"><div class="rot">Últimas notas</div>'+
+      lin('11/07/2026','R$ 1.240,00')+lin('02/06/2026','R$ 486,00')+lin('24/04/2026','R$ 2.115,00')+
+    '</div>';
+}
+function lin(r,v,forte){
+  return '<div class="lin"><span>'+esc(r)+'</span><b'+(forte?' style="color:var(--marca)"':'')+'>'+esc(v)+'</b></div>';
+}
+
+/* ---------- MONTAGEM POR MODO ------------------------------------------- */
+function nav(){
+  const itens = [['Negociações',0],['Chat',1],['Relatórios',0],['Templates',0],['Tickets',0],['Administração',0]];
+  return '<div class="nav">'+
+    '<span class="marca">'+logo()+'CRM</span>'+
+    '<nav>'+itens.map(([r,on])=>'<a href="#" class="'+(on?'on':'')+'">'+r+'</a>').join('')+'</nav>'+
+    '<span class="dir"><button class="bt so-ico" title="Indicadores">'+ic('grafico')+'</button>'+
+    '<span class="av n24">M</span></span></div>';
+}
+function logo(){
+  return '<svg width="22" height="22" viewBox="0 0 100 100" aria-label="Murano"><rect width="100" height="100" rx="22" fill="#7a1755"/>'+
+    '<path d="M31 74 C 31 48, 33 36, 47 28" fill="none" stroke="#e7d7dc" stroke-width="9.5" stroke-linecap="round"/>'+
+    '<path d="M53 74 C 53 48, 55 36, 69 28" fill="none" stroke="#e7d7dc" stroke-width="9.5" stroke-linecap="round"/></svg>';
+}
+
+function folha(){
+  if(!S.folha) return '';
+  return '<div class="veu" data-folha="0"></div><div class="folha">'+
+    '<div class="alca" data-folha="0"><i></i></div>'+
+    '<div class="abas" style="height:44px">'+['Resumo','Perfil','Compras','Ciclo','Funil','Notas']
+      .map((r,i)=>'<button class="'+(i===0?'on':'')+'" style="height:44px">'+r+'</button>').join('')+'</div>'+
+    '<div class="conteudo">'+conteudoResumo()+'</div></div>';
+}
+
+function barraTel(){
+  return '<div class="barraTel">'+FILAS.map(f=>{
+    const n=contaFila(f.k), on=S.fila===f.k;
+    return '<button class="'+(on?'on':'')+'" data-fila="'+f.k+'">'+
+      '<span class="env">'+ic(f.ic)+
+      (n>0?'<span class="n '+(f.urg?'':'quieto')+'">'+n+'</span>':'')+'</span>'+
+      '<span class="r">'+f.r+'</span></button>';
+  }).join('')+'</div>';
+}
+
+function pintar(){
+  document.documentElement.dataset.tema = S.tema;
+
+  /* DESKTOP */
+  document.getElementById('app-d').innerHTML =
+    nav()+'<div class="corpo">'+sidebar('d')+thread('d')+(S.painel?painel():'')+'</div>';
+
+  /* CELULAR — uma coluna por vez, barra de filas embaixo na lista */
+  const m = S.telVista==='lista'
+    ? '<div class="corpo">'+sidebar('m')+'</div>'+barraTel()
+    : '<div class="corpo">'+thread('m')+'</div>';
+  document.getElementById('app-m').innerHTML = m + folha();
+
+  /* COMPACTO — só a thread, sem barra do produto */
+  document.getElementById('app-c').innerHTML = '<div class="corpo">'+thread('c')+'</div>' + folha();
+
+  /* A conversa abre na ultima mensagem. Sem `behavior:smooth`: rolagem animada
+     na abertura e movimento que nao carrega informacao -- o olho persegue algo
+     que ja deveria estar parado no lugar certo. */
+  const aoFim = () => document.querySelectorAll('.msgs').forEach(el => { el.scrollTop = el.scrollHeight; });
+  requestAnimationFrame(() => { aoFim(); requestAnimationFrame(aoFim); });
+}
+
+/* ---------- eventos ------------------------------------------------------ */
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-conv],[data-fila],[data-painel],[data-aba],[data-cen],[data-voltar],[data-folha],[data-agenda]');
+  if(t){
+    if(t.dataset.conv){ S.conv = t.dataset.conv; if(window.matchMedia) S.telVista='conversa'; }
+    if(t.dataset.fila){ S.fila = t.dataset.fila;
+      const primeira = CONVS.find(c=>c.fila===S.fila); if(primeira) S.conv = primeira.id; }
+    if(t.dataset.painel!==undefined && t.dataset.painel!==''){
+      if(t.closest('.app.d')) S.painel = t.dataset.painel==='1' ? !S.painel : false;
+      else S.folha = true;
+    }
+    if(t.dataset.aba){ S.aba = t.dataset.aba; S.painel = true; }
+    if(t.dataset.cen){ S.cen[t.dataset.cen] = true; sincronizarChips(); }
+    if(t.dataset.voltar) S.telVista='lista';
+    if(t.dataset.folha==='0') S.folha=false;
+    if(t.dataset.agenda) S.fila='meus';
+    pintar(); return;
+  }
+  /* o botão “Cliente” e o “📊” do celular/compacto abrem a folha */
+  const bi = e.target.closest('.bt.so-ico[title="Dados do cliente"]');
+  if(bi){ S.folha = true; pintar(); return; }
+});
+
+document.getElementById('segTema').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  S.tema = b.dataset.t;
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed', String(x===b)));
+  pintar();
+});
+document.getElementById('segEstado').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  S.estado = b.dataset.e;
+  [...e.currentTarget.children].forEach(x=>x.setAttribute('aria-pressed', String(x===b)));
+  pintar();
+});
+document.querySelectorAll('.chk[data-c]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    S.cen[b.dataset.c] = !S.cen[b.dataset.c];
+    b.setAttribute('aria-pressed', String(S.cen[b.dataset.c]));
+    pintar();
+  });
+});
+function sincronizarChips(){
+  document.querySelectorAll('.chk[data-c]').forEach(b=>
+    b.setAttribute('aria-pressed', String(!!S.cen[b.dataset.c])));
+}
+
+pintar();
+</script>
+</body>
+</html>

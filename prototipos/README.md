@@ -35,7 +35,9 @@ com custo em cliques, o que está bom e deve ser preservado, e os riscos — est
 | `direcao-1-continuidade.html` | Continuidade — o mapa do RD, com o que faltava aparecer |
 | `direcao-2-fila-de-trabalho.html` | Fila de trabalho — a lista vira ordem de serviço |
 | `direcao-3-balcao.html` | Balcão — a unidade de trabalho é a cliente, não a conversa |
-| `laudo-ux-chat.md` | O laudo de UX |
+| **`tema-premium.html`** | **Bancada — a mesma tela, sobre uma grade** (Direção 4, 27/08) |
+| `laudo-ux-chat.md` | O laudo de UX das direções 1 a 3 |
+| `laudo-tema-premium.md` | O laudo da Direção 4 — escalas, contrastes e plano de implementação |
 
 ---
 
@@ -82,28 +84,51 @@ mensagem. Nasce no escuro, como o hub que embute este CRM.
 sugestão comercial defasada vira mensagem errada com aparência de autoridade.
 Cartões mais ricos custam consulta.
 
+### 4 · Bancada  *(acrescentada em 27/08/2026)*
+**Nada de novo na tela. Tudo no mesmo ritmo.** Herda todas as correções da Direção 1
+e **não acrescenta nenhuma informação nova**: o que muda é que a tela passa a
+obedecer a uma grade — sete degraus de espaço, sete de tipografia, três de raio,
+três alturas de controle, dois de elevação e cinco famílias de cor com um trabalho
+cada. Nasce de uma contagem: hoje o chat tem **18 tamanhos de fonte, 65 combinações
+de padding, 15 raios e 6 rampas de sombra**. A 1 respondeu “o que falta aparecer”;
+a 4 responde “por que a tela parece improvisada mesmo mostrando a coisa certa”.
+Consertos visíveis: uma régua vertical por coluna (a sidebar tem hoje três bordas
+esquerdas), uma altura só para as ações do cabeçalho, mensagens agrupadas por autor,
+e o painel do ERP parando de truncar `R$ 12.480,00` — que precisa de 112 px e recebe 55.
+
+*Sacrifica:* o título-dropdown das filas some, absorvido pela faixa segmentada que a
+própria Direção 1 criou — é o único elemento que muda de forma, e é memória muscular.
+O peso 800 é abolido (pode ler como “apagado” no primeiro dia, embora todo contraste
+suba). Ícones de interface deixam de ser emoji. E ela **não** muda a forma do dia nem
+vende mais por conversa: isso continua sendo a 2 e a 3.
+
 ---
 
 ## Tabela de decisão
 
-| | 1 · Continuidade | 2 · Fila de trabalho | 3 · Balcão |
-|---|---|---|---|
-| **Risco de treinamento** | baixo | alto | alto |
-| **Fidelidade ao mapa do RD** | total | parcial (lista muda) | baixa (direita muda) |
-| **Resolve triagem em 3 s** | parcial (contadores) | **sim** (fila ordenada por espera) | parcial (estado comercial) |
-| **Resolve a janela de 24h** | mostra | mostra e **trava a caixa** | mostra, trava e oferece o template ao lado |
-| **Resolve a tabulação** | não (facilita) | **sim** (vem procurar o vendedor) | **sim** (dossiê do momento) |
-| **Usa a vantagem do ERP** | resumo por padrão | ficha estreita com ações | **fusão total** (faixa fixa + catálogo) |
-| **Mobile** | resolvido | resolvido + gestos (swipe, áudio com trava) | resolvido + carrossel de contexto |
-| **Teclado** | inalterado | **⌘K, j/k, r/e/s/t** | inalterado |
-| **Custo de dados por conversa** | igual ao de hoje | um pouco maior | **bem maior** |
-| **Prazo estimado de implementação** | curto | médio | longo |
+| | 1 · Continuidade | **4 · Bancada** | 2 · Fila de trabalho | 3 · Balcão |
+|---|---|---|---|---|
+| **Risco de treinamento** | baixo | baixo (um elemento muda de forma) | alto | alto |
+| **Fidelidade ao mapa do RD** | total | total | parcial (lista muda) | baixa (direita muda) |
+| **Resolve triagem em 3 s** | parcial (contadores) | parcial (os mesmos contadores, um clique mais perto) | **sim** (fila ordenada por espera) | parcial (estado comercial) |
+| **Resolve a janela de 24h** | mostra | mostra | mostra e **trava a caixa** | mostra, trava e oferece o template ao lado |
+| **Resolve a tabulação** | não (facilita) | não | **sim** (vem procurar o vendedor) | **sim** (dossiê do momento) |
+| **Usa a vantagem do ERP** | resumo por padrão | resumo por padrão, **sem truncar o valor** | ficha estreita com ações | **fusão total** (faixa fixa + catálogo) |
+| **Mobile** | resolvido | resolvido + piso de toque de 44 px auditado | resolvido + gestos | resolvido + carrossel |
+| **Compacto (a lupa, 500 px)** | herda o do original | **desenhado** (28/36, ações numa linha, 77 % para a conversa) | não tratado | não tratado |
+| **Teclado** | inalterado | inalterado | **⌘K, j/k, r/e/s/t** | inalterado |
+| **Custo de dados por conversa** | igual ao de hoje | **igual ao de hoje** | um pouco maior | **bem maior** |
+| **Precisa de dado que o banco não tem** | não | **não** | sim (adiar) | sim (catálogo, ação) |
+| **Prazo estimado de implementação** | curto | curto | médio | longo |
 
-**Uma leitura possível:** as três não são excludentes no tempo. A Direção 1 é o
+**Uma leitura possível:** as quatro não são excludentes no tempo. A Direção 1 é o
 piso — quase tudo nela é correção do que já existe, e vale mesmo que a escolha
-final seja outra. A 2 e a 3 são apostas diferentes sobre onde está o ganho: a 2
-aposta em **atender mais conversas por dia**, a 3 em **vender mais por conversa**.
-A pergunta a responder antes de escolher é essa, não qual tela é mais bonita.
+final seja outra. A **4 é a 1 mais acabamento**: mesma informação, mesmas posições,
+tudo sobre uma grade — é a única que não pede dado novo e a única que trata o modo
+compacto. A 2 e a 3 são apostas diferentes sobre onde está o ganho: a 2 aposta em
+**atender mais conversas por dia**, a 3 em **vender mais por conversa**. A pergunta
+a responder antes de escolher entre elas é essa, não qual tela é mais bonita —
+e a 4 pode entrar antes, junto ou depois de qualquer uma das duas.
 
 ---
 
