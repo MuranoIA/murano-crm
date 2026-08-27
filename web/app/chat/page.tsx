@@ -726,6 +726,11 @@ export default function Chat() {
   // vendedor que não têm por que pesar na abertura do chat.
   const [carteira, setCarteira] = useState<ContatoCarteira[] | null>(null);
   const [carteiraCarregando, setCarteiraCarregando] = useState(false);
+  // Quantos nomes da agenda estão desenhados. A lista inteira (~4,7 mil botões)
+  // pesa no navegador, então ela cresce sob demanda em vez de aparecer de uma
+  // vez — mas o corte NÃO pode ser um teto fixo: era "Mostrando 400 de 4696",
+  // sem nenhum jeito de ver o 401º a não ser buscar, e a busca estava quebrada.
+  const [carteiraLimite, setCarteiraLimite] = useState(400);
   const carregarCarteira = useCallback(async () => {
     setCarteiraCarregando(true);
     try {
@@ -864,6 +869,16 @@ export default function Chat() {
   // filtro por VENDEDOR, como no board: só para quem enxerga mais de uma
   // carteira (admin/home). Vendedor já vê só a própria — chip seria redundante.
   const [vendFiltro, setVendFiltro] = useState<string | null>(null);
+
+  // Trocar o termo da busca ou o vendedor recomeça a agenda do topo. Sem isto,
+  // quem tivesse expandido para 2.000 nomes e depois digitasse um nome ficaria
+  // com o "mostrar mais" de um recorte anterior — e a lista voltaria a crescer a
+  // partir de um número que não diz nada sobre a busca atual.
+  //
+  // Mora AQUI, e não junto do estado da carteira lá em cima, porque depende de
+  // `vendFiltro`: declarado na linha acima, ele não existe antes deste ponto e
+  // referenciá-lo em cima estoura em tempo de render.
+  useEffect(() => { setCarteiraLimite(400); }, [busca, vendFiltro]);
   const [achados, setAchados] = useState<Conversa[] | null>(null);  // busca no conteúdo
   const [buscandoMsgs, setBuscandoMsgs] = useState(false);
   const [truncado, setTruncado] = useState(false);
@@ -1708,9 +1723,16 @@ export default function Chat() {
     .filter((k) => {
       const t = busca.trim().toLowerCase();
       if (!t) return true;
+      // ⚠️ Os dígitos do termo SÓ entram na conta se existirem. `"".includes("")`
+      // é `true` em JS, então um termo sem número nenhum ("samara soares brito")
+      // fazia a cláusula do telefone casar com TODAS as linhas — e a busca
+      // devolvia a carteira inteira, parecendo que não filtrava nada. A lista de
+      // conversas escapava disso por um `|| " "` no fim, que funciona por
+      // acidente; aqui a guarda é explícita, para não depender de sorte.
+      const digitos = t.replace(/\D/g, "");
       return (k.cliente ?? "").toLowerCase().includes(t)
-        || (k.telefone ?? "").includes(t.replace(/\D/g, ""))
-        || String(k.codcli).includes(t);
+        || (!!digitos && (k.telefone ?? "").includes(digitos))
+        || (!!digitos && String(k.codcli).includes(digitos));
     });
 
   // ---- DESENHO EM VIGOR (0095) ---------------------------------------------
@@ -2170,7 +2192,13 @@ export default function Chat() {
                 </div>
               )}
 
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              {/* Esta faixa fala da lista de CONVERSAS: o contador e a ordem por
+                  data. Na agenda ela mentia duas vezes — dizia "0 conversas" ao
+                  lado de 4.696 clientes na tela (porque "carteira" não é um
+                  recorte da lista de conversas) e oferecia "Mais recente" numa
+                  lista que é alfabética. A contagem da agenda já vem na faixa
+                  dentro da própria lista, então aqui é só sumir. */}
+              <div style={{ position: "relative", display: filtro === "carteira" ? "none" : "flex", alignItems: "center" }}>
                 <span style={{ fontSize: 10.5, color: M.muted }}>
                   {ordenadas.length} conversa{ordenadas.length === 1 ? "" : "s"}
                 </span>
@@ -2214,7 +2242,7 @@ export default function Chat() {
                       {carteiraVisivel.length} cliente{carteiraVisivel.length === 1 ? "" : "s"}
                       {(carteira ?? []).some((k) => !k.cliente_id) && " · alguns sem contato"}
                     </div>
-                    {carteiraVisivel.slice(0, 400).map((k) => {
+                    {carteiraVisivel.slice(0, carteiraLimite).map((k) => {
                       const conv = conversas.find((c) => c.cliente_id === k.cliente_id);
                       const ativa = !!k.cliente_id && sel?.cliente_id === k.cliente_id;
                       const inerte = !k.cliente_id;
@@ -2253,9 +2281,25 @@ export default function Chat() {
                         </button>
                       );
                     })}
-                    {carteiraVisivel.length > 400 && (
-                      <div style={{ padding: "10px 12px", fontSize: 11.5, color: M.gray }}>
-                        Mostrando 400 de {carteiraVisivel.length} — use a busca para achar quem você procura.
+                    {carteiraVisivel.length > carteiraLimite && (
+                      <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => setCarteiraLimite((n) => n + 400)}
+                          style={{ background: M.roxoSoft, color: M.wine, border: `1px solid ${M.border}`,
+                            borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 800,
+                            cursor: "pointer", fontFamily: "inherit" }}>
+                          Mostrar mais {Math.min(400, carteiraVisivel.length - carteiraLimite)}
+                        </button>
+                        <span style={{ fontSize: 11.5, color: M.gray }}>
+                          {carteiraLimite} de {carteiraVisivel.length}
+                        </span>
+                        <button
+                          onClick={() => setCarteiraLimite(carteiraVisivel.length)}
+                          style={{ background: "transparent", color: M.gray, border: "none", padding: 0,
+                            fontSize: 11.5, fontWeight: 700, textDecoration: "underline",
+                            cursor: "pointer", fontFamily: "inherit" }}>
+                          ver todos
+                        </button>
                       </div>
                     )}
                   </>
