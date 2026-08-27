@@ -11,6 +11,7 @@ import {
 // cedo, o servidor confere de novo (lib/templateVars.ts)
 import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
+import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
 
 // ---------------------------------------------------------------------------
@@ -322,92 +323,200 @@ function Trecho({ texto, termo }: { texto: string; termo: string }) {
 // card ganha codcli, RCA e historico de compra sozinho — sem escrita paralela
 // que o proprio job poderia desfazer.
 // ---------------------------------------------------------------------------
-function SalvarContato({ atual, salvar, temErp }: {
-  atual?: any;
-  salvar: (d: { nome?: string; cpf?: string }) => Promise<boolean>;
+// ---------------------------------------------------------------------------
+// FICHA DE CADASTRO (0109) - a cliente dita, o consultor cola, alguem digita
+// no WinThor depois.
+//
+// Substitui o antigo "Salvar contato", que pedia nome + CPF e mais nada. Ele
+// resolvia o VINCULO (o CPF faz `wth_reconciliar_vinculos()` casar) e deixava
+// o cadastro de fora: na hora de digitar no ERP faltava endereco, inscricao
+// estadual, nome fantasia -- e o consultor voltava a perguntar, dias depois,
+// coisas que a cliente teria respondido de uma vez.
+//
+// A lista de campos NAO esta aqui. Vem de `crm_config.cadastro_campos`,
+// editavel em /admin, porque quem sabe o que o WinThor exige e quem cadastra.
+// O mesmo array gera a MENSAGEM que pede os dados -- se fossem dois textos,
+// divergiriam e alguem perguntaria duas vezes.
+// ---------------------------------------------------------------------------
+function FichaCadastro({ clienteId, temErp, pedirDados, avisar }: {
+  clienteId: string;
   temErp: boolean;
+  /** poe o texto do pedido na caixa de mensagem, para revisar antes de enviar */
+  pedirDados: (texto: string) => void;
+  avisar: (m: string) => void;
 }) {
+  const [campos, setCampos] = useState<CampoCadastro[]>(CAMPOS_PADRAO);
+  const [dados, setDados] = useState<Record<string, string>>({});
+  const [obs, setObs] = useState("");
+  const [ficha, setFicha] = useState<any>(null);
   const [aberto, setAberto] = useState(false);
-  const [nome, setNome] = useState("");
-  const [cpf, setCpf] = useState("");
   const [ocupado, setOcupado] = useState(false);
 
-  // ---- Cliente JÁ cadastrado no WinThor: o ERP manda -----------------------
-  // O botão gravava `clientes.nome_completo`, que é o nome que o board e o chat
-  // exibem. Num cliente já vinculado isso deixava o CRM chamando de "rom" quem
-  // o ERP chama de "ROMULO ALBUQUERQUE" — e a divergência não voltaria sozinha,
-  // porque o ETL nunca reescreve contato conhecido (§25.2).
-  //
-  // A regra do projeto já era essa e só não estava aplicada aqui: "WinThor é
-  // fonte da verdade quando houver divergência de sync" (§10.8). Então, com
-  // vínculo, não há formulário — há o caminho para corrigir onde o dado nasce.
+  useEffect(() => {
+    let vivo = true;
+    setAberto(false); setDados({}); setObs(""); setFicha(null);
+    fetch("/api/chat/cadastro?cliente_id=" + encodeURIComponent(clienteId), { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!vivo) return;
+        setCampos(j?.campos ?? CAMPOS_PADRAO);
+        setFicha(j?.ficha ?? null);
+        setDados((j?.ficha?.dados ?? {}) as Record<string, string>);
+        setObs(j?.ficha?.observacao ?? "");
+        // Ficha ja comecada reabre ABERTA: fechada, quem esta no meio do
+        // preenchimento acharia que perdeu o que digitou ontem.
+        if (j?.ficha) setAberto(true);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [clienteId]);
+
+  // Cliente ja vinculado: o cadastro existe no ERP e e ele que manda (10.8 e a
+  // migration 0108). Nao ha ficha a preencher -- ha o caminho para corrigir.
   if (temErp) {
     return (
-      <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
+      <div style={{ padding: "11px 14px", borderBottom: "1px solid " + M.border }}>
         <div style={{ fontSize: 12.5, color: M.gray, lineHeight: 1.5 }}>
-          <b style={{ color: M.ink }}>Cadastro do WinThor.</b> Nome, CPF e endereço deste cliente
-          vêm do ERP e não são editados aqui — corrigir por lá vale para todo mundo,
-          e a mudança chega em até 10 minutos.
+          <b style={{ color: M.ink }}>Cadastro do WinThor.</b> Nome, CPF e endereco vem do ERP e
+          nao sao editados aqui - corrigir por la vale para todo mundo, e a mudanca chega em ate
+          10 minutos.
         </div>
       </div>
     );
   }
 
-  if (!aberto) {
-    return (
-      <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
-        <button onClick={() => { setNome(atual?.nome ?? ""); setCpf(""); setAberto(true); }}
-          style={{ width: "100%", padding: "8px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
-            color: M.wine, background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 9, cursor: "pointer" }}>
-          ✎ Salvar contato
-        </button>
-        {!temErp && (
-          <div style={{ fontSize: 10.5, color: M.gray, marginTop: 6, lineHeight: 1.45 }}>
-            Com o CPF preenchido, o cadastro do WinThor e o histórico de compra aparecem sozinhos.
-          </div>
-        )}
-      </div>
-    );
+  const falta = faltando(campos, dados);
+  const preenchidos = campos.filter((c) => String(dados[c.k] ?? "").trim()).length;
+
+  async function salvar() {
+    setOcupado(true);
+    try {
+      const r = await fetch("/api/chat/cadastro", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: clienteId, dados, observacao: obs }),
+      });
+      const j = await r.json().catch(() => ({}));
+      avisar(r.ok ? (j?.aviso ?? "Ficha salva.") : (j?.error ?? ("erro " + r.status)));
+      if (r.ok) setFicha({ ...(ficha ?? {}), dados, observacao: obs });
+    } finally { setOcupado(false); }
+  }
+
+  async function marcarCopiado(desfazer: boolean) {
+    setOcupado(true);
+    try {
+      const r = await fetch("/api/chat/cadastro", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: clienteId, desfazer }),
+      });
+      const j = await r.json().catch(() => ({}));
+      avisar(r.ok ? (j?.aviso ?? "ok") : (j?.error ?? ("erro " + r.status)));
+      if (r.ok) setFicha((f: any) => ({ ...(f ?? {}), copiado_em: desfazer ? null : new Date().toISOString() }));
+    } finally { setOcupado(false); }
   }
 
   return (
-    <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
-      <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 7 }}>
-        Salvar contato
+    <div style={{ padding: "11px 14px", borderBottom: "1px solid " + M.border }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted }}>
+          Ficha para o WinThor
+        </div>
+        {ficha?.copiado_em && (
+          <span title="Ja foi digitada no ERP" style={{ fontSize: 9, fontWeight: 800, color: "#1a6b3c", background: "#e7f6ec", border: "1px solid #bfe6cd", borderRadius: 5, padding: "1px 6px" }}>
+            CADASTRADA
+          </span>
+        )}
+        {!ficha?.copiado_em && preenchidos > 0 && (
+          <span style={{ fontSize: 9.5, color: M.muted }}>{preenchidos}/{campos.length}</span>
+        )}
       </div>
-      <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do cliente"
-        style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, fontFamily: "inherit",
-          color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 6 }} />
-      <input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="CPF ou CNPJ (opcional)" inputMode="numeric"
-        style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 12.5, fontFamily: "inherit",
-          color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 8 }} />
-      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-        <button onClick={() => setAberto(false)}
-          style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", color: M.gray,
-            background: "transparent", border: `1px solid ${M.border}`, borderRadius: 8, cursor: "pointer" }}>
-          Cancelar
+
+      {/* O gesto que comeca tudo. O texto vai para a CAIXA DE MENSAGEM, nao
+          direto para o WhatsApp - quem envia e a pessoa, depois de ler.
+          Disparar mensagem real ao clicar num painel de consulta seria o tipo
+          de engano que nao tem desfazer. */}
+      <button
+        onClick={() => pedirDados(textoPedidoDeDados(campos, String(dados["nome"] ?? "").trim().split(/\s+/)[0]))}
+        style={{ width: "100%", padding: "8px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
+          color: M.wine, background: M.roxoSoft, border: "1px solid " + M.border, borderRadius: 9,
+          cursor: "pointer", marginBottom: 8 }}>
+        Pedir os dados a cliente
+      </button>
+
+      {!aberto ? (
+        <button onClick={() => setAberto(true)}
+          style={{ width: "100%", padding: "8px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit",
+            color: M.gray, background: M.bg, border: "1px solid " + M.border, borderRadius: 9, cursor: "pointer" }}>
+          Preencher a ficha
         </button>
-        <button disabled={ocupado || nome.trim().length < 2}
-          onClick={async () => {
-            setOcupado(true);
-            const ok = await salvar({ nome: nome.trim(), cpf: cpf.trim() || undefined });
-            setOcupado(false);
-            if (ok) setAberto(false);
-          }}
-          style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: "#fff",
-            background: ocupado || nome.trim().length < 2 ? M.muted : M.azul, border: "none", borderRadius: 8,
-            cursor: ocupado || nome.trim().length < 2 ? "default" : "pointer" }}>
-          {ocupado ? "Salvando…" : "Salvar"}
-        </button>
-      </div>
+      ) : (
+        <>
+          {campos.map((c) => (
+            <div key={c.k} style={{ marginBottom: 6 }}>
+              <label style={{ display: "block", fontSize: 10.5, color: M.muted, marginBottom: 2 }}>
+                {c.rotulo}{c.obrigatorio && <span style={{ color: M.laranja }}> *</span>}
+                {c.ajuda && <span style={{ opacity: 0.8 }}> - {c.ajuda}</span>}
+              </label>
+              <input
+                value={dados[c.k] ?? ""}
+                onChange={(e) => setDados((d) => ({ ...d, [c.k]: e.target.value }))}
+                style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", fontSize: 12.5,
+                  fontFamily: "inherit", color: M.ink, background: M.bg,
+                  border: "1px solid " + M.border, borderRadius: 8, outline: "none" }} />
+            </div>
+          ))}
+          <textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2}
+            placeholder="Observacao (opcional)"
+            style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", fontSize: 12.5,
+              fontFamily: "inherit", color: M.ink, background: M.bg, border: "1px solid " + M.border,
+              borderRadius: 8, outline: "none", resize: "vertical", marginBottom: 8 }} />
+
+          {falta.length > 0 && (
+            <div style={{ fontSize: 10.5, color: M.laranja, marginBottom: 6 }}>
+              Falta: {falta.join(", ")}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button disabled={ocupado || falta.length > 0} onClick={salvar}
+              style={{ flex: 1, padding: "7px 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                color: "#fff", background: ocupado || falta.length ? M.muted : M.azul, border: "none",
+                borderRadius: 8, cursor: ocupado || falta.length ? "default" : "pointer" }}>
+              {ocupado ? "Salvando..." : "Salvar ficha"}
+            </button>
+            <button
+              onClick={() => {
+                const t = fichaEmTexto(campos, dados);
+                navigator.clipboard?.writeText(t).then(
+                  () => avisar("Ficha copiada - cole no WinThor."),
+                  () => avisar("Nao consegui copiar; selecione o texto a mao."),
+                );
+              }}
+              title="Copia a ficha em texto, campo por linha, para colar no ERP"
+              style={{ padding: "7px 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                color: M.wine, background: M.roxoSoft, border: "1px solid " + M.border,
+                borderRadius: 8, cursor: "pointer" }}>
+              Copiar
+            </button>
+          </div>
+
+          {ficha && (
+            <button disabled={ocupado} onClick={() => marcarCopiado(!!ficha.copiado_em)}
+              style={{ width: "100%", marginTop: 6, padding: "6px 12px", fontSize: 11.5, fontWeight: 700,
+                fontFamily: "inherit", color: M.gray, background: "transparent",
+                border: "1px solid " + M.border, borderRadius: 8, cursor: "pointer" }}>
+              {ficha.copiado_em ? "Desmarcar - ainda nao cadastrei" : "Ja cadastrei no WinThor"}
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-function PainelContato({ c, aba, extra, salvarContato }: {
+function PainelContato({ c, aba, extra, fichaDe }: {
   c: Contato | null; aba: AbaContato; extra?: any;
-  /** salvar nome/CPF do contato — ausente quando não há o que salvar */
-  salvarContato?: (dados: { nome?: string; cpf?: string }) => Promise<boolean>;
+  /** a ficha de cadastro (0109); ausente em card sintetico do ERP */
+  fichaDe?: (temErp: boolean) => React.ReactNode;
 }) {
   if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
   const { compras, ciclo, funil, ultimas_notas } = c;
@@ -510,7 +619,7 @@ function PainelContato({ c, aba, extra, salvarContato }: {
           ) : (
             <Vazio t="Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP." />
           )}
-          {salvarContato && <SalvarContato atual={extra} salvar={salvarContato} temErp={!!compras} />}
+          {fichaDe && fichaDe(!!compras)}
         </>
       )}
 
@@ -911,6 +1020,33 @@ export default function Chat() {
   const [truncado, setTruncado] = useState(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const textoRef = useRef<HTMLTextAreaElement>(null);
+
+  // ---- a caixa cresce com o texto, como no WhatsApp ------------------------
+  // `rows={1}` sozinho nao faz isso: a altura fica travada em uma linha e o
+  // resto do texto rola por dentro, escondido. O truque e zerar a altura antes
+  // de ler `scrollHeight` -- sem zerar, o valor lido e sempre o atual, e a
+  // caixa so cresce, nunca volta a encolher quando a pessoa apaga ou envia.
+  //
+  // O teto existe para a conversa nao sumir atras do compositor: passando
+  // dele, a caixa rola por dentro -- que e o que o WhatsApp faz tambem.
+  const crescer = useCallback(() => {
+    const el = textoRef.current;
+    if (!el) return;
+    const teto = embutido ? 92 : 132;   // `compacto` so existe mais abaixo; e o mesmo valor
+    // ⚠️ `0px`, e nao `auto`. Com `auto` o navegador devolvia `scrollHeight` do
+    // estado ANTERIOR (medido: campo vazio reportando 50px), entao a caixa
+    // crescia e nunca voltava a encolher. Zerar a altura obriga o recalculo, e
+    // o valor lido passa a ser o do conteudo de agora.
+    el.style.height = "0px";
+    const alvo = Math.min(el.scrollHeight, teto);
+    el.style.height = alvo + "px";
+    el.style.overflowY = el.scrollHeight > teto ? "auto" : "hidden";
+  }, [embutido]);
+
+  // Roda tambem quando o texto muda por FORA da digitacao: resposta rapida,
+  // "pedir os dados", reenviar uma falha, e o esvaziar depois do envio -- sem
+  // isto a caixa ficaria alta com o campo vazio, ou baixa com texto colado.
+  useEffect(() => { crescer(); }, [texto, crescer]);
   const fimRef = useRef<HTMLDivElement>(null);
   const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
   const selRef = useRef<Conversa | null>(null);
@@ -1272,25 +1408,27 @@ export default function Chat() {
     finally { setPausando(false); }
   }
 
-  async function salvarContato(dados: { nome?: string; cpf?: string }): Promise<boolean> {
-    if (!sel) return false;
-    try {
-      const r = await fetch("/api/chat/contato", {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: sel.cliente_id, ...dados }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { setAviso(j?.error ?? `não consegui salvar (erro ${r.status})`); return false; }
-      // reflete na hora, na lista e no cabeçalho, sem esperar o próximo load
-      if (dados.nome) {
-        setSel((s) => (s ? { ...s, cliente: dados.nome! } : s));
-        setConversas((cs) => cs.map((x) => (x.cliente_id === sel.cliente_id ? { ...x, cliente: dados.nome! } : x)));
-      }
-      setAviso(j?.aviso ?? "Contato salvo.");
-      carregarContatoDe(sel.cliente_id);
-      return true;
-    } catch (e: any) { setAviso(String(e?.message ?? e)); return false; }
-  }
+  // A ficha de cadastro do painel do contato (0109). Vive aqui, e nao dentro do
+  // PainelContato, porque precisa do `sel` e do compositor: o botao "pedir os
+  // dados" escreve na CAIXA DE MENSAGEM, e quem envia e a pessoa.
+  const fichaDe = useCallback((temErp: boolean) => {
+    if (!sel) return null;
+    // card sintetico do ERP nao e contato: nao ha conversa nem ficha
+    if (/^(winthor|venda):/.test(sel.cliente_id)) return null;
+    return (
+      <FichaCadastro
+        clienteId={sel.cliente_id}
+        temErp={temErp}
+        pedirDados={(t) => {
+          setModoNota(false);
+          setTexto(t);
+          setTimeout(() => textoRef.current?.focus(), 10);
+          setAviso("Revise o texto e envie — nada foi enviado ainda.");
+        }}
+        avisar={(m) => setAviso(m)}
+      />
+    );
+  }, [sel]);
 
   function abrir(c: Conversa) {
     setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
@@ -2519,7 +2657,7 @@ export default function Chat() {
             {sel && (
               <>
                 {/* cabeçalho da conversa */}
-                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : "9px 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: compacto ? "wrap" : "nowrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : "9px 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "nowrap" }}>
                   {isMobile && !compacto && (
                     <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
@@ -2534,11 +2672,15 @@ export default function Chat() {
                           ativa, é o que evita responder pela linha errada (a janela
                           de 24h é por par número+cliente) */}
                       {linha && (
-                        <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
+                        <span title={`Esta conversa corre pelo ${linha.rotulo}`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
                           color: linha.canal === "rd" ? M.gray : M.roxo,
                           background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
-                          borderRadius: 999, padding: "1px 7px" }}>
-                          {linha.rotulo}
+                          borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" }}>
+                          {/* O parentese explicativo ("Murano Pro (RD Conversas)")
+                             quebrava o cabecalho em duas linhas num quadro de 500px --
+                             a mesma linha que acabamos de ganhar juntando as acoes ao
+                             nome. Fica no `title`, como ja acontece nos chips da lista. */}
+                          {compacto ? linha.rotulo.replace(/\s*\([^)]*\)\s*/g, " ").trim() : linha.rotulo}
                         </span>
                       )}
                       {/* anti-colisão: quem mais está com ESTA conversa aberta */}
@@ -2552,13 +2694,15 @@ export default function Chat() {
                       )}
                     </span>
                   </span>
-                  {/* No modo compacto as ações ganham FAIXA PRÓPRIA (flexBasis
-                      100%): com ~500px, nome + 6 ações na mesma linha quebravam
-                      em três, e cada quebra come altura da conversa — que é o
-                      motivo de a janela existir. Aqui é uma linha só, sem
-                      quebrar, rolando na horizontal se faltar espaço. */}
+                  {/* No compacto as ações ficam na MESMA LINHA do nome, não numa
+                      faixa própria: a faixa custava uma linha inteira do cabeçalho,
+                      e altura é o que falta numa janela que existe para mostrar
+                      conversa. Cabe porque elas são só ícones aqui (`rot`) e o
+                      nome encolhe com reticências. Rola na horizontal se faltar
+                      espaço, em vez de quebrar — quebrar devolveria a linha que
+                      esta mudança acabou de ganhar. */}
                   <span style={compacto
-                    ? { flexBasis: "100%", display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto", paddingTop: 2 }
+                    ? { display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflowX: "auto", flexShrink: 0, maxWidth: "62%" }
                     : { display: "contents" }}>
                   {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
                   {sel.na_fila && (
@@ -3061,7 +3205,7 @@ export default function Chat() {
                 )}
 
                 {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
-                <div style={{ display: "flex", gap: 8, padding: "10px 14px", background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
+                <div style={{ display: "flex", gap: 8, padding: compacto ? "8px 10px" : "10px 14px", background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
                   {/* anexo: foto, áudio, documento — o texto digitado vira legenda
                       da PRIMEIRA. `multiple`: dá para escolher várias fotos de uma vez */}
                   <input
@@ -3072,11 +3216,24 @@ export default function Chat() {
                     style={{ display: "none" }}
                     onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) enviarArquivos(fs); }}
                   />
+                  {/* ---- A PILULA -------------------------------------------
+                      No WhatsApp o anexo e o audio moram DENTRO da caixa de
+                      texto, nao ao lado dela: e uma peca so, com a borda em
+                      volta de tudo. Antes cada botao era um quadrado com borda
+                      propria e o campo era mais um quadrado no meio da fila --
+                      por isso parecia estreito mesmo tendo espaco. Aqui a borda
+                      passa para o container, os botoes ficam transparentes, e o
+                      campo ocupa o que sobra. O enviar fica de FORA, como la. */}
+                  <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "flex-end", gap: 2,
+                    padding: compacto ? "3px 4px" : "4px 6px",
+                    background: modoNota ? M.surface : M.bg,
+                    border: `1px solid ${modoNota ? NOTA.borda : M.border}`,
+                    borderRadius: compacto ? 16 : 22, transition: "border-color .15s" }}>
                   <button
                     onClick={() => arquivoRef.current?.click()}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     {!enviandoArquivo ? "📎" : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
                   </button>
@@ -3087,8 +3244,8 @@ export default function Chat() {
                     title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
                     style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, flexShrink: 0, fontFamily: "inherit", fontSize: 17,
                       opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
-                      border: `1px solid ${gravando ? M.laranja : M.border}`,
-                      background: gravando ? "#fdeae3" : M.bg, color: gravando ? M.laranja : M.gray }}
+                      border: "none",
+                      background: gravando ? "#fdeae3" : "transparent", color: gravando ? M.laranja : M.gray }}
                   >
                     {gravando ? "⏹" : "🎤"}
                   </button>
@@ -3131,8 +3288,8 @@ export default function Chat() {
                         onClick={() => setMaisAberto((v) => !v)}
                         title="Mais: pausa, respostas rapidas e nota interna"
                         style={{ width: 30, height: 30, borderRadius: 9,
-                          border: `1px solid ${maisAberto ? M.roxo : M.border}`,
-                          background: maisAberto ? M.roxo : M.bg, color: maisAberto ? "#fff" : M.gray,
+                          border: "none",
+                          background: maisAberto ? M.roxo : "transparent", color: maisAberto ? "#fff" : M.gray,
                           fontSize: 15, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
                         ⋯
                       </button>
@@ -3151,7 +3308,7 @@ export default function Chat() {
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
                     style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
-                      border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 15,
+                      border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
                       fontFamily: "inherit", flexShrink: 0 }}>
@@ -3161,7 +3318,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -3169,7 +3326,7 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>
@@ -3186,7 +3343,7 @@ export default function Chat() {
                       ? "Sem janela de 24h aberta — o aviso de pausa não pode ser enviado"
                       : "Avisar a cliente que você vai se ausentar por alguns minutos"}
                     style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12,
-                      border: `1px solid ${M.border}`, background: M.bg, color: M.gray, fontSize: 15,
+                      border: "none", background: "transparent", color: M.gray, fontSize: 15,
                       opacity: modoNota || !janelaAberta ? 0.4 : 1,
                       cursor: pausando || modoNota || !janelaAberta ? "default" : "pointer",
                       fontFamily: "inherit", flexShrink: 0 }}>
@@ -3196,7 +3353,7 @@ export default function Chat() {
                     onClick={() => { setPicker((v) => !v); setPickerIdx(0); }}
                     disabled={modoNota}
                     title="Respostas rápidas (ou digite / na caixa)"
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${picker ? M.roxo : M.border}`, background: picker ? M.roxo : M.bg, color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: picker ? M.roxo : "transparent", color: picker ? "#fff" : M.gray, fontSize: 16, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     ⚡
                   </button>
@@ -3204,7 +3361,7 @@ export default function Chat() {
                   <button
                     onClick={() => { setModoNota((v) => !v); setPicker(false); setTimeout(() => textoRef.current?.focus(), 10); }}
                     title={modoNota ? "Voltar a escrever mensagem para o cliente" : "Escrever nota interna (o cliente não vê)"}
-                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: `1px solid ${modoNota ? NOTA.ink : M.border}`, background: modoNota ? NOTA.ink : M.bg, color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: compacto ? 30 : 42, height: compacto ? 30 : 42, borderRadius: compacto ? 9 : 12, border: "none", background: modoNota ? NOTA.ink : "transparent", color: modoNota ? NOTA.bg : M.gray, fontSize: 16, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
                     🗒️
                   </button>
@@ -3223,7 +3380,7 @@ export default function Chat() {
                           onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
                           disabled={enviando}
                           title="Escolher um template — reabre a conversa fora da janela de 24h"
-                          style={{ height: compacto ? 30 : 42, width: compacto ? 30 : undefined, padding: compacto ? 0 : "0 12px", borderRadius: compacto ? 9 : 12, border: `1px solid ${menuTemplate ? M.roxo : M.border}`, background: menuTemplate ? M.roxo : M.bg, color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                          style={{ height: compacto ? 30 : 42, width: compacto ? 30 : undefined, padding: compacto ? 0 : "0 12px", borderRadius: compacto ? 9 : 12, border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                         >
                           {/* Na lupa a palavra sozinha comia ~90px de um compositor
                               de 500px. Vira "T", como os demais icones da barra —
@@ -3299,12 +3456,21 @@ export default function Chat() {
                       if (e.key === "Escape" && picker) { e.preventDefault(); setPicker(false); setNovaAberta(false); return; }
                       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (modoNota) enviarNota(); else enviar(); }
                     }}
-                    placeholder={modoNota
-                      ? "Nota interna — só a equipe vê (Enter salva)"
-                      : "Escreva uma mensagem… (/ abre respostas rápidas, Enter envia)"}
+                    // ⚠️ CURTO de proposito. O `scrollHeight` de um textarea VAZIO
+                    // conta a altura do placeholder -- e o texto antigo ("Escreva uma
+                    // mensagem… (/ abre respostas rapidas, Enter envia)") quebrava em
+                    // duas linhas num campo de 300px. Resultado: a caixa nunca voltava
+                    // ao tamanho de uma linha depois de enviar. A dica do "/" e do
+                    // Enter vive no `title`, onde nao ocupa altura.
+                    placeholder={modoNota ? "Nota interna…" : "Mensagem"}
+                    title={modoNota
+                      ? "Nota interna — só a equipe vê. Enter salva."
+                      : "Enter envia · Shift+Enter quebra linha · / abre as respostas rápidas"}
                     rows={1}
-                    style={{ flex: 1, minWidth: compacto ? 110 : 160, resize: "none", padding: compacto ? "7px 10px" : "10px 13px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: modoNota ? M.surface : M.bg, border: `1px solid ${modoNota ? NOTA.borda : M.border}`, borderRadius: compacto ? 9 : 12, outline: "none", lineHeight: 1.4, maxHeight: 110 }}
+                    onInput={crescer}
+                    style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", padding: compacto ? "6px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
                   />
+                  </div>
                   <button
                     onClick={() => (modoNota ? enviarNota() : enviar())}
                     disabled={enviando || !texto.trim()}
@@ -3331,7 +3497,7 @@ export default function Chat() {
             <PainelContato
               c={contato}
               aba={abaAtual}
-              salvarContato={sel && !sel.cliente_id.startsWith("winthor:") && !sel.cliente_id.startsWith("venda:") ? salvarContato : undefined}
+              fichaDe={fichaDe}
               extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
             />
           </div>
@@ -3375,7 +3541,7 @@ export default function Chat() {
                 <PainelContato
                   c={contato}
                   aba={abaAtual}
-              salvarContato={sel && !sel.cliente_id.startsWith("winthor:") && !sel.cliente_id.startsWith("venda:") ? salvarContato : undefined}
+              fichaDe={fichaDe}
                   extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
                 />
               </div>

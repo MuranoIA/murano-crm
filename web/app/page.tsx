@@ -3207,8 +3207,8 @@ export default function Page() {
                                 onClick={() => window.open(`${URL_CONSULTA}?codcli=${codcli}`, "consultaclientes")}>C</BotaoCard>
                             )}
                             {temConversaReal && (
-                              <BotaoCard t="Ampliar — a conversa inteira" cor="#0b7fb0" bg="#eaf6fd" borda="#bfe6f8"
-                                onClick={() => abrirZoom(c)}>🔍</BotaoCard>
+                              <BotaoCard t="Maximizar — a conversa inteira" cor="#0b7fb0" bg="#eaf6fd" borda="#bfe6f8"
+                                onClick={() => abrirZoom(c)}>⛶</BotaoCard>
                             )}
                             {menuContato === c.cliente_id && (
                               <PainelContatoCard
@@ -3224,17 +3224,38 @@ export default function Page() {
                           {mostraInput && (
                             <div
                               onClick={(e) => e.stopPropagation()}
-                              style={{ marginTop: 4, display: "flex", gap: 4 }}
+                              style={{ marginTop: 4, display: "flex", gap: 4, alignItems: "flex-end" }}
                             >
-                              <input
+                              {/* <textarea>, nao <input>: precisa crescer com o texto,
+                                  como no WhatsApp. Um <input> nao quebra linha -- o texto
+                                  rola por dentro e a pessoa perde de vista o que escreveu.
+                                  Zerar a altura antes de ler `scrollHeight` e o que faz a
+                                  caixa tambem ENCOLHER quando o texto e apagado; sem isso
+                                  ela so cresce. Teto de 78px para nao comer o card. */}
+                              <textarea
+                                rows={1}
                                 value={respostaTexto[c.cliente_id] ?? ""}
                                 onChange={(e) => setRespostaTexto((prev) => ({ ...prev, [c.cliente_id]: e.target.value }))}
+                                onInput={(e) => {
+                                  const el = e.currentTarget;
+                                  el.style.height = "0px";   // "auto" devolve o scrollHeight antigo
+                                  el.style.height = Math.min(el.scrollHeight, 78) + "px";
+                                  el.style.overflowY = el.scrollHeight > 78 ? "auto" : "hidden";
+                                }}
+                                ref={(el) => {
+                                  // tambem ao (re)montar e depois do envio, quando o texto
+                                  // volta a vazio por fora da digitacao
+                                  if (!el) return;
+                                  el.style.height = "0px";
+                                  el.style.height = Math.min(el.scrollHeight, 78) + "px";
+                                }}
                                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarResposta(c.cliente_id); } }}
                                 placeholder="Responder (msg livre, 24h)…"
                                 disabled={enviandoResposta === c.cliente_id}
                                 style={{
-                                  flex: 1, minWidth: 0, fontSize: 11, padding: "5px 8px",
-                                  border: `1px solid ${RD.border}`, borderRadius: 6, outline: "none", color: RD.navy,
+                                  flex: 1, minWidth: 0, fontSize: 11, padding: "5px 8px", resize: "none",
+                                  fontFamily: "inherit", lineHeight: 1.35, overflowY: "hidden", boxSizing: "border-box",
+                                  border: `1px solid ${RD.border}`, borderRadius: 10, outline: "none", color: RD.navy,
                                 }}
                               />
                               <button
@@ -3243,8 +3264,8 @@ export default function Page() {
                                 title="Enviar mensagem livre (só funciona dentro da janela de 24h do WhatsApp)"
                                 style={{
                                   cursor: enviandoResposta === c.cliente_id ? "wait" : "pointer",
-                                  background: RD.cyan, color: "#fff", border: "none",
-                                  borderRadius: 6, padding: "0 10px", fontSize: 11, fontWeight: 700,
+                                  background: RD.cyan, color: "#fff", border: "none", flexShrink: 0,
+                                  borderRadius: 10, height: 26, padding: "0 10px", fontSize: 11, fontWeight: 700,
                                 }}
                               >
                                 {enviandoResposta === c.cliente_id ? "…" : "➤"}
@@ -3305,7 +3326,7 @@ export default function Page() {
                   <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
                 {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
-                <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Diminuir — fecha a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>🔍</button>
+                <button onClick={() => { setCardZoom(null); setZoomAcao(null); }} onMouseDown={(e) => e.stopPropagation()} title="Fechar a janela ampliada" style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid #bfe6f8`, background: "#eaf6fd", color: "#0b7fb0", fontSize: 11, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>✕</button>
                 {/* Ciclo e tempo entram AQUI, na mesma linha: sao a unica coisa
                     do card que a conversa embaixo nao mostra. */}
                 {zciclo && (

@@ -1,5 +1,6 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO } from "../../../../lib/crmConfig";
+import { lerCampos, type CampoCadastro } from "../../../../lib/cadastroCampos";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,8 @@ export async function GET() {
 
   const sb = sbAdmin();
   const cfg = await lerCrmConfig(sb);
+  const { data: cc } = await sb.from("crm_config").select("cadastro_campos").eq("id", 1).maybeSingle();
+  const campos: CampoCadastro[] = lerCampos((cc as any)?.cadastro_campos);
 
   // `padrao` viaja junto para a tela poder dizer "este é o estado de fábrica"
   // sem repetir a regra do lado do navegador.
@@ -167,6 +170,19 @@ export async function GET() {
           "A rota também recusa repetir para quem já foi avisado.",
         texto: cfg.texto_pausa,
       },
+      // ---- campos da ficha de cadastro (0109) -----------------------------
+      // A lista mora no banco porque quem sabe o que o WinThor exige e quem
+      // cadastra, nao quem faz deploy. O MESMO array gera a mensagem que pede
+      // os dados a cliente -- uma fonte, dois usos, sem risco de o consultor
+      // pedir oito coisas e o formulario ter dez.
+      cadastro: {
+        rotulo: "Ficha de cadastro do cliente novo",
+        resumo:
+          "Os campos que o consultor preenche no chat com o que a cliente ditar, para " +
+          "alguem depois digitar no WinThor. A mensagem que PEDE os dados e montada desta " +
+          "mesma lista, entao corrigir aqui corrige os dois lugares.",
+        campos: campos,
+      },
       envio: {
         rotulo: "Número de envio",
         resumo:
@@ -216,6 +232,26 @@ export async function PUT(req: Request) {
 
   const sb = sbAdmin();
   const antes = await lerCrmConfig(sb);
+
+  // ---- campos da ficha de cadastro: lista, nao booleano ---------------------
+  if (chave === "cadastro_campos") {
+    const limpos = lerCampos(valor);
+    if (!Array.isArray(valor) || !valor.length) {
+      return Response.json({ error: "informe ao menos um campo" }, { status: 400 });
+    }
+    // chave duplicada faria dois campos gravarem no mesmo lugar, e o segundo
+    // apagaria o primeiro em silencio na hora de salvar a ficha
+    const ks = limpos.map((c) => c.k);
+    if (new Set(ks).size !== ks.length) {
+      return Response.json({ error: "ha identificadores repetidos na lista" }, { status: 400 });
+    }
+    const { error } = await sb.from("crm_config").upsert({
+      id: 1, cadastro_campos: limpos,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ ok: true, aviso: `Ficha com ${limpos.length} campos. A mensagem que pede os dados ja acompanha.` });
+  }
 
   // ---- MODO MIGRAÇÃO: escreve as quatro chaves de uma vez -------------------
   // Não há coluna `modo_migracao` no banco de propósito (ver `modoMigracao()`
