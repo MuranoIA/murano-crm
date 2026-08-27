@@ -638,6 +638,8 @@ export default function Page() {
   // Modo migracao (Fase C simulada): o RD nao existe para esta tela. Derivado
   // no servidor a partir das quatro chaves -- ver modoMigracao() em crmConfig.
   const [semRd, setSemRd] = useState(false);
+  // Saúde do canal (§28.3). Vem junto do board; não é uma requisição a mais.
+  const [saude, setSaude] = useState<any>(null);
   // Os textos de ajuda das colunas foram escritos quando o RD era o único canal
   // e o nomeiam ("nunca teve conversa com operador no RD Conversas"). No modo
   // migração isso é justamente a menção que não deve existir. Trocar a palavra
@@ -690,6 +692,7 @@ export default function Page() {
       // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
       setCicloAtivo(j.ciclo_ativo !== false);
       setSemRd(j.modo_migracao === true);
+      setSaude(j.saude ?? null);
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
@@ -2757,6 +2760,43 @@ export default function Page() {
             >Limpar filtro</button>
           </div>
         )}
+
+        {/* ---- CANAL MUDO ------------------------------------------------
+            O modo de falha que já aconteceu: o app deixou de estar inscrito na
+            WABA e o sistema ficou mudo por horas — nada quebrou, nada apareceu
+            no log, ninguém foi avisado. O sinal é recibo que não volta: quem
+            promove `wait → success` é o mesmo webhook por onde as mensagens das
+            clientes entram.
+
+            A faixa fica ACIMA das colunas e em vermelho quando é grave: um
+            aviso que exige rolar até achar não é aviso. E aparece para TODO
+            MUNDO, com texto diferente por papel — a consultora não conserta,
+            mas precisa saber que o silêncio de hoje pode não ser da cliente. */}
+        {saude && saude.estado !== "ok" && (() => {
+          const grave = saude.estado === "mudo";
+          const cor = grave ? { fg: "#b3261e", bg: "#fdeae9", br: "#f2c4c0" }
+                    : saude.estado === "suspeito" ? { fg: "#8a5a00", bg: "#fff7e6", br: "#f3ddad" }
+                    : { fg: RD.gray, bg: RD.surface, br: RD.border };
+          const admin = sessao.role === "admin";
+          return (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap",
+              background: cor.bg, border: `1px solid ${cor.br}`, borderRadius: 10,
+              padding: "11px 14px", marginBottom: 14, fontSize: 12.5, color: cor.fg, lineHeight: 1.5 }}>
+              <span style={{ fontSize: 16, lineHeight: 1 }}>{grave ? "🔴" : "⚠️"}</span>
+              <span style={{ flex: 1, minWidth: 220 }}>
+                <b>{saude.titulo}.</b> {saude.detalhe}
+                {" "}
+                {admin
+                  ? "Abra Administração → Mecanismos para o diagnóstico completo do canal."
+                  : "Avise o administrador — enquanto isso, uma resposta que não chega pode não ser da cliente."}
+              </span>
+              {admin && (
+                <a href="/admin" style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: cor.fg,
+                  textDecoration: "underline" }}>Diagnosticar</a>
+              )}
+            </div>
+          );
+        })()}
 
         {ncFiltro && (
           <div style={{
