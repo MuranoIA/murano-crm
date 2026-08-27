@@ -1864,6 +1864,10 @@ export default function Page() {
                   );
                 })()}
             <a href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</a>
+            {/* Templates: para TODOS os papeis. O consultor escreve e manda para
+                o administrador avaliar (0110) -- e ve ali os que ja existem e
+                pode usar hoje, para nao sugerir o que ja esta no ar. */}
+            <a href="/templates" title="Ver os templates disponíveis e sugerir um novo" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Templates</a>
             {sessao.role === "admin" && (
               <a href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
             )}
@@ -2041,6 +2045,7 @@ export default function Page() {
                 </>
               )}
               <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
+              <a href="/templates" onClick={fecha} style={row}>📨 Templates</a>
               {sessao.role === "admin" && (
                 <a href="/admin" onClick={fecha} style={row}>⚙️ Administração</a>
               )}
