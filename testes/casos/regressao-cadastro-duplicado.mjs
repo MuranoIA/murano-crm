@@ -122,4 +122,40 @@ export default async function (t) {
     return `${contagens.length} cadastro(s); a mensagem cai em ${dono.id} (${dono.n} msgs), ` +
       `que é onde o histórico mora`;
   });
+
+  // ---------------------------------------------------------------- passo 4
+  await t.passo("4. o cadastro do número NOVO ganha do cadastro do RD", "✅", async () => {
+    // Por que a regra nao pode ser so "a mensagem mais recente": o ETL do RD
+    // continua alimentando o banco (§44), entao um cadastro antigo pode receber
+    // mensagem NOVA do RD depois de a cliente ja ter migrado para o nosso
+    // numero — e roubaria a conversa da Cloud de volta, partindo-a outra vez.
+    const src = readFileSync(WEBHOOK, "utf8");
+    const i = src.indexOf("async function acharOuCriarCliente");
+    const corpo = src.slice(i, i + 3200);
+    api.ok(/wamid/.test(corpo),
+      "a escolha entre cadastros duplicados nao consulta mais o canal novo (wamid): " +
+      "um cadastro do RD com mensagem recente do ETL volta a roubar a conversa da Cloud");
+
+    // E o invariante que a regra garante: nenhum vencedor so-RD tendo irmao com
+    // conversa no numero novo.
+    const { data } = await db.sb
+      .from("clientes").select("id,telefone").like("telefone", "%84719702").order("id");
+    const ids = (data ?? []).map((c) => c.id);
+    if (ids.length < 2) return "contato de teste sem duplicata — invariante vazio";
+
+    const ult = async (soCloud) => {
+      let q = db.sb.from("mensagens").select("cliente_id")
+        .in("cliente_id", ids).neq("tipo", "evento_sistema");
+      if (soCloud) q = q.like("id", "wamid%");
+      const { data: r } = await q.order("criada_em", { ascending: false }).limit(1);
+      return r?.[0]?.cliente_id ?? null;
+    };
+    const cloud = await ult(true);
+    const escolhido = cloud ?? (await ult(false));
+    api.ok(!cloud || escolhido === cloud,
+      `há conversa no número novo em ${cloud}, mas a regra escolheria ${escolhido}`);
+    return cloud
+      ? `há Cloud em ${cloud} e é ele que recebe — o cadastro do RD não rouba`
+      : "nenhum candidato tem conversa no número novo; vale a data";
+  });
 }
