@@ -16,10 +16,20 @@ export const maxDuration = 60;
 // .mp4 é descartada, porque só o áudio é decodificado. Quando o navegador não
 // dá conta do codec, o original sobe com `cortado:false` e o painel aplica o
 // teto de 59s no player (e usa <audio>, que ignora o vídeo do container).
+//
+// ⚠️ O ARQUIVO NÃO PASSA POR ESTA ROTA. O corpo de uma função da Vercel tem
+// teto de ~4,5 MB, e um WAV mono de 59 s a 48 kHz dá 5,4 MB — subir por aqui
+// devolvia 413 (e o limite piora a cada segundo que o trecho ganha). Então o
+// navegador sobe DIRETO para o Storage, em dois passos:
+//   POST {acao:"assinar"}   -> devolve uma URL de upload assinada (2h)
+//   PUT  <signedUrl>        -> o navegador manda os bytes ao Supabase
+//   POST {acao:"confirmar"} -> conferimos que o objeto existe e gravamos o ponteiro
+// A service_role nunca sai daqui: o que vai para o navegador é um token de
+// escrita para UM caminho só, que nasce nesta rota depois da guarda de admin.
 const BUCKET = "ranking-musica";
 const CHAVE = "parabens_musica";
 const SEGUNDOS = 59; // teto de reprodução na TV (não exportar: rota do Next só aceita handlers + config)
-const MAX = 20 * 1024 * 1024;
+const MAX = 40 * 1024 * 1024; // teto do objeto no bucket (conferido no `confirmar`)
 const MIMES: Record<string, string> = {
   "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
   "audio/mpeg": "mp3", "audio/mp3": "mp3",
@@ -62,34 +72,59 @@ export async function GET() {
   return Response.json({ musica: await atual(), segundos: SEGUNDOS });
 }
 
+// Caminho novo (JSON, dois passos). Multipart era o caminho antigo: se chegar,
+// é uma aba que ficou aberta desde antes do deploy — dizer isso é mais útil que
+// um erro de campo faltando.
 export async function POST(req: Request) {
   const nao = guarda();
   if (nao) return nao;
 
-  const form = await req.formData().catch(() => null);
-  const file = form?.get("audio");
-  if (!(file instanceof File)) return Response.json({ error: "Nenhum arquivo enviado." }, { status: 400 });
+  const tipo = req.headers.get("content-type") ?? "";
+  if (!tipo.includes("application/json")) {
+    return Response.json({ error: "Esta página está desatualizada. Recarregue com Ctrl+Shift+R e envie de novo." }, { status: 400 });
+  }
 
-  const ext = MIMES[file.type];
-  if (!ext) return Response.json({ error: `Formato não suportado (${file.type || "desconhecido"}). Use MP3, M4A, WAV, OGG ou MP4.` }, { status: 400 });
-  if (!file.size) return Response.json({ error: "Arquivo vazio." }, { status: 400 });
-  if (file.size > MAX) return Response.json({ error: `Arquivo muito grande (${(file.size / 1048576).toFixed(1)} MB). Máximo 20 MB.` }, { status: 400 });
+  const body = await req.json().catch(() => null) as { acao?: string; mime?: string; path?: string; nome?: string; cortado?: boolean; origem?: string } | null;
+  if (body?.acao === "assinar") return assinar(body);
+  if (body?.acao === "confirmar") return confirmar(body);
+  return Response.json({ error: "Ação desconhecida." }, { status: 400 });
+}
 
-  const nome = String(form?.get("nome") ?? file.name ?? "musica").slice(0, 120);
-  const cortado = String(form?.get("cortado") ?? "") === "1";
-  const origem = String(form?.get("origem") ?? "").slice(0, 120);
+// Passo 1: reserva o caminho e devolve a URL de escrita assinada.
+async function assinar(body: { mime?: string }) {
+  const ext = MIMES[String(body.mime ?? "")];
+  if (!ext) return Response.json({ error: `Formato não suportado (${body.mime || "desconhecido"}). Use MP3, M4A, WAV, OGG ou MP4.` }, { status: 400 });
 
-  const anterior = await atual();
   const path = `parabens-${Date.now()}.${ext}`;
-  const buf = new Uint8Array(await file.arrayBuffer());
+  const { data, error } = await sb().storage.from(BUCKET).createSignedUploadUrl(path);
+  if (error || !data) return Response.json({ error: "Falha ao preparar o upload: " + (error?.message ?? "sem resposta") }, { status: 500 });
+  return Response.json({ ok: true, path, signedUrl: data.signedUrl });
+}
+
+// Passo 2: o objeto já está no bucket — conferimos e gravamos o ponteiro.
+async function confirmar(body: { path?: string; nome?: string; cortado?: boolean; origem?: string }) {
+  const path = String(body.path ?? "");
+  // só um caminho que ESTA rota poderia ter criado; sem isso o ponteiro poderia
+  // apontar para qualquer objeto do bucket.
+  if (!/^parabens-\d+\.[a-z0-9]{2,4}$/.test(path)) return Response.json({ error: "Caminho inválido." }, { status: 400 });
 
   const client = sb();
-  const { error: upErr } = await client.storage.from(BUCKET).upload(path, buf, { contentType: file.type, upsert: true });
-  if (upErr) return Response.json({ error: "Falha no upload: " + upErr.message }, { status: 500 });
+  const { data: achados } = await client.storage.from(BUCKET).list("", { search: path, limit: 1 });
+  const obj = achados?.find((f) => f.name === path);
+  if (!obj) return Response.json({ error: "O arquivo não chegou ao servidor. Tente enviar de novo." }, { status: 400 });
 
+  const tamanho = Number(obj.metadata?.size ?? 0);
+  if (!tamanho) { await apagarArquivo(path); return Response.json({ error: "Arquivo vazio." }, { status: 400 }); }
+  if (tamanho > MAX) { await apagarArquivo(path); return Response.json({ error: `Arquivo muito grande (${(tamanho / 1048576).toFixed(1)} MB). Máximo 40 MB.` }, { status: 400 }); }
+
+  const anterior = await atual();
   const musica: Musica = {
     url: client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
-    path, nome, segundos: SEGUNDOS, cortado, origem,
+    path,
+    nome: String(body.nome ?? "musica").slice(0, 120),
+    segundos: SEGUNDOS,
+    cortado: body.cortado === true,
+    origem: String(body.origem ?? "").slice(0, 120),
     atualizado_em: new Date().toISOString(),
   };
   const { error: dbErr } = await client.from("bi_config")
