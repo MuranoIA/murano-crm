@@ -349,14 +349,50 @@ async function acharOuCriarCliente(
   const tel8 = waId.replace(/\D/g, "").slice(-8);
 
   // match pelos 8 últimos dígitos — cobre RD (12 dígitos, sem o nono) e Meta (13)
+  //
+  // ⚠️ `order by id` NÃO é enfeite. Sem ordem, o Postgres devolve as linhas na
+  // ordem que quiser, e a versão anterior escolhia "a primeira que tiver
+  // carteira" — ou seja, a mesma cliente podia cair em linhas DIFERENTES entre
+  // uma mensagem e outra. Medido em 27/08/2026: 38 telefones com mais de um
+  // cadastro, 80 linhas, TODOS ambíguos aqui, e 16 com a conversa já partida em
+  // duas. É a mesma família do defeito de paginação do board (§61): consulta
+  // sem desempate não é "quase determinística", é instável.
   const { data: candidatos } = await sb
     .from("clientes")
     .select("id,carteira,telefone")
     .like("telefone", `%${tel8}`)
-    .limit(5);
+    .order("id")
+    .limit(20);
+
+  if (candidatos?.length === 1) {
+    return { id: candidatos[0].id, carteira: candidatos[0].carteira ?? null };
+  }
+
   if (candidatos?.length) {
-    // se houver mais de um, prefere quem tem carteira definida
-    const escolhido = candidatos.find((c: any) => c.carteira) ?? candidatos[0];
+    // Com mais de um cadastro, o critério certo não é "tem carteira": é ONDE A
+    // CONVERSA MORA. A cliente vê UM histórico no aparelho dela; o cadastro que
+    // já carrega esse histórico é o que a consultora precisa ver crescer. Jogar
+    // a mensagem no cadastro vazio parte a conversa em duas telas.
+    //
+    // Uma consulta só, e apenas no caso raro (38 de ~4.800 contatos): a linha
+    // mais recente entre os candidatos diz qual cadastro está vivo.
+    const ids = candidatos.map((c: any) => c.id);
+    const { data: recente } = await sb
+      .from("mensagens")
+      .select("cliente_id")
+      .in("cliente_id", ids)
+      .neq("tipo", "evento_sistema")
+      .order("criada_em", { ascending: false })
+      .limit(1);
+
+    const vivo = recente?.[0]?.cliente_id
+      ? candidatos.find((c: any) => c.id === recente[0].cliente_id)
+      : null;
+
+    // Sem nenhuma mensagem em nenhum deles, cai no desempate estável: quem tem
+    // carteira primeiro, e `candidatos` já vem ordenado por id — então duas
+    // execuções seguidas escolhem o MESMO, que é o ponto.
+    const escolhido = vivo ?? candidatos.find((c: any) => c.carteira) ?? candidatos[0];
     return { id: escolhido.id, carteira: escolhido.carteira ?? null };
   }
 

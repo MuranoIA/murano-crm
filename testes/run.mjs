@@ -16,7 +16,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as db from "./db.mjs";
 import * as api from "./api.mjs";
-import { subirChrome, novaAba, fecharChrome, acharChrome, SAIDAS } from "./driver.mjs";
+import { subirChrome, novaAba, novaAbaIsolada, fecharChrome, acharChrome, SAIDAS } from "./driver.mjs";
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -39,6 +39,14 @@ const ctx = {
   },
   async aba(url = "about:blank") {
     return novaAba(await ctx.chrome(), url);
+  },
+  /**
+   * Aba com sessao PROPRIA. Obrigatoria quando o caso tem duas pessoas ao
+   * mesmo tempo: abas comuns dividem o jarro de cookies, entao o login da
+   * segunda derruba o da primeira em silencio (ver novaAbaIsolada no driver).
+   */
+  async abaIsolada(url = "about:blank") {
+    return novaAbaIsolada(await ctx.chrome(), url);
   },
 };
 

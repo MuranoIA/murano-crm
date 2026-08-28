@@ -240,3 +240,59 @@ export async function novaAba(chrome, url = "about:blank") {
 export function fecharChrome(chrome) {
   try { chrome.proc.kill(); } catch { /* já morreu */ }
 }
+
+/**
+ * Uma aba com JARRO DE COOKIES PRÓPRIO.
+ *
+ * ⚠️ Por que isto existe: `novaAba()` cria a aba pelo endpoint HTTP
+ * `/json/new`, que a coloca no **contexto padrão** do navegador — e contexto é
+ * quem guarda o cookie. Duas abas de lá dividem a MESMA sessão: setar
+ * `crm_sessao=admin` na segunda **derruba** o `crm_sessao=romulo` da primeira,
+ * sem erro nenhum.
+ *
+ * Isso produziu um falso positivo caro em 27/08/2026: o teste de presença do
+ * ciclo 4 acusou "o aviso 👀 não apareceu" quando na verdade as duas abas eram
+ * a MESMA pessoa — e o chat, corretamente, não avisa que você está onde você
+ * está (§21: o filtro é por rótulo, não por aba, justamente para o PC e o
+ * celular do mesmo vendedor não virarem "outra pessoa"). A foto denunciou:
+ * a aba que deveria ser do consultor mostrava o avatar Admin.
+ *
+ * `Target.createBrowserContext` é o equivalente de uma janela anônima
+ * separada. Use SEMPRE que o teste tiver duas pessoas ao mesmo tempo.
+ */
+export async function novaAbaIsolada(chrome, url = "about:blank") {
+  const bws = new WebSocket(chrome.alvo);
+  await new Promise((res, rej) => {
+    bws.addEventListener("open", res, { once: true });
+    bws.addEventListener("error", () => rej(new Error("websocket do navegador não abriu")), { once: true });
+  });
+  const chamar = (metodo, params) =>
+    new Promise((res, rej) => {
+      const id = Math.floor(Math.random() * 1e9);
+      const ouvir = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.id !== id) return;
+        bws.removeEventListener("message", ouvir);
+        m.error ? rej(new Error(`${metodo}: ${m.error.message}`)) : res(m.result);
+      };
+      bws.addEventListener("message", ouvir);
+      bws.send(JSON.stringify({ id, method: metodo, params }));
+    });
+
+  // disposeOnDetach:false — senão fechar este socket levaria o contexto junto,
+  // e a aba morreria no meio do teste.
+  const { browserContextId } = await chamar("Target.createBrowserContext", { disposeOnDetach: false });
+  const { targetId } = await chamar("Target.createTarget", { url, browserContextId });
+  try { bws.close(); } catch { /* já foi */ }
+
+  const ws = new WebSocket(`ws://127.0.0.1:${chrome.porta}/devtools/page/${targetId}`);
+  await new Promise((res, rej) => {
+    ws.addEventListener("open", res, { once: true });
+    ws.addEventListener("error", () => rej(new Error("websocket da aba isolada não abriu")), { once: true });
+  });
+  const aba = new Aba(ws);
+  await aba.preparar();
+  aba.alvoId = targetId;
+  aba.contextoId = browserContextId;
+  return aba;
+}

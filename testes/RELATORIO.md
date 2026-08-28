@@ -304,3 +304,72 @@ migrations **0114, 0115 e 0116**.
 
 `npx tsc --noEmit` passa limpo, e o build de produção foi refeito e exercitado
 depois de cada correção — nada aqui está apenas escrito.
+
+---
+
+## 10. Segunda rodada — migrations aplicadas e um falso positivo desmontado
+
+> 27/08/2026, sessão principal, depois do laudo acima. Mesmo harness, mesmo
+> alvo, servidor subido **sem `WHATSAPP_TOKEN`** (envio fisicamente impossível).
+
+### 10.1 As três migrations foram aplicadas
+
+Medi cada uma antes de aplicar, em vez de confiar no texto do arquivo:
+
+| | Verificação prévia | Estado |
+|---|---|---|
+| **0114** métricas | nenhum dos objetos existia — criação limpa | ✅ aplicada |
+| **0115** localização | coluna e índice ausentes; índice é **parcial** (`where localizacao is not null`), hoje ~0 linhas → barato | ✅ aplicada |
+| **0116** pendências | recria view **em uso**: confirmei mesmas 12 colunas, **zero views dependentes**, chips do /admin montados a partir dos dados, e grupo E com **20 linhas** (não inunda) | ✅ aplicada |
+
+Efeito conferido no banco: `vw_disparo_desfecho` já devolve **1.501 disparos com
+desfecho** (a taxa de resposta que não existia agora tem dado), e
+`vw_pendencias_admin` distribui A 103 · B 47 · C 83 · D 113 · **E 20**.
+
+**Isso encerra a R2 na origem** (a thread quebrava por `mensagens.localizacao`
+faltar) e **a R3** (0114 sem aplicar). `crm_config.sla_minutos` nasceu em **0 =
+desligado**, de propósito: o limite é decisão de quem opera.
+
+⚠️ Aplicar a migration **não** faz a funcionalidade aparecer em produção — o
+código que lê essas views segue sem commit e sem deploy. O que mudou é que o
+banco deixou de ser o bloqueio.
+
+### 10.2 A falha do ciclo 4 era do TESTE, não do produto
+
+O passo 2 (presença "👀 fulano está aqui") acusou defeito. **Era falso
+positivo**, e a foto denunciou: a aba que deveria ser do consultor mostrava o
+avatar **Admin** e o chip "Todos os vendedores", que só existe para admin.
+
+Causa: `novaAba()` cria a aba pelo `/json/new`, no **contexto padrão** do
+navegador — e contexto é quem guarda o cookie. Setar `crm_sessao=admin` na
+segunda aba **derrubou** o `crm_sessao=romulo` da primeira. As duas viraram a
+mesma pessoa, e o chat, corretamente, não avisa que você está onde você está
+(§21: o filtro é **por rótulo, não por aba**, justamente para o PC e o celular
+do mesmo vendedor não virarem "outra pessoa").
+
+Dois consertos, no harness:
+
+1. **`novaAbaIsolada()`** (`driver.mjs`) — `Target.createBrowserContext`, jarro
+   de cookies próprio. Obrigatória sempre que o caso tiver duas pessoas.
+2. **O caso agora PROVA que são duas pessoas** antes de julgar a presença, lendo
+   `crm_sessao` de cada aba por `Network.getCookies`. Sem isso, uma colisão de
+   sessão volta a virar "a presença não funciona" — diagnóstico errado que manda
+   alguém consertar o que está certo.
+
+Ciclo 4 depois do conserto: **6 de 6**, presença detectada.
+
+### 10.3 Placar final da rodada
+
+**76 passos · 70 passaram · 0 falharam · 6 pulados · 0 regressões · nada ficou
+no banco.**
+
+Os 6 pulados são os mesmos de antes, e continuam sendo recusa consciente: 3 por
+segurança (derrubar o canal, enviar disparo em massa, ligar a resposta de fora
+do horário — essa responderia a *qualquer* cliente, porque o gatilho é o webhook
+de produção), 1 por não gastar a única autorização de número em anexo de mídia,
+1 lacuna real confirmada sem execução (não há alerta fora da tela), e 1 por
+`foraDeHorario.ts` ser TypeScript num runner Node puro.
+
+Verifiquei por consulta independente que **nada sobrou**: zero linhas `[QA]` em
+`mensagens`, `chat_nota` e `clientes`, e a única transferência recente é ação
+real de usuário, não do teste.
