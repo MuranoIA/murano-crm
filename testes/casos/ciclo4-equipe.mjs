@@ -35,14 +35,29 @@ export default async function (t) {
     try { chrome = await t.chrome(); } catch (e) { throw new Error(String(e.message)); }
     void chrome;
 
-    const abaA = await t.aba();
-    const abaB = await t.aba();
+    // ⚠️ ISOLADAS, nao t.aba(): abas comuns dividem o jarro de cookies, entao o
+    // login de B derruba o de A e as duas viram a MESMA pessoa. Foi assim que
+    // este passo acusou defeito de presenca que nao existia (27/08/2026).
+    const abaA = await t.abaIsolada();
+    const abaB = await t.abaIsolada();
     try {
       await abaA.cookies(api.SESSOES.romulo);
       await abaB.cookies({ crm_sessao: "admin", crm_email: "outra.pessoa@muranoprofessional.com.br" });
       const url = `${api.BASE}/chat?cliente=${encodeURIComponent(alvo.cliente_id)}`;
       await abaA.ir(url, { esperar: 9000 });
       await abaB.ir(url, { esperar: 9000 });
+
+      // Antes de julgar a presenca, PROVE que sao duas pessoas. Sem isto, uma
+      // colisao de sessao vira "a presenca nao funciona" — diagnostico errado
+      // que manda alguem consertar o que esta certo.
+      const quem = async (aba) => {
+        const r = await aba.enviar("Network.getCookies", { urls: [api.BASE] });
+        const c = (r.cookies || []).find((x) => x.name === "crm_sessao");
+        return c ? c.value : null;
+      };
+      const [sA, sB] = [await quem(abaA), await quem(abaB)];
+      api.ok(sA === "romulo" && sB === "admin",
+        `as duas abas precisam ser pessoas diferentes — A=${sA} B=${sB} (colisao de cookie: use abaIsolada)`);
 
       // a presença viaja por Realtime; dá um tempo para o broadcast circular
       const viu = await abaA.ate(
