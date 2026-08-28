@@ -21,6 +21,9 @@ import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
 import { avisar, destinatarios } from "../../../../lib/chatPush";
 import { avisarForaDeHorario } from "../../../../lib/foraDeHorario";
 
+import { acharCpfNoTexto } from "../../../../lib/cpf";
+import { ligarPorCpf, recadoDoVinculo } from "../../../../lib/vinculoCpf";
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
@@ -174,6 +177,10 @@ async function gravarMensagemRecebida(
   // aviso de fora do horário (nasce desligado; não repete na mesma rajada).
   // Depois do upsert de propósito: se falhar, a mensagem da cliente já está salva.
   await avisarForaDeHorario(sb, cliente.id, waId);
+
+  // A cliente mandou o CPF? Entao o contato pode se ligar ao ERP sozinho (0117).
+  // Depois do upsert, pela mesma razao: nada aqui pode custar a mensagem dela.
+  await tentarVincularPeloCpf(sb, cliente.id, extrairConteudo(msg));
 
   // ---- push com o app fechado (0096) --------------------------------------
   // Último passo do fluxo, de propósito: a mensagem já está salva e a conversa
@@ -341,6 +348,44 @@ function extrairLocalizacao(msg: any): { localizacao?: Record<string, unknown> }
 // ---------------------------------------------------------------------------
 // Vínculo mensagem ↔ cliente (match por tel8, criação se não existir)
 // ---------------------------------------------------------------------------
+/**
+ * A cliente digitou o CPF na conversa — liga o contato ao cliente do ERP.
+ *
+ * Pedido do usuário (28/08/2026): *"se a cliente digitar o cpf e este for o
+ * mesmo do winthor, então o processo acontece automaticamente?"*. Acontece —
+ * com um freio: o automático só vale quando o **nome também bate**.
+ *
+ * Sem esse freio, qualquer CPF válido que chegasse pela conversa vincularia
+ * este contato ao cadastro daquele CPF: a cliente manda o do marido, o da
+ * sócia, ou erra um dígito de um jeito que ainda passe no verificador, e a
+ * conversa herda o histórico de compra e o RCA de outra pessoa. Com o nome
+ * batendo, são dois sinais independentes concordando — o sistema confirma uma
+ * hipótese que já tinha, em vez de confiar no que um estranho digitou.
+ *
+ * Quando divergem, ninguém é vinculado: vira nota na conversa e o consultor
+ * decide. Nota, e não mensagem — o que entra em `mensagens` move card de etapa
+ * e abre espera no indicador (§21.2).
+ */
+async function tentarVincularPeloCpf(sb: any, clienteId: string, texto: string): Promise<void> {
+  try {
+    const cpf = acharCpfNoTexto(texto);
+    if (!cpf) return;
+    const r = await ligarPorCpf(sb, {
+      cliente_id: clienteId, cpf, por: null,
+      origem: "cpf_confirmado", exigirNomeIgual: true,
+    });
+    const recado = recadoDoVinculo(r);
+    if (recado) {
+      await sb.from("chat_nota").insert({
+        cliente_id: clienteId, autor: "sistema", texto: recado,
+      });
+    }
+  } catch (e) {
+    // Nunca derruba o webhook: a mensagem da cliente vale mais que o vínculo.
+    console.warn("[wa-webhook] vinculo por cpf falhou:", (e as Error)?.message);
+  }
+}
+
 async function acharOuCriarCliente(
   sb: any,
   waId: string,

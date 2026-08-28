@@ -34,7 +34,7 @@ const M = {
 const ModoMigracao = createContext(false);
 const useSemRd = () => useContext(ModoMigracao);
 
-type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config" | "pendencias";
+type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config" | "pendencias" | "atualizacoes";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "usuarios", rotulo: "👥 Usuários" },
   { id: "carteiras", rotulo: "🧑‍💼 Vendedores" },
@@ -44,6 +44,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "chat-layout", rotulo: "🎨 Desenho do chat" },
   { id: "crm-config", rotulo: "⚙️ Mecanismos" },
   { id: "pendencias", rotulo: "⚠️ Pendências" },
+  { id: "atualizacoes", rotulo: "🔄 Atualização cadastral" },
   { id: "paginas-legais", rotulo: "📄 Páginas legais" },
 ];
 
@@ -505,6 +506,10 @@ export default function Admin() {
 
       {aba === "pendencias" && dados?.pendencias && (
         <PendenciasAba d={dados.pendencias} recarregar={(gr) => carregarPendencias(gr)} />
+      )}
+
+      {aba === "atualizacoes" && dados?.linhas && (
+        <AtualizacoesAba d={dados} recarregar={() => carregar("atualizacoes")} avisar={avisar} />
       )}
 
       {aba === "paginas-legais" && dados?.["paginas-legais"] && (
@@ -2687,6 +2692,126 @@ function EnviosAba({ dados }: { dados: any }) {
 // FORA do CRM (cadastro no WinThor), então o admin precisa levar a lista para
 // quem cuida do ERP.
 // ---------------------------------------------------------------------------
+/**
+ * Fila de atualização cadastral (0117).
+ *
+ * O CRM descobre que o cadastro do WinThor está velho — quase sempre o telefone,
+ * quando a cliente troca de número — e **não pode corrigir**: o
+ * `murano-clientes-v2` é espelho do ERP, reescrito a cada minuto. Escrever lá
+ * não chegaria ao WinThor, seria apagado em ~1 minuto, e no intervalo mostraria
+ * "atualizado" na tela. Então a correção vira pedido, e o pedido vira `.csv`
+ * para quem edita o ERP de verdade.
+ *
+ * Mesma régua da aba Pendências: o sistema não finge consertar o que não
+ * alcança, mas nenhum caso fica invisível.
+ */
+function AtualizacoesAba({ d, recarregar, avisar }: {
+  d: any; recarregar: () => void; avisar: (t: "erro" | "ok", m: string) => void;
+}) {
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const linhas: any[] = d.linhas ?? [];
+
+  async function tratar(id: number, status: "aplicado" | "descartado") {
+    setOcupado(id);
+    try {
+      const r = await fetch("/api/admin/atualizacoes", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      avisar("ok", status === "aplicado" ? "marcado como aplicado no ERP" : "descartado");
+      recarregar();
+    } catch (e: any) { avisar("erro", e?.message ?? String(e)); }
+    finally { setOcupado(null); }
+  }
+
+  return (
+    <Bloco
+      titulo="O que precisa ser corrigido no WinThor"
+      ajuda={
+        <>
+          O CRM detecta o cadastro desatualizado — em geral o <b>telefone</b>, quando a cliente
+          troca de número — e <b>não pode corrigir daqui</b>: o banco que o CRM enxerga é um
+          espelho do WinThor, reescrito a cada minuto. Leve o <code style={mono}>.csv</code> a
+          quem edita o ERP e depois marque como aplicado.
+        </>
+      }
+    >
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700 }}>
+          {d.pendentes ?? 0} pendente{(d.pendentes ?? 0) === 1 ? "" : "s"}
+        </span>
+        <a href="/api/admin/atualizacoes?csv=1" style={{
+          padding: "5px 12px", fontSize: 12, fontWeight: 700, borderRadius: 20,
+          border: `1px solid ${M.border}`, color: M.gray, textDecoration: "none" }}>
+          baixar .csv
+        </a>
+      </div>
+
+      {!linhas.length ? (
+        <p style={{ fontSize: 13, color: M.verde, fontWeight: 700 }}>
+          Nenhuma correção pendente — os cadastros estão em dia.
+        </p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                {["cliente", "campo", "no WinThor", "na conversa", "origem", "quando", ""].map((h) => (
+                  <th key={h} style={{ ...td, textAlign: "left", fontSize: 10.5, textTransform: "uppercase",
+                    letterSpacing: 0.5, color: M.muted, fontWeight: 800 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l) => (
+                <tr key={l.id}>
+                  <td style={td}>
+                    <div style={{ fontWeight: 700 }}>{l.nome ?? "—"}</div>
+                    <div style={{ fontSize: 11, color: M.muted }}>cód. {l.codcli}</div>
+                  </td>
+                  <td style={{ ...td, color: M.gray }}>{l.campo}</td>
+                  <td style={{ ...td, color: M.muted, textDecoration: "line-through" }}>{l.valor_atual ?? "—"}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{l.valor_novo}</td>
+                  <td style={{ ...td, fontSize: 11, color: M.muted }}>
+                    {l.origem === "cpf_confirmado" ? "CPF confirmado pela cliente" : `confirmado por ${l.por ?? "consultor"}`}
+                  </td>
+                  <td style={{ ...td, fontSize: 11, color: M.muted, whiteSpace: "nowrap" }}>
+                    {String(l.criada_em ?? "").slice(0, 10).split("-").reverse().join("/")}
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    {l.status === "pendente" ? (
+                      <>
+                        <button disabled={ocupado === l.id} onClick={() => tratar(l.id, "aplicado")}
+                          style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit",
+                            color: "#fff", background: M.verde, border: "none", borderRadius: 7,
+                            cursor: "pointer", marginRight: 6 }}>
+                          Aplicado
+                        </button>
+                        <button disabled={ocupado === l.id} onClick={() => tratar(l.id, "descartado")}
+                          style={{ padding: "4px 10px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit",
+                            color: M.gray, background: M.bg, border: `1px solid ${M.border}`,
+                            borderRadius: 7, cursor: "pointer" }}>
+                          Descartar
+                        </button>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, color: M.muted }}>
+                        {l.status} · {l.tratado_por ?? "—"}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Bloco>
+  );
+}
+
 function PendenciasAba({ d, recarregar }: { d: any; recarregar: (grupo: string | null) => void }) {
   const linhas: any[] = d.linhas ?? [];
   const totais: Record<string, number> = d.totais ?? {};

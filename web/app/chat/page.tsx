@@ -740,10 +740,13 @@ function Estado({ glifo, titulo, texto, alto }: {
   );
 }
 
-function PainelContato({ c, aba, extra, fichaDe }: {
+function PainelContato({ c, aba, extra, fichaDe, vincular, ocupado }: {
   c: Contato | null; aba: AbaContato; extra?: any;
   /** a ficha de cadastro (0109); ausente em card sintetico do ERP */
   fichaDe?: (temErp: boolean) => React.ReactNode;
+  /** "e a mesma pessoa": liga o contato ao cliente do ERP escolhido (0117) */
+  vincular?: (codcli: number, nome: string) => void;
+  ocupado?: boolean;
 }) {
   if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
   const { compras, ciclo, funil, ultimas_notas } = c;
@@ -893,6 +896,20 @@ function PainelContato({ c, aba, extra, fichaDe }: {
                     {k.cidade && ` · ${k.cidade}`}
                   </div>
                   {k.telefone && <div style={{ color: M.muted }}>telefone no cadastro: {k.telefone}</div>}
+                  {vincular && (
+                    // O gesto humano que o sistema nao pode dar sozinho. Dai o
+                    // rotulo dizer o que ele AFIRMA ("e a mesma pessoa"), e nao
+                    // o que ele executa ("vincular"): quem clica esta assumindo
+                    // a identidade, e e isso que precisa estar consciente.
+                    <button
+                      disabled={ocupado}
+                      onClick={() => vincular(k.codcli, k.nome)}
+                      style={{ marginTop: 7, padding: "6px 10px", fontSize: 12, fontWeight: 700,
+                        fontFamily: "inherit", color: "#fff", background: M.roxo, border: "none",
+                        borderRadius: 8, cursor: ocupado ? "wait" : "pointer", opacity: ocupado ? 0.6 : 1 }}>
+                      É a mesma pessoa
+                    </button>
+                  )}
                 </div>
               ))}
               <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.5 }}>
@@ -1736,6 +1753,31 @@ export default function Chat() {
       .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
       .catch(() => setContato(null));
   }
+
+  // "É a mesma pessoa": o consultor confirma que o contato sem cadastro é o
+  // cliente do ERP que o painel sugeriu pelo nome (0117). O servidor faz o
+  // resto — CPF, vínculo, e o pedido de atualização do telefone, se mudou.
+  const [vinculando, setVinculando] = useState(false);
+  const vincularContato = useCallback(async (codcli: number, nome: string) => {
+    if (!sel || vinculando) return;
+    if (!confirm(
+      `Confirmar que este contato é ${nome} (cód. ${codcli})?\n\n` +
+      `O histórico de compra passa a aparecer aqui e a conversa vai para o RCA do ` +
+      `cadastro. Se for homônimo, cancele — são duas pessoas.`
+    )) return;
+    setVinculando(true);
+    try {
+      const r = await fetch("/api/chat/vincular", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, codcli }),
+      });
+      const j = await r.json().catch(() => ({}));
+      setAviso(r.ok ? (j?.aviso ?? "vinculado") : (j?.error ?? `erro ${r.status}`));
+      if (r.ok) { carregarContatoDe(sel.cliente_id); carregarThread(sel, false); }
+    } catch {
+      setAviso("não consegui vincular agora");
+    } finally { setVinculando(false); }
+  }, [sel, vinculando]);
 
   // Pausa: avisa o cliente que o vendedor vai se ausentar (0106). As travas
   // (janela de 24h, não repetir) moram no servidor — aqui só o gesto e o recado.
@@ -4202,6 +4244,8 @@ export default function Chat() {
               c={contato}
               aba={abaAtual}
               fichaDe={fichaDe}
+              vincular={vincularContato}
+              ocupado={vinculando}
               extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
             />
           </div>
@@ -4258,6 +4302,8 @@ export default function Chat() {
                   c={contato}
                   aba={abaAtual}
               fichaDe={fichaDe}
+                  vincular={vincularContato}
+                  ocupado={vinculando}
                   extra={{ telefone: sel.telefone, carteira: sel.vendedor, linha: linha?.rotulo, status: sel.status }}
                 />
               </div>
