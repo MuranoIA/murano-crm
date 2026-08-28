@@ -1,7 +1,7 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
-import { lerCrmConfig, linhasVisiveis, canalEscolhido, VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
-import { codigoMeta, FALHA_DO_NUMERO } from "../../../../lib/erroMeta";
+import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
+import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -16,73 +16,19 @@ export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
 // devolve exatamente quem seria atingido ANTES de qualquer envio, como faz a
 // tela de campanhas do RD Conversas.
 //
+// ⚠️ A PENEIRA NÃO MORA MAIS AQUI. Foi para `lib/publicoDisparo.ts`, porque o
+// chat do Claude (`./chat`) monta o mesmo público conversando — e duas peneiras
+// para a mesma pergunta divergiriam sem ninguém notar até depois do envio.
+//
 // O ENVIO continua sendo do navegador, um POST /api/send-template por cliente,
 // com pausa do ETL e espera entre um e outro. Não foi trazido para cá de
-// propósito: a cota do RD é de ~48 chamadas/min e é COMPARTILHADA com o ETL
-// (§14.5) — um laço de centenas de envios não cabe no tempo de uma rota da
-// Vercel. Esta rota escolhe e explica o público; quem manda é a tela, um a um,
-// mostrando a falha de cada cliente.
+// propósito: a cota é compartilhada com o ETL (§14.5) — um laço de centenas de
+// envios não cabe no tempo de uma rota da Vercel. Esta rota escolhe e explica o
+// público; quem manda é a tela, um a um, mostrando a falha de cada cliente.
 //
-// ⚠️ NADA AQUI OLHA MAIS O RD CONVERSAS quando ele está escondido. Isso REVERTE
-// a decisão da §31.2, que mandava esta rota ler a `vw_funil` crua com o
-// argumento de que "esconder não pode virar agir sem saber" — cegá-la faria o
-// CRM re-abordar quem está em conversa aberta no RD agora.
-//
-// Aquele argumento morreu com a §44. Sob a premissa da migração, mandar
-// template pelo número novo para quem só fala no RD **não é dano: é a
-// migração**. E o usuário reiterou duas vezes que dado do RD não entra no
-// disparo.
-//
-// Os quatro pontos por onde o RD entrava, todos medidos em 27/08:
-//
-//   público/etapa   `vw_funil` crua (4.852) -> `vw_funil_visivel` (4.328)
-//   anti-repetição  747 disparos em 30d, dos quais 34 pelo nosso número
-//   extrato         os mesmos 747 — a tela mostrava 713 do painel do RD
-//   canal do envio  ignorava `crm_config.numero_envio` (§37.1)
-//
-// O discriminador de canal em `disparos_template` é o próprio **id**: o ramo
-// Cloud grava o `wamid` da Meta, o do RD grava o id do painel deles. É
-// estrutural — não depende de nome de template nem de coluna nova.
-
-const PAGE = 1000;
-const COLS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,telefone,venda_valor,rd_cliente_id,codcli";
-
-/** Dias desde uma data ISO. Sem data = nunca teve atividade. */
-const diasDesde = (iso: string | null | undefined): number => {
-  if (!iso) return Infinity;
-  const t = new Date(iso).getTime();
-  return isNaN(t) ? Infinity : (Date.now() - t) / 86_400_000;
-};
-
-const tel8 = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-8);
-
-/**
- * O id que o /api/send-template entende. A linha do funil pode ser um card
- * sintético (`winthor:<codcli>`, da fila de prospecção) que não existe em
- * `clientes` — esse contato só é alcançável se já tiver par no RD.
- */
-function idDeEnvio(c: any): string | null {
-  if (c.rd_cliente_id) return String(c.rd_cliente_id);
-  const id = c.cliente_id;
-  if (typeof id !== "string") return null;
-  // ⚠️ NÃO é "sem dois-pontos". Era, e por isso TODO contato do nosso próprio
-  // número (`wa:<telefone>`, §16.3) ficava fora do disparo em massa -- contado
-  // como "sem contato", que é o rótulo de quem não dá para alcançar. Eles dão:
-  // `/api/send-template` roteia `wa:` para a Cloud sem hesitar.
-  //
-  // É o mesmo defeito que o board tinha em `temConversaReal` (§50.2), e piora
-  // sozinho: todo contato novo nasce `wa:`, e depois do corte serão todos. O que
-  // precisa ficar de fora é só o que não tem contato: `winthor:` e `venda:`.
-  return /^(winthor|venda):/.test(id) ? null : id;
-}
-
-const codDeId = (id: any): number | null => {
-  if (typeof id === "string" && (id.startsWith("winthor:") || id.startsWith("venda:"))) {
-    const n = Number(id.slice(id.indexOf(":") + 1));
-    return isNaN(n) ? null : n;
-  }
-  return null;
-};
+// ⚠️ NADA AQUI OLHA MAIS O RD CONVERSAS quando ele está escondido (§44). O
+// discriminador de canal em `disparos_template` é o próprio **id**: o ramo
+// Cloud grava o `wamid` da Meta, o do RD grava o id do painel deles.
 
 // --- GET: o que a tela precisa para montar uma campanha ---------------------
 export async function GET() {
@@ -148,11 +94,9 @@ export async function GET() {
     .map((l) => ({ dia: l.dia, template_id: l.template_id, enviados: l.enviados, vendedores: [...l.vendedores].sort() }));
 
   // A opção que o modal do board oferecia como "template padrão do sistema": não
-  // manda `template_id` nenhum e deixa o /api/send-template resolver — o que hoje
-  // significa cair em TEMPLATE_RECONTATO_ID, o template do painel do RD. É a ÚNICA
-  // que alcança a base do RD, onde está praticamente toda a conversa (§16.3), já
-  // que nenhum template do RD está cadastrado em crm_templates. Sem ela, esta tela
-  // nasceria incapaz de fazer o que o board fazia.
+  // manda `template_id` nenhum e deixa o /api/send-template resolver. É a ÚNICA
+  // que alcança a base do RD, já que nenhum template do RD está cadastrado em
+  // crm_templates. Sem ela, esta tela nasceria incapaz de fazer o que o board fazia.
   const padraoRd = !!process.env.TEMPLATE_RECONTATO_ID
     || templates.some((t: any) => t.canal !== "cloud" && t.envio_id);
   const lista = padraoRd
@@ -168,6 +112,10 @@ export async function GET() {
       templates: lista,
       carteiras: cartRes.data ?? [],
       historico,
+      limiteMax: LIMITE_MAX,
+      // a tela do chat precisa saber se o assistente está configurado para não
+      // oferecer uma caixa de conversa que responde 501 no primeiro envio
+      temAssistente: !!process.env.ANTHROPIC_API_KEY,
       // interruptor ligado = TODA conversa sai pela Cloud, sem olhar o canal
       envioPadraoCloud: process.env.WHATSAPP_ENVIO_PADRAO === "true",
     },
@@ -183,236 +131,10 @@ export async function POST(req: Request) {
   if (!b) return Response.json({ error: "body inválido" }, { status: 400 });
   if (b.acao !== "previa") return Response.json({ error: "ação desconhecida" }, { status: 400 });
 
-  const f = b.filtros ?? {};
-  const carteiras: string[] = Array.isArray(f.carteiras) ? f.carteiras.map(String) : [];
-  const etapas: string[] = Array.isArray(f.etapas) ? f.etapas.map(String) : [];
-  const diasMin = Number.isFinite(Number(f.diasMin)) ? Math.max(0, Number(f.diasMin)) : 0;
-  const diasRecontato = Math.min(60, Math.max(0, Number(f.diasRecontato ?? 4) || 0));
-  const limite = Math.min(500, Math.max(1, Number(f.limite ?? 20) || 20));
-  // canal do template escolhido: "cloud" | "rd" | null (nenhum escolhido ainda)
-  const canalTpl: string | null = f.canal === "cloud" || f.canal === "rd" ? f.canal : null;
-
-  const db = sbAdmin();
-
-  // 1) cards do funil (paginado — o PostgREST corta em 1000 e a view passa de 4 mil)
-  const cards: any[] = [];
-  for (let from = 0; ; from += PAGE) {
-    let q = db.from(VIEW_FUNIL_TELA).select(COLS)
-      .order("ultima_atividade", { ascending: false, nullsFirst: false })
-      // ⚠️ MESMO DESEMPATE DO /api/funil, e aqui o preço é maior: sem ele a
-      // paginação perde e duplica linhas (medido: 30 clientes fora, 22 em
-      // dobro), e este laço monta o PÚBLICO DA CAMPANHA. Perder alguém aqui é
-      // não abordar quem devia; duplicar é ranquear a mesma pessoa duas vezes.
-      .order("cliente_id", { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (carteiras.length) q = q.in("vendedor", carteiras);
-    if (etapas.length) q = q.in("etapa", etapas);
-    const { data, error } = await q;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-    cards.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
+  try {
+    const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
+    return Response.json(publico);
+  } catch (e: any) {
+    return Response.json({ error: e?.message ?? String(e) }, { status: 500 });
   }
-
-  // 2) contexto: último disparo, lixeira, ciclo de compra e quem já conversa
-  //    pela Cloud. Nenhum depende do outro, então vão em paralelo.
-  const desdeDisparo = new Date(Date.now() - Math.max(diasRecontato, 1) * 86_400_000).toISOString();
-  // ⚠️ A memória de FALHA tem janela própria, e não a do anti-repetição.
-  // Um número que não recebe no WhatsApp continua não recebendo amanhã — com a
-  // janela do anti-repetição (que pode ser 1 dia), esqueceríamos uma falha de
-  // anteontem e queimaríamos outro template no mesmo número morto.
-  //
-  // 90 dias, e não "sempre", porque a pessoa pode ter instalado o WhatsApp
-  // nesse meio tempo: condenar um número para sempre pelo pior dia dele seria
-  // o erro simétrico.
-  const desdeFalha = new Date(Date.now() - 90 * 86_400_000).toISOString();
-  const cfg = await lerCrmConfig(db);
-  const soCloudP = !linhasVisiveis(cfg).includes("rd");
-  const [dispRes, descRes, cicloRes, linhaRes, desfRes] = await Promise.all([
-    (() => {
-      // anti-repetição: só conta template que saiu pelo número em uso
-      const q = db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo);
-      return soCloudP ? q.like("id", "wamid.%") : q;
-    })(),
-    db.from("wth_descartados").select("cliente_id,codcli,tel8"),
-    // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
-    // passa a ser só tempo parado + ticket — ver o cálculo de `score` abaixo
-    cfg.ciclo_ativo
-      ? db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade")
-      : Promise.resolve({ data: [] as any[] }),
-    db.from("vw_chat_linha_cliente").select("cliente_id"),
-    // Só as FALHAS. Medido em 27/08: 32 linhas em 90 dias.
-    //
-    // ⚠️ A primeira versão pedia falhas E entregas na mesma consulta, com
-    // `limit(8000)` — de um universo de **59.956** linhas. O PostgREST devolveu
-    // as 8.000 MAIS ANTIGAS e não avisou que truncou: as falhas, todas de
-    // agosto, ficaram de fora e o corte nunca disparou. Sem erro, sem log, o
-    // recurso simplesmente não existia. Um `limit` sobre um universo que não se
-    // mediu antes é um filtro invisível.
-    db.from("mensagens")
-      .select("cliente_id,erro,criada_em")
-      .eq("enviada_por", "operator")
-      .eq("status", "failed")
-      .gte("criada_em", desdeFalha)
-      .order("criada_em", { ascending: true })
-      .limit(2000),
-  ]);
-
-  const ultimoDisparo = new Map<string, string>();
-  for (const d of dispRes.data ?? []) {
-    const id = String(d.cliente_id ?? "");
-    const atual = ultimoDisparo.get(id);
-    if (!atual || String(d.criada_em) > atual) ultimoDisparo.set(id, String(d.criada_em));
-  }
-
-  // ---- NÚMERO QUE NÃO RECEBE (item 5) ------------------------------------
-  // Re-disparar para um número que não existe no WhatsApp custa um template a
-  // cada tentativa, para sempre. O motivo já estava gravado; ninguém lia.
-  //
-  // ⚠️ DUAS distinções, e sem elas o corte sabotaria o próprio disparo:
-  //
-  // 1. **Nem toda falha é do número.** Medido no banco em 27/08: 131047 (janela
-  //    fechada) atinge 6 clientes — e é EXATAMENTE quem o template existe para
-  //    alcançar; 131042 é problema de pagamento NOSSO — cortar puniria o cliente
-  //    por erro da nossa conta. Só entra o que significa "este número não
-  //    recebe" (`FALHA_DO_NUMERO`, hoje 131026 e 131051).
-  //
-  // 2. **Vale o ÚLTIMO desfecho, não "já falhou alguma vez".** Um número que
-  //    falhou em junho e recebeu em agosto passou a existir no WhatsApp — a
-  //    pessoa instalou. Cortar por histórico condenaria o cliente para sempre
-  //    pelo pior dia dele.
-  // Candidatos: quem levou uma falha permanente, e QUANDO foi a última delas.
-  const falhaEm = new Map<string, string>();
-  for (const m of desfRes.data ?? []) {          // já vem em ordem crescente
-    const id = String((m as any).cliente_id ?? "");
-    if (!id) continue;
-    const cod = codigoMeta((m as any).erro);
-    if (cod && FALHA_DO_NUMERO.has(cod)) falhaEm.set(id, String((m as any).criada_em));
-    else falhaEm.delete(id);   // falha de outro tipo depois: não é o número
-  }
-
-  // A regra 2 acima, agora com uma consulta dirigida em vez de uma varredura:
-  // os candidatos são poucos (2, na medição), então perguntar "houve entrega
-  // DEPOIS?" custa uma consulta pequena — e é a única forma de não condenar
-  // para sempre quem instalou o WhatsApp mais tarde.
-  const morto = new Set(falhaEm.keys());
-  if (morto.size) {
-    const ids = [...morto].slice(0, 300);        // teto de tamanho de URL
-    const { data: vivos } = await db.from("mensagens")
-      .select("cliente_id,criada_em")
-      .eq("enviada_por", "operator")
-      .in("status", ["success", "read"])
-      .in("cliente_id", ids)
-      .gte("criada_em", desdeFalha)
-      .limit(3000);
-    for (const v of vivos ?? []) {
-      const id = String((v as any).cliente_id ?? "");
-      if (String((v as any).criada_em) > (falhaEm.get(id) ?? "")) morto.delete(id);
-    }
-  }
-  const desfecho = { get: (id: string) => (morto.has(id) ? "morto" : "ok") };
-
-  const descCli = new Set((descRes.data ?? []).map((d: any) => d.cliente_id).filter(Boolean));
-  const descCod = new Set((descRes.data ?? []).map((d: any) => d.codcli).filter((x: any) => x != null).map(Number));
-  const descTel = new Set((descRes.data ?? []).map((d: any) => d.tel8).filter(Boolean));
-
-  const cicloCli = new Map<string, any>(), cicloCod = new Map<number, any>(), cicloTel = new Map<string, any>();
-  for (const r of cicloRes.data ?? []) {
-    if (r.cliente_id) cicloCli.set(String(r.cliente_id), r);
-    if (r.codcli != null) cicloCod.set(Number(r.codcli), r);
-    const t = tel8(r.telefone);
-    if (t.length === 8) cicloTel.set(t, r);
-  }
-
-  // Canal do contato. Conversa que já trafegou pela Cloud carrega `linha_id` e
-  // aparece na view; quem NÃO aparece não tem mensagem `wamid` nenhuma, então o
-  // roteamento de /api/send-template dá "rd" com certeza. O erro possível é só
-  // para o lado conservador (contar como Cloud quem voltou a falar pelo RD).
-  // ⚠️ `numero_envio` (§37.1) tem precedência sobre a regra por conversa, e esta
-  // rota ignorava isso: com o admin escolhendo Cloud, um template da Cloud era
-  // cortado por "canal" em quem o envio mandaria pela Cloud de qualquer forma.
-  const envioPadraoCloud = canalEscolhido(cfg) === "whatsapp"
-    || process.env.WHATSAPP_ENVIO_PADRAO === "true";
-  const naCloud = new Set((linhaRes.data ?? []).map((r: any) => String(r.cliente_id)));
-  const canalDe = (id: string): "whatsapp" | "rd" =>
-    envioPadraoCloud || id.startsWith("wa:") || naCloud.has(id) ? "whatsapp" : "rd";
-
-  // 3) peneira, contando o motivo de CADA corte — número sem motivo vira
-  //    discussão ("por que só 12?") que ninguém resolve olhando a tela.
-  const cortes = { sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0, ativo_demais: 0, canal: 0, numero_morto: 0 };
-  const elegiveis: any[] = [];
-  const vistos = new Set<string>();
-
-  for (const c of cards) {
-    const envio = idDeEnvio(c);
-    if (!envio) { cortes.sem_contato++; continue; }
-    if (!c.telefone) { cortes.sem_telefone++; continue; }
-
-    const cod = c.codcli ?? codDeId(c.cliente_id);
-    const t = tel8(c.telefone);
-    if (descCli.has(c.cliente_id) || descCli.has(envio)
-      || (cod != null && descCod.has(Number(cod)))
-      || (t.length === 8 && descTel.has(t))) { cortes.descartado++; continue; }
-
-    // Antes dos cortes de tempo: não adianta ranquear quem não pode receber.
-    if (desfecho.get(envio) === "morto" || desfecho.get(String(c.cliente_id)) === "morto") {
-      cortes.numero_morto++; continue;
-    }
-
-    const ud = ultimoDisparo.get(envio) ?? ultimoDisparo.get(String(c.cliente_id));
-    if (diasRecontato > 0 && ud && diasDesde(ud) < diasRecontato) { cortes.disparo_recente++; continue; }
-
-    const dias = diasDesde(c.ultima_atividade);
-    if (dias < diasMin) { cortes.ativo_demais++; continue; }
-
-    const canal = canalDe(envio);
-    // Template da Cloud só chega em conversa que já corre na Cloud: numa do RD o
-    // envio cai no ramo do RD com um nome que o painel deles não conhece —
-    // falha certa, uma por cliente. Recortar aqui é mais honesto do que deixar
-    // falhar trezentas vezes e chamar de "erro".
-    if (canalTpl === "cloud" && canal !== "whatsapp") { cortes.canal++; continue; }
-
-    // dedup: prospecção e conversa podem apontar para o mesmo contato do RD
-    if (vistos.has(envio)) continue;
-    vistos.add(envio);
-
-    const ci = (cod != null && cicloCod.get(Number(cod)))
-      || cicloCli.get(String(c.cliente_id))
-      || (t.length === 8 ? cicloTel.get(t) : null);
-
-    // urgência do ciclo + tempo parado + ticket. Com o motor desligado, `ci` é
-    // sempre nulo e a parcela da urgência some — a ordem passa a ser tempo
-    // parado + ticket, que continua sendo uma ordem defensável, em vez de a
-    // campanha sair sem critério nenhum.
-    const parado = dias === Infinity ? 40 : Math.min(dias, 60);
-    const score = Number(ci?.score_urgencia ?? 0) + parado * 0.6 + Math.min(Number(c.venda_valor ?? 0) / 100, 30);
-
-    elegiveis.push({
-      envio_id: envio,
-      cliente_id: String(c.cliente_id),
-      cliente: c.cliente ?? "",
-      primeiro_nome: String(c.cliente ?? "").trim().split(/\s+/)[0] || "cliente",
-      vendedor: c.vendedor ?? null,
-      etapa: c.etapa ?? null,
-      dias: dias === Infinity ? null : Math.floor(dias),
-      canal,
-      ciclo: ci?.tipo_oportunidade ?? null,
-      score: Math.round(score * 10) / 10,
-    });
-  }
-
-  elegiveis.sort((a, b) => b.score - a.score);
-  const selecionados = elegiveis.slice(0, limite);
-
-  return Response.json({
-    // a tela explica a ordem do público; com o motor desligado a explicação
-    // muda junto, senão prometeria um critério que não está sendo aplicado
-    ciclo_ativo: cfg.ciclo_ativo,
-    total: elegiveis.length,
-    selecionados,
-    cortes,
-    porCanal: {
-      whatsapp: selecionados.filter((c) => c.canal === "whatsapp").length,
-      rd: selecionados.filter((c) => c.canal === "rd").length,
-    },
-  });
 }

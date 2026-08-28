@@ -1178,7 +1178,232 @@ const CORTE_ROTULO: Record<string, string> = {
   // O texto diz "não recebe", e não "falhou": quem falhou por janela fechada
   // continua no público -- é justamente quem o template alcança.
   numero_morto: "o número não recebe no WhatsApp (falha confirmada)",
+  comprou_no_periodo: "já compraram no período pedido",
+  conversa_aberta: "estão em conversa aberta agora",
 };
+
+// Os mesmos buckets que a `vw_pedido_bi_card` calcula. Não invente outros aqui:
+// o rótulo da tela e o corte do servidor têm de falar do mesmo intervalo.
+const PERIODOS_COMPRA = [
+  { k: "hoje", r: "hoje" }, { k: "ontem", r: "ontem" }, { k: "semana", r: "nos últimos 7 dias" },
+  { k: "quinzena", r: "nos últimos 15 dias" }, { k: "mes", r: "neste mês" },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Assistente de campanha -- o mesmo pedido que a supervisao fazia num chat FORA
+// do sistema ("200 de cada vendedor do inside sales que nao compraram esse mes,
+// que nao receberam template hoje, que nao estao em conversa aberta"), agora
+// dentro do CRM e sem passar por planilha.
+//
+// TRES DECISOES QUE SUSTENTAM ESTA CAIXA
+//
+// 1. Ela PROPOE, nao aplica. A resposta vem com um cartao e um botao; enquanto
+//    ninguem clica, os filtros ao lado nao se mexem. Foi a escolha do usuario, e
+//    e o mesmo freio do "marcar nao aplica" do redesenho (§29.4): um publico de
+//    800 pessoas custa ~R$ 344 e e irreversivel.
+//
+// 2. Os numeros que ela diz sao os numeros da PREVIA. O assistente nao tem uma
+//    contagem propria -- ele chama a mesma peneira (`lib/publicoDisparo.ts`) que
+//    a tela usa. Se tivesse a sua, a conversa prometeria um numero e a prévia
+//    mostraria outro, e so o envio revelaria qual dos dois era verdade.
+//
+// 3. O historico da conversa mora AQUI, no navegador, e volta inteiro para a
+//    rota a cada mensagem. Nada de tabela nova para um rascunho que acaba quando
+//    a campanha sai.
+// ---------------------------------------------------------------------------
+const SUGESTOES = [
+  "200 de cada vendedor do inside sales que não compraram neste mês, que não receberam template hoje e que não estão em conversa aberta",
+  "50 clientes da Kamilly parados há mais de 30 dias",
+  "quem está na lista de prospecção e nunca recebeu template",
+];
+
+/** A proposta em português, para conferir sem decorar nome de campo. */
+function descreverFiltros(f: any): string[] {
+  const l: string[] = [];
+  const alvo = [
+    ...(f.times ?? []).map((t: string) => `time ${t}`),
+    ...(f.carteiras ?? []),
+  ];
+  l.push(alvo.length ? `Quem: ${alvo.join(", ")}` : "Quem: a equipe toda");
+  if ((f.etapas ?? []).length) {
+    l.push("Etapas: " + f.etapas.map((e: string) => ETAPAS.find((x) => x.key === e)?.rotulo ?? e).join(", "));
+  }
+  if (f.diasMin > 0) l.push(`Parados há ${f.diasMin} dias ou mais`);
+  if (f.diasRecontato > 0) {
+    l.push(f.diasRecontato === 1 ? "Não receberam template hoje" : `Sem template há ${f.diasRecontato} dias`);
+  }
+  const per = PERIODOS_COMPRA.find((x) => x.k === f.semCompraNo);
+  if (per) l.push(`Não compraram ${per.r}`);
+  if (f.semConversaAberta) l.push("Fora quem está em conversa aberta");
+  if (f.porVendedor > 0) l.push(`No máximo ${f.porVendedor} por carteira`);
+  l.push(`Total a enviar: ${f.limite}`);
+  return l;
+}
+
+function AssistenteCampanha({ disponivel, canal, aoAplicar }: {
+  disponivel: boolean; canal: string | null; aoAplicar: (f: any) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [linhas, setLinhas] = useState<{ quem: "eu" | "ia"; texto: string; proposta?: any; resultado?: any }[]>([]);
+  const [historico, setHistorico] = useState<any[]>([]);
+  const [texto, setTexto] = useState("");
+  const [indo, setIndo] = useState(false);
+  const [erro, setErro] = useState("");
+  // Medido em 28/08 contra a API real: 18s no caminho curto, ~30s quando o
+  // assistente refaz a conta. Sem contador, essa espera parece travamento -- e
+  // quem acha que travou clica de novo, o que gasta outra chamada.
+  const [seg, setSeg] = useState(0);
+  const fim = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { fim.current?.scrollIntoView({ block: "end" }); }, [linhas, indo]);
+  useEffect(() => {
+    if (!indo) return;
+    const t = setInterval(() => setSeg((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [indo]);
+
+  async function mandar(pergunta?: string) {
+    const t = (pergunta ?? texto).trim();
+    if (!t || indo) return;
+    setTexto(""); setErro("");
+    setLinhas((v) => [...v, { quem: "eu", texto: t }]);
+    setSeg(0);
+    setIndo(true);
+    try {
+      const r = await fetch("/api/admin/disparo-massa/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texto: t, canal, mensagens: historico }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) { setErro(j.error ?? `erro ${r.status}`); return; }
+      setHistorico(j.mensagens ?? []);
+      setLinhas((v) => [...v, { quem: "ia", texto: j.texto, proposta: j.proposta, resultado: j.resultado }]);
+    } catch (e: any) {
+      setErro(e?.message ?? String(e));
+    } finally {
+      setIndo(false);
+    }
+  }
+
+  if (!disponivel) {
+    return (
+      <Bloco titulo="Montar conversando" ajuda="Descrever o público em uma frase, em vez de preencher campo por campo.">
+        <Recado tipo="aviso">
+          O assistente ainda não está ligado: falta a variável <b>ANTHROPIC_API_KEY</b> nas variáveis de
+          ambiente da Vercel. Os filtros abaixo continuam funcionando normalmente.
+        </Recado>
+      </Bloco>
+    );
+  }
+
+  return (
+    <Bloco
+      titulo="Montar conversando"
+      ajuda={<>
+        Descreva o público como você descreveria para uma pessoa. O assistente <b>propõe</b> os filtros e
+        confere o número no nosso banco — quem aplica, revisa e envia é você. Ele não dispara nada.
+      </>}
+    >
+      {!aberto && linhas.length === 0 ? (
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" }}>
+          <Botao cor={M.azul} onClick={() => setAberto(true)}>Abrir a conversa</Botao>
+          <span style={{ fontSize: 12.5, color: M.muted }}>
+            ou preencha os campos abaixo, como sempre
+          </span>
+        </div>
+      ) : (
+        <>
+          {linhas.length === 0 && indo && (
+            <div style={{ fontSize: 12.5, color: M.muted, marginBottom: 12 }}>
+              conferindo no banco… {seg}s
+            </div>
+          )}
+
+          {linhas.length === 0 && !indo && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: M.muted, marginBottom: 7 }}>Por exemplo:</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {SUGESTOES.map((sug) => (
+                  <button key={sug} onClick={() => mandar(sug)}
+                    style={{ textAlign: "left", padding: "8px 11px", fontSize: 12.5, fontFamily: "inherit",
+                      color: M.gray, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9,
+                      cursor: "pointer", lineHeight: 1.5 }}>
+                    {sug}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {linhas.length > 0 && (
+            <div style={{ maxHeight: 420, overflow: "auto", border: `1px solid ${M.border}`,
+              borderRadius: 10, padding: 12, marginBottom: 12, background: M.bg }}>
+              {linhas.map((l, i) => (
+                <div key={i} style={{ marginBottom: 12, display: "flex",
+                  justifyContent: l.quem === "eu" ? "flex-end" : "flex-start" }}>
+                  <div style={{ maxWidth: "84%" }}>
+                    <div style={{ padding: "9px 12px", borderRadius: 12, fontSize: 13.5, lineHeight: 1.6,
+                      whiteSpace: "pre-wrap", color: l.quem === "eu" ? "#fff" : M.ink,
+                      background: l.quem === "eu" ? M.azul : M.surface,
+                      border: `1px solid ${l.quem === "eu" ? M.azul : M.border}` }}>
+                      {l.texto}
+                    </div>
+
+                    {l.proposta && (
+                      <div style={{ marginTop: 8, padding: "11px 13px", background: M.roxoSoft,
+                        border: `1px solid ${M.roxo}`, borderRadius: 11 }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
+                          textTransform: "uppercase", color: M.roxo, marginBottom: 7 }}>
+                          Proposta de público
+                        </div>
+                        {descreverFiltros(l.proposta).map((d) => (
+                          <div key={d} style={{ fontSize: 12.5, color: M.ink, lineHeight: 1.65 }}>{d}</div>
+                        ))}
+                        {l.resultado && (
+                          <div style={{ fontSize: 12.5, color: M.gray, marginTop: 7, lineHeight: 1.6 }}>
+                            <b>{l.resultado.total}</b> elegíveis · vão receber{" "}
+                            <b>{l.resultado.selecionados}</b> ·{" "}
+                            <b style={{ color: M.verde }}>
+                              {moedaBR(l.resultado.selecionados * CUSTO_TEMPLATE)}
+                            </b>
+                          </div>
+                        )}
+                        <div style={{ marginTop: 10 }}>
+                          <Botao cor={M.roxo} onClick={() => aoAplicar(l.proposta)}>
+                            Aplicar nos filtros
+                          </Botao>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {indo && (
+                <div style={{ fontSize: 12.5, color: M.muted }}>
+                  conferindo no banco… {seg}s
+                  {seg >= 12 && <span> · costuma levar uns 30 segundos</span>}
+                </div>
+              )}
+              <div ref={fim} />
+            </div>
+          )}
+
+          {erro && <Recado tipo="erro">{erro}</Recado>}
+
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
+            <textarea value={texto} onChange={(e) => setTexto(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mandar(); } }}
+              placeholder="quem deve receber?" rows={2}
+              style={{ ...inputBase, flex: 1, resize: "vertical", lineHeight: 1.5 }} />
+            <Botao cor={M.azul} disabled={indo || !texto.trim()} onClick={() => mandar()}>
+              {indo ? "…" : "Perguntar"}
+            </Botao>
+          </div>
+        </>
+      )}
+    </Bloco>
+  );
+}
 
 function DisparoMassaAba({ cfg, avisar, recarregar }: {
   cfg: any; avisar: (t: "erro" | "ok", m: string) => void; recarregar: () => Promise<void>;
@@ -1189,6 +1414,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   // botão do card e para o chat, não para uma campanha.
   const padrao = templates.find((t) => t.id === 0) ?? templates.find((t) => t.padrao) ?? templates[0] ?? null;
 
+  const limiteMax: number = cfg.limiteMax ?? 1000;
   const [tplId, setTplId] = useState<number | null>(padrao?.id ?? null);
   const [extras, setExtras] = useState<string[]>([]);
   const [carteiras, setCarteiras] = useState<string[]>([]);
@@ -1196,6 +1422,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   const [diasMin, setDiasMin] = useState(0);
   const [diasRecontato, setDiasRecontato] = useState(4);
   const [limite, setLimite] = useState(20);
+  // Filtros que a conversa do assistente sabe pedir e a tela precisa saber
+  // mostrar -- proposta que a tela nao consegue exibir e proposta que ninguem
+  // consegue conferir antes de gastar R$ 0,43 vezes N.
+  const [times, setTimes] = useState<string[]>([]);
+  const [semCompraNo, setSemCompraNo] = useState("");        // "" = nao olha compra
+  const [semConversaAberta, setSemConversaAberta] = useState(false);
+  const [porVendedor, setPorVendedor] = useState(0);         // 0 = sem cota
 
   const [previa, setPrevia] = useState<any>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
@@ -1221,7 +1454,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             acao: "previa",
-            filtros: { carteiras, etapas, diasMin, diasRecontato, limite, canal: canalTpl },
+            filtros: {
+              carteiras, times, etapas, diasMin, diasRecontato,
+              semCompraNo, semConversaAberta, porVendedor, limite, canal: canalTpl,
+            },
           }),
         });
         const j = await r.json().catch(() => ({}));
@@ -1235,13 +1471,36 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       }
     }, 400);
     return () => { vivo = false; clearTimeout(t); };
-  }, [carteiras, etapas, diasMin, diasRecontato, limite, canalTpl, avisar]);
+  }, [carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
+      semConversaAberta, porVendedor, limite, canalTpl, avisar]);
+
+  // O assistente propoe; quem aplica e o admin, num clique. Nada aqui envia --
+  // depois de aplicado o publico ainda passa por Revisar e Confirmar.
+  const aplicarProposta = useCallback((f: any) => {
+    setCarteiras(Array.isArray(f?.carteiras) ? f.carteiras.map(String) : []);
+    setTimes(Array.isArray(f?.times) ? f.times.map(String) : []);
+    setEtapas(Array.isArray(f?.etapas) ? f.etapas.map(String) : []);
+    setDiasMin(Math.max(0, Number(f?.diasMin) || 0));
+    setDiasRecontato(Math.max(0, Number(f?.diasRecontato) || 0));
+    setSemCompraNo(PERIODOS_COMPRA.some((x) => x.k === f?.semCompraNo) ? String(f.semCompraNo) : "");
+    setSemConversaAberta(!!f?.semConversaAberta);
+    setPorVendedor(Math.max(0, Number(f?.porVendedor) || 0));
+    setLimite(Math.min(limiteMax, Math.max(1, Number(f?.limite) || 20)));
+    // os campos ficam abaixo da dobra: sem isto o clique em Aplicar parece não
+    // ter feito nada, e a pessoa clica de novo
+    setTimeout(() => {
+      document.getElementById("quem-recebe")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }, [limiteMax]);
 
   const alternar = (lista: string[], set: (v: string[]) => void, v: string) =>
     set(lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v]);
 
   const selecionados: any[] = previa?.selecionados ?? [];
   const custo = selecionados.length * CUSTO_TEMPLATE;
+  // 1,8s entre um envio e outro (o mesmo `enviar()` abaixo). Com centenas de
+  // clientes isso deixa de ser detalhe: e o tempo que a aba fica aberta.
+  const minutos = Math.round((selecionados.length * 1.8) / 60);
 
   async function enviar() {
     setFase("enviando");
@@ -1438,6 +1697,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         )}
       </Bloco>
 
+      <AssistenteCampanha
+        disponivel={cfg.temAssistente !== false}
+        canal={canalTpl}
+        aoAplicar={aplicarProposta}
+      />
+
+      <div id="quem-recebe" />
       <Bloco
         titulo="2. Quem recebe"
         ajuda="O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."
@@ -1458,7 +1724,33 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           {carteiras.length > 0 && <BotaoLeve onClick={() => setCarteiras([])}>limpar</BotaoLeve>}
         </div>
 
-        <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Etapas do funil</span></div>
+        <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Times</span></div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+          {TIMES.filter((t) => t.v).map((t) => {
+            const on = times.includes(t.v);
+            return (
+              <button key={t.v} onClick={() => alternar(times, setTimes, t.v)} title={t.r}
+                style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.azul : M.bg,
+                  border: `1px solid ${on ? M.azul : M.border}` }}>
+                {t.v}
+              </button>
+            );
+          })}
+          <span style={{ fontSize: 12, color: M.muted }}>
+            atalho para as carteiras do time inteiro — soma com as escolhidas acima
+          </span>
+        </div>
+
+        <div style={{ marginBottom: 6 }}>
+          <span style={rotuloCampo}>Etapas do funil</span>
+          {etapas.length === 0 && (
+            <span style={{ fontSize: 12, color: M.muted, marginLeft: 8, textTransform: "none",
+              letterSpacing: 0, fontWeight: 400 }}>
+              nenhuma marcada = todas
+            </span>
+          )}
+        </div>
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16 }}>
           {ETAPAS.map((e) => {
             const on = etapas.includes(e.key);
@@ -1493,6 +1785,23 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
             </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Por vendedor, no máximo</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <input type="number" min={0} max={limiteMax} value={porVendedor}
+                onChange={(e) => setPorVendedor(Math.min(limiteMax, Math.max(0, Number(e.target.value) || 0)))}
+                style={{ ...inputBase, width: 80 }} />
+              <span style={{ fontSize: 12.5, color: M.gray }}>0 = sem cota</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <label style={rotuloCampo}>Não enviar para quem comprou</label>
+            <select value={semCompraNo} onChange={(e) => setSemCompraNo(e.target.value)}
+              style={{ ...inputBase, width: 170 }}>
+              <option value="">— não olhar compra —</option>
+              {PERIODOS_COMPRA.map((x) => <option key={x.k} value={x.k}>{x.r}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <label style={rotuloCampo}>Quantidade a enviar</label>
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
               {[10, 20, 30, 50, 100, 200].map((n) => (
@@ -1501,8 +1810,19 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                     borderRadius: 7, color: limite === n ? "#fff" : M.gray, background: limite === n ? M.roxo : M.bg,
                     border: `1px solid ${limite === n ? M.roxo : M.border}` }}>{n}</button>
               ))}
+              <input type="number" min={1} max={limiteMax} value={limite}
+                onChange={(e) => setLimite(Math.min(limiteMax, Math.max(1, Number(e.target.value) || 1)))}
+                title={`até ${limiteMax}`}
+                style={{ ...inputBase, width: 78, padding: "5px 8px" }} />
             </div>
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, flexBasis: "100%",
+            fontSize: 13, color: M.ink, cursor: "pointer" }}>
+            <input type="checkbox" checked={semConversaAberta}
+              onChange={(e) => setSemConversaAberta(e.target.checked)} />
+            Pular quem <b style={{ fontWeight: 700 }}>está em conversa aberta</b> — falou nas últimas
+            24h, ou a conversa está marcada como aberta no chat
+          </label>
         </div>
       </Bloco>
 
@@ -1520,7 +1840,18 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               <b>{previa.total}</b> clientes elegíveis · vão receber <b>{selecionados.length}</b> ·{" "}
               <b style={{ color: M.verde }}>{moedaBR(CUSTO_TEMPLATE)}</b> cada · total{" "}
               <b style={{ color: M.verde }}>{moedaBR(custo)}</b>
+              {minutos >= 2 && <> · ~<b>{minutos} min</b> de aba aberta</>}
             </div>
+
+            {Object.keys(previa.porVendedor ?? {}).length > 1 && (
+              <div style={{ fontSize: 12.5, color: M.gray, marginTop: 6, lineHeight: 1.6 }}>
+                Por carteira:{" "}
+                {Object.entries(previa.porVendedor)
+                  .sort((a: any, b: any) => b[1] - a[1])
+                  .map(([v, n]) => `${v} ${n}`)
+                  .join(" · ")}
+              </div>
+            )}
 
             {tpl?.canal === "cloud" && !cfg.envioPadraoCloud && (
               <div style={{ marginTop: 12 }}>
