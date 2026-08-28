@@ -4,6 +4,43 @@
 > contas/máquinas — mora no git, ao contrário dos transcripts e da memória local.
 > Só contém o que foi confirmado contra a conta real da API ou o código do repo.
 
+---
+
+## 0. LEIA PRIMEIRO — você não está sozinho neste projeto
+
+O usuário trabalha com **várias sessões ao mesmo tempo**, em features diferentes,
+no mesmo repositório. Você não enxerga as outras. Isso já custou caro em
+28/08/2026: dois `next build` sobre o mesmo `.next` o corromperam (`ENOENT` de
+manifesto, `ChunkLoadError` numa suíte que estava correta), uma sessão trocou a
+branch da árvore com o trabalho não commitado de outra dentro, e um `git status`
+com 15 arquivos levou a atribuir a uma sessão o trabalho de outra.
+
+**As regras, e o porquê de cada uma:**
+
+- **Trabalhe só na worktree e na branch que a mensagem de abertura indicar.**
+  Cada sessão tem a sua (`git worktree`), com `.next` e porta próprios — é isso
+  que impede um build de derrubar o servidor da outra.
+- **Branch sempre saindo de `origin/master`.** Nunca commite em branch de outra
+  sessão, mesmo que a árvore esteja nela quando você chegar.
+- **Ao terminar: PR para `master` (squash).** Nunca push direto.
+- **Commite SÓ o que você mexeu.** Se `git status` mostrar arquivo que você não
+  tocou, ele é de outra sessão — não inclua. `git diff origin/master` separa;
+  a memória de "o que eu editei" não, porque a árvore muda debaixo de você.
+- **Migration:** `git fetch` e confira `supabase_migrations.schema_migrations`
+  **no banco** antes de escolher o número, e **commite o arquivo sozinho, na
+  hora**, para reservá-lo. Este projeto já colidiu duas vezes (§21.3: duas
+  frentes criaram `0080`, depois `0082`). O banco é **um só** — duas sessões
+  aplicando migration ao mesmo tempo é mais arriscado que duas escrevendo código.
+- **Antes de `npm run build`,** veja se outra sessão está buildando o mesmo
+  `.next` (`Get-CimInstance Win32_Process -Filter "Name='node.exe'"` mostra a
+  linha de comando de cada uma). Se estiver, espere — não mate processo alheio.
+- **Arquivos-monstro são serializados, não paralelizados.**
+  `web/app/chat/page.tsx` e `web/app/page.tsx` passam de 3.000 linhas e quase
+  toda feature encosta neles. Duas sessões ali ao mesmo tempo conflitam sempre.
+
+Se a mensagem de abertura não disser em que worktree trabalhar, **pergunte antes
+de escrever** — é mais barato que descobrir depois de quem era o código.
+
 ## 1. Objetivo e estado atual
 
 ETL em **Node.js + TypeScript** para extrair dados da API REST do **RD Station
