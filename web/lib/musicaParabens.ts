@@ -9,16 +9,16 @@
 //
 // O resultado é um WAV PCM mono de no máximo SEGUNDOS_PARABENS segundos, com
 // fade de entrada e de saída (corte seco em música soa como falha de som).
-// ~30 s mono a 44,1 kHz = ~2,6 MB, que a TV baixa uma vez e mantém em cache.
+// ~59 s mono a 44,1 kHz = ~5,2 MB, que a TV baixa uma vez e mantém em cache.
 
-export const SEGUNDOS_PARABENS = 30;
+export const SEGUNDOS_PARABENS = 59;
 
 const FADE_IN = 0.04;
 const FADE_OUT = 1.2;
 
 export type TrechoPronto = {
   blob: Blob;          // WAV cortado, pronto pra subir
-  segundos: number;    // duração real (pode ser < 30 se a música for curta)
+  segundos: number;    // duração real (pode ser < 59 se a música for curta)
   duracaoOriginal: number;
   temVideo: boolean;   // o arquivo de origem era um container de vídeo
 };
