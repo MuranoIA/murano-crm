@@ -377,17 +377,30 @@ async function acharOuCriarCliente(
     // Uma consulta só, e apenas no caso raro (38 de ~4.800 contatos): a linha
     // mais recente entre os candidatos diz qual cadastro está vivo.
     const ids = candidatos.map((c: any) => c.id);
-    const { data: recente } = await sb
-      .from("mensagens")
-      .select("cliente_id")
-      .in("cliente_id", ids)
-      .neq("tipo", "evento_sistema")
-      .order("criada_em", { ascending: false })
-      .limit(1);
 
-    const vivo = recente?.[0]?.cliente_id
-      ? candidatos.find((c: any) => c.id === recente[0].cliente_id)
-      : null;
+    // O NUMERO NOVO GANHA DO RD, e nao e preferencia estetica.
+    //
+    // "A mensagem mais recente" sozinha tem um furo que so aparece com o tempo:
+    // o ETL do RD continua alimentando o banco (§44), entao um cadastro antigo
+    // pode receber mensagem NOVA do RD depois de a cliente ja ter migrado para o
+    // nosso numero. A conversa da Cloud seria roubada de volta pelo cadastro do
+    // RD, e partiria outra vez -- justamente o defeito que este bloco conserta.
+    //
+    // Medido em 27/08/2026: risco 0 hoje (nenhum duplicado tem irmao com Cloud
+    // vencendo pela data). Mas ele cresce exatamente na direcao da migracao, e a
+    // decisao do usuario e clara: o que ficou no RD ficou para tras.
+    const maisRecente = async (soCloud: boolean) => {
+      let q = sb.from("mensagens").select("cliente_id")
+        .in("cliente_id", ids).neq("tipo", "evento_sistema");
+      if (soCloud) q = q.like("id", "wamid%");
+      const { data } = await q.order("criada_em", { ascending: false }).limit(1);
+      return data?.[0]?.cliente_id ?? null;
+    };
+
+    // Consulta a mais SO no caso raro (38 de ~4.800 contatos) e so quando nenhum
+    // dos candidatos tem conversa no numero novo.
+    const alvo = (await maisRecente(true)) ?? (await maisRecente(false));
+    const vivo = alvo ? candidatos.find((c: any) => c.id === alvo) : null;
 
     // Sem nenhuma mensagem em nenhum deles, cai no desempate estável: quem tem
     // carteira primeiro, e `candidatos` já vem ordenado por id — então duas
