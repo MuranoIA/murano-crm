@@ -377,6 +377,10 @@ type Contato = {
            tipo_oportunidade: string | null; acao_recomendada: string | null; tendencia: string | null } | null;
   funil: { etapa: string | null; venda_valor: number | null; venda_data: string | null; sem_cadastro: boolean | null } | null;
   ultimas_notas: { data_fat: string; valor: number; num_nota: string | number | null; filial: string | null }[];
+  // Clientes do ERP com o MESMO NOME, quando este numero nao tem vinculo.
+  // Nao afirma identidade -- e pista para o humano decidir (§ trocou de numero).
+  erp_candidatos?: { codcli: number; nome: string; telefone: string | null;
+                     cidade: string | null; rca_num: number | null; rca_nome: string | null }[];
 };
 
 const moedaBR = (v: number | null | undefined) =>
@@ -743,6 +747,7 @@ function PainelContato({ c, aba, extra, fichaDe }: {
 }) {
   if (!c) return <div style={{ padding: 14, fontSize: 12, color: M.muted }}>Carregando dados do cliente…</div>;
   const { compras, ciclo, funil, ultimas_notas } = c;
+  const candidatos = c.erp_candidatos ?? [];
 
   const Bloco = ({ titulo, children }: { titulo: string; children: any }) => (
     <div style={{ padding: "11px 14px", borderBottom: `1px solid ${M.border}` }}>
@@ -797,7 +802,21 @@ function PainelContato({ c, aba, extra, fichaDe }: {
     <div style={{ fontSize: 12.5 }}>
       {aba === "resumo" && (
         semErp ? (
-          <Vazio t="Este contato não tem vínculo com o cadastro do WinThor, então não há histórico de compra para resumir. O CPF no painel do RD é o que cria o vínculo." />
+          candidatos.length ? (
+            // Mesma pista da aba Perfil, no lugar onde o painel ABRE -- o Resumo
+            // e a aba padrao, entao e aqui que a consultora le primeiro.
+            <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.6 }}>
+              Este <b>número</b> não está no cadastro do WinThor, por isso não há histórico de
+              compra. Mas há {candidatos.length === 1 ? "um cliente" : `${candidatos.length} clientes`}
+              {" "}com este mesmo nome —{" "}
+              <b>{candidatos[0].nome}</b>, cód. {candidatos[0].codcli}
+              {candidatos[0].rca_num != null && `, RCA ${candidatos[0].rca_num}`}
+              {candidatos[0].telefone && `, telefone ${candidatos[0].telefone}`}.
+              {" "}Pode ser a mesma pessoa com número novo; veja a aba <b>Perfil</b>.
+            </div>
+          ) : (
+            <Vazio t="Este contato não tem vínculo com o cadastro do WinThor, então não há histórico de compra para resumir. Preencher o CPF na ficha é o que cria o vínculo." />
+          )
         ) : (
           <>
             <div style={{ display: "flex", flexDirection: G.numeroHeroi ? "column" : "row", gap: 7, padding: "12px 14px 10px" }}>
@@ -850,8 +869,37 @@ function PainelContato({ c, aba, extra, fichaDe }: {
               {compras.cidade && <Linha r="Cidade" v={compras.cidade} />}
               {compras.rca_oficial && <Linha r="RCA oficial" v={compras.rca_oficial} />}
             </Bloco>
+          ) : candidatos.length ? (
+            // Trocou de numero: o cadastro velho continua no ERP, com CPF e
+            // vinculo; o numero novo entrou como outra linha, sem CPF. Dizer
+            // "sem cadastro" aqui e falso, e a equipe percebe na hora -- foi
+            // exatamente essa a reclamacao (28/08/2026).
+            <Bloco titulo="Este número não está no cadastro">
+              <div style={{ padding: "2px 0 8px", fontSize: 12, color: M.muted, lineHeight: 1.5 }}>
+                Há {candidatos.length === 1 ? "um cliente" : `${candidatos.length} clientes`} no
+                WinThor com este mesmo nome. Pode ser a mesma pessoa com número novo — confira:
+              </div>
+              {candidatos.map((k) => (
+                <div key={k.codcli} style={{
+                  borderLeft: `3px solid ${M.roxo}`, padding: "6px 10px", marginBottom: 6,
+                  background: M.bg, borderRadius: 6, fontSize: 12, lineHeight: 1.5,
+                }}>
+                  <div style={{ fontWeight: 700 }}>{k.nome}</div>
+                  <div style={{ color: M.muted }}>
+                    cód. {k.codcli}
+                    {k.rca_num != null && ` · RCA ${k.rca_num}${k.rca_nome ? ` (${k.rca_nome})` : ""}`}
+                    {k.cidade && ` · ${k.cidade}`}
+                  </div>
+                  {k.telefone && <div style={{ color: M.muted }}>telefone no cadastro: {k.telefone}</div>}
+                </div>
+              ))}
+              <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.5 }}>
+                Confirmando o CPF na ficha, o vínculo se cria sozinho em até 10 minutos e o
+                histórico de compra aparece aqui.
+              </div>
+            </Bloco>
           ) : (
-            <Vazio t="Sem cadastro no WinThor — contato ainda não vinculado a um cliente do ERP." />
+            <Vazio t="Não encontrei este contato no WinThor — ainda não vinculado a um cliente do ERP." />
           )}
           {fichaDe && fichaDe(!!compras)}
         </>

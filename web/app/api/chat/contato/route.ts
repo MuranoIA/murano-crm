@@ -46,7 +46,7 @@ export async function GET(req: Request) {
     (async () => {
       await cfgP;
       const { data } = await sb.from(VIEW_FUNIL_TELA)
-        .select("etapa,venda_valor,venda_data,codcli,sem_cadastro")
+        .select("cliente,etapa,venda_valor,venda_data,codcli,sem_cadastro")
         .eq("cliente_id", cliente_id).maybeSingle();
       return data ?? null;
     })(),
@@ -58,12 +58,48 @@ export async function GET(req: Request) {
       .limit(5),
   ]);
 
+  // -------------------------------------------------------------------------
+  // "SEM CADASTRO NO WINTHOR" ERA MENTIRA EM 52 CONTATOS
+  //
+  // Relatado com print em 28/08/2026: clientes que a equipe SABE que existem no
+  // ERP apareciam no painel como contato novo. Não eram novas — **trocaram de
+  // número**. O cadastro velho continua lá, com CPF e vínculo; o número novo
+  // entrou como outra linha em `clientes`, sem CPF, e o vínculo casa por CPF
+  // (§10.5), então nunca se forma.
+  //
+  // O detalhe que torna isso um defeito nosso, e não um buraco de dado: a view
+  // JÁ SABIA. Para os dois casos do print ela devolve `sem_cadastro = false` —
+  // ou seja, encontrou o nome no WinThor — e o painel escrevia o contrário,
+  // porque decidia pela ausência de `codcli`. Duas telas do mesmo sistema
+  // afirmando coisas opostas sobre a mesma pessoa.
+  //
+  // Aqui a rota pergunta ao ERP pelo NOME e devolve o candidato. Quem afirma que
+  // é a mesma pessoa é o humano, nunca este código: homônimo existe, e a §10.3
+  // já registra que casar por nome não escala. Por isso vêm até 3 candidatos com
+  // telefone e RCA à vista — é com eles que a consultora decide.
+  //
+  // O caminho de saída continua sendo o CPF: gravado na ficha, o
+  // `wth_reconciliar_vinculos()` liga tudo sozinho em até 10 minutos.
+  // -------------------------------------------------------------------------
+  let erp_candidatos: any[] = [];
+  if (!compras.data) {
+    const nome = String((funil as any)?.cliente ?? "").trim();
+    // nome curto demais casa com meio mundo; melhor não sugerir nada
+    if (nome.length >= 8) {
+      const { data } = await sb.from("wth_carteira")
+        .select("codcli,nome,telefone,cidade,rca_num,rca_nome")
+        .ilike("nome", nome).eq("ativo", true).limit(3);
+      erp_candidatos = data ?? [];
+    }
+  }
+
   return Response.json({
     ciclo_ativo: (await cfgP).ciclo_ativo,
     compras: compras.data ?? null,
     ciclo: cicloRow,
     funil,
     ultimas_notas: ultimas.data ?? [],
+    erp_candidatos,
   });
 }
 
