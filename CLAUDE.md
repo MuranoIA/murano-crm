@@ -8,6 +8,23 @@
 
 ## 0. LEIA PRIMEIRO — você não está sozinho neste projeto
 
+> **Primeiro comando desta sessão, antes de escrever qualquer coisa:**
+>
+> ```bash
+> node scripts/abertura.mjs
+> ```
+>
+> Ele imprime a foto do momento — em que worktree e branch você está, **quais
+> arquivos as outras sessões estão mexendo agora**, que portas já estão
+> ocupadas, o head do `origin/master`, os PRs abertos e o próximo número de
+> migration livre. É derivado do estado real (git, processos, disco), então
+> não envelhece como um arquivo mantido à mão envelheceria.
+>
+> Para abrir uma frente nova: `node scripts/nova-worktree.mjs <nome> <porta>`
+> — cria a pasta irmã, a branch a partir de `origin/master`, copia os `.env`
+> (que são gitignored e não vêm junto), instala as dependências e imprime a
+> mensagem de abertura pronta.
+
 O usuário trabalha com **várias sessões ao mesmo tempo**, em features diferentes,
 no mesmo repositório. Você não enxerga as outras. Isso já custou caro em
 28/08/2026: dois `next build` sobre o mesmo `.next` o corromperam (`ENOENT` de
