@@ -4758,3 +4758,104 @@ acima. Fica anotado como campo devolvido e ignorado.
   de tipo voltam de formas novas a cada tentativa. O teste que valeu foi subir o
   servidor e mandar o payload de verdade, que ainda por cima achou a perda de
   mensagem.
+
+## 63. O assistente monta o publico do disparo conversando (28/08/2026)
+
+`/admin` -> Templates -> Disparo em massa -> bloco **Montar conversando**. Nenhuma
+migration: o publico sai das views que ja existem.
+
+### 63.1 O caminho que isto encurta
+
+O fluxo real da campanha saia do CRM no meio: a supervisao conversava com um chat
+**fora** do sistema ("200 clientes de cada vendedor do inside sales que nao
+compraram nesse mes, que nao receberam template hoje, que nao estao em conversa
+aberta"), recebia uma **planilha**, e subia a planilha no painel do RD para
+disparar.
+
+Tres defeitos desapareceram com isso, e nenhum deles era a conversa:
+
+| | na planilha | aqui |
+|---|---|---|
+| de onde vem o numero | consulta que ninguem revisa | a mesma peneira da previa |
+| frescor | envelhece entre gerar e subir (o cliente compra, responde, ja recebeu template) | recontada a cada aplicacao |
+| o que o disparo sabe | nada | anti-repeticao, lixeira, numero que nao recebe, extrato |
+
+### 63.2 UMA peneira, dois chamadores -- e por isso ela saiu da rota
+
+A logica do publico foi de `app/api/admin/disparo-massa/route.ts` para
+**`lib/publicoDisparo.ts`**, porque passou a ter dois donos: a tela (campos) e o
+assistente (conversa). Com duas peneiras, o numero que o assistente promete e o
+numero da previa divergiriam -- e a divergencia so apareceria **depois do envio**,
+que e exatamente o erro que este desenho existe para impedir.
+
+⚠️ **O bug que provou a regra, achado no teste:** a primeira versao passava para a
+contagem so o que o modelo pedia, e `canal` **nao vem do modelo** -- vem do
+template marcado na tela. Com um template da Cloud escolhido, o assistente contava
+sem o recorte de canal e a previa contava com ele. Corrigido injetando `canalTpl`
+antes de `lerFiltros`.
+
+### 63.3 O modelo PROPOE; quem aplica e o admin
+
+Escolha do usuario. A resposta vem com um cartao ("Proposta de publico", em
+portugues, nao em nome de campo) e um botao **Aplicar nos filtros**. Enquanto
+ninguem clica, os campos ao lado nao se mexem; depois de aplicado ainda ha
+**Revisar** e **Confirmar**. Mesmo freio do "marcar nao aplica" da §29.4, e pelo
+mesmo motivo: 800 clientes custam ~R$ 344 e o envio e irreversivel.
+
+**A unica ferramenta do modelo e `montar_publico`, que so LE.** Nao existe caminho
+de codigo da rota do assistente ate `/api/send-template`, e o envio continua sendo
+o laco do navegador (§26.2) -- a cota nao cabe no tempo de uma rota da Vercel.
+
+### 63.4 ⚠️ NENHUM NOME DE CLIENTE VAI PARA O MODELO
+
+O `tool_result` devolve **contagens**: total, selecionados, quanto de cada carteira,
+canal, e os cortes por motivo. Conferido no payload real durante o teste. A lista
+com nome e telefone e desenhada pela tela a partir da previa, que roda no nosso
+servidor. O modelo nao precisa dos nomes para montar um publico.
+
+### 63.5 Os filtros que faltavam (e de onde cada um sai)
+
+| filtro | fonte | nota |
+|---|---|---|
+| **times** (IS/ISR/GC) | `carteira_config."time"` | atalho que vira carteira antes da peneira; soma com as escolhidas a dedo |
+| **nao compraram no periodo** | `vw_pedido_bi_card` (bucket) | e a **nota fiscal**, o mesmo numero da coluna Pedido emitido. Contar compra pela conversa daria outro resultado e o disparo passaria a discordar do board |
+| **fora quem esta em conversa aberta** | `mensagens` (recebida <24h, sob `filtroLinhas`) + `chat_conversa.status` | passa pelo filtro de linhas: com o RD escondido, conversa que so existe la nao conta (§44) |
+| **cota por vendedor** | — | molda a **escolha**, nao a elegibilidade: quem sobra da cota segue no total e entra na proxima campanha em vez de sumir como inelegivel |
+
+Teto do disparo subiu de 500 para **1000**, com o campo livre ao lado dos presets --
+"200 de cada" com quatro carteiras da 800. A previa passou a dizer **~N min de aba
+aberta** (1,8s por envio): com centenas de clientes isso deixa de ser detalhe.
+
+Medido em 28/08 com o pedido literal do usuario: **1.504 elegiveis, 800
+selecionados** (200 x anne/thiago/milene/thamires), cortes 130 ja compraram no mes,
+59 sem contato, 1 em conversa aberta, 1 numero morto.
+
+### 63.6 Pendencia -- e ela e do usuario, nao de codigo
+
+**`ANTHROPIC_API_KEY` na Vercel** (Settings -> Environment Variables). Sem ela o
+bloco aparece com um recado explicando o que falta e os filtros seguem funcionando;
+a rota responde **501** com a mesma instrucao. `temAssistente` no GET existe para a
+tela nao oferecer uma caixa de conversa que falha no primeiro envio.
+
+⚠️ **A chamada real a Anthropic NAO foi exercitada** -- nao ha chave nesta maquina
+e o `ant` nao esta instalado. O que foi provado ponta a ponta, contra um servidor
+que imita `POST /v1/messages`: o laco de tool use, o pareamento
+`tool_use`/`tool_result`, o replay do historico entre turnos, o payload enviado
+(modelo, `thinking: adaptive`, `strict`, as 9 propriedades obrigatorias), e a tela
+inteira no Chrome -- pergunta, cartao, Aplicar, previa recontada, zero erro no
+console. O que falta validar com chave real e a **qualidade da traducao** do
+portugues para os filtros.
+
+### 63.7 Arquivos
+
+| Arquivo | Papel |
+|---|---|
+| `web/lib/publicoDisparo.ts` | a peneira unica: tipos, `lerFiltros`, `montarPublico` |
+| `web/app/api/admin/disparo-massa/chat/route.ts` | Claude Opus 5 + a ferramenta `montar_publico` (so leitura) |
+| `web/app/api/admin/disparo-massa/route.ts` | passou a chamar a peneira; ganhou `temAssistente` e `limiteMax` |
+| `web/app/admin/page.tsx` | `AssistenteCampanha`, os quatro filtros novos, tempo estimado e cota por carteira |
+
+O historico da conversa mora no **navegador** e volta inteiro para a rota a cada
+mensagem: e rascunho que acaba quando a campanha sai, nao merece tabela nem
+limpeza. Quem devolve a lista pronta e a rota -- o pareamento tool_use/tool_result
+tem de ser exato, e a tela so ecoa.
