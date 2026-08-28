@@ -807,12 +807,12 @@ function PainelContato({ c, aba, extra, fichaDe }: {
             // e a aba padrao, entao e aqui que a consultora le primeiro.
             <div style={{ padding: 14, fontSize: 12, color: M.muted, lineHeight: 1.6 }}>
               Este <b>número</b> não está no cadastro do WinThor, por isso não há histórico de
-              compra. Mas há {candidatos.length === 1 ? "um cliente" : `${candidatos.length} clientes`}
-              {" "}com este mesmo nome —{" "}
+              compra. Mas o <b>nome</b> já existe lá, com outro telefone —{" "}
               <b>{candidatos[0].nome}</b>, cód. {candidatos[0].codcli}
               {candidatos[0].rca_num != null && `, RCA ${candidatos[0].rca_num}`}
               {candidatos[0].telefone && `, telefone ${candidatos[0].telefone}`}.
-              {" "}Pode ser a mesma pessoa com número novo; veja a aba <b>Perfil</b>.
+              {" "}Pode ser a mesma cliente que trocou de número, ou um homônimo; veja a aba{" "}
+              <b>Perfil</b>.
             </div>
           ) : (
             <Vazio t="Este contato não tem vínculo com o cadastro do WinThor, então não há histórico de compra para resumir. Preencher o CPF na ficha é o que cria o vínculo." />
@@ -876,8 +876,10 @@ function PainelContato({ c, aba, extra, fichaDe }: {
             // exatamente essa a reclamacao (28/08/2026).
             <Bloco titulo="Este número não está no cadastro">
               <div style={{ padding: "2px 0 8px", fontSize: 12, color: M.muted, lineHeight: 1.5 }}>
-                Há {candidatos.length === 1 ? "um cliente" : `${candidatos.length} clientes`} no
-                WinThor com este mesmo nome. Pode ser a mesma pessoa com número novo — confira:
+                Este nome já existe no WinThor
+                {candidatos.length > 1 ? ` (${candidatos.length} cadastros)` : ""}, com{" "}
+                <b>outro telefone</b>. Pode ser a mesma pessoa que <b>trocou de número</b> — ou um{" "}
+                <b>homônimo</b>. Confira antes de decidir:
               </div>
               {candidatos.map((k) => (
                 <div key={k.codcli} style={{
@@ -894,8 +896,9 @@ function PainelContato({ c, aba, extra, fichaDe }: {
                 </div>
               ))}
               <div style={{ fontSize: 11.5, color: M.muted, lineHeight: 1.5 }}>
-                Confirmando o CPF na ficha, o vínculo se cria sozinho em até 10 minutos e o
-                histórico de compra aparece aqui.
+                Se for a mesma pessoa, preencher o CPF na ficha cria o vínculo sozinho em até
+                10 minutos: o histórico de compra aparece aqui e a conversa passa para o RCA do
+                cadastro. Se for homônimo, não preencha — são duas pessoas.
               </div>
             </Bloco>
           ) : (
