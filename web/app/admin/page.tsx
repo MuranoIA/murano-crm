@@ -1182,6 +1182,12 @@ const CORTE_ROTULO: Record<string, string> = {
   conversa_aberta: "estão em conversa aberta agora",
 };
 
+// Com o modo migração ligado o CRM não nomeia o RD Conversas (§44). Só o corte
+// por canal precisa de outra redação -- os demais não citam o RD.
+const CORTE_ROTULO_SEM_RD: Record<string, string> = {
+  canal: "ainda não conversam por este número",
+};
+
 // Os mesmos buckets que a `vw_pedido_bi_card` calcula. Não invente outros aqui:
 // o rótulo da tela e o corte do servidor têm de falar do mesmo intervalo.
 const PERIODOS_COMPRA = [
@@ -1408,6 +1414,10 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar }: {
 function DisparoMassaAba({ cfg, avisar, recarregar }: {
   cfg: any; avisar: (t: "erro" | "ok", m: string) => void; recarregar: () => Promise<void>;
 }) {
+  // §45.3: a tela inteira deixa de nomear o RD quando o modo migração está
+  // ligado. Esta aba tinha ficado de fora -- e era a mais gritante, porque
+  // mandava "escolha um template do RD" para quem já não tem RD nenhum.
+  const semRd = useSemRd();
   const templates: any[] = cfg.templates ?? [];
   // Começa no "Padrão do sistema" quando ele existe: era o default do modal do
   // board e é o único que alcança a base do RD. O ★ padrão da tabela vale para o
@@ -1616,7 +1626,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         </div>
         <div style={{ fontSize: 12.5, color: M.gray, marginTop: 8 }}>
           Template: <b>{tpl?.nome ?? "padrão do sistema"}</b>
-          {tpl?.canal === "cloud" ? " · WhatsApp Cloud" : " · RD Conversas"}
+          {semRd ? "" : tpl?.canal === "cloud" ? " · WhatsApp Cloud" : " · RD Conversas"}
         </div>
         {tpl?.corpo && (
           <div style={{ marginTop: 10, padding: "10px 12px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, fontSize: 13, color: M.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
@@ -1642,7 +1652,8 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         titulo="1. Template"
         ajuda={<>
           O texto vem do cadastro ao lado, em <b>Templates cadastrados</b> — é o que a cliente vai
-          ler. Template da Cloud só entra nesta lista depois de <b>aprovado pela Meta</b>.
+          ler. {semRd ? "O template" : "Template da Cloud"} só entra nesta lista depois de{" "}
+          <b>aprovado pela Meta</b>.
         </>}
       >
         {templates.length === 0 ? (
@@ -1664,12 +1675,12 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                     {t.nome}
                     {t.padrao && <span style={{ fontSize: 11, color: M.roxo, marginLeft: 6 }}>★ padrão</span>}
                     <span style={{ fontSize: 11, fontWeight: 700, color: M.muted, marginLeft: 8 }}>
-                      {t.canal === "cloud" ? "WhatsApp Cloud" : "RD Conversas"}
+                      {semRd ? "" : t.canal === "cloud" ? "WhatsApp Cloud" : "RD Conversas"}
                     </span>
                     {t.tem_imagem && <span style={{ fontSize: 11, color: M.muted, marginLeft: 6 }}>· com imagem</span>}
                   </div>
                   <div style={{ fontSize: 12.5, color: M.gray, marginTop: 3, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                    {t.corpo ?? <i>{t.nota ?? "o texto deste template mora no painel do RD Conversas"}</i>}
+                    {t.corpo ?? <i>{t.nota ?? "este template não tem o texto guardado aqui"}</i>}
                   </div>
                 </div>
               </label>
@@ -1853,7 +1864,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               </div>
             )}
 
-            {tpl?.canal === "cloud" && !cfg.envioPadraoCloud && (
+            {!semRd && tpl?.canal === "cloud" && !cfg.envioPadraoCloud && (
               <div style={{ marginTop: 12 }}>
                 <Recado tipo="aviso">
                   Este template é da <b>WhatsApp Cloud</b>, então só alcança conversas que já correm por lá —
@@ -1868,7 +1879,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                 Ficaram de fora:{" "}
                 {Object.entries(previa.cortes)
                   .filter(([, n]) => Number(n) > 0)
-                  .map(([k, n]) => `${n} ${CORTE_ROTULO[k] ?? k}`)
+                  .map(([k, n]) => `${n} ${(semRd ? CORTE_ROTULO_SEM_RD[k] : null) ?? CORTE_ROTULO[k] ?? k}`)
                   .join(" · ")}
               </div>
             )}
@@ -1878,7 +1889,8 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead><tr>
                     <th style={th}>Cliente</th><th style={th}>Carteira</th>
-                    <th style={th}>Etapa</th><th style={th}>Parado</th><th style={th}>Canal</th>
+                    <th style={th}>Etapa</th><th style={th}>Parado</th>
+                    {!semRd && <th style={th}>Canal</th>}
                   </tr></thead>
                   <tbody>
                     {selecionados.map((s: any) => (
@@ -1887,7 +1899,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                         <td style={td}>{s.vendedor ?? "—"}</td>
                         <td style={td}>{ETAPAS.find((e) => e.key === s.etapa)?.rotulo ?? s.etapa}</td>
                         <td style={td}>{s.dias == null ? "nunca falou" : `${s.dias} d`}</td>
-                        <td style={td}>{s.canal === "whatsapp" ? "Cloud" : "RD"}</td>
+                        {!semRd && <td style={td}>{s.canal === "whatsapp" ? "Cloud" : "RD"}</td>}
                       </tr>
                     ))}
                   </tbody>

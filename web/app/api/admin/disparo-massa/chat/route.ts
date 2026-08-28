@@ -126,12 +126,11 @@ function sistema(ctx: {
     `- Carteiras ativas: ${lista}.`,
     `- Padrão da tela quando ninguém pede nada: etapas ${FILTROS_PADRAO.etapas.join(" e ")}, sem repetir`,
     `  template por ${FILTROS_PADRAO.diasRecontato} dias, ${FILTROS_PADRAO.limite} clientes.`,
-    ctx.canalTpl === "cloud"
-      ? "- O template escolhido na tela é da WhatsApp Cloud, então só alcança quem já conversa por lá; o resto sai do público e aparece no corte 'canal'."
-      : "- O template escolhido na tela é do RD Conversas.",
     ctx.semRd
-      ? "- O sistema está em modo migração: conversa que só existe no RD Conversas não conta para nada aqui."
-      : "",
+      ? "- Existe um número só. Não mencione RD Conversas, Tallos, nem canal de atendimento antigo: para quem lê esta tela, isso não existe."
+      : ctx.canalTpl === "cloud"
+        ? "- O template escolhido na tela é da WhatsApp Cloud, então só alcança quem já conversa por lá; o resto sai do público e aparece no corte 'canal'."
+        : "- O template escolhido na tela é do RD Conversas.",
     "",
     "COISAS QUE JÁ SÃO AUTOMÁTICAS — não prometa como se fosse mérito seu, mas mencione se perguntarem:",
     "- quem está na lixeira sai;",

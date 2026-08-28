@@ -1,6 +1,6 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
-import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
+import { lerCrmConfig, linhasVisiveis, modoMigracao } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
 
 export const dynamic = "force-dynamic";
@@ -97,8 +97,12 @@ export async function GET() {
   // manda `template_id` nenhum e deixa o /api/send-template resolver. É a ÚNICA
   // que alcança a base do RD, já que nenhum template do RD está cadastrado em
   // crm_templates. Sem ela, esta tela nasceria incapaz de fazer o que o board fazia.
-  const padraoRd = !!process.env.TEMPLATE_RECONTATO_ID
-    || templates.some((t: any) => t.canal !== "cloud" && t.envio_id);
+  // ⚠️ Com o modo migração ligado ela NÃO aparece: seria oferecer o template do
+  // painel do RD numa tela que não nomeia mais o RD (§44) -- e, com o envio já
+  // roteado para a Cloud, ela nem alcança a base que promete alcançar.
+  const padraoRd = !modoMigracao(cfgG)
+    && (!!process.env.TEMPLATE_RECONTATO_ID
+      || templates.some((t: any) => t.canal !== "cloud" && t.envio_id));
   const lista = padraoRd
     ? [{
         id: 0, nome: "Padrão do sistema", canal: "rd", padrao: false,
