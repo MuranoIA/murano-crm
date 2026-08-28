@@ -11,14 +11,14 @@ export const maxDuration = 60;
 // JSON para os painéis, que tocam por SEGUNDOS e voltam ao som sintetizado
 // quando a chave não existe. Só admin.
 //
-// O corte de 30s acontece no navegador do admin (web/lib/musicaParabens.ts):
+// O corte de 59s acontece no navegador do admin (web/lib/musicaParabens.ts):
 // decodifica, corta e sobe um WAV — é lá também que a trilha de VÍDEO de um
 // .mp4 é descartada, porque só o áudio é decodificado. Quando o navegador não
 // dá conta do codec, o original sobe com `cortado:false` e o painel aplica o
-// teto de 30s no player (e usa <audio>, que ignora o vídeo do container).
+// teto de 59s no player (e usa <audio>, que ignora o vídeo do container).
 const BUCKET = "ranking-musica";
 const CHAVE = "parabens_musica";
-const SEGUNDOS = 30; // teto de reprodução na TV (não exportar: rota do Next só aceita handlers + config)
+const SEGUNDOS = 59; // teto de reprodução na TV (não exportar: rota do Next só aceita handlers + config)
 const MAX = 20 * 1024 * 1024;
 const MIMES: Record<string, string> = {
   "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
