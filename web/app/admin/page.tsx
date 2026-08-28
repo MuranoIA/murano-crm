@@ -1251,10 +1251,10 @@ function descreverFiltros(f: any): string[] {
   return l;
 }
 
-function AssistenteCampanha({ disponivel, canal, aoAplicar }: {
+function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }: {
   disponivel: boolean; canal: string | null; aoAplicar: (f: any) => void;
+  aberto: boolean; setAberto: (v: boolean) => void;
 }) {
-  const [aberto, setAberto] = useState(false);
   const [linhas, setLinhas] = useState<{ quem: "eu" | "ia"; texto: string; proposta?: any; resultado?: any }[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
   const [texto, setTexto] = useState("");
@@ -1381,7 +1381,7 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar }: {
                         )}
                         <div style={{ marginTop: 10 }}>
                           <Botao cor={M.roxo} onClick={() => aoAplicar(l.proposta)}>
-                            Aplicar nos filtros
+                            Usar este público
                           </Botao>
                         </div>
                       </div>
@@ -1409,6 +1409,12 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar }: {
             <Botao cor={M.azul} disabled={indo || !texto.trim()} onClick={() => mandar()}>
               {indo ? "…" : "Perguntar"}
             </Botao>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <BotaoLeve onClick={() => setAberto(false)}>
+              fechar a conversa e voltar a escolher à mão
+            </BotaoLeve>
           </div>
         </>
       )}
@@ -1444,6 +1450,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   const [semCompraNo, setSemCompraNo] = useState("");        // "" = nao olha compra
   const [semConversaAberta, setSemConversaAberta] = useState(false);
   const [porVendedor, setPorVendedor] = useState(0);         // 0 = sem cota
+  // Conversa aberta = o público é dela. Os campos abaixo continuam VISÍVEIS
+  // (são o extrato do que foi combinado, e Revisar manda 800 pessoas: o
+  // critério tem de estar à vista), mas param de aceitar edição -- senão
+  // haveria duas fontes para a mesma decisão e ninguém saberia qual valeu.
+  const [conversaAberta, setConversaAberta] = useState(false);
 
   const [previa, setPrevia] = useState<any>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
@@ -1491,6 +1502,9 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
   // O assistente propoe; quem aplica e o admin, num clique. Nada aqui envia --
   // depois de aplicado o publico ainda passa por Revisar e Confirmar.
+  const conversaAbertaRef = useRef(false);
+  useEffect(() => { conversaAbertaRef.current = conversaAberta; }, [conversaAberta]);
+
   const aplicarProposta = useCallback((f: any) => {
     setCarteiras(Array.isArray(f?.carteiras) ? f.carteiras.map(String) : []);
     setTimes(Array.isArray(f?.times) ? f.times.map(String) : []);
@@ -1501,10 +1515,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
     setSemConversaAberta(!!f?.semConversaAberta);
     setPorVendedor(Math.max(0, Number(f?.porVendedor) || 0));
     setLimite(Math.min(limiteMax, Math.max(1, Number(f?.limite) || 20)));
-    // os campos ficam abaixo da dobra: sem isto o clique em Aplicar parece não
-    // ter feito nada, e a pessoa clica de novo
+    // A tela rola sozinha para o que a pessoa quer ver a seguir: com a conversa
+    // aberta isso é a LISTA (os campos são só extrato); sem ela, são os campos
+    // que acabaram de mudar. Sem rolar, o clique parece não ter feito nada e a
+    // pessoa clica de novo.
     setTimeout(() => {
-      document.getElementById("quem-recebe")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const alvo = conversaAbertaRef.current ? "previa" : "quem-recebe";
+      document.getElementById(alvo)?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 60);
   }, [limiteMax]);
 
@@ -1717,13 +1734,19 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         disponivel={cfg.temAssistente !== false}
         canal={canalTpl}
         aoAplicar={aplicarProposta}
+        aberto={conversaAberta}
+        setAberto={setConversaAberta}
       />
 
       <div id="quem-recebe" />
       <Bloco
         titulo="2. Quem recebe"
-        ajuda="O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."
+        ajuda={conversaAberta
+          ? "Quem manda aqui é a conversa acima. Estes campos mostram o que foi combinado, mas não aceitam edição — feche a conversa para escolher à mão."
+          : "O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."}
       >
+        <div style={{ opacity: conversaAberta ? 0.55 : 1, pointerEvents: conversaAberta ? "none" : "auto" }}
+          aria-disabled={conversaAberta}>
         <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Carteiras</span></div>
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
           {(cfg.carteiras ?? []).map((c: any) => {
@@ -1840,8 +1863,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
             24h, ou a conversa está marcada como aberta no chat
           </label>
         </div>
+        </div>
       </Bloco>
 
+      <div id="previa" />
       <Bloco
         titulo="3. Prévia"
         ajuda={"Havendo mais elegíveis que a quantidade pedida, vão os mais prioritários — "
