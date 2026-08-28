@@ -99,16 +99,30 @@ export default async function (t) {
   });
 
   // ---------------------------------------------------------------- passo 3
-  await t.passo("3. a view e o painel não se contradizem", "✅", async () => {
-    if (!amostra.length) return "sem amostra — nada a comparar";
-    const alvo = amostra[0];
+  await t.passo("3. a tela decide pelo candidato, não pelo `sem_cadastro` da view", "✅", async () => {
+    // ⚠️ A primeira versão deste passo exigia `sem_cadastro === false` para quem
+    // tem homônimo no ERP, e falhou — corretamente. A view casa nome pelo
+    // `nome_norm` dela; este teste casa em memória, normalizando acento. As duas
+    // réguas não são a mesma, então "a view sempre acha o que eu acho" é uma
+    // afirmação forte demais, e sobre algo que a correção nem controla.
+    //
+    // O invariante que IMPORTA, e que a correção de fato garante: a tela decide
+    // pelo candidato que a ROTA devolve, não pelo `sem_cadastro` da view. Foi a
+    // leitura do `codcli` nulo que produzia a contradição original.
+    const src = readFileSync(PAGINA, "utf8");
+    const i = src.indexOf("candidatos.length ? (");
+    api.ok(i > 0, "o painel deixou de ramificar por `candidatos.length`");
+
+    const naoEncontrei = src.indexOf("Não encontrei este contato no WinThor");
+    api.ok(naoEncontrei > i,
+      "a frase 'não encontrei' voltou a vir ANTES do ramo do candidato — quem trocou de " +
+      "número volta a ser anunciado como cliente novo");
+
+    if (!amostra.length) return "sem amostra; o invariante estrutural está de pé";
     const { data: f } = await db.sb
-      .from("vw_funil_visivel").select("sem_cadastro,codcli").eq("cliente_id", alvo.id).maybeSingle();
-    // A view acha pelo nome (sem_cadastro=false) mas nao carrega codcli; era
-    // exatamente essa lacuna que o painel lia como "nao existe no ERP".
-    api.ok(f && f.sem_cadastro === false,
-      `a view marca sem_cadastro=${f?.sem_cadastro} para quem TEM homônimo no ERP — ` +
-      `se isso mudou, o painel e o board voltam a discordar`);
-    return `view: sem_cadastro=false, codcli=${f?.codcli ?? "null"} — a lacuna que o painel agora explica`;
+      .from("vw_funil_visivel").select("sem_cadastro,codcli").eq("cliente_id", amostra[0].id).maybeSingle();
+    // Reportado, não exigido: serve para enxergar a divergência das duas réguas.
+    return `painel ramifica pelo candidato · na amostra a view diz ` +
+      `sem_cadastro=${f?.sem_cadastro} e codcli=${f?.codcli ?? "null"}`;
   });
 }

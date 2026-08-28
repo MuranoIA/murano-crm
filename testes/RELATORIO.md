@@ -430,3 +430,77 @@ com a rota devolvendo o candidato correto.
 A rodada acusou `ChunkLoadError` na tela de admin. O chunk em disco era
 `page-f671…` e o navegador pediu `page-d340…`: **HTML de um build anterior**, a
 armadilha do `.next` da §60.5. Re-rodado isolado: 13 de 13. Não é defeito do app.
+
+---
+
+## 12. CPF confirma o cadastro, e a fila de atualização (0117)
+
+> Pedido do usuário em 28/08/2026, a partir do caso da §11: *"não seria ideal
+> que houvesse um botão tipo, pedir cpf para a cliente, e em seguida, se a
+> cliente digitar o cpf e este for o mesmo do winthor, então o processo acontece
+> automaticamente?"* — e, na mesma conversa, *"sim, construa isso"* para a fila
+> de atualização cadastral.
+
+### 12.1 O freio que faz o automático ser seguro
+
+O automático acontece, com uma condição: **o nome também tem de bater.**
+
+Sem ela, qualquer CPF válido que chegasse pela conversa vincularia o contato ao
+cadastro daquele CPF — a cliente manda o do marido, o da sócia, ou erra um
+dígito de um jeito que ainda passe no verificador, e a conversa herda o
+histórico de compra e o RCA de outra pessoa. Com o nome batendo, são **dois
+sinais independentes concordando**: o sistema confirma uma hipótese que já
+tinha, em vez de confiar no que um estranho digitou.
+
+Quando divergem, ninguém é vinculado — vira nota na conversa e o consultor
+decide. Nota, e não mensagem: o que entra em `mensagens` move card de etapa e
+abre espera no indicador (§21.2).
+
+O caminho manual (botão **"É a mesma pessoa"**) chama a MESMA função com o freio
+desligado, porque ali quem afirma a identidade é o humano, olhando os dois nomes
+na tela. Exigir igualdade justo aí recusaria o caso mais comum — "MARIA DA
+SILVA" no ERP contra "Maria Silva" no WhatsApp, que é exatamente o que ele
+acabou de conferir.
+
+⚠️ O CPF do caminho manual **não vem do navegador**: vem do cadastro do ERP que
+o consultor escolheu. Aceitar um CPF do corpo da requisição abriria vincular um
+contato a qualquer cliente, sem freio nenhum.
+
+### 12.2 Por que a fila existe, em vez de escrever no ERP
+
+Medido antes de construir: o `murano-clientes-v2` **não é o WinThor** — é um
+espelho reescrito de minuto em minuto. O `sync_log` de lá mostra duas cargas
+completas dos 8.651 clientes com **72 segundos** de diferença, e todo
+`updated_at` cai numa janela de 3 segundos. Uma escrita nossa ali não chegaria
+ao WinThor, seria apagada em ~1 minuto, e no intervalo mostraria "atualizado" na
+tela — o pior dos três.
+
+Então o CRM faz o que alcança e **registra** o que não alcança, com `.csv` para
+quem edita o ERP. O arquivo não é enfeite: sem ele a tela seria um número que o
+admin não pode acionar, a mesma doença que a aba Pendências (§36) cura.
+
+### 12.3 Verificado ao vivo, e desfeito
+
+O caminho de escrita foi exercitado contra o caso real da §11 e **revertido em
+seguida**, com o estado capturado antes e conferido depois:
+
+```
+POST /api/chat/vincular -> ligado · codcli 3497 · RCA 46
+   telefone_mudou: true (9199180675 no ERP × 559193452574 na conversa)
+fila  -> 1 pendente, com o nome do cliente
+csv   -> BOM + ";" (abre no Excel pt-BR sem importação)
+PATCH -> aplicado; a fila zera
+desfeito -> cpf null · 0 vínculos · 0 atualizações · 0 notas · fila vazia
+```
+
+Guardas conferidas: card sintético do ERP → 422 · sem sessão → 401 · codcli sem
+CPF no cadastro → 422 com o motivo · repetir o vínculo → "já estava vinculado".
+
+### 12.4 Uma armadilha de teste que quase virou defeito inventado
+
+O primeiro teste do `.csv` acusou "o BOM sumiu". Não sumiu: **`Response.text()`
+remove o BOM por especificação** ao decodificar UTF-8, então a asserção nunca
+poderia passar. O teste agora olha os bytes (`EF BB BF`) via `arrayBuffer()`.
+
+Vale como lição do próprio harness: teste que acusa defeito inexistente custa
+mais caro que teste ausente — manda alguém consertar o que está certo.
