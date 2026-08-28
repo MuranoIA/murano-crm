@@ -921,26 +921,36 @@ export default function Page() {
     try {
       const inicio = inicioEmSegundos(musicaInicio);
       const trecho = await prepararTrecho(file, inicio);
-      const fd = new FormData();
-      if (trecho) {
-        fd.append("audio", new File([trecho.blob], "parabens.wav", { type: "audio/wav" }), "parabens.wav");
-        fd.append("cortado", "1");
-      } else {
-        // navegador não decodificou (codec exótico): sobe o original e QUEM corta
-        // os 20s é o player do painel. Aí o limite do bucket (20 MB) vale.
-        if (file.size > 20 * 1024 * 1024) {
-          setMusicaMsg({ ok: false, texto: "Não consegui extrair o áudio deste arquivo neste navegador, e ele é grande demais (máx. 20 MB) para subir inteiro. Converta para MP3 e tente de novo." });
-          return;
-        }
-        fd.append("audio", file, file.name);
-        fd.append("cortado", "0");
-      }
-      fd.append("nome", file.name);
-      fd.append("origem", file.type || "");
+
+      // O que sobe: o trecho cortado aqui, ou o original quando este navegador
+      // não soube decodificar o codec (aí quem corta é o player do painel).
+      const corpo: Blob = trecho ? trecho.blob : file;
+      const mime = trecho ? "audio/wav" : (file.type || "");
+
       setMusicaEnviando("enviando");
-      const r = await fetch("/api/ranking/musica", { method: "POST", body: fd });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { setMusicaMsg({ ok: false, texto: j?.error ?? ("Erro " + r.status) }); return; }
+      // Passo 1: a rota reserva o caminho e assina a URL de escrita.
+      const rAss = await fetch("/api/ranking/musica", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ acao: "assinar", mime }),
+      });
+      const jAss = await rAss.json().catch(() => ({}));
+      if (!rAss.ok) { setMusicaMsg({ ok: false, texto: jAss?.error ?? ("Erro " + rAss.status) }); return; }
+
+      // Passo 2: os bytes vão DIRETO para o Storage. Passar por /api devolvia 413
+      // acima de ~4,5 MB (teto do corpo de uma função da Vercel), e um trecho de
+      // 59s já estoura isso.
+      const rPut = await fetch(jAss.signedUrl, { method: "PUT", headers: { "content-type": mime || "application/octet-stream" }, body: corpo });
+      if (!rPut.ok) { setMusicaMsg({ ok: false, texto: `Falha ao enviar o arquivo (${rPut.status}). Tente de novo.` }); return; }
+
+      // Passo 3: só agora o ponteiro muda — se o envio falhar, a música atual fica.
+      const rConf = await fetch("/api/ranking/musica", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ acao: "confirmar", path: jAss.path, nome: file.name, cortado: !!trecho, origem: file.type || "" }),
+      });
+      const j = await rConf.json().catch(() => ({}));
+      if (!rConf.ok) { setMusicaMsg({ ok: false, texto: j?.error ?? ("Erro " + rConf.status) }); return; }
       setMusica(j.musica);
       setMusicaMsg({
         ok: true,
