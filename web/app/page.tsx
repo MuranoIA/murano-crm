@@ -1841,7 +1841,7 @@ export default function Page() {
                             <button onClick={() => { setRankingMenuAberto(false); abrirMetasInd(); }} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🏅 Metas individuais
                             </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirMusica(); }} title="Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca 20 segundos)" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
+                            <button onClick={() => { setRankingMenuAberto(false); abrirMusica(); }} title={`Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca ${SEGUNDOS_PARABENS} segundos)`} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
                               🎵 Música dos parabéns
                             </button>
                             </>)}
