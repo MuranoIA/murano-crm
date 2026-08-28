@@ -1228,6 +1228,75 @@ const SUGESTOES = [
   "quem está na lista de prospecção e nunca recebeu template",
 ];
 
+// Como cada dimensão de produto se lê em português.
+const DIM_ROTULO: Record<string, string> = {
+  secao: "seção", departamento: "departamento", marca: "marca", produto: "produto",
+};
+
+const descreverItem = (r: any) =>
+  `${DIM_ROTULO[r?.dimensao] ?? r?.dimensao} ${(r?.valores ?? []).join(", ")}`;
+
+/**
+ * Os critérios que NÃO têm campo próprio na tela (produto, localização, valor,
+ * frequência, recência, ramo, ciclo, conjunto de consulta).
+ *
+ * ⚠️ Isto existe para que nenhum recorte aja invisível. O bloco "Quem recebe"
+ * tem nove campos; a conversa sabe pedir muito mais. Um filtro que corta o
+ * público sem aparecer em lugar nenhum é a mesma doença da §36.1 -- e aqui
+ * custa dinheiro, porque quem confirma o disparo confirma o que está vendo.
+ */
+function criteriosExtras(f: any): string[] {
+  if (!f) return [];
+  const l: string[] = [];
+  const nums = (v: any) => Number(v) || 0;
+
+  const onde: string[] = [];
+  if ((f.cidades ?? []).length) onde.push(`cidade ${f.cidades.join(", ")}`);
+  if ((f.estados ?? []).length) onde.push(`estado ${f.estados.join(", ")}`);
+  if ((f.bairros ?? []).length) onde.push(`bairro ${f.bairros.join(", ")}`);
+  if ((f.cepPrefixos ?? []).length) onde.push(`CEP começando em ${f.cepPrefixos.join(", ")}`);
+  if (onde.length) l.push("Onde: " + onde.join(" · "));
+
+  if (f.comprou) {
+    l.push(f.comprou.dias > 0
+      ? `Compraram ${descreverItem(f.comprou)} nos últimos ${f.comprou.dias} dias`
+      : `Já compraram ${descreverItem(f.comprou)}`);
+  }
+  if (f.naoComprou) l.push(`Nunca compraram ${descreverItem(f.naoComprou)}`);
+  if (f.semComprarItemHa) {
+    l.push(`Compravam ${descreverItem(f.semComprarItemHa)} e não compram há ${f.semComprarItemHa.dias} dias`);
+  }
+
+  if (nums(f.ticketMin)) l.push(`Ticket médio a partir de ${moedaBR(nums(f.ticketMin))}`);
+  if (nums(f.ticketMax)) l.push(`Ticket médio até ${moedaBR(nums(f.ticketMax))}`);
+  if (nums(f.receitaMin)) l.push(`Já compraram ${moedaBR(nums(f.receitaMin))} ou mais no total`);
+  if (nums(f.ultimoPedidoMin)) l.push(`Último pedido de ${moedaBR(nums(f.ultimoPedidoMin))} ou mais`);
+  if (nums(f.pedidosMin) === 1 && nums(f.pedidosMax) === 1) l.push("Compraram uma vez só");
+  else {
+    if (nums(f.pedidosMin)) l.push(`Pelo menos ${f.pedidosMin} pedidos`);
+    if (nums(f.pedidosMax)) l.push(`No máximo ${f.pedidosMax} pedidos`);
+  }
+
+  if (nums(f.semComprarDiasMin) && nums(f.semComprarDiasMax)) {
+    l.push(`Sem comprar entre ${f.semComprarDiasMin} e ${f.semComprarDiasMax} dias`);
+  } else {
+    if (nums(f.semComprarDiasMin)) l.push(`Sem comprar há ${f.semComprarDiasMin} dias ou mais`);
+    if (nums(f.semComprarDiasMax)) l.push(`Sem comprar há no máximo ${f.semComprarDiasMax} dias`);
+  }
+  if (f.nuncaComprou) l.push("Nunca compraram nada");
+  if (nums(f.primeiraCompraUltimosDias)) l.push(`Primeira compra nos últimos ${f.primeiraCompraUltimosDias} dias`);
+  if (nums(f.comDevolucaoUltimosDias)) l.push(`Tiveram devolução nos últimos ${f.comDevolucaoUltimosDias} dias`);
+  if (f.semDevolucao) l.push("Nunca devolveram");
+
+  if ((f.ramos ?? []).length) l.push(`Ramo: ${f.ramos.join(", ")}`);
+  if ((f.tiposOportunidade ?? []).length) l.push(`Oportunidade: ${f.tiposOportunidade.join(", ")}`);
+  if ((f.tendencias ?? []).length) l.push(`Tendência: ${f.tendencias.join(", ")}`);
+  if (nums(f.scoreMin)) l.push(`Score de urgência a partir de ${f.scoreMin}`);
+  if (f.conjunto) l.push(`Lista vinda de uma consulta ao banco (${f.conjunto})`);
+
+  return l;
+}
+
 /** A proposta em português, para conferir sem decorar nome de campo. */
 function descreverFiltros(f: any): string[] {
   const l: string[] = [];
@@ -1246,6 +1315,7 @@ function descreverFiltros(f: any): string[] {
   const per = PERIODOS_COMPRA.find((x) => x.k === f.semCompraNo);
   if (per) l.push(`Não compraram ${per.r}`);
   if (f.semConversaAberta) l.push("Fora quem está em conversa aberta");
+  l.push(...criteriosExtras(f));
   if (f.porVendedor > 0) l.push(`No máximo ${f.porVendedor} por carteira`);
   l.push(`Total a enviar: ${f.limite}`);
   return l;
@@ -1255,7 +1325,9 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
   disponivel: boolean; canal: string | null; aoAplicar: (f: any) => void;
   aberto: boolean; setAberto: (v: boolean) => void;
 }) {
-  const [linhas, setLinhas] = useState<{ quem: "eu" | "ia"; texto: string; proposta?: any; resultado?: any }[]>([]);
+  const [linhas, setLinhas] = useState<{
+    quem: "eu" | "ia"; texto: string; proposta?: any; resultado?: any; consultas?: any[];
+  }[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
   const [texto, setTexto] = useState("");
   const [indo, setIndo] = useState(false);
@@ -1288,7 +1360,9 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.error) { setErro(j.error ?? `erro ${r.status}`); return; }
       setHistorico(j.mensagens ?? []);
-      setLinhas((v) => [...v, { quem: "ia", texto: j.texto, proposta: j.proposta, resultado: j.resultado }]);
+      setLinhas((v) => [...v, {
+        quem: "ia", texto: j.texto, proposta: j.proposta, resultado: j.resultado, consultas: j.consultas,
+      }]);
     } catch (e: any) {
       setErro(e?.message ?? String(e));
     } finally {
@@ -1359,6 +1433,32 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
                       border: `1px solid ${l.quem === "eu" ? M.azul : M.border}` }}>
                       {l.texto}
                     </div>
+
+                    {!!l.consultas?.length && (
+                      <details style={{ marginTop: 8, fontSize: 12, color: M.gray }}>
+                        <summary style={{ cursor: "pointer", color: M.azul, fontWeight: 600 }}>
+                          {l.consultas.length === 1 ? "1 consulta ao banco" : `${l.consultas.length} consultas ao banco`}
+                        </summary>
+                        {l.consultas.map((c: any, k: number) => (
+                          <div key={k} style={{ marginTop: 7, paddingLeft: 8, borderLeft: `2px solid ${M.border}` }}>
+                            <div style={{ lineHeight: 1.5 }}>{c.motivo}</div>
+                            <pre style={{ margin: "4px 0 0", padding: "6px 8px", background: M.bg, borderRadius: 6,
+                              fontSize: 11, whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace" }}>{c.sql}</pre>
+                            <div style={{ fontSize: 11, color: c.erro ? "#b3261e" : M.muted, marginTop: 3 }}>
+                              {c.erro ? `recusada: ${c.erro}` : `${c.linhas} linha(s)${c.conjunto ? ` · lista ${c.conjunto}` : ""}`}
+                            </div>
+                          </div>
+                        ))}
+                      </details>
+                    )}
+
+                    {!!l.resultado?.avisos?.length && (
+                      <div style={{ marginTop: 8, padding: "8px 11px", background: "rgba(221,160,34,.12)",
+                        border: "1px solid rgba(138,97,0,.25)", borderRadius: 9, fontSize: 12,
+                        color: "#8a6100", lineHeight: 1.55 }}>
+                        {l.resultado.avisos.map((a: string, k: number) => <div key={k}>{a}</div>)}
+                      </div>
+                    )}
 
                     {l.proposta && (
                       <div style={{ marginTop: 8, padding: "11px 13px", background: M.roxoSoft,
@@ -1455,6 +1555,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   // critério tem de estar à vista), mas param de aceitar edição -- senão
   // haveria duas fontes para a mesma decisão e ninguém saberia qual valeu.
   const [conversaAberta, setConversaAberta] = useState(false);
+  // Os recortes que a conversa sabe pedir e a tela nao tem campo para mostrar
+  // (produto, localizacao, valor, frequencia, recencia, ramo, ciclo, conjunto).
+  // Ficam aqui, sao mandados junto na previa, e sao ESCRITOS no bloco abaixo --
+  // filtro que corta sem aparecer e o que ninguem consegue conferir.
+  const [extrasErp, setExtrasErp] = useState<any>(null);
 
   const [previa, setPrevia] = useState<any>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
@@ -1481,6 +1586,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           body: JSON.stringify({
             acao: "previa",
             filtros: {
+              ...(extrasErp ?? {}),
               carteiras, times, etapas, diasMin, diasRecontato,
               semCompraNo, semConversaAberta, porVendedor, limite, canal: canalTpl,
             },
@@ -1498,7 +1604,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
     }, 400);
     return () => { vivo = false; clearTimeout(t); };
   }, [carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
-      semConversaAberta, porVendedor, limite, canalTpl, avisar]);
+      semConversaAberta, porVendedor, limite, canalTpl, extrasErp, avisar]);
 
   // O assistente propoe; quem aplica e o admin, num clique. Nada aqui envia --
   // depois de aplicado o publico ainda passa por Revisar e Confirmar.
@@ -1515,6 +1621,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
     setSemConversaAberta(!!f?.semConversaAberta);
     setPorVendedor(Math.max(0, Number(f?.porVendedor) || 0));
     setLimite(Math.min(limiteMax, Math.max(1, Number(f?.limite) || 20)));
+    setExtrasErp(f ?? null);
     // A tela rola sozinha para o que a pessoa quer ver a seguir: com a conversa
     // aberta isso é a LISTA (os campos são só extrato); sem ela, são os campos
     // que acabaram de mudar. Sem rolar, o clique parece não ter feito nada e a
@@ -1864,6 +1971,26 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           </label>
         </div>
         </div>
+
+        {criteriosExtras(extrasErp).length > 0 && (
+          <div style={{ marginTop: 16, padding: "11px 13px", background: M.roxoSoft,
+            border: `1px solid ${M.roxo}`, borderRadius: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.roxo }}>
+                Critérios da conversa
+              </span>
+              <span style={{ fontSize: 12, color: M.gray }}>
+                não têm campo aqui, mas <b>estão valendo</b>
+              </span>
+              <span style={{ marginLeft: "auto" }}>
+                <BotaoLeve onClick={() => setExtrasErp(null)}>remover</BotaoLeve>
+              </span>
+            </div>
+            {criteriosExtras(extrasErp).map((c) => (
+              <div key={c} style={{ fontSize: 12.5, color: M.ink, lineHeight: 1.65 }}>{c}</div>
+            ))}
+          </div>
+        )}
       </Bloco>
 
       <div id="previa" />
