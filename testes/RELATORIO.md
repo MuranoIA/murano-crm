@@ -373,3 +373,60 @@ de produção), 1 por não gastar a única autorização de número em anexo de 
 Verifiquei por consulta independente que **nada sobrou**: zero linhas `[QA]` em
 `mensagens`, `chat_nota` e `clientes`, e a única transferência recente é ação
 real de usuário, não do teste.
+
+---
+
+## 11. Bug reportado pelo usuário depois da suíte — "cliente antiga aparece como nova"
+
+> 28/08/2026, com print. Depois de um disparo de template para 6 pessoas, elas
+> caíram na fila de espera e o painel dizia **"Sem cadastro no WinThor"** para
+> clientes que a equipe sabe existirem no ERP (casos F.A.N. e S.G.S.O.).
+
+### 11.1 Não eram clientes novas — trocaram de número
+
+Cada uma existe **duas vezes** em `clientes`:
+
+| | telefone | CPF | vínculo |
+|---|---|---|---|
+| a do print | número novo | não | **nenhum** — esse tel8 não existe no WinThor |
+| a antiga | número velho | sim | codcli + RCA |
+
+O vínculo casa por **CPF** (§10.5); o número novo entrou sem CPF, então nunca se
+forma. No caso de S.G.S.O. o cadastro antigo até se chama "… **ctt desativado**",
+ou seja, alguém já sabia da troca.
+
+**52 contatos** estão nessa situação: sem vínculo, com homônimo já vinculado.
+
+### 11.2 O defeito é nosso, não do dado: a view já sabia
+
+Para os dois casos do print, `vw_funil_visivel` devolve **`sem_cadastro = false`**
+— ela encontrou o nome no WinThor. O painel escrevia o contrário, porque decidia
+pela ausência de `codcli`. **Duas telas do mesmo sistema afirmando coisas opostas
+sobre a mesma pessoa.**
+
+A `vw_funil_visivel` acha pelo nome mas não carrega o `codcli`; era essa lacuna
+que o painel lia como "não existe no ERP".
+
+### 11.3 O que mudou
+
+`/api/chat/contato` passou a perguntar ao ERP **pelo nome** quando não há vínculo,
+e devolve até 3 candidatos com código, RCA, cidade e telefone do cadastro. As duas
+abas que erravam foram corrigidas:
+
+- **Resumo** (a aba padrão, a primeira que se lê) — dizia ainda para preencher o
+  CPF *"no painel do RD"*, que está sendo aposentado (§44);
+- **Perfil** — a frase do print.
+
+Nenhuma das duas afirma que é a mesma pessoa: quem decide é o humano, com o
+telefone do cadastro à vista. Homônimo existe, e a §10.3 já registra que casar por
+nome não escala. O caminho de saída continua sendo o CPF na ficha, que forma o
+vínculo sozinho em até 10 minutos.
+
+Verificado por screenshot nas duas abas (`testes/saidas/trocou-de-numero*.png`),
+com a rota devolvendo o candidato correto.
+
+### 11.4 Uma falha de ambiente, para não assustar quem reler o log
+
+A rodada acusou `ChunkLoadError` na tela de admin. O chunk em disco era
+`page-f671…` e o navegador pediu `page-d340…`: **HTML de um build anterior**, a
+armadilha do `.next` da §60.5. Re-rodado isolado: 13 de 13. Não é defeito do app.
