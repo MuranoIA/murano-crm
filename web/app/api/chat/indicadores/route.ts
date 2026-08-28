@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../../lib/papel";
+import { lerCrmConfig } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -29,14 +30,36 @@ export async function GET(req: Request) {
   let qVol = sb.from("vw_chat_volume_diario")
     .select("vendedor,dia,recebidas,enviadas,conversas")
     .gte("dia", desde).not("vendedor", "is", null);
-  let qResolv = sb.from("chat_conversa")
-    .select("motivo,resolvida_por,resolvida_em")
-    .eq("status", "resolvida").gte("resolvida_em", desde);
-  if (carteira) { qTempo = qTempo.eq("vendedor", carteira); qVol = qVol.eq("vendedor", carteira); }
+  // ---- item 2: tempo de resolução (0114) ----------------------------------
+  // A fonte é a tabela append-only, não `chat_conversa`: aquela é upsert por
+  // cliente e perde a resolução anterior quando a conversa reabre — a média
+  // melhoraria justamente quando a operação piorasse.
+  let qResolv = sb.from("vw_chat_resolucao")
+    .select("vendedor,dia,motivo,resolvidas,com_tempo,ate_1h,ate_24h,mediana_min,p90_min")
+    .gte("dia", desde);
 
-  const [{ data: tempo, error: e1 }, { data: vol, error: e2 }, { data: resolvidas }] =
-    await Promise.all([qTempo, qVol, qResolv]);
+  // ---- item 3: quem está esperando AGORA ----------------------------------
+  // Não é histórico: é a fila do momento, para alguém agir antes de a espera
+  // virar estatística. A view já respeita `linhas_visiveis` e ignora `auto`.
+  let qEspera = sb.from("vw_chat_espera").select("cliente_id,cliente,vendedor,esperando_desde,minutos");
+
+  if (carteira) {
+    qTempo = qTempo.eq("vendedor", carteira);
+    qVol = qVol.eq("vendedor", carteira);
+    qResolv = qResolv.eq("vendedor", carteira);
+    qEspera = qEspera.eq("vendedor", carteira);
+  }
+
+  const [{ data: tempo, error: e1 }, { data: vol, error: e2 }, resolvRes, esperaRes, cfg] =
+    await Promise.all([qTempo, qVol, qResolv, qEspera, lerCrmConfig(sb)]);
   if (e1 || e2) return Response.json({ error: (e1 ?? e2)!.message }, { status: 500 });
+
+  // As duas views nascem na 0114. Enquanto ela não for aplicada, a tela mostra
+  // o resto normalmente e diz que estas duas ainda não existem — em vez de
+  // devolver 500 e derrubar indicadores que já funcionavam.
+  const semViews = !!(resolvRes.error || esperaRes.error);
+  const resolvidas = resolvRes.data ?? [];
+  const esperando = (esperaRes.data ?? []).slice().sort((a: any, b: any) => b.minutos - a.minutos);
 
   // resumo por vendedor: contagens somadas; mediana como "típica do dia"
   const porVendedor = new Map<string, any>();
@@ -81,16 +104,50 @@ export async function GET(req: Request) {
 
   // encerramentos por motivo — a nossa tabulação virando número
   const motivos: Record<string, number> = {};
-  for (const r of resolvidas ?? []) {
+  let totalResolv = 0, comTempo = 0, ate1h = 0, ate24h = 0;
+  const medianasResol: number[] = [];
+  let piorP90Resol = 0;
+  for (const r of resolvidas) {
     const k = (r.motivo as string) || "sem_motivo";
-    motivos[k] = (motivos[k] ?? 0) + 1;
+    const n = Number(r.resolvidas ?? 0);
+    motivos[k] = (motivos[k] ?? 0) + n;
+    totalResolv += n;
+    comTempo += Number(r.com_tempo ?? 0);
+    ate1h += Number(r.ate_1h ?? 0);
+    ate24h += Number(r.ate_24h ?? 0);
+    if (r.mediana_min != null) medianasResol.push(Number(r.mediana_min));
+    piorP90Resol = Math.max(piorP90Resol, Number(r.p90_min ?? 0));
   }
+
+  // O limite de SLA mora em `crm_config` e nasce em 0 (desligado): número
+  // chutado no deploy vira alarme que todo mundo aprende a ignorar.
+  const sla = Number(cfg.sla_minutos ?? 0);
+  const estourados = sla > 0 ? esperando.filter((e: any) => Number(e.minutos) >= sla) : [];
 
   return Response.json({
     dias, desde,
     vendedores,
     serie: tempo ?? [],
-    resolvidas: { total: (resolvidas ?? []).length, por_motivo: motivos },
+    // item 2 — contagens somadas; a mediana segue sendo "típica do dia" (§21.1)
+    resolvidas: {
+      total: totalResolv,
+      por_motivo: motivos,
+      com_tempo: comTempo,
+      ate_1h: ate1h,
+      ate_24h: ate24h,
+      mediana_tipica_min: mediana(medianasResol),
+      pior_p90_min: piorP90Resol || null,
+    },
+    // item 3 — a fila do momento
+    espera: {
+      sla_minutos: sla,
+      total: esperando.length,
+      estourados: estourados.length,
+      // um punhado basta para agir; a contagem acima é o número honesto
+      lista: estourados.slice(0, 20),
+      mais_antiga: esperando[0] ?? null,
+    },
+    sem_views: semViews,
     atualizado_em: new Date().toISOString(),
   });
 }

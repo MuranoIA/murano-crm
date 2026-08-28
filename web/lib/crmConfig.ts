@@ -53,6 +53,14 @@ export type CrmConfig = {
    * discordariam sobre de quem é o cliente no primeiro ajuste.
    */
   carteira_rd_ativa: boolean;
+  /**
+   * Minutos de espera que acendem o alerta de SLA no chat (0114). **0 =
+   * desligado**, e é o estado de origem: escolher o limite é decisão de quem
+   * opera, e um número chutado no deploy viraria alarme que todo mundo aprende
+   * a ignorar — que é pior que não ter alarme, porque dá a sensação de que
+   * alguém está vigiando.
+   */
+  sla_minutos: number;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -66,6 +74,7 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   historico_rd: true,
   texto_pausa: "",
   carteira_rd_ativa: true,
+  sla_minutos: 0,
   atualizado_por: null,
   atualizado_em: null,
 };
@@ -134,7 +143,17 @@ type Sb = { from: (t: string) => any };
 export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
   try {
     const [cfgR, linhasR] = await Promise.all([
-      sb.from("crm_config").select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,texto_pausa,carteira_rd_ativa,atualizado_por,atualizado_em")
+      // ⚠️ `select("*")`, e não a lista de colunas, DE PROPÓSITO.
+      //
+      // Pedir uma coluna que ainda não existe faz o PostgREST recusar a
+      // consulta INTEIRA — e o `catch` abaixo devolveria `CRM_CONFIG_PADRAO`,
+      // que tem `linhas_visiveis: null` (= todas) e `carteira_rd_ativa: true`.
+      // Ou seja: uma coluna nova no código, antes da migration, traria o RD
+      // Conversas de volta em todas as telas, sem erro nenhum aparecer.
+      //
+      // Com `*`, coluna que falta simplesmente não vem, e cada campo cai no seu
+      // próprio padrão. O deploy pode chegar antes da migration sem estrago.
+      sb.from("crm_config").select("*")
         .eq("id", 1).maybeSingle(),
       sb.from("chat_linha").select("phone_number_id,rotulo,numero,ativo").eq("ativo", true).order("rotulo"),
     ]);
@@ -147,6 +166,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       historico_rd: data.historico_rd !== false,
       texto_pausa: String(data.texto_pausa ?? ""),
       carteira_rd_ativa: data.carteira_rd_ativa !== false,
+      sla_minutos: Math.max(0, Number(data.sla_minutos ?? 0) || 0),
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
       atualizado_em: data.atualizado_em ?? null,

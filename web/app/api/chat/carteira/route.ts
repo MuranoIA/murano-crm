@@ -83,7 +83,9 @@ export async function GET() {
   const porTel8 = new Map<string, string>();
   if (faltam.length) {
     for (let from = 0; ; from += PAGE) {
-      const { data } = await sb.from("clientes").select("id,telefone").range(from, from + PAGE - 1);
+      const { data } = await sb.from("clientes").select("id,telefone")
+        .order("id", { ascending: true })   // desempate: `range` sem `order` nao tem ordem prometida entre paginas
+        .range(from, from + PAGE - 1);
       for (const cl of data ?? []) {
         const t8 = String((cl as any).telefone ?? "").replace(/\D/g, "").slice(-8);
         // preferência estável: o primeiro que aparecer fica; o telefone é a

@@ -4597,3 +4597,164 @@ Nenhum dos três dava erro. O board caiu por `charAt` de null (§35.1), o corte 
 cortava, e a tela mostrava o número errado — todos silenciosos, todos passando
 por `tsc` e `next build`. O que os revelou foi **rodar contra dado real e
 conferir o número**, nunca a leitura do código.
+
+
+## 62. Localização na conversa (27/08/2026) — migrations 0115 e 0116
+
+### 62.1 "Tempo real" não existe nesta API — e o que existe no lugar
+
+O usuário pediu localização **fixa e em tempo real**. Verifiquei antes de
+construir, e as duas fontes concordam:
+
+- a referência de webhook da Meta para `location` descreve **só o pino
+  estático**: `latitude`, `longitude`, `name`, `address`, `url`. Nenhuma menção
+  a atualização contínua;
+- a documentação de BSP (tyntec) afirma que a WhatsApp Business API **não
+  recebe live location**.
+
+A live location — a que fica atualizando sozinha por 15 min, 1 h ou 8 — é
+recurso do app entre pessoas. Uma imitação mostraria um ponto parado com cara de
+rastreamento, que é pior que não ter: mesma razão do "digitando…" e do apagar
+mensagem (§54).
+
+**O que a plataforma oferece, e foi o que entrou**, é o
+`interactive.location_request_message`: um botão que abre no aparelho da cliente
+a tela de compartilhar. Ela toca, e a **posição do momento** volta como um
+`location` comum, com `context.id` apontando para o pedido. É sob demanda, não
+contínuo — e a tela diz isso, em vez de prometer acompanhamento.
+
+### 62.2 O ponto estava sendo jogado fora desde a 0079
+
+O webhook JÁ recebia `type: location` e gravava o texto `[localização]`,
+descartando latitude, longitude, nome e endereço, que vêm no mesmo payload.
+Havia **1 mensagem** dessas no banco: a cliente mandou onde fica o salão dela e o
+CRM guardou a palavra "localização".
+
+Agora `mensagens.localizacao` (jsonb) guarda o ponto, e a bolha desenha um
+cartão com nome, endereço e link para o mapa — **o mesmo cartão nos dois
+sentidos**, senão a thread contaria duas histórias visuais para a mesma coisa.
+
+Três decisões:
+
+- **Uma coluna jsonb, não cinco soltas.** O contraponto é `midia_*` (0079), que
+  é discreta — mas `midia_tipo` é FILTRADA, com índice parcial. Localização é
+  sempre lida inteira, para desenhar um cartão; ninguém procura "mensagens com
+  latitude > x". Cinco colunas que só andam juntas são cinco lugares para
+  esquecer de preencher.
+- **Sem imagem de mapa.** Um preview estático exigiria chave de um provedor de
+  tiles, e cada bolha viraria uma requisição a terceiro numa tela que carrega
+  200 mensagens. O cartão traz o que serve para agir.
+- **Com cartão, o texto some da bolha.** `conteudo` é o mesmo endereço, escrito
+  para quem lê a LISTA de conversas, onde não há cartão. Na bolha seria a mesma
+  informação duas vezes.
+
+### 62.3 ⚠️ O teste ponta a ponta pegou perda de mensagem
+
+Mandei três webhooks de localização ao servidor local, no formato documentado.
+Resultado: **três respostas HTTP 200, zero linhas gravadas.**
+
+A causa: a coluna `localizacao` ainda não existia (0115 não aplicada), o upsert
+inteiro falhava, e o webhook **engole erro para sempre responder 200** (§16.1,
+e com razão: sem 200 a Meta reenvia eternamente). Ou seja — se o deploy chegasse
+antes da migration, **toda mensagem de localização seria perdida em silêncio**.
+Não degradada: perdida. A Meta reenvia, falha igual e desiste.
+
+O conserto é uma segunda tentativa sem o campo, no webhook **e** na rota de
+envio (onde é pior ainda: a mensagem já foi para a cliente, e sem espelho o
+vendedor manda de novo). Mesmo padrão de `encaminhada_de` (§49.2).
+
+**A regra que fica, e vale para toda coluna nova daqui em diante:** num caminho
+que engole erro para responder 200, uma coluna que ainda não existe não é um
+campo faltando — é a mensagem inteira no lixo. Ou a migration vai antes do
+deploy, ou o código tolera a ausência. E só o teste ponta a ponta mostra isso:
+`tsc` e `next build` passaram limpos.
+
+### 62.4 O grupo E de Pendências (0116) — a pergunta que abriu um buraco
+
+O usuário perguntou: *"quando se cadastra um cliente novo, neste momento ele
+ainda não existe no WinThor, onde ele aparece em nosso sistema?"*
+
+A resposta era **em lugar nenhum**, e foi conferida caso a caso:
+
+| onde | por que não aparece |
+|---|---|
+| board | os três ramos da `vw_funil_visivel` exigem conversa (1), mensagem de operador em linha escondida (1b), ou cadastro no WinThor (2) |
+| chat | a lista vem da mesma view |
+| Pendências | os quatro grupos da 0101 também partem de conversa ou de carteira |
+
+Medido: dos **116** contatos com id `wa:`, **2** estavam exatamente assim. Ficavam
+visíveis só na aba de quem os criou e sumiam no primeiro recarregamento.
+
+É a doença que a tela de Pendências existe para curar (§36.1): *um registro que
+o sistema não sabe classificar não pode simplesmente não aparecer.* Daí o
+**grupo E**.
+
+Os outros 108 sem mensagem **não** entram: têm cadastro no WinThor e já aparecem
+como prospecção, sob o id sintético `winthor:<codcli>`. O grupo E some sozinho —
+basta a primeira mensagem, ou o CPF entrar no ERP.
+
+### 62.5 "Murano Pro (RD Conversas)" num contato que nunca conversou
+
+Relatado pelo usuário com print, em plena chave de migração ligada. O cabeçalho
+da conversa exibia a etiqueta **MURANO PRO (RD CONVERSAS)** — o nome do sistema
+que a chave manda esconder.
+
+Diagnóstico: o contato **não tinha nenhuma mensagem**, em linha nenhuma. Estava
+na tela pela aba *Minha carteira* (§38), que vem do ERP e não de conversa.
+
+A causa era uma decisão com **dois casos onde precisava de três**:
+
+```ts
+c.linha_id = daLinha.get(c.cliente_id) ?? "rd"
+```
+
+O `?? "rd"` lê *"não tem mensagem na Cloud"* e conclui *"é conversa do RD"*.
+Isso era verdade enquanto TODA conversa vinha do ETL. Deixou de ser quando
+passamos a criar contato pelo botão + (§35.2) e a provisionar 108 da carteira do
+WinThor (§37.4): gente que nunca trocou uma palavra conosco.
+
+A régua correta:
+
+| tem | linha |
+|---|---|
+| mensagem com `linha_id` | aquela linha |
+| mensagem sem `linha_id` | Murano Pro (RD) |
+| **nenhuma mensagem** | **nenhuma — sem etiqueta** |
+
+Corrigido em `/api/chat/thread` (cabeçalho) e `/api/chat` (lista), mais os
+contadores do seletor por número, nos dois lados — eles somavam esses contatos
+ao balde do RD e inflavam uma fatia que a lista não mostrava. E o filtro por
+número passou a excluí-los de qualquer linha, que é o certo: eles não correm por
+nenhuma.
+
+**É a terceira vez neste projeto que um `??` decide errado** (§22.6.1, §56,
+agora). O padrão é sempre o mesmo: o operador transforma "não sei" em um valor
+concreto, e alguém lê aquele valor como se fosse um fato apurado.
+
+⚠️ **Achado de lambuja, não corrigido:** `/api/chat` devolve `modo_migracao` com
+um comentário afirmando que a etiqueta de linha e o filtro por número somem — e
+`app/chat/page.tsx` **nunca lê esse campo**. Hoje não vaza porque conversa do RD
+já está escondida por `linhas_visiveis`; o vazamento vinha só pelo caminho
+acima. Fica anotado como campo devolvido e ignorado.
+
+### 62.6 Método
+
+- **`python3` com heredoc come um nível de escape neste ambiente.** Um `\\n`
+  virou quebra de linha real e o `assert` de âncora falhou. É a 4ª vez (§36.4,
+  §40.4, §42.4). Caminho confiável: escrever o script com a ferramenta Write e
+  rodar `python3 <arquivo>`.
+- **O `/tmp` do Git Bash é `%TEMP%`; o do python no Windows é `C:\tmp`, que não
+  existe.** Script python que escreve em `/tmp` e comando bash que lê `/tmp` não
+  se encontram. Usar `os.environ['TEMP']`.
+- **Um `select` com coluna inexistente NÃO devolve linhas sem o campo: devolve
+  ERRO.** Isso derrubou duas coisas no mesmo dia, em lados opostos. No
+  `lerCrmConfig`, pedir `sla_minutos` antes da 0114 faria a leitura inteira
+  falhar e cair no padrão — o que traria o RD Conversas de volta em todas as
+  telas, sem erro nenhum aparecer (corrigido com `select("*")`). E no meu
+  próprio script de teste, pedir `localizacao` antes da 0115 fez a consulta
+  voltar erro em vez de linha, e o teste acusou "não gravou" **três vezes**
+  enquanto o webhook gravava certo. Duas horas atrás desse fantasma.
+- **Extrair função de TS por regex para testar é briga perdida** — as anotações
+  de tipo voltam de formas novas a cada tentativa. O teste que valeu foi subir o
+  servidor e mandar o payload de verdade, que ainda por cima achou a perda de
+  mensagem.

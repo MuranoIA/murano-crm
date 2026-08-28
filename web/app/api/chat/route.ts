@@ -47,6 +47,11 @@ export async function GET() {
     let q = soConversa(sb.from(fonte).select(COLS))
       .not("ultima_atividade", "is", null)
       .order("ultima_atividade", { ascending: false })
+      // desempate: cada pagina e uma consulta separada e o Postgres nao promete
+      // a mesma ordem entre elas quando as chaves empatam -- conversa repetida
+      // numa pagina e ausente da outra. Medido no /api/funil (30 fora, 22 em
+      // dobro). `cliente_id` e unico na view, entao a ordem vira total.
+      .order("cliente_id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (carteira) q = q.eq("vendedor", carteira);
     const { data, error } = await q;
@@ -84,6 +89,7 @@ export async function GET() {
       .not("ultima_atividade", "is", null)
       .is("vendedor", null)
       .order("ultima_atividade", { ascending: false })
+      .order("cliente_id", { ascending: true })   // desempate: ver a nota acima
       .range(from, from + PAGE - 1);
     filaCandidatos.push(...(data ?? []));
     if (!data || data.length < PAGE) break;
@@ -118,7 +124,7 @@ export async function GET() {
   // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
-  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso] = await Promise.all([
+  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso, esperaRes] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
@@ -132,6 +138,20 @@ export async function GET() {
     // e-mail simplesmente não acha linha, e a pessoa cai no desenho global —
     // que é o comportamento certo, já que o piloto é por e-mail.
     sb.from("acesso").select("chat_layout").eq("email", usuario ?? "").maybeSingle(),
+    // ---- item 3: quem está esperando resposta AGORA (0114) ----------------
+    //
+    // Entra NESTE Promise.all, e não numa rota própria, pelo motivo da §15.1:
+    // uma chamada extra por aba aberta escala com o número de abas, não com o
+    // trabalho — foi assim que o navegador virou o maior consumidor de cota.
+    // Aqui não custa round-trip nenhum.
+    //
+    // E vem da VIEW, não de `ultima_enviada_por` das conversas já carregadas,
+    // embora desse para calcular ali de graça: a view ignora `tipo='auto'`, o
+    // robô de fora do horário. Sem isso, ligar o aviso de ausência zeraria a
+    // fila de espera — melhorar o número piorando o atendimento. Calcular na
+    // tela também criaria um segundo número, que diverge do dos indicadores no
+    // primeiro ajuste da régua.
+    sb.from("vw_chat_espera").select("cliente_id,minutos"),
   ]);
   const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e]));
@@ -159,7 +179,9 @@ export async function GET() {
       const m = new Map<string, string>();
       for (let from = 0; ; from += PAGE) {
         const { data } = await sb.from("vw_chat_linha_cliente")
-          .select("cliente_id,linha_id").range(from, from + PAGE - 1);
+          .select("cliente_id,linha_id")
+          .order("cliente_id", { ascending: true })   // desempate: ver a nota acima
+          .range(from, from + PAGE - 1);
         for (const l of data ?? []) m.set((l as any).cliente_id, (l as any).linha_id);
         if (!data || data.length < PAGE) break;
       }
@@ -169,8 +191,16 @@ export async function GET() {
 
   const porLinha = new Map<string, number>();
   for (const c of conversas) {
-    c.linha_id = daLinha.get(c.cliente_id) ?? "rd";
-    porLinha.set(c.linha_id, (porLinha.get(c.linha_id) ?? 0) + 1);
+    // `?? "rd"` traduzia "não tem mensagem na Cloud" como "é conversa do RD".
+    // Era verdade quando toda conversa vinha do ETL; deixou de ser quando
+    // passamos a criar contato sem conversa (§35.2) e a provisionar da carteira
+    // (§37.4). Sem NENHUMA atividade, a conversa não corre por linha alguma —
+    // e etiquetá-la de RD nomeia o sistema que o modo migração esconde (§44).
+    c.linha_id = daLinha.get(c.cliente_id) ?? (c.ultima_atividade ? "rd" : null);
+    // sem linha, não entra em contador nenhum: senão o seletor por número
+    // ganharia uma fatia sem nome, e a soma dos chips deixaria de bater com a
+    // lista
+    if (c.linha_id) porLinha.set(c.linha_id, (porLinha.get(c.linha_id) ?? 0) + 1);
   }
 
   // Linha que aparece nas conversas mas não está cadastrada entra assim mesmo,
@@ -202,6 +232,14 @@ export async function GET() {
     // Fase C simulada: some o filtro por numero e a etiqueta da linha no
     // cabecalho -- com uma linha so, os dois viram enfeite que nomeia o RD.
     modo_migracao: modoMigracao(cfg),
+    // limite 0 = alerta desligado; a view ausente (0114 não aplicada) degrada
+    // para lista vazia, e a tela simplesmente não mostra a faixa
+    sla: {
+      minutos: Number(cfg.sla_minutos ?? 0),
+      esperando: (esperaRes.data ?? []).map((e: any) => ({
+        cliente_id: String(e.cliente_id), minutos: Number(e.minutos),
+      })),
+    },
     atualizado_em: new Date().toISOString(),
   });
 }

@@ -12,6 +12,26 @@
 > ⚠️ O cabeçalho anterior dizia "59 · 18 · 30 (107 itens)". Estava errado: são
 > 96 caixas no arquivo, não 107. Contado com script, não no olho.
 
+> ## ⏱️ Verificado por execução em 27/08/2026 (suíte `testes/`)
+>
+> 76 passos rodados contra o build de produção: **68 passaram, 1 falhou, 7 pulados**
+> (`testes/RELATORIO.md`). O que esta auditoria muda no arquivo:
+>
+> **Os quatro primeiros "pendentes por impacto" saíram do papel.** Taxa de resposta
+> pós-disparo, tempo de resolução, alerta de SLA e entregue/lido por campanha estão
+> **implementados em código** — e nenhum produz número, porque a migration **0114
+> está no disco e não foi aplicada no banco**. O código degrada em silêncio: a tela
+> não quebra, os campos vêm zerados e a rota sinaliza `sem_views`/`indisponivel`.
+> Aplicar a 0114 é o que separa os quatro de "pronto".
+>
+> **Uma regressão foi achada e corrigida:** `/api/funil` paginava sobre ordem não-total
+> e **perdia 30 clientes do board e duplicava 22** — sem erro, sem log. Corrigido com
+> desempate determinístico, com teste que trava a volta (`testes/casos/regressao-paginacao.mjs`).
+>
+> **Um bloqueio de deploy:** com a 0115 também não aplicada, `/api/chat/thread` devolvia
+> **500 em toda conversa** (`column mensagens.localizacao does not exist`). Corrigido com
+> a mesma segunda tentativa que o webhook e a rota de localização já faziam.
+
 ## 1. Canais e Conexão
 
 - [x] Conectar número de WhatsApp via API oficial (Meta Cloud API) — `api/whatsapp/webhook`, `lib/whatsapp.ts`
@@ -74,8 +94,8 @@
 - [x] Excluir contatos com falha de template anterior — corte `numero_morto` (§61). Só falha do NÚMERO (131026/131051): 131047 é quem o template existe para alcançar e 131042 é erro nosso. Vale o **último** desfecho, em janela própria de 90 dias
 - [ ] Agendamento (data/hora futura) — o laço roda **no navegador** (§26.2); agendar exige mover o envio para o servidor, e a cota do RD não cabe no tempo de uma rota da Vercel
 - [~] Limite por lote — dá para escolher a quantidade; **não há teto por consultor**
-- [~] Acompanhamento do disparo — `disparos_template` + aba Envios dão *enviado*; **entregue/lido/falhou por campanha, não**
-- [ ] Taxa de resposta pós-disparo
+- [~] Acompanhamento do disparo — `disparos_template` + aba Envios dão *enviado*. Entregue/lido/falhou **por campanha** está implementado em código [27/08] (`api/admin/campanhas`, agrupando por template e traduzindo os códigos de falha), **pendente da 0114**
+- [~] Taxa de resposta pós-disparo — **implementado em código** (`api/admin/campanhas` + `vw_disparo_desfecho`, calculada sobre os ENTREGUES, não sobre os enviados). **[27/08] Sem número enquanto a 0114 não for aplicada:** a rota responde `indisponivel`
 - [~] Pausar/cancelar em andamento — fechar a aba interrompe (e o ETL é retomado no fim); não há botão de pausa da campanha
 
 ## 6. Distribuição e Atendimento
@@ -89,7 +109,7 @@
 - [x] Múltiplos atendentes vendo o mesmo chat — presença por Realtime, "👀 fulano está aqui" (§21)
 - [x] Fechar/encerrar com motivo — `chat_conversa` (0079); o motivo **é a nossa tabulação**
 - [x] Reabrir conversa encerrada — automático, pelo webhook, quando a cliente responde
-- [~] SLA — os indicadores **medem** tempo de resposta (mediana, p90, faixas, 0084); **não há alerta de estouro**
+- [~] SLA — os indicadores **medem** tempo de resposta (mediana, p90, faixas, 0084). O **alerta de estouro** está implementado em código [27/08] (`vw_chat_espera` + `crm_config.sla_minutos`, e `/api/chat` já devolve `sla`), mas **a coluna não existe no banco**: 0114 não aplicada, então o alerta nunca acende. Limite 0 também significa desligado, e é o estado de origem
 
 ## 7. Contatos / CRM
 
@@ -134,7 +154,7 @@
 
 - [x] Volume de conversas por período — `/chat/indicadores` (0084)
 - [x] Tempo médio de primeira resposta — mediana, p90 e faixas, com rajada e corte de 24 h (§21.1)
-- [ ] Tempo médio de resolução — `chat_conversa` guarda o encerramento; a conta não existe
+- [~] Tempo médio de resolução — **implementado em código [27/08]**: `chat_resolucao` (append-only, porque `chat_conversa` é upsert e a reabertura apagaria a resolução anterior) + `vw_chat_resolucao`, com mediana, p90, até 1h e até 24h já em `/api/chat/indicadores`. **Sem número enquanto a 0114 não for aplicada** — a rota devolve `sem_views: true`
 - [x] Conversas por atendente — indicadores, com escopo no servidor
 - [ ] Taxa de resposta a disparos
 - [~] Abertas × fechadas × sem resposta — as três filas dão o número de hoje; **não há série histórica**

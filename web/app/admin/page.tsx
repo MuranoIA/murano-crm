@@ -1718,6 +1718,47 @@ function SaudeCanalBloco() {
   );
 }
 
+/**
+ * Limite de espera que acende o alerta (item 3 do checklist).
+ *
+ * Um campo de número, e não um interruptor liga/desliga, porque a pergunta real
+ * não é "quero alarme?" e sim "a partir de quanto tempo isto é demora?" — e a
+ * resposta muda com o horário, a equipe e o tipo de cliente. 0 é o desligado,
+ * e é onde nasce.
+ */
+function SlaBloco({ info, salvar, ocupado, setOcupado }: {
+  info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
+  ocupado: boolean; setOcupado: (v: boolean) => void;
+}) {
+  const [min, setMin] = useState<string>(String(info.minutos ?? 0));
+  const n = Math.floor(Number(min));
+  const valido = Number.isFinite(n) && n >= 0 && n <= 1440;
+  const mudou = valido && n !== Number(info.minutos ?? 0);
+
+  return (
+    <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2, marginBottom: 4 }}>{info.rotulo}</div>
+      <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{info.resumo}</p>
+      <Recado tipo="aviso">{info.nota}</Recado>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        <input value={min} onChange={(e) => setMin(e.target.value.replace(/[^0-9]/g, ""))}
+          inputMode="numeric" style={{ width: 90, padding: "8px 11px", fontSize: 14, fontFamily: "inherit",
+            color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9, outline: "none" }} />
+        <span style={{ fontSize: 13, color: M.gray }}>
+          minutos {n === 0 ? "— desligado" : `— avisa a partir de ${n} min de espera`}
+        </span>
+        <span style={{ marginLeft: "auto" }}>
+          <Botao disabled={ocupado || !mudou}
+            onClick={async () => { setOcupado(true); await salvar("sla_minutos", n); setOcupado(false); }}>
+            {ocupado ? "Salvando…" : "Salvar limite"}
+          </Botao>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function LocaisBloco({ info, salvar, ocupado, setOcupado }: {
   info: any; salvar: (chave: string, valor: any) => Promise<boolean>;
   ocupado: boolean; setOcupado: (v: boolean) => void;
@@ -2055,6 +2096,133 @@ function SugestoesAba({ sugs, templates, recarregar, avisar, publicar }: {
   );
 }
 
+/**
+ * Desempenho de cada template — itens 1 e 4 do checklist.
+ *
+ * Vive dentro da aba Envios porque responde à pergunta que aquela aba levanta e
+ * não respondia: os números de lá dizem QUANTOS saíram; estes dizem **se valeu**.
+ *
+ * Busca própria, e só quando a aba abre: são até 20 mil linhas de desfecho, e
+ * quem veio olhar a contagem do mês não deve pagar por elas.
+ */
+function DesempenhoTemplates() {
+  const [d, setD] = useState<any>(null);
+  const [dias, setDias] = useState(30);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setD(null); setErro(null);
+    fetch(`/api/admin/campanhas?dias=${dias}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => { if (vivo) setD(j.campanhas ?? null); })
+      .catch(() => { if (vivo) setErro("não consegui carregar"); });
+    return () => { vivo = false; };
+  }, [dias]);
+
+  if (erro) return <Bloco titulo="Desempenho dos templates"><Recado tipo="aviso">{erro}</Recado></Bloco>;
+  if (!d) return <Bloco titulo="Desempenho dos templates"><p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Carregando…</p></Bloco>;
+
+  if (d.indisponivel) {
+    return (
+      <Bloco titulo="Desempenho dos templates">
+        <Recado tipo="aviso">
+          Falta aplicar a migration <code>0114</code> — sem ela não há de onde tirar entrega
+          e resposta. O resto desta aba funciona normalmente.
+        </Recado>
+      </Bloco>
+    );
+  }
+
+  const linhas: any[] = d.linhas ?? [];
+  const t = d.total ?? {};
+  const pct = (v: any) => (v == null ? "—" : `${v}%`);
+
+  return (
+    <Bloco
+      titulo="Desempenho dos templates"
+      ajuda={<>
+        Template que <b>não chegou</b> e template que <b>chegou e não interessou</b> produzem o
+        mesmo silêncio, e a conclusão que se tira dos dois é oposta. Por isso entrega e resposta
+        aparecem lado a lado. A <b>taxa é sobre os entregues</b> — quem não recebeu não teve
+        chance de responder, e contá-lo culparia o texto por um problema de número.
+      </>}
+    >
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {(d.janelas ?? [7, 15, 30, 90]).map((n: number) => (
+          <button key={n} onClick={() => setDias(n)}
+            style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", borderRadius: 999,
+              color: dias === n ? "#fff" : M.gray, background: dias === n ? M.roxo : M.bg,
+              border: `1px solid ${dias === n ? M.roxo : M.border}` }}>
+            {n} dias
+          </button>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: 11.5, color: M.muted, alignSelf: "center" }}>
+          resposta contada em até {d.horas}h após o envio
+        </span>
+      </div>
+
+      {linhas.length === 0 ? (
+        <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>
+          Nenhum template disparado {d.so_cloud ? "pelo número em uso " : ""}nesta janela.
+        </p>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <thead><tr>
+                <th style={th}>Template</th>
+                <th style={th}>Enviados</th>
+                <th style={th}>Chegaram</th>
+                <th style={th}>Lidos</th>
+                <th style={th}>Responderam</th>
+                <th style={th}>Taxa</th>
+                <th style={th}>Falhas</th>
+              </tr></thead>
+              <tbody>
+                {linhas.map((l) => (
+                  <tr key={l.template_id}>
+                    <td style={{ ...td, fontWeight: 600 }} title={l.corpo ?? undefined}>{l.nome}</td>
+                    <td style={td}>{l.enviados}</td>
+                    <td style={td}>{l.entregues}{l.sem_recibo ? <span style={{ color: M.muted }}> (+{l.sem_recibo} sem recibo)</span> : null}</td>
+                    <td style={td}>{l.lidos}</td>
+                    <td style={td}>{l.responderam}</td>
+                    <td style={{ ...td, fontWeight: 800, color: l.taxa_resposta == null ? M.muted : l.taxa_resposta >= 20 ? M.ink : M.laranja }}>
+                      {pct(l.taxa_resposta)}
+                    </td>
+                    <td style={{ ...td, color: l.falharam ? M.laranja : M.muted }}>{l.falharam}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={{ ...td, fontWeight: 800 }}>todos</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{t.enviados}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{t.entregues}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{t.lidos}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{t.responderam}</td>
+                  <td style={{ ...td, fontWeight: 800 }}>{pct(t.taxa_resposta)}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{t.falharam}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {(t.erros ?? []).length > 0 && (
+            <div style={{ marginTop: 14, fontSize: 12.5, color: M.ink, lineHeight: 1.7 }}>
+              <b style={{ color: M.wine }}>Por que falharam</b> — se o topo desta lista é
+              &ldquo;o número não recebe&rdquo;, o problema é a lista, não o texto:
+              <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+                {(t.erros ?? []).map((e: any) => (
+                  <li key={e.codigo}><b>{e.n}×</b> {e.texto}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </Bloco>
+  );
+}
+
 function EnviosAba({ dados }: { dados: any }) {
   // Com o modo migracao ligado nao existe "fora daqui": todo template sai por
   // este CRM. O terceiro quadro e a coluna do RD deixam de ser informacao e
@@ -2138,6 +2306,8 @@ function EnviosAba({ dados }: { dados: any }) {
           </div>}
         </div>
       </Bloco>
+
+      <DesempenhoTemplates />
 
       <Bloco titulo="Por consultora" ajuda="Mesmo período escolhido acima. A carteira é a do contato, não quem clicou.">
         {linhas.length === 0 ? (
@@ -2309,6 +2479,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   const migracao = d.migracao ?? null;
   const cadastro = d.cadastro ?? null;
   const locais = d.locais ?? null;
+  const sla = d.sla ?? null;
   const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
@@ -2509,6 +2680,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
             por meses. E a MESMA lista gera a mensagem que pede os dados a
             cliente: corrigir aqui corrige os dois lugares de uma vez. */}
         <SaudeCanalBloco />
+        {sla && <SlaBloco info={sla} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {locais && <LocaisBloco info={locais} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {cadastro && <CadastroCamposBloco info={cadastro} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
 
