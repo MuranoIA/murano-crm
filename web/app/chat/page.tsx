@@ -341,6 +341,9 @@ type Msg = {
   resposta_a?: string | null;  // wamid da mensagem citada
   erro?: string | null;        // motivo da falha, como a Meta explicou (0091)
   linha_id?: string | null;    // null = RD Conversas (§23.4); decide a janela de 24h
+  // ponto no mapa (0115). Vale para o que a cliente compartilha E para o que
+  // nós mandamos — a bolha desenha o mesmo cartão nos dois casos.
+  localizacao?: { lat: number; lng: number; nome?: string | null; endereco?: string | null; url?: string | null } | null;
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -399,6 +402,39 @@ const rotuloTempo = (iso: string | null) => {
 // Se `midia_path` está vazio, a mensagem chegou mas o download falhou — mostra
 // aviso em vez de um player quebrado.
 // ---------------------------------------------------------------------------
+/**
+ * Cartão de mapa (0115) — o mesmo desenho para o ponto que a cliente manda e
+ * para o que nós mandamos.
+ *
+ * Sem imagem de mapa de propósito: um preview estático exigiria chave de um
+ * provedor de tiles, e cada bolha viraria uma requisição a um terceiro dentro
+ * de uma tela que carrega 200 mensagens. O cartão traz o que serve para agir —
+ * nome, endereço e o link que abre no app de mapas do aparelho.
+ *
+ * `nome` e `endereco` são opcionais: quem compartilha a própria posição manda
+ * só as coordenadas, e nesse caso elas são o texto.
+ */
+function CartaoLocal({ loc }: { loc: any }) {
+  const lat = Number(loc?.lat), lng = Number(loc?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const titulo = loc?.nome || loc?.endereco || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  const sub = loc?.nome && loc?.endereco ? loc.endereco : null;
+  const href = loc?.url || `https://www.google.com/maps?q=${lat},${lng}`;
+  return (
+    <a href={href} target="_blank" rel="noreferrer"
+      style={{ display: "flex", gap: 9, alignItems: "flex-start", textDecoration: "none",
+        background: "rgba(26,95,168,.07)", border: "1px solid rgba(26,95,168,.22)",
+        borderRadius: 10, padding: "8px 10px", marginBottom: 4, maxWidth: 260 }}>
+      <span style={{ fontSize: 18, lineHeight: 1.1 }}>📍</span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: M.ink, wordBreak: "break-word" }}>{titulo}</span>
+        {sub && <span style={{ display: "block", fontSize: 11.5, color: M.gray, marginTop: 1 }}>{sub}</span>}
+        <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: M.azul, marginTop: 3 }}>Abrir no mapa ↗</span>
+      </span>
+    </a>
+  );
+}
+
 function Midia({ m }: { m: Msg }) {
   if (!m.midia_tipo) return null;
   const src = `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
@@ -2014,6 +2050,32 @@ export default function Chat() {
     } finally { setEnviando(false); }
   }
 
+  /**
+   * Pede a localização ATUAL da cliente (0115).
+   *
+   * É o que dá para chamar de "tempo real" nesta plataforma: a live location do
+   * WhatsApp, aquela que fica atualizando sozinha, NÃO é entregue pela Cloud
+   * API. Aqui vai um botão; ela toca, escolhe compartilhar, e a posição do
+   * momento volta como uma mensagem de localização comum.
+   *
+   * Por isso o texto do menu diz "posição do momento": prometer acompanhamento
+   * contínuo seria vender o que a API não faz.
+   */
+  async function pedirLocal() {
+    if (!sel) return;
+    try {
+      const r = await fetch("/api/chat/localizacao", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: sel.cliente_id, pedir: true }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setAviso(j?.error ?? "não consegui pedir a localização"); return; }
+      void carregarThread(sel, false);   // sem rolar: o pedido entra no fim, e o vendedor ja esta la
+    } catch {
+      setAviso("não consegui pedir a localização");
+    }
+  }
+
   async function enviarLocal(idx: number, nome: string) {
     if (!sel || enviando) return;
     setEnviando(true); setAviso(null);
@@ -2162,7 +2224,10 @@ export default function Chat() {
   // A fila de espera escapa do filtro por vendedor de propósito: conversa sem
   // dono não pertence a carteira nenhuma — escondê-la ao escolher um vendedor
   // faria sumir justamente o que qualquer um pode pegar.
-  const daLinha = (c: Conversa) => !linhaSel || (c.linha_id ?? "rd") === linhaSel;
+  // Contato sem linha (nunca conversou) NÃO é do RD, e some ao filtrar por
+  // qualquer número — que é o certo: ele não corre por nenhum. Antes o `?? "rd"`
+  // o jogava no balde do RD e ele aparecia ao filtrar por lá.
+  const daLinha = (c: Conversa) => !linhaSel || c.linha_id === linhaSel;
   const doVendedor = (c: Conversa) => !vendFiltro || c.na_fila || c.vendedor === vendFiltro;
 
   // bases cruzadas: cada seletor conta DENTRO do que o outro já escolheu, senão
@@ -2175,7 +2240,10 @@ export default function Chat() {
   const noEscopo = conversas.filter((c) => daLinha(c) && doVendedor(c));
 
   const contaPorLinha = new Map<string, number>();
-  for (const c of baseVend) contaPorLinha.set(c.linha_id ?? "rd", (contaPorLinha.get(c.linha_id ?? "rd") ?? 0) + 1);
+  // `?? "rd"` aqui era o mesmo erro do servidor: contato sem conversa nenhuma
+  // não corre por linha alguma, e somá-lo ao RD inflava um número que a lista
+  // não mostrava.
+  for (const c of baseVend) if (c.linha_id) contaPorLinha.set(c.linha_id, (contaPorLinha.get(c.linha_id) ?? 0) + 1);
 
   // vendedores que REALMENTE têm conversa aqui — a lista de carteira_config
   // traz gente sem nenhuma, e chip que filtra para o vazio só atrapalha
@@ -3475,8 +3543,12 @@ export default function Chat() {
                                 );
                               })()}
                               <Midia m={m} />
-                              {/* com mídia, o texto só aparece se for legenda de verdade (não o rótulo) */}
-                              {(!m.midia_tipo || (m.conteudo && !/^(📷|🎬|🎤|📎|🙂)/.test(m.conteudo))) && (
+                              {m.localizacao && <CartaoLocal loc={m.localizacao} />}
+                              {/* com mídia, o texto só aparece se for legenda de verdade (não o rótulo).
+                                  Com CARTÃO de mapa, o texto some sempre: `conteudo` é o
+                                  mesmo endereço, escrito para quem lê a LISTA de conversas,
+                                  onde não há cartão nenhum. Na bolha, seria a mesma coisa duas vezes. */}
+                              {!m.localizacao && (!m.midia_tipo || (m.conteudo && !/^(📷|🎬|🎤|📎|🙂)/.test(m.conteudo))) && (
                                 <div style={{ fontSize: 13.5, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.conteudo}</div>
                               )}
                               {/* Encaminhar. Fica DENTRO da bolha, na linha da
@@ -3760,7 +3832,10 @@ export default function Chat() {
                     borderRadius: compacto ? 16 : 22, transition: "border-color .15s" }}>
                   <div style={{ position: "relative", flexShrink: 0 }}>
                   <button
-                    onClick={() => (locais.length ? setAnexoAberto((v) => !v) : arquivoRef.current?.click())}
+                    // Antes: sem endereço cadastrado o clipe ia direto para o
+                    // seletor de arquivo. Agora o menu tem SEMPRE ao menos duas
+                    // opções (arquivo e pedir localização), então ele sempre abre.
+                    onClick={() => setAnexoAberto((v) => !v)}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
                     style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
@@ -3782,6 +3857,18 @@ export default function Chat() {
                         <div style={{ height: 1, background: M.bg }} />
                         <div style={{ padding: "7px 13px 3px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
                           textTransform: "uppercase", color: M.muted }}>Localização</div>
+                        <button onClick={() => { setAnexoAberto(false); void pedirLocal(); }}
+                          title="A cliente recebe um botão e escolhe compartilhar. Não é acompanhamento ao vivo — a API do WhatsApp não entrega isso."
+                          style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
+                            padding: "9px 13px", fontSize: 13, fontWeight: 600, color: M.ink,
+                            background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                          <span style={{ fontSize: 16 }}>🛰️</span>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: "block" }}>Pedir a localização dela</span>
+                            <span style={{ display: "block", fontSize: 11, color: M.muted }}>posição do momento</span>
+                          </span>
+                        </button>
+                        {locais.length > 0 && <div style={{ height: 1, background: M.bg }} />}
                         {locais.map((l, i) => (
                           <button key={i} onClick={() => { setAnexoAberto(false); void enviarLocal(i, l.nome); }}
                             title={l.endereco}

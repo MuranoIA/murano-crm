@@ -146,6 +146,37 @@ export function sendLocation(
   });
 }
 
+/**
+ * PEDE a localização atual da cliente (0115).
+ *
+ * É a resposta possível para "localização em tempo real". A live location do
+ * WhatsApp — aquela que fica atualizando sozinha por 15 minutos, 1 hora ou 8 —
+ * **não existe nesta API**: a referência de webhook da Meta para `location`
+ * descreve só o pino estático, e a documentação de BSP afirma que a Business
+ * API não recebe live location. Verificado em 27/08/2026.
+ *
+ * O que dá para fazer é PERGUNTAR. Isto manda um botão; a cliente toca, o
+ * aparelho abre a tela de compartilhar, e a posição do momento volta como um
+ * `location` comum no webhook — com `context.id` apontando para este pedido.
+ *
+ * Diferença que a tela precisa deixar clara: é **sob demanda**, não contínuo.
+ * Quem quiser acompanhar alguém se deslocando vai ter de pedir de novo.
+ *
+ * Mensagem livre: vale a janela de 24h como qualquer outra.
+ */
+export function sendLocationRequest(to: string, texto: string): Promise<EnvioOk> {
+  return post({
+    to, type: "interactive",
+    interactive: {
+      type: "location_request_message",
+      // 1024 é o teto da Meta para o corpo; cortar aqui evita o 131009 que só
+      // apareceria depois do clique
+      body: { text: String(texto ?? "").slice(0, 1024) },
+      action: { name: "send_location" },
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MÍDIA
 // ---------------------------------------------------------------------------

@@ -144,8 +144,25 @@ async function gravarMensagemRecebida(
     criada_em: new Date(Number(msg.timestamp) * 1000).toISOString(),
     linha_id: linhaId ?? null,
     ...(await processarMidia(sb, msg, wamid, cliente.id)),
+    ...extrairLocalizacao(msg),
   };
-  const { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });
+  let { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });
+
+  // ⚠️ A coluna `localizacao` nasce na 0115. Se o deploy chegar antes da
+  // migration, o upsert INTEIRO falha — e como este webhook engole erro para
+  // sempre responder 200 (§16.1), a mensagem da cliente é **perdida em
+  // silêncio**. Não degradada: perdida. A Meta reenvia, falha igual e desiste.
+  //
+  // Medido ao vivo em 27/08 antes de existir esta rede: três localizações
+  // enviadas, três respostas 200, zero linhas gravadas.
+  //
+  // Por isso a segunda tentativa sem o campo: perder o ponto no mapa é ruim,
+  // perder a mensagem é inaceitável. Mesmo padrão de `encaminhada_de` (0111).
+  if (error && /localizacao/i.test(error.message)) {
+    const { localizacao, ...semLocal } = row as any;
+    console.warn("[wa-webhook] coluna localizacao ausente (aplicar 0115) — gravando sem o ponto");
+    ({ error } = await sb.from("mensagens").upsert(semLocal, { onConflict: "id" }));
+  }
   if (error) throw new Error(`upsert mensagens: ${error.message}`);
 
   // conversa volta pra fila: cliente falou => reabre (status aberta/resolvida, §18 item 4)
@@ -272,13 +289,53 @@ function extrairConteudo(msg: any): string {
       const m = msg[msg.type] ?? {};
       return String(m.caption || m.filename || rotulos[msg.type] || `[${msg.type}]`);
     }
-    case "location":
-      return "[localização]";
+    case "location": {
+      // O rótulo antigo era literalmente "[localização]" — a cliente mandava
+      // onde fica o salão dela e o CRM guardava a palavra. Agora o conteúdo é
+      // o que dá para LER na lista de conversas, onde não há cartão nenhum:
+      // o nome e o endereço, se ela os enviou; as coordenadas, se não.
+      const l = msg.location ?? {};
+      const partes = [l.name, l.address].filter(Boolean);
+      if (partes.length) return `📍 ${partes.join(" — ")}`;
+      // ⚠️ Validar o par TAMBÉM aqui, e não só em `extrairLocalizacao`. Um
+      // payload torto rendia literalmente "📍 abc, null" na lista de conversas
+      // (visto no teste): `!= null` aceita a string "abc". Sem coordenada
+      // legível, o rótulo genérico é o honesto.
+      const la = Number(l.latitude), lo = Number(l.longitude);
+      return Number.isFinite(la) && Number.isFinite(lo) ? `📍 ${la}, ${lo}` : "📍 Localização";
+    }
     case "contacts":
       return "[contato compartilhado]";
     default:
       return `[${msg.type ?? "desconhecido"}]`;
   }
+}
+
+/**
+ * O ponto no mapa, quando a mensagem é de localização (0115).
+ *
+ * Isto vinha sendo DESCARTADO: o payload da Meta traz latitude, longitude,
+ * name, address e url, e o webhook guardava só a palavra "[localização]".
+ *
+ * `name` e `address` são opcionais — a cliente que compartilha a posição do
+ * aparelho manda só as coordenadas. Por isso nada aqui é obrigatório além do
+ * par lat/lng, e a bolha sabe desenhar o cartão sem endereço.
+ */
+function extrairLocalizacao(msg: any): { localizacao?: Record<string, unknown> } {
+  if (msg?.type !== "location") return {};
+  const l = msg.location ?? {};
+  const lat = Number(l.latitude), lng = Number(l.longitude);
+  // Sem par válido não há cartão a desenhar. Gravar `{lat: NaN}` faria a bolha
+  // renderizar um pino apontando para lugar nenhum — pior que não renderizar.
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return {};
+  return {
+    localizacao: {
+      lat, lng,
+      nome: l.name ? String(l.name) : null,
+      endereco: l.address ? String(l.address) : null,
+      url: l.url ? String(l.url) : null,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

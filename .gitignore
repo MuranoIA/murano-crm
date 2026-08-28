@@ -19,3 +19,6 @@ apk/*.apk
 apk/*.aab
 apk/app/
 apk/.bubblewrap/
+
+# saidas da suite de QA (screenshots, resultado.json)
+testes/saidas/

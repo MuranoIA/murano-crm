@@ -84,6 +84,23 @@ export async function GET() {
     for (let from = 0; ; from += PAGE) {
       let q = sb.from(VIEW_FUNIL_TELA).select(cols)
         .order("ultima_atividade", { ascending: false, nullsFirst: false })
+        // ⚠️ DESEMPATE OBRIGATÓRIO — sem ele o board PERDE cliente, em silêncio.
+        //
+        // `ultima_atividade` é NULA em ~4 mil linhas (toda a prospecção), então
+        // a ordenação tem milhares de empates. Cada página é uma consulta
+        // separada, e o Postgres não promete a mesma ordem entre elas quando as
+        // chaves empatam: a mesma linha volta em duas páginas e outra não volta
+        // em nenhuma.
+        //
+        // Medido em 27/08/2026, antes desta linha: a view tinha 4.327 clientes e
+        // a rota devolvia 4.322 cards com só 4.297 distintos — 22 clientes
+        // duplicados e **30 clientes que não apareciam no board**, todos de
+        // prospecção. A conta fecha exata (4.327 − 30 + 25 = 4.322), o que
+        // descarta filtro e aponta a paginação.
+        //
+        // `cliente_id` é único na view, então a ordem vira total e a paginação
+        // passa a ser estável. Mesma doença da §61.2: corte silencioso.
+        .order("cliente_id", { ascending: true })
         .range(from, from + PAGE - 1);
       if (carteira) q = q.eq("vendedor", carteira);
       const { data, error } = await q;
@@ -108,6 +125,11 @@ export async function GET() {
     for (let from = 0; ; from += PAGE) {
       let pcQ = sb.from("vw_venda_card")
         .select("etapa,dias,vendedor_slug,codcli,cliente,cliente_id,telefone,pedidos,valor,ultima_compra,conversa_aberta")
+        // desempate: ver a nota longa no laço da view do funil. `range` sem
+        // `order` não tem ordem prometida nenhuma entre páginas. Hoje são 484
+        // linhas (uma página só, então inerte), mas a coluna cresce com as
+        // vendas e o dia em que passar de mil não vem com aviso.
+        .order("codcli", { ascending: true })
         .range(from, from + PAGE - 1);
       pcQ = carteira ? pcQ.eq("vendedor_slug", carteira) : pcQ.in("vendedor_slug", slugs);
       const { data, error } = await pcQ;
@@ -150,6 +172,11 @@ export async function GET() {
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await sb.from("vw_ciclo_card")
         .select("codcli,cliente_id,telefone,tipo_oportunidade,pct_ciclo,score_urgencia,ciclo_medio,dias_ausente,tendencia,acao_recomendada")
+        // desempate: 1.144 linhas hoje, ou seja DUAS páginas — sem ordem
+        // determinística o selo de ciclo já pode sair do card errado. Está
+        // inerte só porque o motor está desligado (crm_config.ciclo_ativo);
+        // religá-lo sem esta linha traria o defeito de volta.
+        .order("codcli", { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) throw new Error(error.message);
       out.push(...(data ?? []));

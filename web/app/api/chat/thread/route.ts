@@ -44,7 +44,9 @@ export async function GET(req: Request) {
   const antes = new URL(req.url).searchParams.get("antes");
   const LOTE = 200;
 
-  const COLS_MSG = "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro";
+  // `localizacao` (0115) entra aqui: sem ela a bolha nao tem como desenhar o
+  // cartao de mapa, e a mensagem volta a ser so o texto do endereco.
+  const COLS_MSG = "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro,localizacao";
   let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
   if (antes) msgsQ = msgsQ.lt("criada_em", antes);
   if (!querHistorico) msgsQ = filtroLinhas(msgsQ, cfgThread);
@@ -80,9 +82,33 @@ export async function GET(req: Request) {
       .order("iniciada_em", { ascending: true })
       .limit(200),
   ]);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const bruto = data ?? [];
+  // ---- rede de protecao: a coluna `localizacao` nasce na 0115 --------------
+  //
+  // Sem isto, deploy antes da migration derruba a thread INTEIRA: o PostgREST
+  // recusa a consulta por causa de UMA coluna e a rota devolve 500 para toda
+  // conversa, de todo usuario -- o chat para de abrir. Medido em 27/08/2026,
+  // com a 0115 ainda nao aplicada.
+  //
+  // O webhook (linha ~161) e o /api/chat/localizacao (linha ~131) ja fazem
+  // exatamente esta segunda tentativa; aqui faltava. Perder o cartao de mapa e
+  // aceitavel; perder a conversa nao e.
+  let linhasMsg: any[] | null = data as any;
+  let erroMsg: { message?: string } | null = error as any;
+  if (erroMsg && /localizacao/i.test(erroMsg.message ?? "")) {
+    let q2 = sb.from("mensagens")
+      .select(COLS_MSG.replace(",localizacao", ""))
+      .eq("cliente_id", cliente_id);
+    if (antes) q2 = q2.lt("criada_em", antes);
+    if (!querHistorico) q2 = filtroLinhas(q2, cfgThread);
+    const r2 = await q2.order("criada_em", { ascending: false }).limit(LOTE + 1);
+    linhasMsg = r2.data as any;
+    erroMsg = r2.error as any;
+    if (!erroMsg) console.warn("[chat/thread] coluna localizacao ausente (aplicar 0115) - thread sem o cartao de mapa");
+  }
+  if (erroMsg) return Response.json({ error: erroMsg.message }, { status: 500 });
+
+  const bruto = linhasMsg ?? [];
   const temMais = bruto.length > LOTE;
   const mensagens = bruto
     .slice(0, LOTE)
@@ -115,12 +141,26 @@ export async function GET(req: Request) {
   // Sem linha = conversa do RD Conversas (o ETL não tem esse conceito).
   const rotulos = new Map((linhas ?? []).map((l: any) => [l.phone_number_id, l.rotulo]));
   const ultimaComLinha = [...mensagens].reverse().find((m: any) => m.linha_id);
+  // ⚠️ TRÊS casos, não dois. O código antigo tinha só dois e por isso mentia:
+  //
+  //   tem mensagem com linha_id  -> aquela linha
+  //   tem mensagem SEM linha_id  -> RD Conversas (o ETL não tem esse conceito)
+  //   NÃO TEM MENSAGEM NENHUMA   -> linha nenhuma
+  //
+  // O terceiro caía no segundo, e um contato recém-criado — que nunca trocou
+  // uma palavra com ninguém — aparecia no cabeçalho etiquetado
+  // "MURANO PRO (RD CONVERSAS)". Além de falso, nomeia justamente o sistema que
+  // o modo migração diz não existir (§44). Visto em produção em 27/08.
+  const semConversa = mensagens.length === 0;
   const linha = ultimaComLinha
     ? { id: ultimaComLinha.linha_id, rotulo: rotulos.get(ultimaComLinha.linha_id) ?? "linha nova", canal: "whatsapp" }
-    // o número oficial também tem cadastro desde a 0089 (id sintético 'rd'), e o
-    // rótulo vem de lá — assim o cabeçalho da conversa e o filtro da sidebar
-    // chamam o mesmo número pelo mesmo nome
-    : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
+    : semConversa
+      // sem etiqueta: a tela não desenha o chip, em vez de chutar um número
+      ? null
+      // o número oficial também tem cadastro desde a 0089 (id sintético 'rd'), e o
+      // rótulo vem de lá — assim o cabeçalho da conversa e o filtro da sidebar
+      // chamam o mesmo número pelo mesmo nome
+      : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
 
   // Por qual canal ESTA conversa vai sair — já com a escolha do admin aplicada
   // (0102). A tela precisa disto para calcular a janela de 24h da linha CERTA:

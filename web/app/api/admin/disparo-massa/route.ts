@@ -1,6 +1,6 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
-import { lerCrmConfig } from "../../../../lib/crmConfig";
+import { lerCrmConfig, linhasVisiveis, canalEscolhido, VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
 import { codigoMeta, FALHA_DO_NUMERO } from "../../../../lib/erroMeta";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,27 @@ export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
 // (§14.5) — um laço de centenas de envios não cabe no tempo de uma rota da
 // Vercel. Esta rota escolhe e explica o público; quem manda é a tela, um a um,
 // mostrando a falha de cada cliente.
+//
+// ⚠️ NADA AQUI OLHA MAIS O RD CONVERSAS quando ele está escondido. Isso REVERTE
+// a decisão da §31.2, que mandava esta rota ler a `vw_funil` crua com o
+// argumento de que "esconder não pode virar agir sem saber" — cegá-la faria o
+// CRM re-abordar quem está em conversa aberta no RD agora.
+//
+// Aquele argumento morreu com a §44. Sob a premissa da migração, mandar
+// template pelo número novo para quem só fala no RD **não é dano: é a
+// migração**. E o usuário reiterou duas vezes que dado do RD não entra no
+// disparo.
+//
+// Os quatro pontos por onde o RD entrava, todos medidos em 27/08:
+//
+//   público/etapa   `vw_funil` crua (4.852) -> `vw_funil_visivel` (4.328)
+//   anti-repetição  747 disparos em 30d, dos quais 34 pelo nosso número
+//   extrato         os mesmos 747 — a tela mostrava 713 do painel do RD
+//   canal do envio  ignorava `crm_config.numero_envio` (§37.1)
+//
+// O discriminador de canal em `disparos_template` é o próprio **id**: o ramo
+// Cloud grava o `wamid` da Meta, o do RD grava o id do painel deles. É
+// estrutural — não depende de nome de template nem de coluna nova.
 
 const PAGE = 1000;
 const COLS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,telefone,venda_valor,rd_cliente_id,codcli";
@@ -70,15 +91,21 @@ export async function GET() {
 
   const db = sbAdmin();
 
+  const cfgG = await lerCrmConfig(db);
+  const soCloud = !linhasVisiveis(cfgG).includes("rd");
+
   const [tplRes, cartRes, histRes] = await Promise.all([
     db.from("crm_templates")
       .select("id,nome,canal,rd_template_id,meta_nome,corpo,cabecalho_tipo,status,padrao")
       .eq("ativo", true).order("id"),
     db.from("carteira_config").select('slug,cor,"time"').eq("ativo", true).order("slug"),
-    db.from("disparos_template")
-      .select("criada_em,template_id,vendedor")
-      .gte("criada_em", new Date(Date.now() - 30 * 86_400_000).toISOString())
-      .order("criada_em", { ascending: false }).limit(5000),
+    (() => {
+      let q = db.from("disparos_template")
+        .select("criada_em,template_id,vendedor")
+        .gte("criada_em", new Date(Date.now() - 30 * 86_400_000).toISOString());
+      if (soCloud) q = q.like("id", "wamid.%");   // ver a nota do topo
+      return q.order("criada_em", { ascending: false }).limit(5000);
+    })(),
   ]);
 
   if (tplRes.error) return Response.json({ error: tplRes.error.message }, { status: 500 });
@@ -170,8 +197,13 @@ export async function POST(req: Request) {
   // 1) cards do funil (paginado — o PostgREST corta em 1000 e a view passa de 4 mil)
   const cards: any[] = [];
   for (let from = 0; ; from += PAGE) {
-    let q = db.from("vw_funil").select(COLS)
+    let q = db.from(VIEW_FUNIL_TELA).select(COLS)
       .order("ultima_atividade", { ascending: false, nullsFirst: false })
+      // ⚠️ MESMO DESEMPATE DO /api/funil, e aqui o preço é maior: sem ele a
+      // paginação perde e duplica linhas (medido: 30 clientes fora, 22 em
+      // dobro), e este laço monta o PÚBLICO DA CAMPANHA. Perder alguém aqui é
+      // não abordar quem devia; duplicar é ranquear a mesma pessoa duas vezes.
+      .order("cliente_id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (carteiras.length) q = q.in("vendedor", carteiras);
     if (etapas.length) q = q.in("etapa", etapas);
@@ -194,8 +226,13 @@ export async function POST(req: Request) {
   // o erro simétrico.
   const desdeFalha = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const cfg = await lerCrmConfig(db);
+  const soCloudP = !linhasVisiveis(cfg).includes("rd");
   const [dispRes, descRes, cicloRes, linhaRes, desfRes] = await Promise.all([
-    db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo),
+    (() => {
+      // anti-repetição: só conta template que saiu pelo número em uso
+      const q = db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo);
+      return soCloudP ? q.like("id", "wamid.%") : q;
+    })(),
     db.from("wth_descartados").select("cliente_id,codcli,tel8"),
     // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
     // passa a ser só tempo parado + ticket — ver o cálculo de `score` abaixo
@@ -290,7 +327,11 @@ export async function POST(req: Request) {
   // aparece na view; quem NÃO aparece não tem mensagem `wamid` nenhuma, então o
   // roteamento de /api/send-template dá "rd" com certeza. O erro possível é só
   // para o lado conservador (contar como Cloud quem voltou a falar pelo RD).
-  const envioPadraoCloud = process.env.WHATSAPP_ENVIO_PADRAO === "true";
+  // ⚠️ `numero_envio` (§37.1) tem precedência sobre a regra por conversa, e esta
+  // rota ignorava isso: com o admin escolhendo Cloud, um template da Cloud era
+  // cortado por "canal" em quem o envio mandaria pela Cloud de qualquer forma.
+  const envioPadraoCloud = canalEscolhido(cfg) === "whatsapp"
+    || process.env.WHATSAPP_ENVIO_PADRAO === "true";
   const naCloud = new Set((linhaRes.data ?? []).map((r: any) => String(r.cliente_id)));
   const canalDe = (id: string): "whatsapp" | "rd" =>
     envioPadraoCloud || id.startsWith("wa:") || naCloud.has(id) ? "whatsapp" : "rd";

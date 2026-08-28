@@ -18,7 +18,17 @@ type Linha = {
 };
 type Dados = {
   dias: number; vendedores: Linha[];
-  resolvidas: { total: number; por_motivo: Record<string, number> };
+  resolvidas: {
+    total: number; por_motivo: Record<string, number>;
+    com_tempo?: number; ate_1h?: number; ate_24h?: number;
+    mediana_tipica_min?: number | null; pior_p90_min?: number | null;
+  };
+  espera?: {
+    sla_minutos: number; total: number; estourados: number;
+    lista: { cliente_id: string; cliente: string | null; vendedor: string | null; minutos: number }[];
+    mais_antiga: { cliente: string | null; minutos: number } | null;
+  };
+  sem_views?: boolean;
 };
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -116,11 +126,75 @@ export default function Indicadores() {
               </table>
             </div>
 
+            {/* ---- item 3: a fila do MOMENTO ---------------------------------
+                Fica acima do resto de propósito. Tudo o mais nesta tela é
+                história — o que já aconteceu e não dá para mudar. Isto é a
+                única coisa aqui sobre a qual ainda se pode agir hoje. */}
+            {d.espera && (
+              <div style={{ marginTop: 16, background: d.espera.estourados ? "rgba(221,66,34,.07)" : M.surface,
+                border: `1px solid ${d.espera.estourados ? "rgba(221,66,34,.3)" : M.border}`,
+                borderRadius: 14, padding: "12px 16px" }}>
+                <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 8 }}>
+                  Esperando resposta agora
+                </div>
+                {d.espera.sla_minutos === 0 ? (
+                  <div style={{ fontSize: 13, color: M.gray, lineHeight: 1.55 }}>
+                    <b style={{ color: M.ink, fontSize: 20, fontVariantNumeric: "tabular-nums" }}>{d.espera.total}</b>{" "}
+                    conversa(s) com a cliente aguardando dentro da janela de 24h.
+                    {d.espera.mais_antiga && <> A mais antiga espera há <b>{dur(d.espera.mais_antiga.minutos)}</b>.</>}
+                    <div style={{ fontSize: 12, color: M.muted, marginTop: 6 }}>
+                      O <b>alerta</b> está desligado — ninguém é avisado. Um admin define o limite em
+                      Administração → Mecanismos → Alerta de espera.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: M.gray, lineHeight: 1.55 }}>
+                    <b style={{ color: d.espera.estourados ? M.laranja : M.verde, fontSize: 20, fontVariantNumeric: "tabular-nums" }}>
+                      {d.espera.estourados}
+                    </b>{" "}
+                    passaram de {d.espera.sla_minutos} min, de {d.espera.total} esperando.
+                    {d.espera.lista.length > 0 && (
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {d.espera.lista.map((e) => (
+                          <Link key={e.cliente_id} href={`/chat?cliente=${encodeURIComponent(e.cliente_id)}`}
+                            style={{ fontSize: 12, fontWeight: 700, textDecoration: "none", color: M.wine,
+                              background: M.roxoSoft, border: `1px solid ${M.border}`, borderRadius: 999, padding: "4px 10px" }}>
+                            {e.cliente ?? e.cliente_id} · {dur(e.minutos)}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {d.sem_views && (
+              <div style={{ marginTop: 16, fontSize: 12.5, color: M.gray, background: "rgba(221,66,34,.06)",
+                border: "1px solid rgba(221,66,34,.18)", borderRadius: 12, padding: "10px 14px", lineHeight: 1.55 }}>
+                Falta aplicar a migration <b>0114</b> — sem ela não há fila de espera nem tempo de
+                resolução. O resto desta tela continua correto.
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 14, marginTop: 16, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 320px", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 14, padding: "12px 16px" }}>
                 <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: M.muted, marginBottom: 8 }}>
                   Encerramentos por motivo — {d.resolvidas.total} no período
                 </div>
+                {/* item 2: quanto tempo levou para resolver.
+                    `com_tempo` pode ser menor que o total: conversa encerrada
+                    sem nenhuma fala da cliente no ciclo não tem início, e entra
+                    na contagem sem entrar na média — melhor que inventar um
+                    começo para não deixar a linha vazia. */}
+                {!!d.resolvidas.total && (d.resolvidas.com_tempo ?? 0) > 0 && (
+                  <div style={{ fontSize: 13, color: M.gray, marginBottom: 10, lineHeight: 1.55 }}>
+                    Tempo até resolver: <b style={{ color: corDoTempo(d.resolvidas.mediana_tipica_min ?? null) }}>
+                      {dur(d.resolvidas.mediana_tipica_min ?? null)}
+                    </b> típico do dia · {d.resolvidas.ate_1h ?? 0} em até 1h · {d.resolvidas.ate_24h ?? 0} em até 24h
+                    <span style={{ color: M.muted }}> (de {d.resolvidas.com_tempo})</span>
+                  </div>
+                )}
                 {Object.entries(d.resolvidas.por_motivo).sort((a, b) => b[1] - a[1]).map(([k, n]) => (
                   <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "3px 0" }}>
                     <span style={{ color: M.gray }}>{ROTULO_MOTIVO[k] ?? k}</span>

@@ -190,6 +190,19 @@ export async function GET() {
           "vive dentro de iframe, onde o navegador recusa geolocalização sem prompt.",
         itens: locais,
       },
+      sla: {
+        rotulo: "Alerta de espera (SLA)",
+        resumo:
+          "Minutos de espera que acendem o aviso. Os indicadores já MEDEM o tempo de " +
+          "resposta depois do fato; isto é o contrário — a fila do momento, para alguém " +
+          "agir antes de a espera virar estatística. 0 desliga.",
+        minutos: Number(cfg.sla_minutos ?? 0),
+        nota:
+          "Nasce em 0 de propósito: um limite chutado no deploy vira alarme que todo mundo " +
+          "aprende a ignorar, e isso é pior que não ter alarme — dá a sensação de que " +
+          "alguém está vigiando. A resposta automática de fora do horário NÃO apaga o " +
+          "aviso: a cliente recebeu um recado e continua esperando gente.",
+      },
       cadastro: {
         rotulo: "Ficha de cadastro do cliente novo",
         resumo:
@@ -271,6 +284,25 @@ export async function PUT(req: Request) {
         : limpos.length
           ? `${limpos.length} endereço(s) salvos. Já aparecem no 📎 do chat.`
           : "Nenhum endereço — a opção some do menu do chat.",
+    });
+  }
+
+  // ---- limite de SLA: número em minutos, 0 desliga -------------------------
+  if (chave === "sla_minutos") {
+    const n = Math.floor(Number(valor));
+    if (!Number.isFinite(n) || n < 0 || n > 1440) {
+      return Response.json({ error: "informe de 0 a 1440 minutos (0 desliga)" }, { status: 400 });
+    }
+    const { error } = await sb.from("crm_config").upsert({
+      id: 1, sla_minutos: n,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({
+      ok: true,
+      aviso: n === 0
+        ? "Alerta de espera desligado — os indicadores continuam medindo, ninguém é avisado."
+        : `Alerta a partir de ${n} min de espera. Aparece no chat e nos indicadores.`,
     });
   }
 
