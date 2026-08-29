@@ -4964,10 +4964,55 @@ laço. Exercitado contra o servidor de produção local, com token válido:
 que aquele fluxo fica como está, e ele não sofre do problema (não roda em
 iframe).
 
-### 64.4 Como foi verificado
+### 64.4 Segundo relato: acertava o chat, errava a conversa
 
-Chrome headless por CDP contra o build de produção (receita da §35.1), com
-sessão real: o cookie é escrito em `/`, `/chat`, `/relatorios` e
-`/chat?cliente=…`, **não** é escrito pela lupa, e o fluxo inteiro — estar no
-chat, passar pelo SSO, voltar ao chat — fecha. Mais os cinco casos de destino
-inválido acima, por `curl`.
+"Mantem a tela no chat, mas nao mais com a conversa da cliente aberta."
+
+**Porque trocar de conversa nao e uma navegacao.** Clicar num nome da lista so
+troca estado do React: a URL fica parada em `/chat`, o `usePathname` nao muda,
+o efeito do `LembrarTela` nao roda — e o cookie guardava `/chat`, que e
+exatamente o que a volta do SSO entregava.
+
+O conserto tem duas metades e as duas sao necessarias:
+
+1. `abrir()` reescreve a URL com `?cliente=<id>` (`marcarConversaNaUrl`);
+2. e chama `lembrarTelaAtual()`, agora exportada de `app/lembrarTela.tsx`, porque
+   ninguem mais chamaria.
+
+Na volta nao foi preciso codigo nenhum: o `/chat` ja sabia abrir a conversa do
+`?cliente=` — e o caminho que o board usa desde a §40.1.
+
+`replaceState`, nao `push`: o Voltar do navegador nao deve virar um desfazer de
+"abri outra conversa". Fechar a conversa (o ← do celular, ou ser transferida
+para outra carteira) **limpa** o parametro, senao a volta abriria uma conversa
+que a pessoa fechou de proposito.
+
+⚠️ A lupa fica de fora (`if (embutido) return`): la a URL e a do iframe, e quem
+manda no board e o board. O `lembrarTelaAtual()` tambem barra `embed=1` por
+conta propria — duas travas para o mesmo caso, porque `embutido` e estado que
+so fica verdadeiro depois do primeiro efeito.
+
+### 64.5 Como foi verificado
+
+Chrome headless por CDP contra o build de producao (receita da §35.1), com
+sessao real. O cookie e escrito em `/`, `/chat`, `/relatorios` e
+`/chat?cliente=...`, **nao** e escrito pela lupa, e o fluxo do relato fecha:
+clicar na primeira conversa da lista (deu a FRANCILENE, a mesma do relato),
+passar pelo SSO e voltar na mesma conversa, com a mesma URL e o compositor
+aberto — que so existe com conversa selecionada, medido antes do clique para
+servir de discriminador. Mais os cinco destinos invalidos por `curl`.
+
+#### Tres armadilhas de ambiente, todas custaram tempo
+
+- **`TaskStop` mata o wrapper, nao o `next start`.** O servidor da rodada
+  anterior continuou segurando a porta 3210, o meu novo nem subiu, e o
+  navegador recebia HTML de um build antigo — `ChunkLoadError` e React #423,
+  erros que nao tem nada a ver com o codigo. Conferir a porta
+  (`netstat -ano`) e comparar o `buildId` servido com o `.next/BUILD_ID`.
+- **A porta 9333 do Chrome era de OUTRA sessao** (`--user-data-dir=.../pfb`).
+  O meu Chrome nao subiu e eu estava dirigindo o navegador dela sem perceber.
+  Antes de confiar no CDP, conferir de quem e o processo que atende a porta —
+  e usar porta e perfil proprios.
+- **O Git Bash converte argumento que comeca com `/`** em caminho do Windows:
+  `node script.mjs /chat` chega como `C:/Program Files/Git/chat`. Prefixar com
+  `MSYS_NO_PATHCONV=1`.

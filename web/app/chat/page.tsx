@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ehApp, ativarPush, desativarPush, pushInscrito } from "../pwa";
+import { lembrarTelaAtual } from "../lembrarTela";
 import Link from "next/link";
 import {
   useLigacao, BotaoLigar, BarraChamada, ChamadaRecebida, DesfechoLigacao, MarcoLigacao,
@@ -1683,6 +1684,7 @@ export default function Chat() {
       const minha = sessao?.carteira ?? null;
       if (minha && para !== minha) {
         setSel(null); setMsgs(null); setNotas([]); setTransferencias([]);
+        marcarConversaNaUrl(null);
       } else {
         // admin/home continuam vendo: acompanha o novo dono no cabeçalho
         setSel((s) => (s ? { ...s, vendedor: para, transferida_de: s.vendedor } : s));
@@ -1820,8 +1822,28 @@ export default function Chat() {
     );
   }, [sel]);
 
+  // A conversa aberta vira `?cliente=` na URL. Trocar de conversa nao e uma
+  // navegacao — so muda estado do React —, entao sem isto a URL fica parada em
+  // `/chat` e o cookie que o SSO le (app/lembrarTela.tsx) tambem: recarregar
+  // dentro do hub acertava o chat e abria a lista, nao a conversa.
+  //
+  // `replaceState`, nao `push`: o botao Voltar do navegador nao deve virar um
+  // desfazer de "abri outra conversa". E a lupa fica de fora — la a URL e a do
+  // iframe, e quem manda no board e o board.
+  function marcarConversaNaUrl(clienteId: string | null) {
+    if (embutido) return;
+    try {
+      const url = new URL(window.location.href);
+      if (clienteId) url.searchParams.set("cliente", clienteId);
+      else url.searchParams.delete("cliente");
+      window.history.replaceState(null, "", url.pathname + url.search);
+      lembrarTelaAtual();
+    } catch { /* sem history/URL a conversa continua abrindo; so nao e lembrada */ }
+  }
+
   function abrir(c: Conversa) {
     setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
+    marcarConversaNaUrl(c.cliente_id);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
     // o compositor guarda o nome da cliente ANTERIOR nos campos: deixá-lo aberto
@@ -3241,7 +3263,7 @@ export default function Chat() {
                     conversa, que é o motivo de a lupa existir. */}
                 <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "nowrap" }}>
                   {isMobile && !compacto && (
-                    <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
+                    <button onClick={() => { setSel(null); setMsgs(null); marcarConversaNaUrl(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
                   <span style={{ width: 34, height: 34, borderRadius: 34, background: M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, flexShrink: 0 }}>
                     {(sel.cliente ?? "?").trim().charAt(0).toUpperCase()}
