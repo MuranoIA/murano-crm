@@ -25,37 +25,45 @@ import { useEffect } from "react";
  * basta porque não há iframe de outro site no meio.
  */
 
-const HORAS = 8; // mesma validade do crm_sessao: a memória não sobrevive à sessão
+const HORAS = 8; // mesma validade do crm_sessao: a memoria nao sobrevive a sessao
+
+/**
+ * Grava a tela atual no cookie. Exportada porque a troca de conversa no /chat
+ * nao e uma navegacao: o React so troca o estado, o `usePathname` nao muda e o
+ * efeito abaixo nunca rodaria. Aquela tela reescreve a URL (`?cliente=`) e
+ * chama isto na mao — sem esta funcao a volta do SSO acertaria o /chat e
+ * erraria a conversa, que foi o primeiro relato depois do conserto.
+ */
+export function lembrarTelaAtual() {
+  if (typeof window === "undefined") return;
+
+  // `embed=1` e o /chat DENTRO da lupa do board (um iframe nosso, na nossa
+  // origem). Se ele gravasse, a lupa venceria o board que a hospeda e a volta
+  // do SSO cairia numa conversa em tela cheia e sem a navegacao do produto —
+  // que e justamente o que o modo embutido esconde.
+  if (/[?&]embed=1(&|$)/.test(window.location.search)) return;
+
+  // rotas que nao sao "onde eu estava trabalhando"
+  if (/^\/(auth|api|privacidade|termos)(\/|$)/.test(window.location.pathname)) return;
+
+  const tela = window.location.pathname + window.location.search;
+  const seguro = window.location.protocol === "https:";
+  try {
+    document.cookie =
+      `crm_tela=${encodeURIComponent(tela)}; path=/; max-age=${HORAS * 3600}` +
+      (seguro ? "; SameSite=None; Secure" : "; SameSite=Lax");
+  } catch {
+    // cookie bloqueado (navegador com bloqueio total de terceiros): a volta do
+    // SSO continua caindo no board, como sempre caiu. Degrada, nao quebra.
+  }
+}
 
 export default function LembrarTela() {
-  // usePathname (e não useSearchParams) porque este componente mora no layout
-  // raiz: useSearchParams ali exigiria Suspense e afetaria toda página. A query
-  // real é lida do window, que já está certa quando o efeito roda.
+  // usePathname (e nao useSearchParams) porque este componente mora no layout
+  // raiz: useSearchParams ali exigiria Suspense e afetaria toda pagina. A query
+  // real e lida do window dentro de `lembrarTelaAtual`, que ja esta certa
+  // quando o efeito roda.
   const caminho = usePathname();
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const tela = window.location.pathname + window.location.search;
-
-    // `embed=1` é o /chat DENTRO da lupa do board (um iframe nosso, na nossa
-    // origem). Se ele gravasse, a lupa venceria o board que a hospeda e a
-    // volta do SSO cairia numa conversa em tela cheia e sem a navegação do
-    // produto — que é justamente o que o modo embutido esconde.
-    if (/[?&]embed=1(&|$)/.test(window.location.search)) return;
-
-    // rotas que não são "onde eu estava trabalhando"
-    if (/^\/(auth|api|privacidade|termos)(\/|$)/.test(window.location.pathname)) return;
-
-    const seguro = window.location.protocol === "https:";
-    try {
-      document.cookie =
-        `crm_tela=${encodeURIComponent(tela)}; path=/; max-age=${HORAS * 3600}` +
-        (seguro ? "; SameSite=None; Secure" : "; SameSite=Lax");
-    } catch {
-      // cookie bloqueado (navegador com bloqueio total de terceiros): a volta
-      // do SSO continua caindo no board, como sempre caiu. Degrada, não quebra.
-    }
-  }, [caminho]);
-
+  useEffect(() => { lembrarTelaAtual(); }, [caminho]);
   return null;
 }
