@@ -42,6 +42,41 @@ function verificarToken(token: string, segredo: string): string | null {
   }
 }
 
+// Destino do redirect depois do SSO. Sem isto a rota mandava SEMPRE para `/`:
+// dentro do hub o CRM e um <iframe> cujo `src` e esta rota, entao recarregar a
+// pagina do hub joga quem estava atendendo no /chat de volta no board, que
+// refaz a consulta de milhares de cards. O `?destino=` deixa o hub apontar
+// direto para uma tela; sem ele vale o cookie `crm_tela`, escrito pelo proprio
+// CRM a cada navegacao (app/lembrarTela.tsx).
+//
+// A validacao e o ponto sensivel: isto e um redirect controlado por dado que
+// vem de fora, ou seja, um open redirect se aceitar qualquer coisa. So passa
+// caminho relativo da propria origem — `//host` e `/\host` sao absolutos
+// disfarcados e o navegador os trata como outro site.
+function telaSegura(valor: string | null | undefined): string | null {
+  if (!valor) return null;
+  let d = valor.trim();
+  try { d = decodeURIComponent(d); } catch { return null; }
+  if (d.length > 300) return null;
+  if (!d.startsWith("/")) return null;
+  if (d.startsWith("//") || d.includes("\\")) return null;
+  if (/[\r\n\t]/.test(d)) return null;
+  // rotas que nao sao tela de trabalho (a de SSO, entao, seria um laco)
+  if (/^\/(auth|api|privacidade|termos)(\/|$|\?)/.test(d)) return null;
+  return d;
+}
+
+function cookieDaRequisicao(req: Request, nome: string): string | null {
+  const bruto = req.headers.get("cookie");
+  if (!bruto) return null;
+  for (const parte of bruto.split(";")) {
+    const i = parte.indexOf("=");
+    if (i < 0) continue;
+    if (parte.slice(0, i).trim() === nome) return parte.slice(i + 1).trim();
+  }
+  return null;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const origin = url.origin;
@@ -69,7 +104,13 @@ export async function GET(req: Request) {
   const valor = tokenDePapel(papel, ac.carteira ?? null);
   if (!valor) return NextResponse.redirect(`${origin}/?erro=sem_carteira`);
 
-  const res = NextResponse.redirect(`${origin}/`);
+  // volta para onde a pessoa estava: destino explicito > ultima tela > board
+  const destino =
+    telaSegura(url.searchParams.get("destino")) ??
+    telaSegura(cookieDaRequisicao(req, "crm_tela")) ??
+    "/";
+
+  const res = NextResponse.redirect(`${origin}${destino}`);
   const opts = {
     httpOnly: true,
     secure: true,
