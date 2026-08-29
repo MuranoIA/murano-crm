@@ -924,6 +924,12 @@ export default function Page() {
 
       // O que sobe: o trecho cortado aqui, ou o original quando este navegador
       // não soube decodificar o codec (aí quem corta é o player do painel).
+      // Nesse fallback vale o teto do BUCKET (20 MB), porque o arquivo sobe
+      // inteiro — dizer isso agora evita um "falha no envio" cru lá na frente.
+      if (!trecho && file.size > 20 * 1024 * 1024) {
+        setMusicaMsg({ ok: false, texto: "Não consegui extrair o áudio deste arquivo neste navegador, e ele é grande demais (máx. 20 MB) para subir inteiro. Converta para MP3 e tente de novo." });
+        return;
+      }
       const corpo: Blob = trecho ? trecho.blob : file;
       const mime = trecho ? "audio/wav" : (file.type || "");
 

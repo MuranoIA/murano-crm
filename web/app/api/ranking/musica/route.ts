@@ -11,14 +11,14 @@ export const maxDuration = 60;
 // JSON para os painéis, que tocam por SEGUNDOS e voltam ao som sintetizado
 // quando a chave não existe. Só admin.
 //
-// O corte de 59s acontece no navegador do admin (web/lib/musicaParabens.ts):
+// O corte de 90s acontece no navegador do admin (web/lib/musicaParabens.ts):
 // decodifica, corta e sobe um WAV — é lá também que a trilha de VÍDEO de um
 // .mp4 é descartada, porque só o áudio é decodificado. Quando o navegador não
 // dá conta do codec, o original sobe com `cortado:false` e o painel aplica o
-// teto de 59s no player (e usa <audio>, que ignora o vídeo do container).
+// teto de 90s no player (e usa <audio>, que ignora o vídeo do container).
 //
 // ⚠️ O ARQUIVO NÃO PASSA POR ESTA ROTA. O corpo de uma função da Vercel tem
-// teto de ~4,5 MB, e um WAV mono de 59 s a 48 kHz dá 5,4 MB — subir por aqui
+// teto de ~4,5 MB, e um WAV mono passa disso já com 47 s a 48 kHz — subir por aqui
 // devolvia 413 (e o limite piora a cada segundo que o trecho ganha). Então o
 // navegador sobe DIRETO para o Storage, em dois passos:
 //   POST {acao:"assinar"}   -> devolve uma URL de upload assinada (2h)
@@ -28,8 +28,8 @@ export const maxDuration = 60;
 // escrita para UM caminho só, que nasce nesta rota depois da guarda de admin.
 const BUCKET = "ranking-musica";
 const CHAVE = "parabens_musica";
-const SEGUNDOS = 59; // teto de reprodução na TV (não exportar: rota do Next só aceita handlers + config)
-const MAX = 40 * 1024 * 1024; // teto do objeto no bucket (conferido no `confirmar`)
+const SEGUNDOS = 90; // teto de reprodução na TV (não exportar: rota do Next só aceita handlers + config)
+const MAX = 20 * 1024 * 1024; // o mesmo file_size_limit do bucket: acima disso o PUT já teria falhado
 const MIMES: Record<string, string> = {
   "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
   "audio/mpeg": "mp3", "audio/mp3": "mp3",
@@ -115,7 +115,7 @@ async function confirmar(body: { path?: string; nome?: string; cortado?: boolean
 
   const tamanho = Number(obj.metadata?.size ?? 0);
   if (!tamanho) { await apagarArquivo(path); return Response.json({ error: "Arquivo vazio." }, { status: 400 }); }
-  if (tamanho > MAX) { await apagarArquivo(path); return Response.json({ error: `Arquivo muito grande (${(tamanho / 1048576).toFixed(1)} MB). Máximo 40 MB.` }, { status: 400 }); }
+  if (tamanho > MAX) { await apagarArquivo(path); return Response.json({ error: `Arquivo muito grande (${(tamanho / 1048576).toFixed(1)} MB). Máximo 20 MB.` }, { status: 400 }); }
 
   const anterior = await atual();
   const musica: Musica = {
