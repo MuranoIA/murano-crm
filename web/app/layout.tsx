@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Inter } from "next/font/google";
 import RegistrarPwa from "./pwa";
+import LembrarTela from "./lembrarTela";
 
 // Antes disto o body só CITAVA "Inter" pelo nome — sem o arquivo da fonte
 // carregado, o navegador caía no fallback do sistema sempre (a Inter não é
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       >
         <style dangerouslySetInnerHTML={{ __html: "@keyframes pulse-alert{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.25;transform:scale(.65)}}.et-tip-wrap{display:inline-flex;align-items:center;cursor:help}" }} />
         <RegistrarPwa />
+        <LembrarTela />
         {children}
       </body>
     </html>

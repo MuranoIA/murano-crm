@@ -4913,3 +4913,61 @@ O historico da conversa mora no **navegador** e volta inteiro para a rota a cada
 mensagem: e rascunho que acaba quando a campanha sai, nao merece tabela nem
 limpeza. Quem devolve a lista pronta e a rota -- o pareamento tool_use/tool_result
 tem de ser exato, e a tela so ecoa.
+
+## 64. Recarregar dentro do hub deixou de jogar todo mundo no board (29/08/2026)
+
+Sintoma: quem estava atendendo no `/chat`, dentro do hub, clicava em atualizar e
+caía no board — que refaz a consulta de milhares de cards e ainda perde a
+conversa aberta.
+
+**Não era o chat, era o SSO.** No hub o CRM é um `<iframe>` cujo `src` é
+`/auth/hub-sso?token=…` (§17). Recarregar a página do hub recarrega esse `src`,
+e aquela rota redirecionava SEMPRE para `/`. Direto no domínio o problema não
+existe — recarregar `/chat` fica em `/chat`; ele só aparece embutido, que é
+como o time usa.
+
+### 64.1 A memória tinha de ser um cookie
+
+Quem decide o destino é o SERVIDOR, antes de qualquer JS rodar. Então
+`app/lembrarTela.tsx` (no layout raiz) grava a tela atual no cookie `crm_tela`
+a cada navegação, e a rota lê:
+
+```
+?destino=  >  cookie crm_tela  >  /
+```
+
+`sessionStorage` não serviria: obrigaria a redirecionar para uma página em
+branco só para ler e redirecionar de novo. `SameSite=None; Secure` pela mesma
+razão do `crm_sessao` — no iframe do hub o documento de topo é outro site.
+Fora de https vale `Lax` (o par None/Secure é inválido sem TLS e o cookie
+seria recusado no dev local).
+
+O `?destino=` fica pronto para o hub um dia apontar direto para uma tela; **o
+hub não precisou de nenhuma mudança** para o conserto funcionar.
+
+### 64.2 ⚠️ A lupa não pode gravar
+
+O board embute o `/chat` com `embed=1` (§41), na nossa própria origem — e o
+layout raiz vale lá dentro também. Sem exceção, a lupa gravaria por último e a
+volta do SSO cairia numa **conversa em tela cheia, sem a navegação do
+produto**, que é justamente o que o modo embutido esconde. `embed=1` não grava.
+
+### 64.3 Open redirect é o risco real desta rota
+
+Redirect com destino vindo de fora aceita qualquer coisa se ninguém validar.
+`telaSegura()` só deixa passar caminho relativo: `//host` e `/\host` são
+absolutos disfarçados que o navegador trata como outro site, e `/auth/*` viraria
+laço. Exercitado contra o servidor de produção local, com token válido:
+`//evil.com`, `/\evil.com`, `https://evil.com` e `/auth/hub-sso` caem em `/`.
+
+**O `/auth/callback` do Google continua indo para `/`, sem mudança** — §17 diz
+que aquele fluxo fica como está, e ele não sofre do problema (não roda em
+iframe).
+
+### 64.4 Como foi verificado
+
+Chrome headless por CDP contra o build de produção (receita da §35.1), com
+sessão real: o cookie é escrito em `/`, `/chat`, `/relatorios` e
+`/chat?cliente=…`, **não** é escrito pela lupa, e o fluxo inteiro — estar no
+chat, passar pelo SSO, voltar ao chat — fecha. Mais os cinco casos de destino
+inválido acima, por `curl`.
