@@ -4971,3 +4971,112 @@ sessão real: o cookie é escrito em `/`, `/chat`, `/relatorios` e
 `/chat?cliente=…`, **não** é escrito pela lupa, e o fluxo inteiro — estar no
 chat, passar pelo SSO, voltar ao chat — fecha. Mais os cinco casos de destino
 inválido acima, por `curl`.
+
+## 65. Mensagem chega uma a uma, e cada uma com sua hora (30/08/2026)
+
+Relato do usuário: *"ao enviar várias mensagens do celular do cliente para o
+nosso chat, as mensagens demoram cerca de 10 segundos para chegar, e elas chegam
+todas de uma vez... parece que está sendo processado em lote."* E, junto: se a
+cliente manda várias no mesmo minuto, só a última mostrava a hora.
+
+### 65.1 Onde o lote NÃO estava — medido antes de mexer em nada
+
+As duas primeiras suspeitas eram as óbvias, e as duas estavam limpas:
+
+| etapa | medição (30/08, rajada real de 40 mensagens) |
+|---|---|
+| webhook da Meta → `mensagens` | **individual**, 1,3 a 4,8 s por mensagem (`sincronizado_em - criada_em`) |
+| trigger → `realtime.send` → navegador | **individual**, **80 ms** (ouvinte próprio no canal `board`, com a chave anon) |
+
+Ou seja: o servidor nunca agrupou nada. O enfileiramento era todo do navegador.
+
+⚠️ O webhook **atrasa progressivamente** dentro de uma rajada — 1,6 s na primeira
+mensagem e 3,6 s na décima — porque faz ~8 idas ao Supabase em série por
+mensagem e a Meta entrega mais rápido do que ele digere. É atraso, não lote, e
+não foi mexido aqui.
+
+### 65.2 O que cada aviso do Realtime custava
+
+Cada mensagem nova disparava **duas recargas completas**:
+
+| rota | custo medido |
+|---|---|
+| `/api/chat` (lista de conversas) | **1,3 a 2,2 s** — vários passes paginados sobre `vw_funil_visivel`, mais `vw_chat_linha_cliente`, `chat_conversa`, `vw_chat_espera` |
+| `/api/chat/thread` | **0,5 a 1 s**, **82 KB**, 200 mensagens + 6 consultas de apoio |
+
+Dez mensagens em dez segundos = **vinte recargas concorrentes**, e a conversa só
+se mexia quando aquilo desafogava — todas as bolhas de uma vez. Pior: a guarda
+de in-flight da lista fazia `return` e **perdia** o evento, apesar do comentário
+dela prometer a coalescência da §15.3.
+
+### 65.3 A correção — perguntar outra coisa
+
+`GET /api/chat/thread?desde=<criada_em>` devolve só o que existe depois daquela
+data: **7,8 KB em vez de 82 KB**, um índice em vez de seis consultas. O aviso do
+Realtime passa a usar esse caminho e pendura a bolha na hora; a recarga cara da
+lista vai para um balde coalescido de 1,2 s, que faz a rajada inteira caber numa
+recarga só.
+
+**O caminho completo continua existindo e continua sendo o certo** ao abrir a
+conversa, ao trocar de filtro e no poll de 60 s. É ele que traz notas,
+transferências, ligações e o histórico — o lote incremental, por definição, só
+olha para a frente.
+
+Quatro armadilhas pagas na construção, todas de perda ou duplicação silenciosa:
+
+1. **Os TIQUES não vêm no `?desde=`.** O aviso do Realtime dispara também quando
+   o `status` de uma mensagem ANTIGA muda (o recibo da Meta). Sem tratar, o
+   tique congelaria até o poll de 60 s, num lugar onde a equipe repara — "ela
+   leu ou não?". A resposta incremental leva junto `estados`: id/status/erro das
+   40 últimas, no mesmo índice.
+2. **A recarga completa é uma FOTO.** Um `setMsgs(lista)` seco apagaria a
+   mensagem que o incremental pendurou enquanto a foto viajava — e ela não
+   voltaria no próximo aviso (que só traz o que é mais novo), só no poll de
+   60 s. Daí `juntar()`: sobrevive à foto o que for estritamente mais novo que a
+   linha mais recente dela.
+3. **A bolha otimista apareceria em dobro**, entre o aviso do Realtime (que já
+   traz a linha gravada) e a resposta do POST (que era quem a limpava). `juntar`
+   mata a `tmp:` quando chega do servidor a mesma fala, do mesmo lado.
+4. **A bolha otimista não serve de âncora**: a data dela é a do relógio do
+   NAVEGADOR. Um relógio 30 s adiantado faria o `desde` pular as mensagens
+   gravadas nesse intervalo, e elas não voltariam nunca — o pedido seguinte
+   partiria de uma data ainda mais à frente. A âncora ignora ids `tmp:`.
+
+Rolagem: segue as mensagens novas **só se a pessoa já estava no fim** (120 px de
+folga). Quem subiu para reler um preço não é arrancado de lá — mesmo cuidado que
+`carregarAntigas` toma na direção oposta.
+
+### 65.4 A hora volta a TODA bolha — revertendo o item 21 da §60.7
+
+Em `bancada` (o desenho em vigor) a hora aparecia só na última bolha do grupo,
+para tirar repetição da coluna direita, e reaparecia no hover. **A troca se
+mostrou errada no uso**, e o próprio relato do usuário é o argumento: quem
+atende precisa saber a que horas cada fala chegou, e "cinco no mesmo minuto" é
+justamente a rajada em que a ordem importa. Repetição que responde uma pergunta
+não é ruído.
+
+O agrupamento CONTINUA — 2 px dentro do grupo, 10 entre grupos, quina só na
+última bolha — porque aquilo não esconde informação nenhuma. O que saiu foi só o
+esconde-esconde da hora, e com ele a única regra de `:hover` do chat (a classe
+`bc-meta` e o `<style>` que a sustentava, agora código morto).
+
+### 65.5 Como isto foi verificado
+
+`tsc` e `next build` passam — e não provam nada (§55). O que provou:
+
+1. **Ouvinte próprio no canal `board`** (Node + chave anon) medindo a entrega
+   evento a evento: 80 ms, sem agrupamento.
+2. **Chrome headless por CDP** contra o build local, com a resposta de
+   `?desde=` forjada por `Fetch.fulfillRequest` — assim nenhuma mensagem falsa
+   foi escrita no banco de produção. Cinco `board_notificar_carteiras` disparados
+   à mão: **5 avisos → 5 buscas incrementais → 5 bolhas**, uma por evento, sem
+   duplicata e sem perda, cada uma com sua hora.
+3. Captura de tela confirmando as sete bolhas reais das 10:15 mostrando `10:15`
+   cada uma (§41.5: para desenho, screenshot decide).
+
+### 65.6 O que NÃO foi feito
+
+- **O atraso progressivo do webhook em rajada** (65.1) continua. Encurtá-lo é
+  outra frente: mexe no caminho que responde 200 à Meta, onde erro engolido é
+  mensagem perdida (§62.3).
+- **Nada foi mexido no lado do RD** (§44).

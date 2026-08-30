@@ -392,6 +392,45 @@ const dataBR = (d: string | null | undefined) =>
 const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 const horaBR = (iso: string) =>
   new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(11, 16);
+
+/**
+ * Junta duas listas de mensagens da MESMA conversa sem duplicar nem perder.
+ *
+ * Dois usos, e o `pendurar` distingue os dois:
+ *
+ *   pendurar=false (recarga completa): `chegou` e a foto autoritativa -- ela
+ *     manda em tudo que existia quando foi tirada. So sobrevive de `atual` o
+ *     que for mais novo que a foto inteira, porque isso chegou depois dela.
+ *     E assim que o tique que virou "lida" no servidor sobrescreve o "enviada"
+ *     que estava na tela.
+ *
+ *   pendurar=true (lote incremental): `chegou` traz so o que e novo, entao
+ *     `atual` e a base e o lote se soma a ela.
+ *
+ * Nos dois casos a chave e o `id` (o wamid, na Cloud), e a versao que vence e a
+ * mais recente do servidor -- nunca a otimista que a tela pintou ao enviar.
+ */
+function juntar(atual: Msg[] | null, chegou: Msg[], pendurar = false): Msg[] {
+  if (!atual?.length) return chegou;
+  if (!chegou.length) return pendurar ? atual : chegou;
+  const base = pendurar ? atual : chegou;
+  const extra = pendurar
+    ? chegou
+    // corte da foto: o que for estritamente mais novo que a linha mais recente
+    // dela chegou depois, e nao pode ser apagado por ela
+    : atual.filter((m) => m.criada_em > chegou[chegou.length - 1].criada_em);
+  // A bolha otimista (`tmp:`) morre quando o servidor devolve a mensagem DE
+  // VERDADE: mesmo lado, mesmo texto. Sem isto a propria fala do vendedor
+  // apareceria em dobro entre o aviso do Realtime (que ja traz a linha gravada)
+  // e a resposta do POST (que era quem limpava a otimista) -- um piscar de
+  // duplicata que so existe porque a thread ficou rapida.
+  const ditas = new Set(chegou.filter((m) => m.enviada_por !== "customer").map((m) => m.conteudo ?? ""));
+  const vivos = extra.filter((m) => !(String(m.id).startsWith("tmp:") && ditas.has(m.conteudo ?? "")));
+  if (!vivos.length) return base;
+  const por = new Map(base.map((m) => [m.id, m]));
+  for (const m of vivos) por.set(m.id, por.get(m.id) ?? m);
+  return [...por.values()].sort((x, y) => (x.criada_em < y.criada_em ? -1 : x.criada_em > y.criada_em ? 1 : 0));
+}
 const diaBR = (iso: string) =>
   new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10);
 const rotuloTempo = (iso: string | null) => {
@@ -1381,12 +1420,40 @@ export default function Chat() {
   // "pedir os dados", reenviar uma falha, e o esvaziar depois do envio -- sem
   // isto a caixa ficaria alta com o campo vazio, ou baixa com texto colado.
   useEffect(() => { crescer(); }, [texto, crescer]);
+  // ancora da chegada individual: a data da mensagem mais nova que a tela ja
+  // tem. Em ref, e nao em estado, porque quem a le e um callback do Realtime
+  // criado uma vez -- lendo estado, ele ficaria eternamente com o valor do
+  // render em que foi montado, e toda mensagem nova viria "desde" a mesma data.
+  //
+  // ⚠️ A bolha OTIMISTA nao serve de ancora: a data dela e a do relogio do
+  // navegador, que adianta em relacao ao banco com mais frequencia do que se
+  // imagina. Um relogio 30 s adiantado faria o `desde` pular as mensagens
+  // gravadas nesse intervalo -- e elas nao voltariam nunca, porque o proximo
+  // pedido partiria de uma data ainda mais a frente.
+  const ultimaMsgRef = useRef<string | null>(null);
+  const doServidor = (msgs ?? []).filter((m) => !String(m.id).startsWith("tmp:"));
+  ultimaMsgRef.current = doServidor.length ? doServidor[doServidor.length - 1].criada_em : null;
+  const comHistoricoRef = useRef(false);
+  comHistoricoRef.current = comHistorico;
+  // o callback do Realtime e montado uma vez; chamar a funcao por ref evita
+  // que ele fique preso na versao do primeiro render
+  const apanharNovasRef = useRef<((c: Conversa) => Promise<number>) | null>(null);
+  const recargaLenta = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
-  // guarda de in-flight: nunca empilha recargas (mesmo padrão do board)
+  // guarda de in-flight: nunca empilha recargas (mesmo padrão do board).
+  //
+  // ⚠️ `pedidaDeNovo` NAO estava aqui, e a falta dela contrariava o proprio
+  // comentario: a guarda antiga fazia `return` e PERDIA o evento. Numa rajada,
+  // a lista congelava no estado de quando a primeira recarga comecou, porque
+  // todos os avisos seguintes caiam nesse `return`. Coalescer e o que a §15.3
+  // descreve: nunca empilha, nunca perde.
   const carregandoLista = useRef(false);
+  const pedidaDeNovo = useRef(false);
+  // a propria funcao, para o `finally` dela poder se rechamar
+  const carregarListaRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const mq = () => setIsMobile(window.innerWidth < 768);
@@ -1402,7 +1469,7 @@ export default function Chat() {
   }, []);
 
   const carregarLista = useCallback(async () => {
-    if (carregandoLista.current) return;
+    if (carregandoLista.current) { pedidaDeNovo.current = true; return; }
     carregandoLista.current = true;
     try {
       const r = await fetch("/api/chat", { cache: "no-store" });
@@ -1416,8 +1483,13 @@ export default function Chat() {
       }
       else if (r.status === 401) setSessao(null);
       else setErro(j?.error ?? `erro ${r.status}`);
-    } finally { carregandoLista.current = false; }
+    } finally {
+      carregandoLista.current = false;
+      // chegou aviso enquanto esta rodava: uma recarga a mais, nao N
+      if (pedidaDeNovo.current) { pedidaDeNovo.current = false; carregarListaRef.current?.(); }
+    }
   }, []);
+  carregarListaRef.current = carregarLista;
 
   // catálogo carregado uma vez: muda com deploy de admin, não durante o turno
   useEffect(() => {
@@ -1433,7 +1505,18 @@ export default function Chat() {
       { cache: "no-store" });
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
-    setMsgs(j?.mensagens ?? []);
+    // ⚠️ MERGE, nao substituicao seca.
+    //
+    // A recarga completa e uma FOTO de um instante. Enquanto ela viajava, o
+    // `apanharNovas` abaixo pode ter pendurado uma mensagem que chegou depois
+    // da foto ser tirada -- e um `setMsgs(lista)` a apagaria da tela. Ela nao
+    // voltaria no proximo aviso (aquele so traz o que e mais novo que a ultima
+    // que temos, e ela ainda estaria na lista) -- so no poll de 60 s. Bolha
+    // sumindo por alguns minutos e pior que bolha atrasada.
+    //
+    // O criterio e o unico defensavel: o que for estritamente mais novo que a
+    // linha mais recente da foto chegou DEPOIS dela, entao sobrevive.
+    setMsgs((atual) => juntar(atual, j?.mensagens ?? []));
     setCanalEnvio(j?.canal_envio ?? null);
     setOcultas(j?.historico_oculto ?? 0);
     setComHistorico(!!j?.historico_carregado);
@@ -1444,6 +1527,69 @@ export default function Chat() {
     setTemMais(!!j?.tem_mais);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
+
+  /**
+   * Junta a foto do servidor com o que ja apareceu na tela depois dela.
+   * Fora do componente nao da: precisa ser estavel entre renders e nao depende
+   * de estado nenhum -- por isso e uma funcao pura, declarada no modulo.
+   */
+
+  /**
+   * CHEGADA INDIVIDUAL: busca so o que existe depois da ultima mensagem que
+   * temos, e pendura na conversa.
+   *
+   * Este e o caminho que o aviso do Realtime passa a usar. O outro
+   * (`carregarThread`) continua existindo e continua sendo o certo ao ABRIR a
+   * conversa, ao trocar de filtro e no poll de 60 s -- ele e quem traz notas,
+   * transferencias, ligacoes e, principalmente, os TIQUES de entrega das
+   * mensagens antigas, que `?desde=` por definicao nao alcanca.
+   *
+   * Devolve quantas chegaram: quem chamou usa para decidir se rola a tela.
+   */
+  const apanharNovas = useCallback(async (c: Conversa): Promise<number> => {
+    const ultima = ultimaMsgRef.current;
+    // Sem ancora = conversa aberta sem nenhuma mensagem (contato recem-criado, ou
+    // a primeira fala da cliente). Nao ha "depois de" para perguntar, entao cai
+    // na recarga completa -- que aqui e barata, porque a conversa esta vazia.
+    if (!ultima) { await carregarThread(c, false); return 0; }
+    const r = await fetch(
+      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}&desde=${encodeURIComponent(ultima)}` +
+      (comHistoricoRef.current ? "&historico=1" : ""),
+      { cache: "no-store" });
+    if (!r.ok) return 0;                       // silencioso de proposito: a recarga coalescida cobre
+    const j = await r.json().catch(() => null);
+    // Tiques primeiro: valem mesmo quando nao chegou mensagem nenhuma -- o
+    // aviso do Realtime dispara tambem por mudanca de status.
+    const estados: { id: string; status?: string | null; erro?: string | null }[] = j?.estados ?? [];
+    if (estados.length) {
+      const novoEstado = new Map(estados.map((e) => [e.id, e]));
+      setMsgs((atual) => {
+        if (!atual?.length) return atual;
+        let mexeu = false;
+        const fim = atual.map((m) => {
+          const e = novoEstado.get(m.id);
+          if (!e || (e.status === m.status && (e.erro ?? null) === (m.erro ?? null))) return m;
+          mexeu = true;
+          return { ...m, status: e.status as any, erro: e.erro ?? null };
+        });
+        // sem mudanca real, devolve o MESMO array: um array novo a cada aviso
+        // repintaria a thread inteira sem nada ter mudado
+        return mexeu ? fim : atual;
+      });
+    }
+    const novas = j?.mensagens ?? [];
+    if (!novas.length) return 0;
+    // Rolar ate o fim SO se a pessoa ja estava no fim. Quem subiu para reler um
+    // preco nao pode ser arrancado de la por uma mensagem nova -- e o mesmo
+    // cuidado que `carregarAntigas` toma na direcao oposta. 120 px de folga
+    // porque "no fim" na pratica nunca e exatamente zero.
+    const cx = rolagemRef.current;
+    const noFim = !cx || cx.scrollHeight - cx.scrollTop - cx.clientHeight < 120;
+    setMsgs((atual) => juntar(atual, novas, true));
+    if (noFim) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+    return novas.length;
+  }, [carregarThread]);
+  apanharNovasRef.current = apanharNovas;
 
   /**
    * Traz o lote anterior de mensagens (item 4 da fila).
@@ -1512,6 +1658,9 @@ export default function Chat() {
     // isso seria o mesmo desperdício que a §15.1 corrigiu no board.
     if (!embutido) carregarLista();
     carregarRespostas();
+    // Rede de protecao. Continua recarregando TUDO de proposito: e aqui que os
+    // tiques de entrega das mensagens antigas, as notas e as transferencias se
+    // acertam -- o lote incremental, por definicao, so olha para a frente.
     const lento = setInterval(() => {
       if (!embutido) carregarLista();
       if (selRef.current) carregarThread(selRef.current, false);
@@ -1533,8 +1682,30 @@ export default function Chat() {
           .on("broadcast", { event: "mudou" }, (msg: any) => {
             const cart = msg?.payload?.carteira ?? msg?.payload?.payload?.carteira ?? null;
             if (cart && sessao.carteira && cart !== sessao.carteira) return;
-            carregarLista();
-            if (selRef.current) carregarThread(selRef.current, false);
+            // ---- CHEGADA INDIVIDUAL --------------------------------------
+            //
+            // Antes, cada aviso disparava DUAS recargas completas: a lista de
+            // conversas (1,3 a 2,2 s, a rota mais cara do chat) e a thread
+            // inteira (200 mensagens, ~82 KB). Numa rajada de dez mensagens em
+            // dez segundos eram vinte recargas concorrentes -- e a conversa so
+            // se mexia quando aquilo tudo desafogava, todas as bolhas de uma
+            // vez. Medido em 30/08/2026: o webhook grava cada mensagem
+            // separadamente em 1,3 a 4,8 s, e o Realtime entrega cada aviso em
+            // 80 ms. O enfileiramento era todo daqui.
+            //
+            // Agora o aviso pede so o que e novo -- uma linha, um indice -- e
+            // pendura a bolha na hora. A recarga cara vai para o balde
+            // coalescido logo abaixo.
+            if (selRef.current) apanharNovasRef.current?.(selRef.current);
+            // A lista de conversas (previa, nao-lidas, ordem) e a unica coisa
+            // que ainda precisa da rota cara. Ela nao precisa ser instantanea:
+            // esperar 1,2 s faz uma rajada inteira caber numa recarga so, em
+            // vez de uma por mensagem. A guarda de coalescencia ja impede
+            // empilhamento; este atraso impede ate a fila de formar.
+            if (!embutido) {
+              if (recargaLenta.current) clearTimeout(recargaLenta.current);
+              recargaLenta.current = setTimeout(() => carregarLista(), 1200);
+            }
           })
           .subscribe((status: string) => setConectado(status === "SUBSCRIBED"));
 
@@ -1580,6 +1751,7 @@ export default function Chat() {
     return () => {
       cancelado = true;
       clearInterval(lento);
+      if (recargaLenta.current) clearTimeout(recargaLenta.current);
       setConectado(false);
       try { canal?.unsubscribe(); } catch {}
       try { canalPresenca?.unsubscribe(); } catch {}
@@ -2700,13 +2872,6 @@ export default function Chat() {
     // gestos do iPhone.
     <div className="chat-raiz" style={{ height: d1 ? "100dvh" : "100vh", display: "flex", flexDirection: "column", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif",
       ...(d1 && isMobile ? { paddingBottom: "env(safe-area-inset-bottom)" } : null) }}>
-      {/* A tela inteira é estilo inline, e inline não faz `:hover`. Este é o
-          único lugar do chat que precisa de uma regra de verdade: a linha da
-          hora das bolhas do meio de um grupo, que fica escondida e volta quando
-          o ponteiro entra na bolha (item 21/23 do laudo).
-          Só existe em `bancada` — nos outros desenhos a classe nem é aplicada.
-          Se o CSS não carregar, a regra deixa de valer e a linha aparece sempre:
-          degrada para o desenho de hoje, nunca para uma bolha sem hora. */}
       {/* Movimento: vale para TODOS os desenhos. Quem liga "reduzir movimento"
           no sistema costuma fazê-lo por enxaqueca ou vertigem — não é
           preferência estética, e não deve depender de qual tema está ativo. */}
@@ -2715,12 +2880,10 @@ export default function Chat() {
         + "{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}" }} />
       {bc && (
         <style dangerouslySetInnerHTML={{ __html:
-          ".bc-meta{display:none}.bc-bolha:hover .bc-meta{display:flex}"
-          + "@media(hover:none){.bc-meta{display:flex}}"
           // Barra de rolagem fina nas três colunas. A larga do Windows come 15 px
           // da lista — e é justamente a lista que já cedeu largura para a coluna
           // das horas.
-          + ".bc-rolagem{scrollbar-width:thin;scrollbar-color:#c9c4d0 transparent}"
+          ".bc-rolagem{scrollbar-width:thin;scrollbar-color:#c9c4d0 transparent}"
           + ".bc-rolagem::-webkit-scrollbar{width:8px;height:8px}"
           + ".bc-rolagem::-webkit-scrollbar-thumb{background:#c9c4d0;border-radius:8px}"
           + ".bc-rolagem::-webkit-scrollbar-track{background:transparent}"
@@ -3755,7 +3918,7 @@ export default function Chat() {
                             ...(d1
                               ? { flexDirection: "column" as const, alignItems: fora ? "flex-end" : "flex-start" }
                               : { justifyContent: fora ? "flex-end" : "flex-start" }) }}>
-                            <div className={bc ? "bc-bolha" : undefined}
+                            <div
                               style={{ maxWidth: G.bolhaMax, background: fora ? M.bolhaFora : M.bolhaDentro, border: `1px solid ${fora ? (d1 ? "#c9dff5" : "#dcc8e2") : M.border}`,
                               // a quina que aponta para o autor só existe na
                               // ÚLTIMA bolha do grupo: no meio dele, as quatro
@@ -3797,19 +3960,21 @@ export default function Chat() {
                                   estreita, e um botao por fora empurraria o
                                   texto. Aparece so em mensagem com conteudo --
                                   marco de sistema e reacao nao se encaminham. */}
-                              {/* Em `bancada`, a linha da hora some das bolhas do
-                                  MEIO do grupo — mas some só visualmente: ela
-                                  reaparece no hover (classe `bc-meta`), porque o
-                                  encaminhar mora aqui dentro e sumir com ele
-                                  tornaria metade das mensagens não-encaminháveis.
-                                  Em aparelho de toque, onde não há hover, a linha
-                                  fica sempre visível: ali o desenho é o de hoje,
-                                  e nada se perde. */}
-                              <div className={bc && !fechaGrupo ? "bc-meta" : undefined}
-                                style={{ justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums",
-                                  // sem `display` inline quando a classe manda —
-                                  // estilo inline venceria a regra do CSS
-                                  ...(bc && !fechaGrupo ? {} : { display: "flex" }) }}>
+                              {/* A HORA APARECE EM TODA BOLHA, sempre — inclusive
+                                  em cinco mensagens seguidas do mesmo minuto.
+                                  Em `bancada` ela ficava só na última do grupo
+                                  (item 21 da §60.7) para tirar repetição da
+                                  coluna direita, e a troca se mostrou errada no
+                                  uso: quem atende precisa saber a que horas cada
+                                  fala chegou, e "o mesmo minuto" é justamente a
+                                  rajada em que a ordem importa. Repetição que
+                                  responde uma pergunta não é ruído.
+
+                                  O agrupamento continua — espaçamento de 2 px
+                                  dentro do grupo e a quina só na última bolha —,
+                                  porque aquilo não esconde informação nenhuma. */}
+                              <div
+                                style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 5, marginTop: 3, fontSize: 10, color: M.muted, fontVariantNumeric: "tabular-nums" }}>
                                 {(m.conteudo || m.midia_path) && m.tipo !== "evento_sistema" && (
                                   <button
                                     onClick={() => { setEncaminhando(m); setBuscaEnc(""); }}

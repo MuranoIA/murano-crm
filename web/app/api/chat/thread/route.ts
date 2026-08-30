@@ -47,6 +47,63 @@ export async function GET(req: Request) {
   // `localizacao` (0115) entra aqui: sem ela a bolha nao tem como desenhar o
   // cartao de mapa, e a mensagem volta a ser so o texto do endereco.
   const COLS_MSG = "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,midia_path,linha_id,reacao,resposta_a,erro,localizacao";
+
+  // ---- CHEGADA INDIVIDUAL (`?desde=`) -------------------------------------
+  //
+  // O caminho de cima devolve a conversa INTEIRA: 200 mensagens, ~82 KB, mais
+  // seis consultas de apoio (cliente, notas, transferencias, linhas, ligacoes,
+  // janela de 24h). Isso e o certo ao ABRIR uma conversa, e o errado para
+  // mostrar UMA mensagem que acabou de chegar -- e era o que o chat fazia a
+  // cada aviso do Realtime. Numa rajada de dez mensagens em dez segundos, eram
+  // dez recargas completas da thread empilhadas sobre dez recargas completas da
+  // lista de conversas (a rota mais cara do chat, 1,3 a 2,2 s cada), e o
+  // resultado era o que o usuario relatou: nada por ~10 s, e entao tudo junto.
+  //
+  // Aqui a pergunta e outra e cabe num indice: "o que existe depois desta
+  // data?". Devolve uma linha, e a bolha aparece na hora.
+  //
+  // Cursor por DATA, e nao por quantidade, pelo mesmo motivo do `antes`: a
+  // conversa cresce enquanto a resposta viaja, e um offset ja teria escorregado.
+  const desde = new URL(req.url).searchParams.get("desde");
+  if (desde) {
+    let q = sb.from("mensagens").select(COLS_MSG)
+      .eq("cliente_id", cliente_id).gt("criada_em", desde);
+    if (!querHistorico) q = filtroLinhas(q, cfgThread);
+    // teto generoso: se a pessoa ficou com a aba em segundo plano por muito
+    // tempo, o poll de 60 s (que recarrega tudo) conserta o que passar daqui.
+    let { data, error } = await q.order("criada_em", { ascending: true }).limit(100);
+    if (error && /localizacao/i.test(error.message ?? "")) {
+      let q2 = sb.from("mensagens").select(COLS_MSG.replace(",localizacao", ""))
+        .eq("cliente_id", cliente_id).gt("criada_em", desde);
+      if (!querHistorico) q2 = filtroLinhas(q2, cfgThread);
+      const r2 = await q2.order("criada_em", { ascending: true }).limit(100);
+      data = r2.data as any; error = r2.error as any;
+    }
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    const novas = (data ?? []).filter((m: any) => m.tipo !== "evento_sistema");
+
+    // ---- os TIQUES das mensagens que ja estao na tela ---------------------
+    //
+    // O aviso do Realtime tambem dispara quando o `status` de uma mensagem
+    // ANTIGA muda (wait -> success -> read): e o recibo da Meta chegando pelo
+    // webhook. `?desde=` nunca alcancaria isso -- ela so olha para a frente --,
+    // e sem este trecho o tique congelaria ate o poll de 60 s, num lugar onde a
+    // equipe repara: "ela leu ou nao?".
+    //
+    // Sao 40 linhas de tres colunas, no mesmo indice da consulta acima. Alem
+    // dai o recibo ja chegou ha muito tempo.
+    const { data: est } = await sb.from("mensagens")
+      .select("id,status,erro").eq("cliente_id", cliente_id)
+      .order("criada_em", { ascending: false }).limit(40);
+    // O nome do cliente so e buscado quando ha template no lote -- e o unico
+    // uso dele aqui, e a esmagadora maioria dos lotes nao tem nenhum.
+    if (novas.some((m: any) => /^\[template\]\s+\S+/.test(String(m.conteudo ?? "")))) {
+      const { data: c } = await sb.from("clientes").select("nome_completo").eq("id", cliente_id).maybeSingle();
+      await textoDoTemplate(sb, novas, c?.nome_completo);
+    }
+    return Response.json({ incremental: true, mensagens: novas, estados: est ?? [], atualizado_em: new Date().toISOString() });
+  }
+
   let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
   if (antes) msgsQ = msgsQ.lt("criada_em", antes);
   if (!querHistorico) msgsQ = filtroLinhas(msgsQ, cfgThread);
@@ -120,22 +177,7 @@ export async function GET(req: Request) {
   // via o nome técnico e não o que a cliente leu. Os novos já gravam o texto
   // (send-template), mas o histórico não se reescreve sozinho: aqui a troca é
   // só de EXIBIÇÃO, buscando o corpo no cadastro pelo identificador.
-  const pendentes = mensagens
-    .map((m: any) => /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1])
-    .filter(Boolean) as string[];
-  if (pendentes.length) {
-    const { data: tpls } = await sb
-      .from("crm_templates")
-      .select("meta_nome,corpo")
-      .in("meta_nome", [...new Set(pendentes)]);
-    const corpoDe = new Map((tpls ?? []).map((t: any) => [t.meta_nome, t.corpo]));
-    const primeiroNome = String(cli?.nome_completo ?? "").trim().split(/\s+/)[0] || "cliente";
-    for (const m of mensagens as any[]) {
-      const nome = /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1];
-      const corpo = nome ? corpoDe.get(nome) : null;
-      if (corpo) m.conteudo = String(corpo).replace(/\{\{\s*1\s*\}\}/g, primeiroNome);
-    }
-  }
+  await textoDoTemplate(sb, mensagens, cli?.nome_completo);
 
   // por qual linha esta conversa corre: a da última mensagem que tem linha.
   // Sem linha = conversa do RD Conversas (o ETL não tem esse conceito).
@@ -201,4 +243,31 @@ export async function GET(req: Request) {
     ligacoes: ligacoes ?? [],
     atualizado_em: new Date().toISOString(),
   });
+}
+
+/**
+ * Troca "[template] nome_tecnico" pelo TEXTO que a cliente leu.
+ *
+ * Mora aqui, e nao em linha, porque os dois caminhos da rota precisam dela: a
+ * thread inteira e o lote incremental. Um disparo pode chegar pelo `?desde=`
+ * como qualquer outra mensagem, e se so o caminho de cima soubesse traduzir,
+ * a bolha nasceria com o identificador tecnico e so viraria texto no proximo
+ * recarregamento -- diferenca que ninguem associaria a esta funcao.
+ */
+async function textoDoTemplate(sb: any, mensagens: any[], nomeCompleto?: string | null) {
+  const pendentes = mensagens
+    .map((m: any) => /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1])
+    .filter(Boolean) as string[];
+  if (!pendentes.length) return;
+  const { data: tpls } = await sb
+    .from("crm_templates")
+    .select("meta_nome,corpo")
+    .in("meta_nome", [...new Set(pendentes)]);
+  const corpoDe = new Map((tpls ?? []).map((t: any) => [t.meta_nome, t.corpo]));
+  const primeiroNome = String(nomeCompleto ?? "").trim().split(/\s+/)[0] || "cliente";
+  for (const m of mensagens) {
+    const nome = /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1];
+    const corpo = nome ? corpoDe.get(nome) : null;
+    if (corpo) m.conteudo = String(corpo).replace(/\{\{\s*1\s*\}\}/g, primeiroNome);
+  }
 }
