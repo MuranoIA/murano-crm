@@ -28,6 +28,31 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 // ---------------------------------------------------------------------------
+// FALHA AO GRAVAR — a distincao que decide o codigo HTTP da resposta.
+//
+// Medido em 30/08/2026, com 24 clientes escrevendo ao mesmo tempo: 4 upserts
+// de `clientes` e 8 de `mensagens` voltaram `TypeError: fetch failed`, o erro
+// foi para o console e a rota respondeu 200 assim mesmo. Para a Meta isso
+// significa ENTREGUE: ela nao reenvia, e a mensagem da cliente e perdida para
+// sempre. Nao degradada — perdida. Quatro conversas sumiram da tela do
+// consultor sem nada indicando que existiram.
+//
+// O comentario original do POST (a Meta reenvia para sempre o que nao recebe
+// 200) esta certo sobre PAYLOAD RUIM, e errado sobre FALHA DE ESCRITA: no
+// primeiro caso reenviar nunca vai funcionar, no segundo reenviar e
+// exatamente o que se quer. Por isso os dois casos passam a ter respostas
+// diferentes, em vez de um 200 para tudo.
+//
+// Reenviar e seguro porque todo upsert e por wamid (idempotente): a mensagem
+// que ja entrou entra de novo como a mesma linha.
+// ---------------------------------------------------------------------------
+class FalhaAoGravar extends Error {
+  readonly gravacao = true;
+}
+const ehFalhaAoGravar = (e: unknown): boolean => Boolean((e as any)?.gravacao);
+
+
+// ---------------------------------------------------------------------------
 // GET — verificação do webhook (painel da Meta manda ?hub.mode=subscribe&...)
 // ---------------------------------------------------------------------------
 export async function GET(req: Request) {
@@ -55,9 +80,21 @@ export async function POST(req: Request) {
       return new Response("bad signature", { status: 403 });
     }
     const body = JSON.parse(raw);
-    await processar(body);
+    const perdidas = await processar(body);
+    if (perdidas.length) {
+      // 503 = "tente de novo". A Meta reenvia com espera crescente, e o
+      // upsert por wamid faz o reenvio ser inofensivo para o que ja entrou.
+      // Sem isto a mensagem some e ninguem fica sabendo (ver a nota da
+      // classe FalhaAoGravar).
+      console.error("[wa-webhook] pedindo reenvio de", perdidas.length, "evento(s):", perdidas.join(", "));
+      return new Response("erro ao gravar - reenvie", { status: 503 });
+    }
   } catch (e: any) {
     console.error("[wa-webhook] erro:", e?.message ?? e);
+    // Falha de GRAVACAO que escapou dos lacos tambem pede reenvio. Qualquer
+    // outra coisa (payload que nao sabemos ler, JSON quebrado) segue em 200:
+    // ali reenviar nao conserta, so repete para sempre.
+    if (ehFalhaAoGravar(e)) return new Response("erro ao gravar - reenvie", { status: 503 });
   }
   return new Response("ok", { status: 200 });
 }
@@ -74,7 +111,9 @@ function verificarAssinatura(req: Request, raw: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-async function processar(body: any): Promise<void> {
+async function processar(body: any): Promise<string[]> {
+  // ids dos eventos que NAO conseguimos gravar — quem decide o HTTP e o POST.
+  const falhas: string[] = [];
   const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false },
   });
@@ -100,14 +139,29 @@ async function processar(body: any): Promise<void> {
       for (const c of value.contacts ?? []) {
         if (c?.wa_id && c?.profile?.name) nomes.set(c.wa_id, c.profile.name);
       }
+      // Uma mensagem que falha NAO pode levar as outras do mesmo lote junto:
+      // antes, o primeiro throw abortava o `for` e as seguintes nem eram
+      // tentadas. Agora cada uma e tentada, e a falha e guardada para o
+      // final decidir o codigo de resposta.
       for (const msg of value.messages ?? []) {
-        await gravarMensagemRecebida(sb, msg, nomes.get(msg.from), linhaId);
+        try {
+          await gravarMensagemRecebida(sb, msg, nomes.get(msg.from), linhaId);
+        } catch (e: any) {
+          console.error("[wa-webhook] mensagem nao gravada:", msg?.id, e?.message ?? e);
+          if (ehFalhaAoGravar(e)) falhas.push(String(msg?.id ?? "?"));
+        }
       }
       for (const st of value.statuses ?? []) {
-        await atualizarStatus(sb, st);
+        try {
+          await atualizarStatus(sb, st);
+        } catch (e: any) {
+          console.error("[wa-webhook] recibo nao aplicado:", st?.id, e?.message ?? e);
+          if (ehFalhaAoGravar(e)) falhas.push(String(st?.id ?? "?"));
+        }
       }
     }
   }
+  return falhas;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +220,7 @@ async function gravarMensagemRecebida(
     console.warn("[wa-webhook] coluna localizacao ausente (aplicar 0115) — gravando sem o ponto");
     ({ error } = await sb.from("mensagens").upsert(semLocal, { onConflict: "id" }));
   }
-  if (error) throw new Error(`upsert mensagens: ${error.message}`);
+  if (error) throw new FalhaAoGravar(`upsert mensagens: ${error.message}`);
 
   // conversa volta pra fila: cliente falou => reabre (status aberta/resolvida, §18 item 4)
   await sb.from("chat_conversa").upsert(
@@ -463,7 +517,7 @@ async function acharOuCriarCliente(
     canal: "whatsapp",
   };
   const { error } = await sb.from("clientes").upsert(novo, { onConflict: "id" });
-  if (error) throw new Error(`upsert clientes: ${error.message}`);
+  if (error) throw new FalhaAoGravar(`upsert clientes: ${error.message}`);
   return { id: novo.id, carteira: null };
 }
 
@@ -671,7 +725,7 @@ async function atualizarStatus(sb: any, st: any): Promise<void> {
       ...(status === "failed" ? { erro: explicacao ?? "falha sem detalhe da Meta" } : { erro: null }),
     })
     .eq("id", wamid);
-  if (error) throw new Error(`update status: ${error.message}`);
+  if (error) throw new FalhaAoGravar(`update status: ${error.message}`);
   if (status === "failed") {
     console.error("[wa-webhook] envio falhou:", JSON.stringify(st.errors ?? st));
   }

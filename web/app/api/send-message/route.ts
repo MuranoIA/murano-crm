@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendText, linhaDeEnvio } from "../../../lib/whatsapp";
+import { canalDeResposta, sendText, linhaDaConversa } from "../../../lib/whatsapp";
 import { traduzErroRd } from "../../../lib/erroRd";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,6 @@ export async function POST(req: Request) {
 
     const faltando = Object.entries({
       SUPABASE_URL: supaUrl, SUPABASE_SERVICE_ROLE_KEY: supaKey,
-      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
     }).filter(([, v]) => !v).map(([k]) => k);
     if (faltando.length) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
@@ -53,13 +52,17 @@ export async function POST(req: Request) {
       const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
       if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
       try {
-        const { wamid } = await sendText(to, texto);
+        // A conversa responde PELO NUMERO EM QUE A CLIENTE FALOU (§dois numeros).
+        // Um valor global aqui responderia pelo numero errado e cairia em 131047,
+        // porque a janela de 24h e por par (numero, cliente).
+        const linha = await linhaDaConversa(sb, cliente_id);
+        const { wamid } = await sendText(to, texto, linha);
         // espelha no banco (mesma linha que o webhook atualiza com sent/delivered/read)
         await sb.from("mensagens").upsert({
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "mensagem", conteudo: texto,
           status: "wait", criada_em: new Date().toISOString(),
-          linha_id: linhaDeEnvio(),
+          linha_id: linha,
         }, { onConflict: "id" });
         return Response.json({ ok: true, cliente: cli.nome_completo, canal: "whatsapp" });
       } catch (e: any) {
@@ -71,6 +74,16 @@ export async function POST(req: Request) {
         }
         return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
       }
+    }
+
+    // As envs do RD so importam no ramo do RD, logo abaixo. Exigi-las la em
+    // cima derrubava o envio 100% Cloud com 500 quando alguem apagasse as
+    // envs do RD na Vercel -- gesto natural da Fase C. Guarda fica aqui.
+    const faltandoRd = Object.entries({
+      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
+    }).filter(([, v]) => !v).map(([k]) => k);
+    if (faltandoRd.length) {
+      return Response.json({ error: `Config ausente na Vercel: ${faltandoRd.join(", ")}` }, { status: 500 });
     }
 
     const { data: cfg } = await sb.from("carteira_config").select("employee_id").eq("slug", cli.carteira as string).maybeSingle();

@@ -77,6 +77,44 @@ export async function POST(req: Request) {
     }, { status: 422 });
   }
 
+  // -------------------------------------------------------------------------
+  // ✋ PEGAR DA FILA — decisão ATÔMICA, no banco (migration 0120).
+  //
+  // Medido em 30/08/2026: duas consultoras clicando ao mesmo tempo na mesma
+  // conversa recebiam AS DUAS um 200, e uma ficava achando que tinha pegado
+  // a conversa da outra, sem aviso. `chat_transferencia` é append-only e não
+  // tinha trava.
+  //
+  // Conferir DEPOIS de gravar não resolve — foi a primeira tentativa e o teste
+  // reprovou de novo: ler depois de escrever enxerga quem escreveu ANTES,
+  // nunca quem escreve DEPOIS, então cada chamada relia e via a si mesma como
+  // a última. A função `chat_pegar_da_fila` faz checagem e inserção dentro de
+  // um advisory lock por cliente_id, que é o único lugar onde isso é decidível.
+  // -------------------------------------------------------------------------
+  if (de === null && !devolver) {
+    const { data: r, error: eRpc } = await sb.rpc("chat_pegar_da_fila", {
+      p_cliente_id: cliente_id, p_para: para, p_por: usuario, p_observacao: observacao,
+    });
+    if (eRpc) {
+      // Enquanto a 0120 não estiver aplicada a função não existe. Cair no
+      // caminho antigo é melhor que recusar o Pegar: volta a haver corrida,
+      // que é rara, em vez de a fila parar de funcionar, que é constante.
+      if (!/chat_pegar_da_fila|function .* does not exist|PGRST202/i.test(eRpc.message ?? "")) {
+        return Response.json({ error: eRpc.message }, { status: 500 });
+      }
+      console.warn("[transferir] 0120 ausente — pegar da fila sem trava:", eRpc.message);
+    } else {
+      if (!r?.ok) {
+        return Response.json({
+          error: `${r?.dono} pegou esta conversa primeiro.`,
+          perdeuACorrida: true,
+          dono: r?.dono ?? null,
+        }, { status: 409 });
+      }
+      return Response.json({ ok: true, transferencia: r.transferencia });
+    }
+  }
+
   const { data, error } = await sb
     .from("chat_transferencia")
     .insert({ cliente_id, de_carteira: de, para_carteira: para, por: usuario, observacao })

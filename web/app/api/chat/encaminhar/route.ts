@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { sendText, sendMedia, canalDeResposta, linhaDeEnvio, tipoDoMime } from "../../../../lib/whatsapp";
+import { sendText, sendMedia, canalDeResposta, linhaDaConversa, tipoDoMime } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -60,10 +60,14 @@ export async function POST(req: Request) {
     }, { status: 422 });
   }
 
+  // A linha é a do DESTINO, não a da conversa de origem: encaminhar é começar
+  // a falar com outra pessoa, e é o número em que ELA escreve que vale.
+  const linha = await linhaDaConversa(db, para);
+
   const comum = {
     cliente_id: para, enviada_por: "operator", tipo: "mensagem",
     status: "wait", criada_em: new Date().toISOString(),
-    linha_id: linhaDeEnvio(),
+    linha_id: linha,
     encaminhada_de: (msg as any).cliente_id,
   };
 
@@ -95,7 +99,7 @@ export async function POST(req: Request) {
       const mime = String((msg as any).midia_mime ?? arq.type ?? "application/octet-stream");
       const bytes = await arq.arrayBuffer();
       const nome = path.split("/").pop() || "arquivo";
-      const { wamid } = await sendMedia(tel, bytes, mime, nome, (msg as any).conteudo ?? undefined);
+      const { wamid } = await sendMedia(tel, bytes, mime, nome, (msg as any).conteudo ?? undefined, linha);
       await gravar({
         ...comum, id: wamid,
         conteudo: (msg as any).conteudo ?? null,
@@ -106,7 +110,7 @@ export async function POST(req: Request) {
 
     const texto = String((msg as any).conteudo ?? "").trim();
     if (!texto) return Response.json({ error: "não há o que encaminhar nesta mensagem" }, { status: 400 });
-    const { wamid } = await sendText(tel, texto);
+    const { wamid } = await sendText(tel, texto, linha);
     await gravar({ ...comum, id: wamid, conteudo: texto });
     return Response.json({ ok: true, id: wamid, para: (dest as any)?.nome_completo ?? para });
   } catch (e: any) {

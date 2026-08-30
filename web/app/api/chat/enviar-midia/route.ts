@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { canalDeResposta, sendMedia, linhaDeEnvio } from "../../../../lib/whatsapp";
+import { canalDeResposta, sendMedia, linhaDaConversa } from "../../../../lib/whatsapp";
 import { tipoDoMime, extensaoDoMime, limiteDe, recadoDeLimite, emMB } from "../../../../lib/midia";
 import { ehWebm, webmParaOgg, mp4ComOpus } from "../../../../lib/opusOgg";
 
@@ -49,6 +49,10 @@ export async function POST(req: Request) {
 
   const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
   if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
+
+  // Por qual número esta conversa é respondida. O upload da mídia também sai
+  // por ele: media_id pertence à linha que subiu o arquivo.
+  const linha = await linhaDaConversa(sb, cliente_id);
 
   // ⚠️ o caminho vem do navegador, então é conferido contra o dono: sem isto,
   // uma sessão qualquer poderia mandar o arquivo de OUTRA conversa (o bucket é
@@ -112,7 +116,7 @@ export async function POST(req: Request) {
   let wamid: string;
   const t0 = Date.now();
   try {
-    ({ wamid } = await sendMedia(to, bytes, mime, nome, legenda));
+    ({ wamid } = await sendMedia(to, bytes, mime, nome, legenda, linha));
   } catch (e: any) {
     // o arquivo já está no bucket e a mensagem não saiu: sem apagar, cada
     // tentativa fora da janela deixaria um órfão que ninguém nunca vê.
@@ -146,7 +150,7 @@ export async function POST(req: Request) {
     midia_path: caminho,
     midia_mime: mime,
     midia_nome: nome || null,
-    linha_id: linhaDeEnvio(),
+    linha_id: linha,
   }, { onConflict: "id" });
 
   return Response.json({ ok: true, wamid, tipo });

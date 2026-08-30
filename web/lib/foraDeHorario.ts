@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendText, linhaDeEnvio } from "./whatsapp";
+import { sendText, linhaDaConversa } from "./whatsapp";
 
 // ---------------------------------------------------------------------------
 // Resposta automática fora do horário de atendimento.
@@ -72,7 +72,9 @@ export async function avisarForaDeHorario(
       .gte("criada_em", desde);
     if ((count ?? 0) > 0) return false;
 
-    const { wamid } = await sendText(destino, cfg.mensagem);
+    // O aviso automatico responde pela MESMA linha em que a cliente escreveu.
+    const linha = await linhaDaConversa(sb, clienteId);
+    const { wamid } = await sendText(destino, cfg.mensagem, linha);
 
     await sb.from("mensagens").upsert({
       id: wamid,
@@ -82,7 +84,7 @@ export async function avisarForaDeHorario(
       conteudo: cfg.mensagem,
       status: "wait",
       criada_em: new Date().toISOString(),
-      linha_id: linhaDeEnvio(),
+      linha_id: linha,
     }, { onConflict: "id" });
 
     return true;

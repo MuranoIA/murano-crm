@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendTemplate, linhaDeEnvio } from "../../../lib/whatsapp";
+import { canalDeResposta, sendTemplate, linhaDaConversa } from "../../../lib/whatsapp";
 import { traduzErroRd } from "../../../lib/erroRd";
 import { variaveisDe, limparVariavel, aplicarVariaveis, conferirVariaveis } from "../../../lib/templateVars";
 
@@ -20,7 +20,6 @@ export async function POST(req: Request) {
     // editável pela UI sem redeploy (ver /api/templates). Env var só como fallback legado.
     const faltando = Object.entries({
       SUPABASE_URL: supaUrl, SUPABASE_SERVICE_ROLE_KEY: supaKey,
-      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
     }).filter(([, v]) => !v).map(([k]) => k);
     if (faltando.length) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
@@ -160,7 +159,11 @@ export async function POST(req: Request) {
           componentes.push({ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) });
         }
 
-        const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes);
+        // A conversa responde PELO NUMERO EM QUE A CLIENTE FALOU (§dois numeros).
+        // Um valor global aqui responderia pelo numero errado e cairia em 131047,
+        // porque a janela de 24h e por par (numero, cliente).
+        const linha = await linhaDaConversa(sb, cliente_id);
+        const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes, linha);
         await sb.from("disparos_template").insert({
           id: wamid, cliente_id: cli.id, telefone: cli.telefone, vendedor: cli.carteira,
           operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
@@ -179,7 +182,7 @@ export async function POST(req: Request) {
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "template", conteudo: textoEnviado,
           status: "wait", criada_em: new Date().toISOString(),
-          linha_id: linhaDeEnvio(),
+          linha_id: linha,
           // template com imagem reaproveita a bolha de mídia que já existe: o
           // arquivo é o mesmo do cadastro, servido do bucket por URL assinada
           ...(escolhido?.cabecalho_tipo === "imagem" && escolhido?.imagem_path
@@ -194,6 +197,16 @@ export async function POST(req: Request) {
       } catch (e: any) {
         return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
       }
+    }
+
+    // As envs do RD so importam no ramo do RD, logo abaixo. Exigi-las la em
+    // cima derrubava o envio 100% Cloud com 500 quando alguem apagasse as
+    // envs do RD na Vercel -- gesto natural da Fase C. Guarda fica aqui.
+    const faltandoRd = Object.entries({
+      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
+    }).filter(([, v]) => !v).map(([k]) => k);
+    if (faltandoRd.length) {
+      return Response.json({ error: `Config ausente na Vercel: ${faltandoRd.join(", ")}` }, { status: 500 });
     }
 
     // ---- fluxo RD Conversas (intocado) ---------------------------------------

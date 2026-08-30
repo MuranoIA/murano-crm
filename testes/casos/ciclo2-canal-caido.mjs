@@ -27,6 +27,10 @@ export default async function (t) {
   if (!ID) { t.pular("(ciclo inteiro)", "⛔", "o número autorizado não tem contato no banco"); return; }
 
   // ------------------------------------------------------------------ passo 1
+  // estado do alarme ANTES do plantio — o passo 3 compara contra ele, porque
+  // pode haver mensagem real presa em `wait` que não é deste teste.
+  let antes = null;
+
   t.pular("1. simular queda do canal (revogar token / desconectar número)", "—",
     "RECUSADO por segurança: revogar o token ou desconectar o número derruba o atendimento real de " +
     "15 pessoas e o recebimento de clientes. Testo o detector no passo 2, que é o que interessa saber.");
@@ -41,8 +45,8 @@ export default async function (t) {
       );
     }
 
-    // estado de partida, para comparar
-    const antes = linhaEnvioAtiva;
+    // estado de partida, para comparar (visível também no passo 3)
+    antes = linhaEnvioAtiva;
 
     // planta 3 presas (PRESAS_GRAVE) com 20 min de idade (> MINUTOS_PRESA=15)
     const criada = new Date(Date.now() - 20 * 60_000).toISOString();
@@ -79,7 +83,19 @@ export default async function (t) {
     await espera(300);
     const r = await api.get("/api/funil", api.SESSOES.admin);
     const s = r.json?.saude;
-    api.ok(s && s.estado !== "mudo", `o alarme continuou "mudo" depois de remover as presas: ${JSON.stringify(s)}`);
+    // ⚠️ CORRIGIDO EM 30/08/2026: este passo exigia o alarme APAGADO, e reprovou
+    // com 5 presas. Não era defeito do alarme — eram cinco mensagens REAIS
+    // paradas em `wait` na produção, e o alarme estava dizendo a verdade. Um
+    // teste que reprova quando o sistema acerta é pior que teste nenhum.
+    //
+    // A pergunta certa não é "o alarme apagou", é "o alarme parou de contar as
+    // MINHAS presas" — ou seja, ele reage à remoção em vez de ficar travado.
+    const caiu = s && (s.estado !== "mudo" || s.presas <= Math.max(0, (antes?.presas ?? 0)));
+    api.ok(caiu, `o alarme não reagiu à remoção: ${JSON.stringify(s)} (antes do plantio havia ${antes?.presas ?? "?"})`);
+    if (s?.estado === "mudo") {
+      return `o alarme continua aceso, e com razão: ${s.presas} mensagem(ns) REAL(is) parada(s) em wait, ` +
+        `que já existiam antes deste teste. Ele voltou ao número de antes (${antes?.presas ?? "?"}), então não ficou travado.`;
+    }
     return `voltou a estado="${s.estado}" — o alarme segue o estado, não fica preso`;
   });
 
