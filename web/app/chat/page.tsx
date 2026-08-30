@@ -14,6 +14,7 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
+import { limiteDe, recadoDeLimite } from "../../lib/midia";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
@@ -1260,7 +1261,15 @@ export default function Chat() {
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
   // progresso do envio em lote (várias fotos de uma vez)
-  const [fila, setFila] = useState<{ feito: number; total: number } | null>(null);
+  // `pct` = quanto do arquivo ATUAL já subiu para o Storage. Só é preenchido
+  // acima de 2 MB — num anexo pequeno o número piscaria e sumiria.
+  const [fila, setFila] = useState<{ feito: number; total: number; pct: number | null } | null>(null);
+  // O que o clipe mostra enquanto envia. Lote ganha de porcentagem: saber que
+  // faltam 3 de 5 fotos vale mais que os 40% da terceira.
+  const rotuloFila = !fila ? null
+    : fila.total > 1 ? `${fila.feito}/${fila.total}`
+    : fila.pct != null ? `${fila.pct}%`
+    : null;
   const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
   // histórico do outro número (0103): quantas mensagens a seleção de linhas
   // esconde nesta conversa, e se já foram trazidas
@@ -2001,7 +2010,47 @@ export default function Chat() {
     pedacosRef.current = [];
   }
 
+  /**
+   * Sobe UM arquivo direto do navegador para o Supabase Storage, com o token de
+   * escrita que `enviar-midia/assinar` acabou de emitir.
+   *
+   * ⚠️ Não passa pelo nosso servidor DE PROPÓSITO: a Vercel corta o corpo de
+   * qualquer requisição em 4,5 MB (`413 FUNCTION_PAYLOAD_TOO_LARGE`), antes da
+   * função rodar — medido na produção em 29/08/2026. Era isso que fazia PDF
+   * pequeno passar e PDF grande falhar.
+   *
+   * XHR e não `fetch` porque só ele dá `upload.onprogress`: num arquivo de
+   * dezenas de MB, uma tela parada é indistinguível de uma tela travada.
+   */
+  function subirParaStorage(
+    file: File, path: string, token: string, aoAndar: (pct: number) => void,
+  ): Promise<void> {
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!base) return Promise.reject(new Error("Storage não configurado (NEXT_PUBLIC_SUPABASE_URL)"));
+    const url = `${base}/storage/v1/object/upload/sign/wa-midia/${path}?token=${encodeURIComponent(token)}`;
+    return new Promise((ok, erro) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", url, true);
+      x.setRequestHeader("content-type", file.type || "application/octet-stream");
+      x.setRequestHeader("x-upsert", "true");
+      x.upload.onprogress = (e) => {
+        if (e.lengthComputable) aoAndar(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      };
+      x.onload = () => (x.status >= 200 && x.status < 300
+        ? ok()
+        : erro(new Error(`falha ao subir o arquivo (${x.status})`)));
+      x.onerror = () => erro(new Error("conexão caiu durante o envio do arquivo"));
+      x.onabort = () => erro(new Error("envio do arquivo cancelado"));
+      x.send(file);
+    });
+  }
+
   // envio de arquivo (foto, áudio, documento) pelo canal WhatsApp direto.
+  //
+  // Três passos por arquivo: (1) `assinar` confere sessão, canal e tamanho e
+  // devolve um endereço no Storage — todas as recusas caras acontecem aqui,
+  // ANTES de um byte subir; (2) o navegador sobe o arquivo direto no Storage;
+  // (3) `enviar-midia` recebe só o caminho, baixa e repassa para a Meta.
   //
   // Vários de uma vez: a Cloud API manda UMA mídia por requisição, então a fila é
   // nossa. SEQUENCIAL de propósito — em paralelo os arquivos chegariam fora de
@@ -2022,19 +2071,62 @@ export default function Chat() {
     // em cada foto faria a cliente ler cinco vezes a mesma coisa.
     const legenda = texto.trim();
     setEnviandoArquivo(true); setAviso(null);
-    setFila({ feito: 0, total: files.length });
+    setFila({ feito: 0, total: files.length, pct: null });
     const falhas: string[] = [];
     let enviados = 0;
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setFila({ feito: i, total: files.length });
+        setFila({ feito: i, total: files.length, pct: null });
         try {
-          const fd = new FormData();
-          fd.set("cliente_id", alvo.cliente_id);
-          fd.set("arquivo", file);
-          if (i === 0 && legenda) fd.set("legenda", legenda);
-          const r = await fetch("/api/chat/enviar-midia", { method: "POST", body: fd });
+          // corte de tamanho aqui também, com a MESMA função da rota: recusar
+          // um arquivo grande demais não precisa de ida ao servidor, e o
+          // recado sai idêntico porque sai do mesmo lugar.
+          if (file.size > limiteDe(file.type || "application/octet-stream")) {
+            falhas.push(`${file.name}: ${recadoDeLimite(file.type || "application/octet-stream", file.size)}`);
+            setFila({ feito: i + 1, total: files.length, pct: null });
+            continue;
+          }
+
+          const ass = await fetch("/api/chat/enviar-midia/assinar", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              cliente_id: alvo.cliente_id,
+              nome: file.name, mime: file.type || "application/octet-stream", tamanho: file.size,
+            }),
+          });
+          const a = await ass.json().catch(() => null);
+          if (!ass.ok) {
+            // conversa ainda no RD (501) vale para a conversa inteira, não para
+            // este arquivo: insistir nos seguintes só repetiria o mesmo erro.
+            // Tamanho (413), por outro lado, é problema DESTE arquivo — o
+            // próximo pode caber.
+            if (ass.status === 501) {
+              const restam = files.length - i;
+              setAviso((a?.error ?? `erro ${ass.status}`) + (restam > 1 ? ` (${restam} arquivos não enviados)` : ""));
+              break;
+            }
+            falhas.push(`${file.name}: ${a?.error ?? `erro ${ass.status}`}`);
+            setFila({ feito: i + 1, total: files.length, pct: null });
+            continue;
+          }
+
+          // barra de progresso só a partir de 2 MB: abaixo disso o número pisca
+          // e some antes de alguém conseguir ler.
+          const mostraPct = file.size > 2 * 1024 * 1024;
+          await subirParaStorage(file, a.path, a.token, (pct) => {
+            if (mostraPct) setFila({ feito: i, total: files.length, pct });
+          });
+          setFila({ feito: i, total: files.length, pct: mostraPct ? 100 : null });
+
+          const r = await fetch("/api/chat/enviar-midia", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              cliente_id: alvo.cliente_id, path: a.path,
+              mime: a.mime, nome: a.nome,
+              ...(i === 0 && legenda ? { legenda } : null),
+            }),
+          });
           const j = await r.json().catch(() => null);
           if (!r.ok) {
             // janela fechada (422) e conversa ainda no RD (501) valem para a
@@ -2047,7 +2139,12 @@ export default function Chat() {
                 : (j?.error ?? `erro ${r.status}`)) + (restam > 1 ? ` (${restam} arquivos não enviados)` : ""));
               break;
             }
-            falhas.push(`${file.name}: ${j?.error ?? `erro ${r.status}`}`);
+            // 504 é a Vercel matando a função no meio do repasse: o arquivo
+            // subiu, mas não deu tempo de chegar na Meta. Sem tradução isso vira
+            // "erro 504", que não diz a ninguém o que fazer.
+            falhas.push(`${file.name}: ${j?.error ?? (r.status === 504
+              ? "o arquivo é grande demais para o tempo de envio — tente um menor"
+              : `erro ${r.status}`)}`);
           } else {
             enviados++;
             if (i === 0 && legenda) setTexto("");
@@ -2055,7 +2152,7 @@ export default function Chat() {
         } catch (e: any) {
           falhas.push(`${file.name}: ${e?.message ?? e}`);
         }
-        setFila({ feito: i + 1, total: files.length });
+        setFila({ feito: i + 1, total: files.length, pct: null });
       }
       // falha de um arquivo não cala os outros: o aviso diz quantos ficaram para
       // trás. Com um arquivo só (inclusive o áudio gravado) vale o erro cru — o
@@ -3931,9 +4028,9 @@ export default function Chat() {
                     onClick={() => setAnexoAberto((v) => !v)}
                     disabled={enviandoArquivo || modoNota}
                     title={modoNota ? "Nota interna não leva anexo" : "Anexar fotos, áudio ou documentos (dá para escolher várias)"}
-                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: "transparent", color: M.gray, fontSize: fila && fila.total > 1 ? 12 : 17, fontWeight: fila && fila.total > 1 ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: "transparent", color: M.gray, fontSize: rotuloFila ? 12 : 17, fontWeight: rotuloFila ? 700 : 400, fontVariantNumeric: "tabular-nums", opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
                   >
-                    {!enviandoArquivo ? (bc ? <Icone n="clipe" /> : "📎") : fila && fila.total > 1 ? `${fila.feito}/${fila.total}` : "…"}
+                    {!enviandoArquivo ? (bc ? <Icone n="clipe" /> : "📎") : (rotuloFila ?? "…")}
                   </button>
                   {anexoAberto && (
                     <>

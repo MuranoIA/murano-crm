@@ -13,6 +13,13 @@
 
 const GRAPH_VERSION = "v22.0";
 
+import { tipoDoMime, extensaoDoMime } from "./midia";
+
+// As regras de mídia (tipo, extensão, limites) moram em `lib/midia.ts`, que a TELA
+// também importa — este módulo lê o token da Meta e não pode ir para o navegador.
+// Reexportado para quem já importava daqui; a definição continua sendo uma só.
+export { tipoDoMime, extensaoDoMime } from "./midia";
+
 /**
  * Decide o canal de ENVIO de um cliente durante a transição RD → Cloud API.
  * - `wa:<numero>`: contato que nasceu no canal direto (o RD nem o conhece) → whatsapp.
@@ -233,13 +240,7 @@ export function linhaDeEnvio(): string | null {
 }
 
 /** Categoria de mídia que a Cloud API aceita, deduzida do mime do arquivo. */
-export function tipoDoMime(mime: string): "image" | "audio" | "video" | "document" {
-  const m = mime.split(";")[0].trim().toLowerCase();
-  if (m.startsWith("image/")) return "image";
-  if (m.startsWith("audio/")) return "audio";
-  if (m.startsWith("video/")) return "video";
-  return "document";
-}
+
 
 /**
  * Envia mídia: primeiro sobe o arquivo (vira um `media_id` na Meta), depois manda
@@ -282,23 +283,6 @@ export async function sendMedia(
   return post({ to, type: tipo, [tipo]: conteudo });
 }
 
-/** Extensão de arquivo a partir do mime — só para o nome no Storage ficar legível. */
-export function extensaoDoMime(mime: string): string {
-  const mapa: Record<string, string> = {
-    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
-    "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/amr": "amr", "audio/aac": "aac",
-    "video/mp4": "mp4", "video/3gpp": "3gp",
-    "application/pdf": "pdf",
-    "application/msword": "doc",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "application/vnd.ms-excel": "xls",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-  };
-  const limpo = mime.split(";")[0].trim().toLowerCase();
-  if (mapa[limpo]) return mapa[limpo];
-  const sub = limpo.split("/")[1] ?? "bin";
-  return sub.replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
-}
 
 /** Template aprovado. `components` segue o formato do Graph (body params etc.); omitir se o template não tem variáveis. */
 export function sendTemplate(
