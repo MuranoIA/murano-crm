@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 import { randomUUID } from "node:crypto";
 import { BASE } from "./api.mjs";
+import { ENV } from "./db.mjs";
 
 /** Os seis consultores (papel `vendedor` em `acesso`, slug = cookie). */
 export const CONSULTORES = ["anne", "kamilly", "luana", "milene", "thamires", "thiago"];
@@ -194,13 +195,55 @@ export function arquivosDeEnsaio() {
   };
 }
 
-/** FormData pronto para `/api/chat/enviar-midia`. */
-export function formDeMidia(cliente_id, arquivo, legenda) {
-  const fd = new FormData();
-  fd.set("cliente_id", cliente_id);
-  if (legenda) fd.set("legenda", legenda);
-  fd.set("arquivo", new Blob([arquivo.bytes], { type: arquivo.mime }), arquivo.nome);
-  return fd;
+/**
+ * Envia mídia pelo caminho REAL, em três passos — o mesmo que o navegador faz
+ * desde o PR #150.
+ *
+ * ⚠️ O arquivo NÃO passa mais pelo nosso servidor: a Vercel corta o corpo de
+ * qualquer requisição em 4,5 MB antes de a função rodar, e era isso que fazia
+ * PDF pequeno passar e PDF grande falhar. Então:
+ *
+ *   1. `enviar-midia/assinar` devolve `{path, token}` (e confere a conversa)
+ *   2. os bytes vão DIRETO para o Storage, com esse token
+ *   3. `enviar-midia` recebe só o caminho, baixa e repassa para a Meta
+ *
+ * Um teste que mandasse FormData para a rota exercitaria um contrato que não
+ * existe mais — foi exatamente o que aconteceu aqui em 30/08 e devolveu
+ * `400 cliente_id ausente` em 36 envios seguidos.
+ */
+export async function enviarMidia(chamar, sessao, cliente_id, arquivo, legenda) {
+  const ass = await chamar("/api/chat/enviar-midia/assinar", {
+    metodo: "POST", sessao,
+    corpo: { cliente_id, nome: arquivo.nome, mime: arquivo.mime, tamanho: arquivo.bytes.length },
+  });
+  if (ass.status !== 200 || !ass.json?.path) return ass;
+
+  const base = ENV_STORAGE();
+  const url = `${base}/storage/v1/object/upload/sign/wa-midia/${ass.json.path}?token=${encodeURIComponent(ass.json.token)}`;
+  const put = await fetch(url, {
+    method: "PUT",
+    headers: { "content-type": arquivo.mime, "x-upsert": "true" },
+    body: arquivo.bytes,
+  });
+  if (!put.ok) {
+    return { status: put.status, json: { error: `falha ao subir para o Storage: ${await put.text()}` }, texto: "", ms: 0 };
+  }
+
+  return chamar("/api/chat/enviar-midia", {
+    metodo: "POST", sessao,
+    corpo: {
+      cliente_id, path: ass.json.path,
+      mime: ass.json.mime ?? arquivo.mime, nome: ass.json.nome ?? arquivo.nome,
+      ...(legenda ? { legenda } : null),
+    },
+  });
+}
+
+/** A URL do Storage — a mesma que o navegador usa. */
+function ENV_STORAGE() {
+  const v = ENV.NEXT_PUBLIC_SUPABASE_URL || ENV.SUPABASE_URL;
+  if (v) return v;
+  throw new Error("SUPABASE_URL ausente — o ensaio de mídia precisa falar com o Storage");
 }
 
 // ---------------------------------------------------------------------------

@@ -169,7 +169,7 @@ export default async function (t) {
         // uma mídia por rodada, alternando os três tipos que a consultora usa
         const tipo = ["imagem", "audio", "documento"][r % 3];
         await m.medir(`POST /api/chat/enviar-midia (${tipo})`, slug, () =>
-          chamar("/api/chat/enviar-midia", { metodo: "POST", sessao: s, corpo: sim.formDeMidia(c.id, arq[tipo], tipo === "audio" ? "" : `${tipo} do ensaio`) }));
+          sim.enviarMidia(chamar, s, c.id, arq[tipo], tipo === "audio" ? "" : `${tipo} do ensaio`));
 
         await m.medir("POST /api/chat/lida", slug, () =>
           chamar("/api/chat/lida", { metodo: "POST", sessao: s, corpo: { cliente_id: c.id } }));
@@ -428,10 +428,8 @@ export default async function (t) {
     const detalhes = [];
     for (const c of abertas) {
       for (const tipo of ["imagem", "audio", "documento"]) {
-        const r = await chamar("/api/chat/enviar-midia", {
-          metodo: "POST", sessao: SESSOES.admin,
-          corpo: sim.formDeMidia(c.id, arq[tipo], tipo === "audio" ? "" : `Ensaio do Pulse — ${tipo}`),
-        });
+        const r = await sim.enviarMidia(chamar, SESSOES.admin, c.id, arq[tipo],
+          tipo === "audio" ? "" : `Ensaio do Pulse — ${tipo}`);
         detalhes.push(`${c.numero} ${tipo}: ${r.status === 200 ? "ok" : `FALHOU ${r.status} ${(r.json?.error ?? "").slice(0, 140)}`}`);
       }
     }
