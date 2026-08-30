@@ -1944,23 +1944,60 @@ export default function Chat() {
   const [gravando, setGravando] = useState(false);
   const [segundos, setSegundos] = useState(0);
 
+  // ---- a gravação pronta, esperando decisão ------------------------------
+  // Parar de gravar ENVIAVA na hora. Mensagem de voz é o único conteúdo que o
+  // vendedor manda sem nunca ter visto — e não tem desfazer: a Cloud API não
+  // apaga mensagem enviada (§49), então a cliente ouve o cachorro latindo, a
+  // frase cortada ou o silêncio de dez segundos, e o único conserto é gravar
+  // outro por cima pedindo desculpa. A decisão passa a acontecer ANTES do envio.
+  const [previa, setPrevia] = useState<{ url: string; file: File; seg: number } | null>(null);
+  const [tocando, setTocando] = useState(false);
+  const [posicao, setPosicao] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  function soltarPrevia() {
+    audioRef.current?.pause();
+    setPrevia(null); setTocando(false); setPosicao(0);
+  }
+
+  // A URL do blob vive na memória do navegador até alguém revogá-la à mão.
+  // Amarrada ao ciclo do estado, ela se solta sozinha nos três casos — gravar
+  // outra por cima, descartar, e sair da tela — em vez de depender de cada
+  // caminho lembrar de limpar.
+  useEffect(() => {
+    const u = previa?.url;
+    return () => { if (u) URL.revokeObjectURL(u); };
+  }, [previa?.url]);
+
+  // Prévia é de UMA conversa: trocar de cliente com áudio pendente e clicar em
+  // Enviar mandaria a gravação para a pessoa errada.
+  useEffect(() => { soltarPrevia(); }, [sel?.cliente_id]);
+
   async function alternarGravacao() {
     if (gravando) { recRef.current?.stop(); return; }
-    if (!sel) return;
+    if (previa || !sel) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = FORMATOS_AUDIO.find((f) => (window as any).MediaRecorder?.isTypeSupported?.(f)) ?? "";
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       pedacosRef.current = [];
+      // O relógio, e não o cronômetro da tela: este closure é montado no
+      // início da gravação e leria `segundos` congelado em zero.
+      // Serve de PISO para a barra da prévia: o `<audio>` costuma informar a
+      // duração certa (medido no Chrome: 3,9 s para 4 s de gravação) e ela
+      // assume assim que carrega — mas o WebM do MediaRecorder sai sem duração
+      // no cabeçalho, e nem todo navegador a reconstrói.
+      const t0 = Date.now();
       rec.ondataavailable = (e) => { if (e.data.size) pedacosRef.current.push(e.data); };
-      rec.onstop = async () => {
+      rec.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         setGravando(false);
         const tipo = rec.mimeType || mime || "audio/ogg";
         const blob = new Blob(pedacosRef.current, { type: tipo });
         if (blob.size < 1200) { setAviso("Áudio muito curto — segure mais tempo."); return; }
         const ext = tipo.includes("ogg") ? "ogg" : tipo.includes("mp4") ? "m4a" : tipo.includes("aac") ? "aac" : "webm";
-        await enviarArquivo(new File([blob], `audio-${Date.now()}.${ext}`, { type: tipo.split(";")[0] }));
+        const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: tipo.split(";")[0] });
+        setPrevia({ url: URL.createObjectURL(blob), file, seg: Math.max(1, Math.round((Date.now() - t0) / 1000)) });
       };
       recRef.current = rec;
       rec.start();
@@ -1968,6 +2005,20 @@ export default function Chat() {
     } catch {
       setAviso("Não consegui acessar o microfone — verifique a permissão do navegador.");
     }
+  }
+
+  function ouvirPrevia() {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play().catch(() => setAviso("Não consegui tocar a gravação neste navegador."));
+    else a.pause();
+  }
+
+  async function enviarPrevia() {
+    const p = previa;
+    if (!p || enviandoArquivo) return;
+    soltarPrevia();               // revogar a URL não invalida o File: o envio usa o File
+    await enviarArquivo(p.file);
   }
 
   // cronômetro da gravação
@@ -3912,6 +3963,55 @@ export default function Chat() {
                   </div>
                 )}
 
+                {/* ---- gravação pronta: ouvir, e só então decidir ----------------
+                    Fica ACIMA do compositor, e não dentro da pílula, porque as
+                    duas ações aqui não são do mesmo peso do clipe e do micro-
+                    fone: uma delas fala com a cliente e não volta atrás. */}
+                {previa && (
+                  <div style={{ margin: "0 14px", display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 10px", background: M.surface, border: `1px solid ${M.border}`,
+                    borderLeft: `3px solid ${M.roxo}`, borderRadius: "0 10px 10px 0" }}>
+                    {/* o player é nosso: `<audio controls>` é desenhado pelo
+                        navegador, muda de cara em cada um, e traz seek, volume e
+                        menu de download num lugar onde o gesto útil é só ouvir */}
+                    <audio ref={audioRef} src={previa.url} preload="metadata"
+                      onPlay={() => setTocando(true)}
+                      onPause={() => setTocando(false)}
+                      onEnded={() => { setTocando(false); setPosicao(0); }}
+                      onLoadedMetadata={(e) => {
+                        const d = e.currentTarget.duration;
+                        if (Number.isFinite(d) && d > 0) setPrevia((p) => (p ? { ...p, seg: d } : p));
+                      }}
+                      onTimeUpdate={(e) => setPosicao((e.currentTarget as HTMLAudioElement).currentTime)} />
+                    <button onClick={ouvirPrevia} title={tocando ? "Pausar" : "Ouvir antes de enviar"}
+                      style={{ width: 30, height: 30, borderRadius: 30, display: "flex", alignItems: "center",
+                        justifyContent: "center", flexShrink: 0, border: "none", cursor: "pointer",
+                        fontFamily: "inherit", fontSize: 13, background: M.roxoSoft, color: M.roxo }}>
+                      {bc ? <Icone n={tocando ? "pausa" : "tocar"} tamanho={15} /> : tocando ? "⏸" : "▶"}
+                    </button>
+                    <span style={{ flex: 1, minWidth: 40, height: 4, borderRadius: 4, background: M.bg, overflow: "hidden" }}>
+                      <span style={{ display: "block", height: "100%", borderRadius: 4, background: M.roxo,
+                        width: `${Math.min(100, (posicao / previa.seg) * 100)}%` }} />
+                    </span>
+                    <b style={{ fontSize: 12, color: M.gray, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                      {String(Math.floor((tocando || posicao ? posicao : previa.seg) / 60)).padStart(2, "0")}
+                      :{String(Math.floor((tocando || posicao ? posicao : previa.seg) % 60)).padStart(2, "0")}
+                    </b>
+                    <button onClick={soltarPrevia} title="Descartar e não enviar"
+                      style={{ background: "transparent", border: "none", color: M.gray, fontSize: 11.5,
+                        cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", flexShrink: 0 }}>
+                      descartar
+                    </button>
+                    <button onClick={enviarPrevia} disabled={enviandoArquivo}
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8,
+                        border: "none", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", color: "#fff",
+                        background: M.roxo, flexShrink: 0, cursor: enviandoArquivo ? "default" : "pointer",
+                        opacity: enviandoArquivo ? 0.6 : 1 }}>
+                      {bc ? <Icone n="enviar" tamanho={14} /> : null} Enviar
+                    </button>
+                  </div>
+                )}
+
                 {/* ---- respostas rápidas: abre digitando `/` ou pelo botão ⚡ ---- */}
                 {picker && (
                   <div style={{ margin: "0 14px", background: M.surface, border: `1px solid ${M.border}`, borderRadius: "10px 10px 0 0", borderBottom: "none", overflow: "hidden" }}>
@@ -4080,10 +4180,12 @@ export default function Chat() {
                   {/* 🎤 gravar áudio — clica pra gravar, clica de novo pra enviar */}
                   <button
                     onClick={alternarGravacao}
-                    disabled={enviandoArquivo || modoNota}
-                    title={modoNota ? "Nota interna não leva áudio" : gravando ? "Parar e enviar" : "Gravar áudio"}
+                    disabled={enviandoArquivo || modoNota || !!previa}
+                    title={modoNota ? "Nota interna não leva áudio"
+                      : previa ? "Ouça a gravação e decida antes de gravar outra"
+                      : gravando ? "Parar e ouvir" : "Gravar áudio"}
                     style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), flexShrink: 0, fontFamily: "inherit", fontSize: 17,
-                      opacity: modoNota ? 0.4 : 1, cursor: enviandoArquivo || modoNota ? "default" : "pointer",
+                      opacity: modoNota || previa ? 0.4 : 1, cursor: enviandoArquivo || modoNota || previa ? "default" : "pointer",
                       border: "none",
                       background: gravando ? "#fdeae3" : "transparent", color: gravando ? M.laranja : M.gray }}
                   >
