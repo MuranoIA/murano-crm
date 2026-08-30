@@ -6,6 +6,8 @@
 // ela escolhe e explica o público. Dá para validar público, cortes, ranking e o
 // corte `numero_morto` sem uma mensagem sequer. Paro antes do botão de confirmar.
 // -----------------------------------------------------------------------------
+import { modoMigracaoDe } from "../ajuda.mjs";
+
 export const ciclo = "Ciclo 3 — disparo em massa (SÓ PRÉVIA — enviar é proibido)";
 
 const previa = (api, filtros, sessao) =>
@@ -29,7 +31,18 @@ export default async function (t) {
     api.ok(tpls.length > 0, "nenhum template disponível para campanha");
     // §26.3: a entrada sintética "Padrão do sistema" tem de existir, senão a
     // tela não consegue fazer o que o board fazia.
-    api.ok(tpls.some((x) => Number(x.id) === 0), "a opção sintética `Padrão do sistema` (id 0) sumiu — §26.3");
+    // ⚠️ CORRIGIDO EM 30/08/2026: esta linha exigia a opção sempre, e reprovava.
+    // Não era defeito — a rota a esconde de propósito com o MODO MIGRAÇÃO ligado
+    // (§44/§45): oferecer o template do painel do RD numa tela que não nomeia
+    // mais o RD, e cujo envio já vai para a Cloud, seria prometer alcance que
+    // ela não tem. A regra do teste passa a ser condicional, como a do app.
+    const cfgMig = modoMigracaoDe(await db.lerConfig());
+    const temPadrao = tpls.some((x) => Number(x.id) === 0);
+    if (cfgMig) {
+      api.ok(!temPadrao, "modo migração ligado, mas `Padrão do sistema` (id 0) ainda aparece — a tela nomearia o RD");
+    } else {
+      api.ok(temPadrao, "a opção sintética `Padrão do sistema` (id 0) sumiu — §26.3");
+    }
     // Cloud só entra se a Meta aprovou; senão o envio falharia com 132001.
     const cloudNaoAprovado = tpls.filter((x) => x.canal === "cloud" && String(x.status ?? "").toUpperCase() !== "APPROVED");
     api.igual(cloudNaoAprovado.length, 0,

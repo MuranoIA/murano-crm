@@ -50,8 +50,18 @@ export async function subirChrome({ porta = 9222, headless = true } = {}) {
     `--user-data-dir=${perfil}`,
     "--no-first-run", "--no-default-browser-check",
     "--disable-background-networking", "--disable-sync",
-    "--disable-features=Translate,MediaRouter",
     "--window-size=1440,900",
+    // O CRM roda EMBUTIDO no hub (§17), e testar isso exige avaliar JS DENTRO
+    // do quadro. Com site isolation ligado, um iframe de outra origem vira um
+    // PROCESSO separado (OOPIF) e o contexto dele nao aparece no alvo da pagina:
+    // `Runtime.executionContextCreated` nunca menciona o quadro, e a sonda
+    // conclui "o iframe nao carregou" quando ele carregou muito bem.
+    //
+    // Estes dois flags mantem o quadro no mesmo processo. NAO afetam o que
+    // estamos medindo: permissions policy (`allow=`) e cookie de terceiro sao
+    // regras de documento, nao do modelo de processos.
+    "--disable-site-isolation-trials",
+    "--disable-features=IsolateOrigins,site-per-process,Translate,MediaRouter",
   ];
   if (headless) args.push("--headless=new", "--disable-gpu");
   const proc = spawn(bin, args, { stdio: "ignore", detached: false });

@@ -11,6 +11,8 @@
 // Após o envio, o webhook (app/api/whatsapp/webhook) recebe os statuses
 // (sent/delivered/read) e atualiza a linha em `mensagens` pelo wamid.
 
+import { deveSimular, wamidSimulado } from "./simulacaoEnvio";
+
 const GRAPH_VERSION = "v22.0";
 
 import { tipoDoMime, extensaoDoMime } from "./midia";
@@ -96,6 +98,11 @@ export function envWa(nome: string): string {
 const env = envWa;
 
 async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
+  // Ensaio de carga: nada sai para quem nao esta na lista de destinos reais.
+  // Fica ANTES de ler as envs de proposito — assim o ensaio roda mesmo numa
+  // maquina sem WHATSAPP_TOKEN, que e a rede de protecao mais barata que existe.
+  if (deveSimular(String((payload as any).to ?? ""))) return { wamid: wamidSimulado() };
+
   const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
   const token = env("WHATSAPP_TOKEN");
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -250,6 +257,10 @@ export function linhaDeEnvio(): string | null {
 export async function sendMedia(
   to: string, arquivo: ArrayBuffer | Uint8Array, mime: string, nome: string, legenda?: string,
 ): Promise<EnvioOk> {
+  // Aqui a guarda precisa vir antes do UPLOAD, nao so do post(): subir o
+  // arquivo para a Meta ja e uma chamada de rede e ja consome cota.
+  if (deveSimular(to)) return { wamid: wamidSimulado() };
+
   const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
   const token = env("WHATSAPP_TOKEN");
 

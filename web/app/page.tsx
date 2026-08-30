@@ -1243,9 +1243,11 @@ export default function Page() {
   //   - o board recebe o resultado por Realtime (migration 0069), sem gastar cota;
   //   - urgência pontual: o ↻ do card ampliado continua chamando /api/sync-cliente.
   //
-  // A rota /api/negociacao-sync foi mantida (serve para chamada manual/pontual), mas
-  // não é mais chamada em loop. Se algum dia voltar a ser, precisa de coordenação
-  // entre abas — senão o problema volta idêntico.
+  // A rota /api/negociacao-sync FOI REMOVIDA em 30/08/2026, junto com o resto do
+  // que dependia do RD Conversas: ela puxava conversa do RD ao vivo e já não
+  // tinha nenhum chamador desde que o loop saiu daqui. O ↻ do card ampliado
+  // (/api/sync-cliente) é o que sobrou desse caminho — e some junto quando o
+  // número oficial migrar.
 
   // lista de produtos p/ o filtro (busca uma vez; ~415 itens)
   useEffect(() => {

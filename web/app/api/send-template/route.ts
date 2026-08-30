@@ -20,7 +20,6 @@ export async function POST(req: Request) {
     // editável pela UI sem redeploy (ver /api/templates). Env var só como fallback legado.
     const faltando = Object.entries({
       SUPABASE_URL: supaUrl, SUPABASE_SERVICE_ROLE_KEY: supaKey,
-      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
     }).filter(([, v]) => !v).map(([k]) => k);
     if (faltando.length) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
@@ -194,6 +193,16 @@ export async function POST(req: Request) {
       } catch (e: any) {
         return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
       }
+    }
+
+    // As envs do RD so importam no ramo do RD, logo abaixo. Exigi-las la em
+    // cima derrubava o envio 100% Cloud com 500 quando alguem apagasse as
+    // envs do RD na Vercel -- gesto natural da Fase C. Guarda fica aqui.
+    const faltandoRd = Object.entries({
+      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
+    }).filter(([, v]) => !v).map(([k]) => k);
+    if (faltandoRd.length) {
+      return Response.json({ error: `Config ausente na Vercel: ${faltandoRd.join(", ")}` }, { status: 500 });
     }
 
     // ---- fluxo RD Conversas (intocado) ---------------------------------------

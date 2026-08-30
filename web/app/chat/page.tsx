@@ -2038,7 +2038,15 @@ export default function Chat() {
         body: JSON.stringify({ cliente_id: sel.cliente_id, para: sessao.carteira, observacao: "puxou da fila" }),
       });
       const j = await r.json().catch(() => null);
-      if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
+      if (!r.ok) {
+        setAviso(j?.error ?? `erro ${r.status}`);
+        // Perdeu a corrida do Pegar (409): outra pessoa levou a conversa entre o
+        // desenho desta tela e o clique. Recarregar a lista aqui e o que faz a
+        // conversa sair da fila dela na hora — sem isso o recado aparece mas o
+        // card continua ali, convidando a clicar de novo.
+        if (j?.perdeuACorrida) await carregarLista();
+        return;
+      }
       setSel({ ...sel, na_fila: false, vendedor: sessao.carteira });
       await carregarLista();
       await carregarThread(sel, false);
