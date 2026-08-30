@@ -14,7 +14,7 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
-import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia";
+import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
 // ---------------------------------------------------------------------------
@@ -346,6 +346,14 @@ type Msg = {
   // ponto no mapa (0115). Vale para o que a cliente compartilha E para o que
   // nós mandamos — a bolha desenha o mesmo cartão nos dois casos.
   localizacao?: { lat: number; lng: number; nome?: string | null; endereco?: string | null; url?: string | null } | null;
+  // ---- só no navegador, só enquanto o arquivo sobe -----------------------
+  // A bolha da mídia aparecia depois do upload inteiro: quem mandava cinco
+  // fotos ficava olhando a thread parada, sem prova de que o clique funcionou.
+  // `previaLocal` é um blob do PRÓPRIO arquivo escolhido — a foto de verdade,
+  // não um retangulo cinza — e `pctEnvio` é o quanto já subiu.
+  // Nunca vem do servidor: a recarga da thread troca estas linhas pelas reais.
+  previaLocal?: string;
+  pctEnvio?: number | null;
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -482,16 +490,22 @@ function CartaoLocal({ loc }: { loc: any }) {
 
 function Midia({ m }: { m: Msg }) {
   if (!m.midia_tipo) return null;
-  const src = `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
+  // enquanto sobe, a fonte é o arquivo local: o Storage ainda não tem nada
+  // para servir, e `/api/chat/midia` responderia 404 numa mensagem que nem
+  // existe no banco.
+  const subindo = !!m.previaLocal;
+  const src = m.previaLocal ?? `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
   const caixa = { borderRadius: 9, marginBottom: 4, display: "block" } as const;
 
-  if (!m.midia_path) {
+  // sem caminho no Storage E sem prévia local = a mídia realmente se perdeu
+  if (!m.midia_path && !subindo) {
     return (
       <div style={{ fontSize: 11.5, color: M.laranja, background: "#fdeae3", border: "1px solid #f0c4b0", borderRadius: 8, padding: "5px 9px", marginBottom: 4 }}>
         ⚠️ {rotuloMidia(m.midia_tipo)} não pôde ser baixada
       </div>
     );
   }
+  if (subindo) return <MidiaSubindo m={m} src={src} caixa={caixa} />;
   if (m.midia_tipo === "image" || m.midia_tipo === "sticker") {
     const max = m.midia_tipo === "sticker" ? 140 : 260;
     return (
@@ -519,6 +533,50 @@ function Midia({ m }: { m: Msg }) {
     </a>
   );
 }
+/**
+ * A mídia enquanto ela sobe: o conteúdo de verdade, esmaecido, com o quanto
+ * já foi.
+ *
+ * Mostrar a PRÓPRIA foto (e não um retângulo de carregamento) é o que responde
+ * a pergunta que a pessoa tem nesse instante — "mandei a certa?" — e ela dá
+ * para responder na hora, porque o arquivo já está na mão do navegador.
+ *
+ * `pointerEvents: none` no conteúdo: abrir em tamanho real ou dar play num
+ * arquivo que ainda está subindo não leva a lugar nenhum.
+ */
+function MidiaSubindo({ m, src, caixa }: { m: Msg; src: string; caixa: any }) {
+  const pct = m.pctEnvio;
+  const t = m.midia_tipo;
+  const visual =
+    t === "image" || t === "sticker"
+      ? <img src={src} alt={m.midia_nome || "imagem"} style={{ ...caixa, maxWidth: t === "sticker" ? 140 : 260, maxHeight: 300, objectFit: "cover" }} />
+      : t === "video"
+        ? <video src={src} preload="metadata" style={{ ...caixa, maxWidth: 260, maxHeight: 300 }} />
+        : t === "audio"
+          ? <audio controls preload="metadata" src={src} style={{ ...caixa, width: 240, height: 38 }} />
+          : (
+            <span style={{ ...caixa, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(123,45,139,.07)", border: `1px solid ${M.border}`, maxWidth: 250 }}>
+              <span style={{ fontSize: 18 }}>📎</span>
+              <b style={{ fontSize: 12.5, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {m.midia_nome || "documento"}
+              </b>
+            </span>
+          );
+  return (
+    <span style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
+      <span style={{ display: "block", opacity: 0.45, pointerEvents: "none" }}>{visual}</span>
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 20,
+          background: "rgba(36,19,39,.72)", color: "#fff", fontSize: 11, fontWeight: 700,
+          fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+          <span style={{ width: 7, height: 7, borderRadius: 7, background: "#fff", opacity: 0.85 }} />
+          {pct != null ? `${pct}%` : "enviando…"}
+        </span>
+      </span>
+    </span>
+  );
+}
+
 const rotuloMidia = (t: string) =>
   ({ image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha" }[t] ?? "Mídia");
 
@@ -2373,6 +2431,38 @@ export default function Chat() {
     const legenda = texto.trim();
     setEnviandoArquivo(true); setAviso(null);
     setFila({ feito: 0, total: files.length, pct: null });
+
+    // ---- as bolhas aparecem AGORA, com a própria foto, e sobem esmaecidas ---
+    // O lote inteiro entra de uma vez, e não um por vez: mandar cinco fotos e
+    // ver uma só na tela dá a impressão de que as outras quatro se perderam.
+    //
+    // ⚠️ Toda escrita em `msgs` daqui para baixo passa por `sePermanece`: o
+    // upload demora, e se a pessoa trocar de conversa no meio, um `setMsgs`
+    // solto colaria as fotos de um cliente na thread de outro.
+    const marca = Date.now();
+    const otimistas: Msg[] = files.map((f, i) => ({
+      id: `tmp:midia:${marca}:${i}`,
+      conteudo: i === 0 ? legenda : "",
+      enviada_por: "operator",
+      tipo: "mensagem",
+      status: "wait",
+      criada_em: new Date(marca + i).toISOString(),
+      midia_tipo: tipoDoMime(f.type || "application/octet-stream"),
+      midia_mime: f.type || "application/octet-stream",
+      midia_nome: f.name,
+      previaLocal: URL.createObjectURL(f),
+      pctEnvio: null,
+    }));
+    const sePermanece = (fn: (m: Msg[] | null) => Msg[]) => {
+      if (selRef.current?.cliente_id === alvo.cliente_id) setMsgs(fn as any);
+    };
+    const some = (id: string) => sePermanece((m) => (m ?? []).filter((x) => x.id !== id));
+    const anda = (id: string, pct: number | null) =>
+      sePermanece((m) => (m ?? []).map((x) => (x.id === id ? { ...x, pctEnvio: pct } : x)));
+
+    sePermanece((m) => [...(m ?? []), ...otimistas]);
+    setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+
     const falhas: Falha[] = [];
     let enviados = 0;
     try {
@@ -2386,6 +2476,7 @@ export default function Chat() {
           if (file.size > limiteDe(file.type || "application/octet-stream")) {
             const m = file.type || "application/octet-stream";
             falhas.push({ nome: file.name, razao: recadoDeLimite(m, file.size), grupo: recadoDeLimiteDoTipo(m) });
+            some(otimistas[i].id);
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2409,6 +2500,7 @@ export default function Chat() {
               break;
             }
             falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
+            some(otimistas[i].id);
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2417,9 +2509,13 @@ export default function Chat() {
           // e some antes de alguém conseguir ler.
           const mostraPct = file.size > 2 * 1024 * 1024;
           await subirParaStorage(file, a.path, a.token, (pct) => {
-            if (mostraPct) setFila({ feito: i, total: files.length, pct });
+            if (mostraPct) { setFila({ feito: i, total: files.length, pct }); anda(otimistas[i].id, pct); }
           });
           setFila({ feito: i, total: files.length, pct: mostraPct ? 100 : null });
+          // o arquivo subiu; falta a nossa rota repassar para a Meta. O número
+          // some e volta a "enviando…" porque 100% ali seria mentira: a cliente
+          // ainda não recebeu nada.
+          if (mostraPct) anda(otimistas[i].id, null);
 
           const r = await fetch("/api/chat/enviar-midia", {
             method: "POST", headers: { "content-type": "application/json" },
@@ -2447,12 +2543,14 @@ export default function Chat() {
             falhas.push({ nome: file.name, razao: j?.error ?? (r.status === 504
               ? "o arquivo é grande demais para o tempo de envio — tente um menor"
               : `erro ${r.status}`) });
+            some(otimistas[i].id);
           } else {
             enviados++;
             if (i === 0 && legenda) setTexto("");
           }
         } catch (e: any) {
           falhas.push({ nome: file.name, razao: e?.message ?? String(e) });
+          some(otimistas[i].id);
         }
         setFila({ feito: i + 1, total: files.length, pct: null });
       }
@@ -2466,6 +2564,12 @@ export default function Chat() {
       setEnviandoArquivo(false);
       setFila(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
+      // O `break` do 501/422 sai do laço sem passar pelos `some()`, então as
+      // bolhas dos arquivos que nem chegaram a ser tentados ficariam subindo
+      // para sempre. Aqui vai a rede: some com tudo que ainda for otimista.
+      // A recarga logo abaixo traz as linhas de verdade, com a mesma foto.
+      sePermanece((m) => (m ?? []).filter((x) => !x.id.startsWith(`tmp:midia:${marca}:`)));
+      otimistas.forEach((o) => o.previaLocal && URL.revokeObjectURL(o.previaLocal));
       if (enviados) { carregarThread(alvo, true); carregarLista(); }
     }
   }
