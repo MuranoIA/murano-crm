@@ -64,7 +64,7 @@ export const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 /** wamid de entrada, no formato da Meta (só para ser um id estável e único). */
 export const wamidEntrada = () => `wamid.SIM${randomUUID().replace(/-/g, "").toUpperCase()}`;
 
-function envelope(mensagem, nomePerfil, waId) {
+function envelope(mensagem, nomePerfil, waId, linha) {
   return {
     object: "whatsapp_business_account",
     entry: [{
@@ -73,7 +73,7 @@ function envelope(mensagem, nomePerfil, waId) {
         field: "messages",
         value: {
           messaging_product: "whatsapp",
-          metadata: { display_phone_number: "5591816600019", phone_number_id: LINHA },
+          metadata: { display_phone_number: "5591816600019", phone_number_id: linha ?? LINHA },
           contacts: [{ profile: { name: nomePerfil }, wa_id: waId }],
           messages: [mensagem],
         },
@@ -108,13 +108,13 @@ async function entregarWebhook(corpo) {
 }
 
 /** A cliente manda um texto. */
-export function clienteEscreve(i, texto, nome) {
+export function clienteEscreve(i, texto, nome, linha) {
   const waId = telefoneFicticio(i);
   const id = wamidEntrada();
   return entregarWebhook(envelope({
     from: waId, id, timestamp: String(Math.floor(Date.now() / 1000)),
     type: "text", text: { body: texto },
-  }, nome ?? `Cliente Ensaio ${i}`, waId)).then((r) => ({ ...r, wamid: id }));
+  }, nome ?? `Cliente Ensaio ${i}`, waId, linha)).then((r) => ({ ...r, wamid: id }));
 }
 
 /** A cliente manda uma foto/áudio. `media_id` não é baixável — o webhook grava

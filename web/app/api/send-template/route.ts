@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendTemplate, linhaDeEnvio } from "../../../lib/whatsapp";
+import { canalDeResposta, sendTemplate, linhaDaConversa } from "../../../lib/whatsapp";
 import { traduzErroRd } from "../../../lib/erroRd";
 import { variaveisDe, limparVariavel, aplicarVariaveis, conferirVariaveis } from "../../../lib/templateVars";
 
@@ -159,7 +159,11 @@ export async function POST(req: Request) {
           componentes.push({ type: "body", parameters: valores.map((v) => ({ type: "text", text: v })) });
         }
 
-        const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes);
+        // A conversa responde PELO NUMERO EM QUE A CLIENTE FALOU (§dois numeros).
+        // Um valor global aqui responderia pelo numero errado e cairia em 131047,
+        // porque a janela de 24h e por par (numero, cliente).
+        const linha = await linhaDaConversa(sb, cliente_id);
+        const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes, linha);
         await sb.from("disparos_template").insert({
           id: wamid, cliente_id: cli.id, telefone: cli.telefone, vendedor: cli.carteira,
           operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
@@ -178,7 +182,7 @@ export async function POST(req: Request) {
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "template", conteudo: textoEnviado,
           status: "wait", criada_em: new Date().toISOString(),
-          linha_id: linhaDeEnvio(),
+          linha_id: linha,
           // template com imagem reaproveita a bolha de mídia que já existe: o
           // arquivo é o mesmo do cadastro, servido do bucket por URL assinada
           ...(escolhido?.cabecalho_tipo === "imagem" && escolhido?.imagem_path

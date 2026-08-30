@@ -1310,6 +1310,8 @@ export default function Chat() {
     : fila.pct != null ? `${fila.pct}%`
     : null;
   const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
+  // qual NÚMERO responde esta conversa — a janela de 24h é por número, não por canal
+  const [linhaEnvio, setLinhaEnvio] = useState<string | null>(null);
   // histórico do outro número (0103): quantas mensagens a seleção de linhas
   // esconde nesta conversa, e se já foram trazidas
   const [ocultas, setOcultas] = useState(0);
@@ -1518,6 +1520,7 @@ export default function Chat() {
     // linha mais recente da foto chegou DEPOIS dela, entao sobrevive.
     setMsgs((atual) => juntar(atual, j?.mensagens ?? []));
     setCanalEnvio(j?.canal_envio ?? null);
+    setLinhaEnvio(j?.linha_envio ?? null);
     setOcultas(j?.historico_oculto ?? 0);
     setComHistorico(!!j?.historico_carregado);
     setNotas(j?.notas ?? []);
@@ -2775,8 +2778,14 @@ export default function Chat() {
   // RD não tem janela aberta na Cloud. Contar sobre a conversa inteira faria a
   // faixa dizer "aberta, fecha em 23h" e o envio falhar com 131047 — com o
   // texto já escrito, que é justamente o que a faixa existe para evitar.
+  // Com DUAS linhas Cloud, `!!m.linha_id` não basta: contaria a janela de uma
+  // linha para decidir o envio da outra. Quando o servidor sabe o número, o
+  // filtro é por ele; sem essa informação, cai no comportamento anterior.
   const doCanalDeEnvio = (m: Msg) =>
-    canalEnvio === null ? true : canalEnvio === "rd" ? !m.linha_id : !!m.linha_id;
+    canalEnvio === null ? true
+      : canalEnvio === "rd" ? !m.linha_id
+      : linhaEnvio ? m.linha_id === linhaEnvio
+      : !!m.linha_id;
   const ultimaRecebida = (msgs ?? [])
     .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema" && doCanalDeEnvio(m))
     .slice(-1)[0];

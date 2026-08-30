@@ -309,6 +309,83 @@ export default async function (t) {
   });
 
   // =========================================================================
+  // ATO 3b — DOIS NÚMEROS AO MESMO TEMPO
+  //
+  // O plano do lançamento é migrar o número oficial e manter os DOIS vivos.
+  // Até 30/08/2026 todo envio saía por `WHATSAPP_PHONE_NUMBER_ID`, um valor só
+  // para o sistema inteiro: a cliente escreveria para o número oficial e seria
+  // respondida por outro, numa conversa que no aparelho dela é outra conversa —
+  // e a janela de 24h, que é por par (número, cliente), recusaria o envio.
+  // =========================================================================
+
+  const LINHA_2 = "999000111222333";   // linha de ensaio, removida no fim
+
+  await t.passo("DOIS NÚMEROS: a resposta sai pelo número em que a cliente escreveu", "✅", async () => {
+    await t.db.sb.from("chat_linha").upsert({
+      phone_number_id: LINHA_2, numero: "+5591900000002", rotulo: "Linha de ensaio", ativo: true,
+    }, { onConflict: "phone_number_id" });
+    t.db.anotarRastro(`chat_linha ${LINHA_2}`, (c) => c.from("chat_linha").delete().eq("phone_number_id", LINHA_2));
+
+    // uma cliente escreve para a linha PADRÃO, outra para a SEGUNDA linha
+    const a = { i: 910, id: sim.idFicticio(910) };
+    const b = { i: 911, id: sim.idFicticio(911) };
+    clientes.push({ ...a, dono: null }, { ...b, dono: null });
+    await sim.clienteEscreve(a.i, "escrevi para o número de sempre");
+    await sim.clienteEscreve(b.i, "escrevi para o número novo", undefined, LINHA_2);
+    await espera(400);
+
+    const ra = await post("/api/send-message", { cliente_id: a.id, texto: "resposta A" }, SESSOES.admin);
+    const rb = await post("/api/send-message", { cliente_id: b.id, texto: "resposta B" }, SESSOES.admin);
+    if (ra.status !== 200 || rb.status !== 200) throw new Error(`envios: ${ra.status}/${rb.status}`);
+
+    const linhaDe = async (id) => {
+      const { data } = await t.db.sb.from("mensagens").select("linha_id")
+        .eq("cliente_id", id).eq("enviada_por", "operator").order("criada_em", { ascending: false }).limit(1);
+      return data?.[0]?.linha_id ?? null;
+    };
+    const [la, lb] = [await linhaDe(a.id), await linhaDe(b.id)];
+    if (la !== sim.LINHA) throw new Error(`quem escreveu para a linha padrão foi respondida por ${la}`);
+    if (lb !== LINHA_2) {
+      throw new Error(
+        `quem escreveu para a SEGUNDA linha foi respondida por ${lb} — no aparelho dela isso é outra conversa, ` +
+        `e a janela de 24h daquele número não vale para este`,
+      );
+    }
+    return `A respondida por ${la} · B respondida por ${lb} — cada uma pelo número em que escreveu`;
+  });
+
+  await t.passo("DOIS NÚMEROS: linha DESATIVADA no cadastro não é usada para enviar", "✅", async () => {
+    // Linha desativada existe só para dar rótulo a conversa antiga (§28.8).
+    // Enviar por ela falharia na Meta, então o envio cai no número padrão.
+    await t.db.sb.from("chat_linha").update({ ativo: false }).eq("phone_number_id", LINHA_2);
+    const c = { i: 912, id: sim.idFicticio(912) };
+    clientes.push({ ...c, dono: null });
+    await sim.clienteEscreve(c.i, "escrevi para uma linha que foi desativada", undefined, LINHA_2);
+    await espera(400);
+    const r = await post("/api/send-message", { cliente_id: c.id, texto: "resposta C" }, SESSOES.admin);
+    if (r.status !== 200) throw new Error(`envio: ${r.status} ${(r.texto ?? "").slice(0, 160)}`);
+    const { data } = await t.db.sb.from("mensagens").select("linha_id")
+      .eq("cliente_id", c.id).eq("enviada_por", "operator").order("criada_em", { ascending: false }).limit(1);
+    const l = data?.[0]?.linha_id ?? null;
+    if (l !== sim.LINHA) throw new Error(`caiu em ${l}, esperava o número padrão ${sim.LINHA}`);
+    return `linha inativa ignorada; respondeu pelo padrão (${l})`;
+  });
+
+  await t.passo("DOIS NÚMEROS: a thread diz por qual número vai responder", "✅", async () => {
+    await t.db.sb.from("chat_linha").update({ ativo: true }).eq("phone_number_id", LINHA_2);
+    const b = sim.idFicticio(911);
+    const r = await chamar(`/api/chat/thread?cliente_id=${encodeURIComponent(b)}`, { sessao: SESSOES.admin });
+    if (r.status !== 200) throw new Error(`thread devolveu ${r.status}`);
+    if (!("linha_envio" in (r.json ?? {}))) {
+      throw new Error("a thread não devolve `linha_envio` — a tela contaria a janela de 24h sobre as duas linhas juntas");
+    }
+    if (r.json.linha_envio !== LINHA_2) {
+      throw new Error(`thread diz linha_envio=${r.json.linha_envio}, esperava ${LINHA_2}`);
+    }
+    return `linha_envio=${r.json.linha_envio} — a faixa da janela conta sobre o número certo`;
+  });
+
+  // =========================================================================
   // ATO 4 — envio REAL para os números autorizados
   // =========================================================================
 

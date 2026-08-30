@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendText, linhaDeEnvio } from "../../../lib/whatsapp";
+import { canalDeResposta, sendText, linhaDaConversa } from "../../../lib/whatsapp";
 import { traduzErroRd } from "../../../lib/erroRd";
 
 export const dynamic = "force-dynamic";
@@ -52,13 +52,17 @@ export async function POST(req: Request) {
       const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
       if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
       try {
-        const { wamid } = await sendText(to, texto);
+        // A conversa responde PELO NUMERO EM QUE A CLIENTE FALOU (§dois numeros).
+        // Um valor global aqui responderia pelo numero errado e cairia em 131047,
+        // porque a janela de 24h e por par (numero, cliente).
+        const linha = await linhaDaConversa(sb, cliente_id);
+        const { wamid } = await sendText(to, texto, linha);
         // espelha no banco (mesma linha que o webhook atualiza com sent/delivered/read)
         await sb.from("mensagens").upsert({
           id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
           enviada_por: "operator", tipo: "mensagem", conteudo: texto,
           status: "wait", criada_em: new Date().toISOString(),
-          linha_id: linhaDeEnvio(),
+          linha_id: linha,
         }, { onConflict: "id" });
         return Response.json({ ok: true, cliente: cli.nome_completo, canal: "whatsapp" });
       } catch (e: any) {

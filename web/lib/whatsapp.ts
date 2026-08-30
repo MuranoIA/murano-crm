@@ -97,13 +97,15 @@ export function envWa(nome: string): string {
 }
 const env = envWa;
 
-async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
+async function post(payload: Record<string, unknown>, de?: string | null): Promise<EnvioOk> {
   // Ensaio de carga: nada sai para quem nao esta na lista de destinos reais.
   // Fica ANTES de ler as envs de proposito — assim o ensaio roda mesmo numa
   // maquina sem WHATSAPP_TOKEN, que e a rede de protecao mais barata que existe.
   if (deveSimular(String((payload as any).to ?? ""))) return { wamid: wamidSimulado() };
 
-  const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
+  // `de` = por QUAL número esta mensagem sai. Sem ele, o número padrão da env.
+  // Ver `linhaDaConversa()` mais abaixo para o porquê de isto existir.
+  const phoneNumberId = de ? de.replace(/[^\x21-\x7E]/g, "") : env("WHATSAPP_PHONE_NUMBER_ID");
   const token = env("WHATSAPP_TOKEN");
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
 
@@ -133,8 +135,8 @@ async function post(payload: Record<string, unknown>): Promise<EnvioOk> {
 }
 
 /** Mensagem de texto livre — só dentro da janela de 24h. `to` = telefone E.164 sem '+' (ex.: 5591981959789). */
-export function sendText(to: string, texto: string): Promise<EnvioOk> {
-  return post({ to, type: "text", text: { body: texto, preview_url: false } });
+export function sendText(to: string, texto: string, de?: string | null): Promise<EnvioOk> {
+  return post({ to, type: "text", text: { body: texto, preview_url: false } }, de);
 }
 
 /**
@@ -149,6 +151,7 @@ export function sendText(to: string, texto: string): Promise<EnvioOk> {
 export function sendLocation(
   to: string,
   loc: { lat: number; lng: number; nome?: string; endereco?: string },
+  de?: string | null,
 ): Promise<EnvioOk> {
   return post({
     to, type: "location",
@@ -157,7 +160,7 @@ export function sendLocation(
       ...(loc.nome ? { name: loc.nome } : {}),
       ...(loc.endereco ? { address: loc.endereco } : {}),
     },
-  });
+  }, de);
 }
 
 /**
@@ -178,7 +181,7 @@ export function sendLocation(
  *
  * Mensagem livre: vale a janela de 24h como qualquer outra.
  */
-export function sendLocationRequest(to: string, texto: string): Promise<EnvioOk> {
+export function sendLocationRequest(to: string, texto: string, de?: string | null): Promise<EnvioOk> {
   return post({
     to, type: "interactive",
     interactive: {
@@ -188,7 +191,7 @@ export function sendLocationRequest(to: string, texto: string): Promise<EnvioOk>
       body: { text: String(texto ?? "").slice(0, 1024) },
       action: { name: "send_location" },
     },
-  });
+  }, de);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +249,56 @@ export function linhaDeEnvio(): string | null {
   return v ? v.replace(/[^\x21-\x7E]/g, "") : null;
 }
 
+/**
+ * POR QUAL NÚMERO responder esta conversa.
+ *
+ * ⚠️ ISTO É O QUE PERMITE DOIS NÚMEROS AO MESMO TEMPO. Até 30/08/2026 todo
+ * envio saía por `WHATSAPP_PHONE_NUMBER_ID`, um valor só para o sistema
+ * inteiro. Com duas linhas vivas isso quebra de duas formas, e as duas do lado
+ * da cliente:
+ *
+ *   1. ela escreve para o número oficial e é respondida por OUTRO número. No
+ *      aparelho dela isso não é a mesma conversa — é uma conversa nova, de um
+ *      número que ela não conhece;
+ *   2. a janela de 24h é por PAR (número, cliente). A janela que ela abriu foi
+ *      no número oficial; responder pelo outro cai em 131047 mesmo com a tela
+ *      dizendo, corretamente, que há conversa aberta.
+ *
+ * A regra é a única que não depende de configuração: responde-se pelo número
+ * em que a CLIENTE falou. Mensagem enviada não conta — ela carrega a linha de
+ * quem a mandou, então usá-la deixaria a conversa "grudada" no número errado
+ * depois do primeiro engano.
+ *
+ * Cai no padrão (a env) quando a conversa ainda não tem mensagem recebida com
+ * linha: contato novo criado à mão, ou conversa que só existe no RD.
+ */
+export async function linhaDaConversa(sb: any, clienteId: string): Promise<string | null> {
+  const padrao = linhaDeEnvio();
+  try {
+    const { data } = await sb
+      .from("mensagens")
+      .select("linha_id")
+      .eq("cliente_id", clienteId)
+      .eq("enviada_por", "customer")
+      .not("linha_id", "is", null)
+      .order("criada_em", { ascending: false })
+      .limit(1);
+    const linha = data?.[0]?.linha_id ? String(data[0].linha_id) : null;
+    if (!linha || linha === "rd") return padrao;
+
+    // Linha desativada no cadastro não recebe envio: ela existe só para dar
+    // rótulo a conversas antigas (§28.8). Mandar por ela falharia na Meta.
+    const { data: cad } = await sb
+      .from("chat_linha").select("ativo").eq("phone_number_id", linha).maybeSingle();
+    if (cad && cad.ativo === false) return padrao;
+    return linha;
+  } catch {
+    // Falha de leitura não pode impedir a resposta: cai no número padrão, que
+    // é o comportamento de sempre.
+    return padrao;
+  }
+}
+
 /** Categoria de mídia que a Cloud API aceita, deduzida do mime do arquivo. */
 
 
@@ -256,12 +309,15 @@ export function linhaDeEnvio(): string | null {
  */
 export async function sendMedia(
   to: string, arquivo: ArrayBuffer | Uint8Array, mime: string, nome: string, legenda?: string,
+  de?: string | null,
 ): Promise<EnvioOk> {
   // Aqui a guarda precisa vir antes do UPLOAD, nao so do post(): subir o
   // arquivo para a Meta ja e uma chamada de rede e ja consome cota.
   if (deveSimular(to)) return { wamid: wamidSimulado() };
 
-  const phoneNumberId = env("WHATSAPP_PHONE_NUMBER_ID");
+  // O upload da midia tambem e POR NUMERO: subir num e mandar por outro devolve
+  // erro de media id inexistente, porque o id pertence a linha que subiu.
+  const phoneNumberId = de ? de.replace(/[^\x21-\x7E]/g, "") : env("WHATSAPP_PHONE_NUMBER_ID");
   const token = env("WHATSAPP_TOKEN");
 
   // aceita ArrayBuffer ou view (o remux de áudio devolve Uint8Array); a cópia
@@ -291,7 +347,7 @@ export async function sendMedia(
   if (legenda && tipo !== "audio") conteudo.caption = legenda;
   if (tipo === "document") conteudo.filename = nome;
 
-  return post({ to, type: tipo, [tipo]: conteudo });
+  return post({ to, type: tipo, [tipo]: conteudo }, de);
 }
 
 
@@ -301,6 +357,7 @@ export function sendTemplate(
   nomeTemplate: string,
   idioma = "pt_BR",
   components?: unknown[],
+  de?: string | null,
 ): Promise<EnvioOk> {
   return post({
     to,
@@ -310,5 +367,5 @@ export function sendTemplate(
       language: { code: idioma },
       ...(components ? { components } : {}),
     },
-  });
+  }, de);
 }

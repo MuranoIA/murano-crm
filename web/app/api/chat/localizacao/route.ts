@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { sendLocation, sendLocationRequest, canalDeResposta, linhaDeEnvio } from "../../../../lib/whatsapp";
+import { sendLocation, sendLocationRequest, canalDeResposta, linhaDaConversa } from "../../../../lib/whatsapp";
 import { lerLocais, type Local } from "../../../../lib/locais";
 
 export const dynamic = "force-dynamic";
@@ -74,14 +74,15 @@ export async function POST(req: Request) {
     const texto = String(b?.texto ?? "").trim()
       || "Pode compartilhar sua localização? Assim consigo confirmar o endereço.";
     try {
-      const { wamid } = await sendLocationRequest(t, texto);
+      const linha = await linhaDaConversa(sb, cliente_id);
+      const { wamid } = await sendLocationRequest(t, texto, linha);
       // Espelha o PEDIDO na thread. Sem isso o vendedor não vê que já pediu e
       // pede de novo — o mesmo cuidado do cartão de permissão de chamada
       // (§22.6), espelhado pela mesma razão.
       await db.from("mensagens").upsert({
         id: wamid, cliente_id, enviada_por: "operator", tipo: "mensagem",
         conteudo: "📍 " + texto,
-        status: "wait", criada_em: new Date().toISOString(), linha_id: linhaDeEnvio(),
+        status: "wait", criada_em: new Date().toISOString(), linha_id: linha,
       }, { onConflict: "id" });
       return Response.json({ ok: true, id: wamid, pedido: true });
     } catch (e: any) {
@@ -107,7 +108,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { wamid } = await sendLocation(tel, local);
+    const linha = await linhaDaConversa(sb, cliente_id);
+    const { wamid } = await sendLocation(tel, local, linha);
     // A mensagem JÁ FOI para a cliente neste ponto. Se o espelho falhar, ela
     // recebeu um mapa que não existe na thread — o vendedor manda de novo. Por
     // isso a segunda tentativa sem `localizacao`, para o caso de a 0115 ainda
@@ -124,7 +126,7 @@ export async function POST(req: Request) {
       ...(comPonto
         ? { localizacao: { lat: local.lat, lng: local.lng, nome: local.nome, endereco: local.endereco, url: null } }
         : {}),
-      status: "wait", criada_em: new Date().toISOString(), linha_id: linhaDeEnvio(),
+      status: "wait", criada_em: new Date().toISOString(), linha_id: linha,
     }, { onConflict: "id" });
 
     const r1 = await espelho(true);

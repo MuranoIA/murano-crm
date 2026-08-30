@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
-import { canalDeResposta } from "../../../../lib/whatsapp";
+import { canalDeResposta, linhaDaConversa } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -211,6 +211,14 @@ export async function GET(req: Request) {
   // envio falharia com 131047, perdendo o que a pessoa escreveu.
   const canalEnvio = await canalDeResposta(sb, cliente_id).catch(() => "rd" as const);
 
+  // ...e por qual NÚMERO. Com duas linhas Cloud vivas ao mesmo tempo, "cloud"
+  // não é resposta suficiente: a janela é por par (número, cliente), então
+  // contar sobre todas as linhas Cloud juntas volta a mentir — só que de um
+  // jeito mais difícil de perceber, porque as duas são "cloud".
+  const linhaEnvio = canalEnvio === "whatsapp"
+    ? await linhaDaConversa(sb, cliente_id).catch(() => null)
+    : null;
+
   // Quantas mensagens a seleção de linhas está escondendo. Duas contagens de
   // cabeçalho (o total menos o visível) em vez de negar o filtro: a negação de
   // `filtroLinhas` teria de ser escrita à mão e divergiria dele no primeiro
@@ -226,6 +234,8 @@ export async function GET(req: Request) {
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
     canal_envio: canalEnvio,
+    // por qual número esta conversa será respondida (null = RD, ou desconhecido)
+    linha_envio: linhaEnvio,
     // quantas mensagens existem em linhas escondidas (0 = nada a oferecer)
     historico_oculto: historicoOculto,
     // veio COM o histórico? a tela usa para rotular as antigas e não reoferecer
