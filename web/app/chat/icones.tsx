@@ -46,6 +46,8 @@ const CAMINHOS: Record<string, string[]> = {
   microfone: ["M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z", "M19 10v2a7 7 0 0 1-14 0v-2", "M12 19v4", "M8 23h8"],
   /** parar a gravação */
   parar: ["M6 6h12v12H6z"],
+  /** ouvir a gravacao antes de enviar */
+  tocar: ["M8 5l11 7-11 7z"],
   /** pausar o ETL */
   pausa: ["M6 4h4v16H6z", "M14 4h4v16h-4z"],
   /** respostas rápidas */
