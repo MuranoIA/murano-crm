@@ -14,7 +14,7 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
-import { limiteDe, recadoDeLimite } from "../../lib/midia";
+import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1116,50 @@ function CompositorTemplate({
       </div>
     </div>
   );
+}
+
+/**
+ * Um arquivo do lote que não foi. `grupo` é o mesmo motivo escrito SEM o
+ * tamanho do arquivo — é por ele que o resumo junta os que caíram no mesmo
+ * teto (ver `recadoDeLimiteDoTipo`). Sem `grupo`, o motivo é único e o
+ * agrupamento cai no próprio texto.
+ */
+type Falha = { nome: string; razao: string; grupo?: string };
+
+/**
+ * O recado de um lote de arquivos que não foi.
+ *
+ * Agrupa pela RAZÃO, não pelo arquivo: o caso comum é mandar cinco vídeos do
+ * mesmo evento e os cinco baterem no mesmo teto: repetir cinco vezes o mesmo
+ * parágrafo enche a faixa e some com a informação útil (quais arquivos).
+ * A razão aparece uma vez, com os nomes na frente dela.
+ *
+ * Com UM arquivo só, vale a razão crua: pôr o nome dele na frente de um recado
+ * que já fala do arquivo que a pessoa acabou de escolher é ruído.
+ */
+function resumoDasFalhas(falhas: Falha[], total: number): string {
+  if (falhas.length === 1 && total === 1) return falhas[0].razao;
+
+  // agrupa pelo `grupo` quando existe: é o mesmo motivo sem o tamanho do
+  // arquivo, então cinco vídeos de tamanhos diferentes acima do teto caem
+  // todos no mesmo balde em vez de virarem cinco textos distintos.
+  const grupos = new Map<string, { nomes: string[]; razao: string }>();
+  for (const f of falhas) {
+    const k = f.grupo ?? f.razao;
+    const g = grupos.get(k) ?? { nomes: [], razao: f.razao };
+    g.nomes.push(f.nome);
+    grupos.set(k, g);
+  }
+
+  // no máximo 3 nomes por razão, e 2 razões: acima disso a faixa vira parede
+  const partes = [...grupos].slice(0, 2).map(([geral, g]) => {
+    const lista = g.nomes.slice(0, 3).join(", ") + (g.nomes.length > 3 ? ` e mais ${g.nomes.length - 3}` : "");
+    // grupo de um: vale o texto específico, que traz o tamanho do arquivo e diz
+    // o quanto passou. A partir de dois, o tamanho de cada um seria ruído.
+    return `${lista}: ${g.nomes.length === 1 ? g.razao : geral}`;
+  });
+  if (grupos.size > 2) partes.push("…");
+  return `Não enviei ${falhas.length} de ${total}. ${partes.join(" · ")}`;
 }
 
 export default function Chat() {
@@ -2329,7 +2373,7 @@ export default function Chat() {
     const legenda = texto.trim();
     setEnviandoArquivo(true); setAviso(null);
     setFila({ feito: 0, total: files.length, pct: null });
-    const falhas: string[] = [];
+    const falhas: Falha[] = [];
     let enviados = 0;
     try {
       for (let i = 0; i < files.length; i++) {
@@ -2340,7 +2384,8 @@ export default function Chat() {
           // um arquivo grande demais não precisa de ida ao servidor, e o
           // recado sai idêntico porque sai do mesmo lugar.
           if (file.size > limiteDe(file.type || "application/octet-stream")) {
-            falhas.push(`${file.name}: ${recadoDeLimite(file.type || "application/octet-stream", file.size)}`);
+            const m = file.type || "application/octet-stream";
+            falhas.push({ nome: file.name, razao: recadoDeLimite(m, file.size), grupo: recadoDeLimiteDoTipo(m) });
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2363,7 +2408,7 @@ export default function Chat() {
               setAviso((a?.error ?? `erro ${ass.status}`) + (restam > 1 ? ` (${restam} arquivos não enviados)` : ""));
               break;
             }
-            falhas.push(`${file.name}: ${a?.error ?? `erro ${ass.status}`}`);
+            falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2399,15 +2444,15 @@ export default function Chat() {
             // 504 é a Vercel matando a função no meio do repasse: o arquivo
             // subiu, mas não deu tempo de chegar na Meta. Sem tradução isso vira
             // "erro 504", que não diz a ninguém o que fazer.
-            falhas.push(`${file.name}: ${j?.error ?? (r.status === 504
+            falhas.push({ nome: file.name, razao: j?.error ?? (r.status === 504
               ? "o arquivo é grande demais para o tempo de envio — tente um menor"
-              : `erro ${r.status}`)}`);
+              : `erro ${r.status}`) });
           } else {
             enviados++;
             if (i === 0 && legenda) setTexto("");
           }
         } catch (e: any) {
-          falhas.push(`${file.name}: ${e?.message ?? e}`);
+          falhas.push({ nome: file.name, razao: e?.message ?? String(e) });
         }
         setFila({ feito: i + 1, total: files.length, pct: null });
       }
@@ -2415,10 +2460,7 @@ export default function Chat() {
       // trás. Com um arquivo só (inclusive o áudio gravado) vale o erro cru — o
       // nome do arquivo na frente seria ruído.
       if (falhas.length) {
-        setAviso((atual) => atual ?? (files.length === 1
-          ? falhas[0].replace(/^[^:]*: /, "")
-          : `Não enviei ${falhas.length} de ${files.length}: ${falhas.slice(0, 3).join(" · ")}` +
-            (falhas.length > 3 ? " …" : "")));
+        setAviso((atual) => atual ?? resumoDasFalhas(falhas, files.length));
       }
     } finally {
       setEnviandoArquivo(false);

@@ -73,16 +73,73 @@ export function limiteDe(mime: string): number {
 }
 
 /** "12,3 MB" — para o recado de limite dizer o tamanho, não um número de bytes. */
-export function emMB(bytes: number): string {
-  return `${(bytes / MB).toFixed(bytes < 10 * MB ? 1 : 0).replace(".", ",")} MB`;
+export function emMB(bytes: number, casas?: number): string {
+  const c = casas ?? (bytes < 10 * MB ? 1 : 0);
+  return `${(bytes / MB).toFixed(c).replace(".", ",")} MB`;
 }
 
 const NOME_TIPO: Record<TipoMidia, string> = {
   image: "Foto", audio: "Áudio", video: "Vídeo", document: "Documento",
 };
 
-/** Recado de recusa por tamanho, igual nos dois lados (tela e rota). */
+/**
+ * O que a pessoa pode FAZER quando o arquivo não cabe. Só existe frase onde
+ * existe saída: "o limite é 16 MB" é um beco sem saída, e quem lê um beco sem
+ * saída tenta o mesmo arquivo de novo.
+ *
+ * A do vídeo carrega a comparação que a consultora vai fazer sozinha de
+ * qualquer jeito — "no meu celular esse vídeo vai". Vai mesmo: o aplicativo
+ * comprime antes de enviar, e nós mandamos o arquivo como ele está. Dizer
+ * isso evita que a diferença seja lida como defeito nosso.
+ */
+const SAIDA: Partial<Record<TipoMidia, string>> = {
+  video: "Mande um trecho mais curto — o aplicativo do celular comprime o vídeo antes de enviar, e aqui o arquivo vai como está.",
+  image: "Reduza a foto antes de enviar.",
+};
+
+/** "o WhatsApp aceita até 16 MB" ou "aqui o limite é 50 MB" — ver acima. */
+function tetoEmPalavras(tipo: TipoMidia): string {
+  const teto = LIMITE_NOSSO[tipo];
+  return teto >= LIMITE_META[tipo]
+    ? `o WhatsApp aceita até ${emMB(teto)}`
+    : `aqui o limite é ${emMB(teto)}`;
+}
+
+/**
+ * O mesmo recado SEM o tamanho do arquivo.
+ *
+ * Serve para quando vários arquivos caem no mesmo teto: repetir "de 34 MB",
+ * "de 41 MB", "de 28 MB" faria cada um virar um texto diferente, e aí nada
+ * agrupa — cinco parágrafos idênticos no fundo, empurrando a razão para fora
+ * da faixa. Com UM arquivo o tamanho vale (diz o quanto passou); com cinco, o
+ * que importa é o teto.
+ */
+export function recadoDeLimiteDoTipo(mime: string): string {
+  const tipo = tipoDoMime(mime);
+  return [`${NOME_TIPO[tipo]} — ${tetoEmPalavras(tipo)}.`, SAIDA[tipo]]
+    .filter(Boolean).join(" ");
+}
+
+/**
+ * Recado de recusa por tamanho, igual nos três lugares que recusam (a tela,
+ * `assinar` e `enviar-midia`).
+ *
+ * ⚠️ Diz DE QUEM é o teto, e isso não é detalhe: no vídeo, na foto e no
+ * áudio o número é da Meta e não há o que ajustar do nosso lado — pedir para
+ * "aumentarem o limite" seria pedir o impossível. Só o documento tem corte
+ * nosso (50 dos 100 MB da Meta), e aí a frase muda para "aqui o limite é",
+ * porque aí sim é conversa nossa.
+ */
 export function recadoDeLimite(mime: string, tamanho: number): string {
   const tipo = tipoDoMime(mime);
-  return `${NOME_TIPO[tipo]} de ${emMB(tamanho)} — o limite é ${emMB(LIMITE_NOSSO[tipo])}.`;
+  const teto = LIMITE_NOSSO[tipo];
+  const frase = tetoEmPalavras(tipo);
+  // ⚠️ acima de 10 MB `emMB` arredonda para inteiro, e um vídeo de 16,4 MB
+  // virava "Vídeo de 16 MB — o WhatsApp aceita até 16 MB": o recado se
+  // contradizia justamente em quem passou por pouco, que é quem mais tenta de
+  // novo. Quando os dois números empatam na tela, a casa decimal volta.
+  const bruto = emMB(tamanho);
+  const tam = bruto === emMB(teto) ? emMB(tamanho, 1) : bruto;
+  return [`${NOME_TIPO[tipo]} de ${tam} — ${frase}.`, SAIDA[tipo]]
+    .filter(Boolean).join(" ");
 }
