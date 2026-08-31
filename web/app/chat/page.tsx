@@ -14,7 +14,7 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
-import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia";
+import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
 // ---------------------------------------------------------------------------
@@ -346,6 +346,14 @@ type Msg = {
   // ponto no mapa (0115). Vale para o que a cliente compartilha E para o que
   // nós mandamos — a bolha desenha o mesmo cartão nos dois casos.
   localizacao?: { lat: number; lng: number; nome?: string | null; endereco?: string | null; url?: string | null } | null;
+  // ---- só no navegador, só enquanto o arquivo sobe -----------------------
+  // A bolha da mídia aparecia depois do upload inteiro: quem mandava cinco
+  // fotos ficava olhando a thread parada, sem prova de que o clique funcionou.
+  // `previaLocal` é um blob do PRÓPRIO arquivo escolhido — a foto de verdade,
+  // não um retangulo cinza — e `pctEnvio` é o quanto já subiu.
+  // Nunca vem do servidor: a recarga da thread troca estas linhas pelas reais.
+  previaLocal?: string;
+  pctEnvio?: number | null;
 };
 // nota interna: recado da equipe dentro da conversa — o cliente nunca vê (0080)
 type Nota = { id: number; autor: string; texto: string; criada_em: string };
@@ -426,7 +434,13 @@ function juntar(atual: Msg[] | null, chegou: Msg[], pendurar = false): Msg[] {
   // e a resposta do POST (que era quem limpava a otimista) -- um piscar de
   // duplicata que so existe porque a thread ficou rapida.
   const ditas = new Set(chegou.filter((m) => m.enviada_por !== "customer").map((m) => m.conteudo ?? ""));
-  const vivos = extra.filter((m) => !(String(m.id).startsWith("tmp:") && ditas.has(m.conteudo ?? "")));
+  // ⚠️ A bolha da MÍDIA que ainda sobe fica fora dessa poda. Ela é apagada em
+  // lugar próprio (o `finally` do `enviarArquivos`), e aqui morreria cedo por
+  // coincidência de texto: as bolhas do 2º arquivo em diante têm conteúdo
+  // vazio, e a do 1º repete a legenda digitada. Sem esta ressalva, mandar uma
+  // foto legendada com um texto que já foi dito faria a prévia sumir no meio
+  // do upload — exatamente a dúvida ("clicou mesmo?") que ela existe para tirar.
+  const vivos = extra.filter((m) => !(String(m.id).startsWith("tmp:") && !m.previaLocal && ditas.has(m.conteudo ?? "")));
   if (!vivos.length) return base;
   const por = new Map(base.map((m) => [m.id, m]));
   for (const m of vivos) por.set(m.id, por.get(m.id) ?? m);
@@ -482,16 +496,22 @@ function CartaoLocal({ loc }: { loc: any }) {
 
 function Midia({ m }: { m: Msg }) {
   if (!m.midia_tipo) return null;
-  const src = `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
+  // enquanto sobe, a fonte é o arquivo local: o Storage ainda não tem nada
+  // para servir, e `/api/chat/midia` responderia 404 numa mensagem que nem
+  // existe no banco.
+  const subindo = !!m.previaLocal;
+  const src = m.previaLocal ?? `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
   const caixa = { borderRadius: 9, marginBottom: 4, display: "block" } as const;
 
-  if (!m.midia_path) {
+  // sem caminho no Storage E sem prévia local = a mídia realmente se perdeu
+  if (!m.midia_path && !subindo) {
     return (
       <div style={{ fontSize: 11.5, color: M.laranja, background: "#fdeae3", border: "1px solid #f0c4b0", borderRadius: 8, padding: "5px 9px", marginBottom: 4 }}>
         ⚠️ {rotuloMidia(m.midia_tipo)} não pôde ser baixada
       </div>
     );
   }
+  if (subindo) return <MidiaSubindo m={m} src={src} caixa={caixa} />;
   if (m.midia_tipo === "image" || m.midia_tipo === "sticker") {
     const max = m.midia_tipo === "sticker" ? 140 : 260;
     return (
@@ -519,6 +539,77 @@ function Midia({ m }: { m: Msg }) {
     </a>
   );
 }
+/**
+ * A mídia enquanto ela sobe: o conteúdo de verdade, esmaecido, com o quanto
+ * já foi.
+ *
+ * Mostrar a PRÓPRIA foto (e não um retângulo de carregamento) é o que responde
+ * a pergunta que a pessoa tem nesse instante — "mandei a certa?" — e ela dá
+ * para responder na hora, porque o arquivo já está na mão do navegador.
+ *
+ * `pointerEvents: none` no conteúdo: abrir em tamanho real ou dar play num
+ * arquivo que ainda está subindo não leva a lugar nenhum.
+ */
+function MidiaSubindo({ m, src, caixa }: { m: Msg; src: string; caixa: any }) {
+  const pct = m.pctEnvio;
+  const t = m.midia_tipo;
+  // Embaçar só o que é IMAGEM: a foto continua reconhecível ("mandei a certa?")
+  // e fica óbvio que ainda não é a versão final. No documento e no áudio o
+  // embaçado só apagaria o nome do arquivo e os controles, que são justamente
+  // o que a pessoa lê ali — esses ficam apenas esmaecidos.
+  // `scale(1.06)`: o blur amostra o transparente de fora e deixaria uma auréola
+  // clara na borda; a sobra é cortada pelo `overflow:hidden` do envoltório.
+  const borra = { filter: "blur(3px)", transform: "scale(1.06)" } as const;
+  const visual =
+    t === "image" || t === "sticker"
+      ? <img src={src} alt={m.midia_nome || "imagem"} style={{ ...caixa, ...borra, maxWidth: t === "sticker" ? 140 : 260, maxHeight: 300, objectFit: "cover" }} />
+      : t === "video"
+        ? <video src={src} preload="metadata" style={{ ...caixa, ...borra, maxWidth: 260, maxHeight: 300 }} />
+        : t === "audio"
+          ? <audio controls preload="metadata" src={src} style={{ ...caixa, width: 240, height: 38 }} />
+          : (
+            <span style={{ ...caixa, display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(123,45,139,.07)", border: `1px solid ${M.border}`, maxWidth: 250 }}>
+              <span style={{ fontSize: 18 }}>📎</span>
+              <b style={{ fontSize: 12.5, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {m.midia_nome || "documento"}
+              </b>
+            </span>
+          );
+  const imagem = t === "image" || t === "sticker" || t === "video";
+  return (
+    <span style={{ position: "relative", display: "inline-block", maxWidth: "100%",
+      // corta a sobra do `scale` do blur; sem isto a auréola vaza para fora da bolha
+      // ⚠️ e é por causa dele que o palco mínimo abaixo precisa existir: uma foto
+      // de celular leva um instante para decodificar, e até lá o `<img>` tem
+      // altura zero — o crachá ficaria recortado e a bolha nasceria VAZIA, que é
+      // exatamente a dúvida que ela existe para tirar. Visto ao vivo no ensaio.
+      ...(imagem ? { overflow: "hidden", borderRadius: 9, minWidth: 120, minHeight: 90,
+        background: "rgba(36,19,39,.10)" } : null) }}>
+      <span style={{ display: "block", opacity: imagem ? 0.75 : 0.45, pointerEvents: "none" }}>{visual}</span>
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 10px", borderRadius: 20,
+          background: "rgba(36,19,39,.72)", color: "#fff", fontSize: 11, fontWeight: 700,
+          fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+          {/* anel girando: diz "está acontecendo" mesmo quando não há porcentagem
+              — abaixo de 2 MB o XHR nem chega a reportar progresso. Quem liga
+              "reduzir movimento" no sistema para o giro pela regra global da
+              `.chat-raiz`, e sobra o anel parado, que ainda lê como espera. */}
+          <span className="mid-gira" style={{ width: 11, height: 11, borderRadius: 11,
+            border: "2px solid rgba(255,255,255,.35)", borderTopColor: "#fff", boxSizing: "border-box" }} />
+          {pct != null ? `${pct}%` : "enviando…"}
+        </span>
+      </span>
+      {/* a barra só existe quando há número: fingir progresso com uma barra
+          parada em zero seria pior que não ter barra nenhuma */}
+      {pct != null && (
+        <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 3, background: "rgba(36,19,39,.25)", pointerEvents: "none" }}>
+          <span style={{ display: "block", height: "100%", width: `${pct}%`, background: "#fff", transition: "width .15s linear" }} />
+        </span>
+      )}
+    </span>
+  );
+}
+
 const rotuloMidia = (t: string) =>
   ({ image: "Imagem", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha" }[t] ?? "Mídia");
 
@@ -2373,6 +2464,38 @@ export default function Chat() {
     const legenda = texto.trim();
     setEnviandoArquivo(true); setAviso(null);
     setFila({ feito: 0, total: files.length, pct: null });
+
+    // ---- as bolhas aparecem AGORA, com a própria foto, e sobem esmaecidas ---
+    // O lote inteiro entra de uma vez, e não um por vez: mandar cinco fotos e
+    // ver uma só na tela dá a impressão de que as outras quatro se perderam.
+    //
+    // ⚠️ Toda escrita em `msgs` daqui para baixo passa por `sePermanece`: o
+    // upload demora, e se a pessoa trocar de conversa no meio, um `setMsgs`
+    // solto colaria as fotos de um cliente na thread de outro.
+    const marca = Date.now();
+    const otimistas: Msg[] = files.map((f, i) => ({
+      id: `tmp:midia:${marca}:${i}`,
+      conteudo: i === 0 ? legenda : "",
+      enviada_por: "operator",
+      tipo: "mensagem",
+      status: "wait",
+      criada_em: new Date(marca + i).toISOString(),
+      midia_tipo: tipoDoMime(f.type || "application/octet-stream"),
+      midia_mime: f.type || "application/octet-stream",
+      midia_nome: f.name,
+      previaLocal: URL.createObjectURL(f),
+      pctEnvio: null,
+    }));
+    const sePermanece = (fn: (m: Msg[] | null) => Msg[]) => {
+      if (selRef.current?.cliente_id === alvo.cliente_id) setMsgs(fn as any);
+    };
+    const some = (id: string) => sePermanece((m) => (m ?? []).filter((x) => x.id !== id));
+    const anda = (id: string, pct: number | null) =>
+      sePermanece((m) => (m ?? []).map((x) => (x.id === id ? { ...x, pctEnvio: pct } : x)));
+
+    sePermanece((m) => [...(m ?? []), ...otimistas]);
+    setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+
     const falhas: Falha[] = [];
     let enviados = 0;
     try {
@@ -2386,6 +2509,7 @@ export default function Chat() {
           if (file.size > limiteDe(file.type || "application/octet-stream")) {
             const m = file.type || "application/octet-stream";
             falhas.push({ nome: file.name, razao: recadoDeLimite(m, file.size), grupo: recadoDeLimiteDoTipo(m) });
+            some(otimistas[i].id);
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2409,6 +2533,7 @@ export default function Chat() {
               break;
             }
             falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
+            some(otimistas[i].id);
             setFila({ feito: i + 1, total: files.length, pct: null });
             continue;
           }
@@ -2417,9 +2542,13 @@ export default function Chat() {
           // e some antes de alguém conseguir ler.
           const mostraPct = file.size > 2 * 1024 * 1024;
           await subirParaStorage(file, a.path, a.token, (pct) => {
-            if (mostraPct) setFila({ feito: i, total: files.length, pct });
+            if (mostraPct) { setFila({ feito: i, total: files.length, pct }); anda(otimistas[i].id, pct); }
           });
           setFila({ feito: i, total: files.length, pct: mostraPct ? 100 : null });
+          // o arquivo subiu; falta a nossa rota repassar para a Meta. O número
+          // some e volta a "enviando…" porque 100% ali seria mentira: a cliente
+          // ainda não recebeu nada.
+          if (mostraPct) anda(otimistas[i].id, null);
 
           const r = await fetch("/api/chat/enviar-midia", {
             method: "POST", headers: { "content-type": "application/json" },
@@ -2447,12 +2576,14 @@ export default function Chat() {
             falhas.push({ nome: file.name, razao: j?.error ?? (r.status === 504
               ? "o arquivo é grande demais para o tempo de envio — tente um menor"
               : `erro ${r.status}`) });
+            some(otimistas[i].id);
           } else {
             enviados++;
             if (i === 0 && legenda) setTexto("");
           }
         } catch (e: any) {
           falhas.push({ nome: file.name, razao: e?.message ?? String(e) });
+          some(otimistas[i].id);
         }
         setFila({ feito: i + 1, total: files.length, pct: null });
       }
@@ -2466,6 +2597,12 @@ export default function Chat() {
       setEnviandoArquivo(false);
       setFila(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
+      // O `break` do 501/422 sai do laço sem passar pelos `some()`, então as
+      // bolhas dos arquivos que nem chegaram a ser tentados ficariam subindo
+      // para sempre. Aqui vai a rede: some com tudo que ainda for otimista.
+      // A recarga logo abaixo traz as linhas de verdade, com a mesma foto.
+      sePermanece((m) => (m ?? []).filter((x) => !x.id.startsWith(`tmp:midia:${marca}:`)));
+      otimistas.forEach((o) => o.previaLocal && URL.revokeObjectURL(o.previaLocal));
       if (enviados) { carregarThread(alvo, true); carregarLista(); }
     }
   }
@@ -2958,7 +3095,8 @@ export default function Chat() {
           no sistema costuma fazê-lo por enxaqueca ou vertigem — não é
           preferência estética, e não deve depender de qual tema está ativo. */}
       <style dangerouslySetInnerHTML={{ __html:
-        "@media(prefers-reduced-motion:reduce){.chat-raiz *,.chat-raiz *::before,.chat-raiz *::after"
+        "@keyframes mid-gira{to{transform:rotate(360deg)}}.mid-gira{animation:mid-gira .8s linear infinite}"
+        + "@media(prefers-reduced-motion:reduce){.chat-raiz *,.chat-raiz *::before,.chat-raiz *::after"
         + "{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}" }} />
       {bc && (
         <style dangerouslySetInnerHTML={{ __html:
