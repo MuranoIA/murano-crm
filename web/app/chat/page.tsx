@@ -434,7 +434,13 @@ function juntar(atual: Msg[] | null, chegou: Msg[], pendurar = false): Msg[] {
   // e a resposta do POST (que era quem limpava a otimista) -- um piscar de
   // duplicata que so existe porque a thread ficou rapida.
   const ditas = new Set(chegou.filter((m) => m.enviada_por !== "customer").map((m) => m.conteudo ?? ""));
-  const vivos = extra.filter((m) => !(String(m.id).startsWith("tmp:") && ditas.has(m.conteudo ?? "")));
+  // ⚠️ A bolha da MÍDIA que ainda sobe fica fora dessa poda. Ela é apagada em
+  // lugar próprio (o `finally` do `enviarArquivos`), e aqui morreria cedo por
+  // coincidência de texto: as bolhas do 2º arquivo em diante têm conteúdo
+  // vazio, e a do 1º repete a legenda digitada. Sem esta ressalva, mandar uma
+  // foto legendada com um texto que já foi dito faria a prévia sumir no meio
+  // do upload — exatamente a dúvida ("clicou mesmo?") que ela existe para tirar.
+  const vivos = extra.filter((m) => !(String(m.id).startsWith("tmp:") && !m.previaLocal && ditas.has(m.conteudo ?? "")));
   if (!vivos.length) return base;
   const por = new Map(base.map((m) => [m.id, m]));
   for (const m of vivos) por.set(m.id, por.get(m.id) ?? m);
@@ -547,11 +553,18 @@ function Midia({ m }: { m: Msg }) {
 function MidiaSubindo({ m, src, caixa }: { m: Msg; src: string; caixa: any }) {
   const pct = m.pctEnvio;
   const t = m.midia_tipo;
+  // Embaçar só o que é IMAGEM: a foto continua reconhecível ("mandei a certa?")
+  // e fica óbvio que ainda não é a versão final. No documento e no áudio o
+  // embaçado só apagaria o nome do arquivo e os controles, que são justamente
+  // o que a pessoa lê ali — esses ficam apenas esmaecidos.
+  // `scale(1.06)`: o blur amostra o transparente de fora e deixaria uma auréola
+  // clara na borda; a sobra é cortada pelo `overflow:hidden` do envoltório.
+  const borra = { filter: "blur(3px)", transform: "scale(1.06)" } as const;
   const visual =
     t === "image" || t === "sticker"
-      ? <img src={src} alt={m.midia_nome || "imagem"} style={{ ...caixa, maxWidth: t === "sticker" ? 140 : 260, maxHeight: 300, objectFit: "cover" }} />
+      ? <img src={src} alt={m.midia_nome || "imagem"} style={{ ...caixa, ...borra, maxWidth: t === "sticker" ? 140 : 260, maxHeight: 300, objectFit: "cover" }} />
       : t === "video"
-        ? <video src={src} preload="metadata" style={{ ...caixa, maxWidth: 260, maxHeight: 300 }} />
+        ? <video src={src} preload="metadata" style={{ ...caixa, ...borra, maxWidth: 260, maxHeight: 300 }} />
         : t === "audio"
           ? <audio controls preload="metadata" src={src} style={{ ...caixa, width: 240, height: 38 }} />
           : (
@@ -562,17 +575,37 @@ function MidiaSubindo({ m, src, caixa }: { m: Msg; src: string; caixa: any }) {
               </b>
             </span>
           );
+  const imagem = t === "image" || t === "sticker" || t === "video";
   return (
-    <span style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
-      <span style={{ display: "block", opacity: 0.45, pointerEvents: "none" }}>{visual}</span>
+    <span style={{ position: "relative", display: "inline-block", maxWidth: "100%",
+      // corta a sobra do `scale` do blur; sem isto a auréola vaza para fora da bolha
+      // ⚠️ e é por causa dele que o palco mínimo abaixo precisa existir: uma foto
+      // de celular leva um instante para decodificar, e até lá o `<img>` tem
+      // altura zero — o crachá ficaria recortado e a bolha nasceria VAZIA, que é
+      // exatamente a dúvida que ela existe para tirar. Visto ao vivo no ensaio.
+      ...(imagem ? { overflow: "hidden", borderRadius: 9, minWidth: 120, minHeight: 90,
+        background: "rgba(36,19,39,.10)" } : null) }}>
+      <span style={{ display: "block", opacity: imagem ? 0.75 : 0.45, pointerEvents: "none" }}>{visual}</span>
       <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 20,
+        <span style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 10px", borderRadius: 20,
           background: "rgba(36,19,39,.72)", color: "#fff", fontSize: 11, fontWeight: 700,
           fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-          <span style={{ width: 7, height: 7, borderRadius: 7, background: "#fff", opacity: 0.85 }} />
+          {/* anel girando: diz "está acontecendo" mesmo quando não há porcentagem
+              — abaixo de 2 MB o XHR nem chega a reportar progresso. Quem liga
+              "reduzir movimento" no sistema para o giro pela regra global da
+              `.chat-raiz`, e sobra o anel parado, que ainda lê como espera. */}
+          <span className="mid-gira" style={{ width: 11, height: 11, borderRadius: 11,
+            border: "2px solid rgba(255,255,255,.35)", borderTopColor: "#fff", boxSizing: "border-box" }} />
           {pct != null ? `${pct}%` : "enviando…"}
         </span>
       </span>
+      {/* a barra só existe quando há número: fingir progresso com uma barra
+          parada em zero seria pior que não ter barra nenhuma */}
+      {pct != null && (
+        <span style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 3, background: "rgba(36,19,39,.25)", pointerEvents: "none" }}>
+          <span style={{ display: "block", height: "100%", width: `${pct}%`, background: "#fff", transition: "width .15s linear" }} />
+        </span>
+      )}
     </span>
   );
 }
@@ -3062,7 +3095,8 @@ export default function Chat() {
           no sistema costuma fazê-lo por enxaqueca ou vertigem — não é
           preferência estética, e não deve depender de qual tema está ativo. */}
       <style dangerouslySetInnerHTML={{ __html:
-        "@media(prefers-reduced-motion:reduce){.chat-raiz *,.chat-raiz *::before,.chat-raiz *::after"
+        "@keyframes mid-gira{to{transform:rotate(360deg)}}.mid-gira{animation:mid-gira .8s linear infinite}"
+        + "@media(prefers-reduced-motion:reduce){.chat-raiz *,.chat-raiz *::before,.chat-raiz *::after"
         + "{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}" }} />
       {bc && (
         <style dangerouslySetInnerHTML={{ __html:
