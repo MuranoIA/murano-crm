@@ -5080,3 +5080,73 @@ esconde-esconde da hora, e com ele a única regra de `:hover` do chat (a classe
   outra frente: mexe no caminho que responde 200 à Meta, onde erro engolido é
   mensagem perdida (§62.3).
 - **Nada foi mexido no lado do RD** (§44).
+
+## 66. O microfone falhava dizendo a causa errada (31/08/2026)
+
+Relato com print: gravar áudio no chat devolvia *"Não consegui acessar o
+microfone — verifique a permissão do navegador"* com o cadeado do site
+mostrando **Microfone ligado**. A tela mandava conferir justamente o que já
+estava conferido.
+
+### 66.1 Um `catch` sozinho para causas que se consertam em lugares opostos
+
+`alternarGravacao` tinha **um try para tudo** — `getUserMedia`, o construtor do
+`MediaRecorder` e o `start()` — e um `catch {}` que descartava o erro e afirmava
+a mesma causa sempre. Qualquer falha ali virava "verifique a permissão".
+
+O `NotAllowedError` do `getUserMedia` chega idêntico em três situações:
+
+| causa | onde se conserta |
+|---|---|
+| o quadro (iframe) não recebeu `allow="microphone"` | no **pai** — o hub (§22.5), ou a lupa do board (§41.3) |
+| o usuário clicou em bloquear | no cadeado |
+| a permissão do site JÁ está concedida | **fora do navegador** — privacidade do Windows, extensão, política da empresa |
+
+O terceiro é o do relato, e era o único que a mensagem antiga não sabia
+nomear — mandava ao cadeado quem já tinha liberado o cadeado.
+
+`lib/microfone.ts` decide entre eles com o que dá para apurar: o estado da
+política do quadro (`quadroDoMicrofone()`, em quatro valores — nunca "sim ou
+não", porque **em iframe sem a API de política não dá para cravar**) e o estado
+guardado da permissão (`navigator.permissions`, assíncrono — foi por isso que
+`explicarErroMicrofone` virou `async`).
+
+**O nome técnico do erro nunca é jogado fora**, vai entre parênteses no fim de
+toda mensagem. Perder o texto do erro já custou horas neste projeto (§22.6.1,
+§53), e boa parte destes códigos não está documentada.
+
+### 66.2 Microfone e gravador são coisas diferentes
+
+Separados em dois `try`. E a falha do gravador **solta o stream**: sem isso a luz
+do microfone fica acesa depois do erro e a pessoa acha — com razão — que ainda
+está sendo ouvida. É a armadilha da §22.2, do outro lado. `MediaRecorder`
+ausente é checado **antes** de pedir o microfone: não vale acender a luz para
+falhar na linha seguinte.
+
+### 66.3 Medido, não deduzido
+
+Chrome 151 headless com microfone falso, contra o **build de produção** e a
+tela real do chat, com o /chat embutido num iframe cross-origin (pai em
+`127.0.0.1:8899`, CRM em `:3210` — porta diferente é outra **origem**, mas o
+mesmo **site**, então o cookie de sessão chega e a política de permissões
+morde):
+
+| cenário | resultado |
+|---|---|
+| iframe **sem** `allow` | política `false`, `NotAllowedError` → recado do quadro, com a saída de abrir o CRM direto |
+| iframe **com** `allow="microphone"` | política `true`, grava, nenhum aviso |
+| política ok + permissão `granted` + recusa forjada | recado apontando Windows/extensão/outro programa — **o caso do relato** |
+| gravador que lança | recado do gravador, e as tracks conferidas em `readyState === "ended"` |
+
+⚠️ Iframe **same-site** não vira target próprio no CDP. Avaliar dentro dele exige
+o `contextId` de `Runtime.executionContextCreated` — procurar por target, que é o
+caminho da §35.1, devolve "não achei o frame" e parece bug da página.
+
+### 66.4 O que NÃO foi corrigido, porque não está quebrado
+
+O `allow="clipboard-write; microphone; autoplay"` do hub está no lugar
+(`murano-app`, `src/app/crm-externo/page.tsx`, hoje passando pelo
+`PoolEmbeds`), e a lupa do board também delega. **A causa raiz do relato segue
+desconhecida** — a mensagem nova é que vai nomeá-la na próxima tentativa. Se
+disser "o navegador JÁ tem permissão", o conserto é no Windows ou em uma
+extensão, não neste repositório.

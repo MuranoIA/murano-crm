@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LigacaoRtc, explicarErroMicrofone } from "../../lib/webrtcLigacao";
+import { LigacaoRtc } from "../../lib/webrtcLigacao";
+import { explicarErroMicrofone } from "../../lib/microfone";
 import { Icone } from "./icones";
 
 // ---------------------------------------------------------------------------
@@ -277,7 +278,7 @@ export function useLigacao(opts: {
       let sdp = "";
       // o microfone é pedido aqui dentro; recusa vira recado em português
       try { sdp = await r.oferta(); }
-      catch (e: any) { soltarRtc(); setErro(explicarErroMicrofone(e)); return; }
+      catch (e: any) { soltarRtc(); setErro(await explicarErroMicrofone(e)); return; }
 
       const resp = await fetch("/api/chat/ligacao", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -339,7 +340,7 @@ export function useLigacao(opts: {
       rtc.current = r;
       let resposta = "";
       try { resposta = await r.resposta(oferta); }
-      catch (e: any) { soltarRtc(); setErro(explicarErroMicrofone(e)); return; }
+      catch (e: any) { soltarRtc(); setErro(await explicarErroMicrofone(e)); return; }
 
       const resp = await fetch("/api/chat/ligacao/acao", {
         method: "POST", headers: { "Content-Type": "application/json" },
