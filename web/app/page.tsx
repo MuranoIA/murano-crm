@@ -2804,9 +2804,17 @@ export default function Page() {
               <span style={{ flex: 1, minWidth: 220 }}>
                 <b>{saude.titulo}.</b> {saude.detalhe}
                 {" "}
-                {admin
-                  ? "Abra Administração → Mecanismos para o diagnóstico completo do canal."
-                  : "Avise o administrador — enquanto isso, uma resposta que não chega pode não ser da cliente."}
+                {/* O rodapé segue o mesmo fato do texto: com recibo posterior às
+                    presas, o canal está PROVADO vivo — mandar diagnosticar o canal
+                    aqui contradiria a frase anterior, e aviso que se contradiz
+                    deixa de ser lido. */}
+                {saude.canal_confirmado
+                  ? (admin
+                      ? "Abra cada uma no chat para ver o que houve com ela."
+                      : "Confira essas conversas no chat — o sistema em si está entregando normalmente.")
+                  : (admin
+                      ? "Abra Administração → Mecanismos para o diagnóstico completo do canal."
+                      : "Avise o administrador — enquanto isso, uma resposta que não chega pode não ser da cliente.")}
               </span>
               {admin && (
                 <a href="/admin" style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: cor.fg,
