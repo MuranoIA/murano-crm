@@ -15,6 +15,7 @@ import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
 import { limiteDe, recadoDeLimite } from "../../lib/midia";
+import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
@@ -2159,8 +2160,26 @@ export default function Chat() {
   async function alternarGravacao() {
     if (gravando) { recRef.current?.stop(); return; }
     if (previa || !sel) return;
+    // Sem gravador não vale abrir o microfone: acenderia a luz do micro para
+    // falhar na linha seguinte.
+    if (typeof (window as any).MediaRecorder === "undefined") {
+      setAviso("Este navegador não sabe gravar áudio. Use o Chrome ou o Edge atualizados.");
+      return;
+    }
+
+    // O microfone e o gravador falham por motivos OPOSTOS e ficavam no mesmo
+    // catch: qualquer erro daqui virava "verifique a permissão do navegador",
+    // inclusive para quem já tinha a permissão concedida (relatado em 31/08/2026,
+    // com o cadeado do site mostrando o microfone ligado). Cada um tem o seu.
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e: any) {
+      setAviso(await explicarErroMicrofone(e));
+      return;
+    }
+
+    try {
       const mime = FORMATOS_AUDIO.find((f) => (window as any).MediaRecorder?.isTypeSupported?.(f)) ?? "";
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       pedacosRef.current = [];
@@ -2185,8 +2204,12 @@ export default function Chat() {
       recRef.current = rec;
       rec.start();
       setGravando(true); setSegundos(0); setAviso(null);
-    } catch {
-      setAviso("Não consegui acessar o microfone — verifique a permissão do navegador.");
+    } catch (e: any) {
+      // sem isto a luz do microfone continua acesa depois da falha, e a pessoa
+      // acha — com razão — que ainda está sendo ouvida (§22.2)
+      stream.getTracks().forEach((t) => t.stop());
+      setGravando(false);
+      setAviso(explicarErroGravador(e));
     }
   }
 
