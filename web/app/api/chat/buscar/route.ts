@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../../lib/papel";
+import { escopoCarteira } from "../../../../lib/verComo";
 import { carregarAtribuicoes, aplicaEscopo, emLotes } from "../../../../lib/chatEscopo";
 import { lerCrmConfig, VIEW_FUNIL_TELA, filtroLinhas } from "../../../../lib/crmConfig";
 
@@ -31,7 +31,7 @@ const sanitiza = (s: string) =>
 export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value ?? null;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
 
   const bruto = (new URL(req.url).searchParams.get("q") ?? "").trim();
   if (bruto.length < MIN) {

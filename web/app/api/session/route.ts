@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { papelDe, carteiraDe } from "../../../lib/papel";
+import { verComo } from "../../../lib/verComo";
 
 export const dynamic = "force-dynamic";
 
@@ -31,5 +32,9 @@ export async function GET() {
     } catch { /* mantém o fallback [role] */ }
   }
 
-  return Response.json({ role, carteira, papeis, email });
+  // `ver_como`: a carteira que admin/home escolheu simular (null = todas). O
+  // board e o chat leem daqui para nascer ja com a selecao certa depois de um
+  // recarregamento -- sem isso a tela viria estreitada pelo servidor com o
+  // seletor dizendo "Todos", que e o pior dos dois mundos.
+  return Response.json({ role, carteira, papeis, email, ver_como: verComo() });
 }

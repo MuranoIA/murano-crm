@@ -30,6 +30,9 @@ export async function POST(req: Request) {
   if (!token) return NextResponse.json({ error: "papel de vendedor sem carteira definida" }, { status: 400 });
 
   const res = NextResponse.json({ ok: true, role: papel });
+  // Trocar de papel zera a simulacao: assumir "vendedor" enquanto se ve como
+  // outra carteira seriam dois escopos disputando a mesma tela.
+  res.cookies.set("crm_ver_como", "", { httpOnly: true, path: "/", maxAge: 0 });
   res.cookies.set("crm_sessao", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

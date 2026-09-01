@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import ExcelJS from "exceljs";
-import { veTudo, carteiraDe } from "../../../../lib/papel";
+import { veTudo } from "../../../../lib/papel";
+import { escopoCarteira } from "../../../../lib/verComo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,7 +30,7 @@ export async function GET(req: Request) {
   if (!url || !key) return Response.json({ error: "config ausente" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
   const { data, error } = await sb.rpc("relatorio_clientes_santa_barbara", { p_vendedor: carteira });
   if (error) return Response.json({ error: error.message }, { status: 500 });
   const linhas: any[] = data ?? [];
