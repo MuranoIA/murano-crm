@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../../lib/papel";
+import { escopoCarteira } from "../../../../lib/verComo";
 import { lerCrmConfig } from "../../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
 
   const dias = Math.min(90, Math.max(1, Number(new URL(req.url).searchParams.get("dias") ?? 15)));
   const desde = new Date(Date.now() - dias * 86400_000).toISOString().slice(0, 10);

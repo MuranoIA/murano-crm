@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../lib/papel";
+import { escopoCarteira } from "../../../lib/verComo";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });

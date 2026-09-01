@@ -1511,7 +1511,14 @@ export default function Chat() {
   useEffect(() => {
     fetch("/api/session", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setSessao(j?.role ? { role: j.role, carteira: j.carteira ?? null } : null))
+      .then((j) => {
+        setSessao(j?.role ? { role: j.role, carteira: j.carteira ?? null } : null);
+        // "Ver como <vendedor>" (lib/verComo.ts): a escolha feita nos chips do
+        // board vale aqui tambem, porque mora num cookie lido pelo servidor. A
+        // lista ja chega estreitada; o seletor precisa dizer o mesmo, senao a
+        // tela mostra uma carteira com "Todos os vendedores" escrito no botao.
+        if (j?.ver_como) setVendFiltro(j.ver_como as string);
+      })
       .catch(() => setSessao(null));
   }, []);
 
@@ -1537,6 +1544,28 @@ export default function Chat() {
     }
   }, []);
   carregarListaRef.current = carregarLista;
+
+  // Escolher um vendedor no seletor: alem do filtro local (instantaneo, sobre a
+  // lista que ja esta na memoria) grava o escopo no servidor, o mesmo que os
+  // chips do board gravam. A lista e a agenda sao refeitas porque as duas sao
+  // escopadas la -- e ao voltar para "Todos" a busca anterior veio estreitada,
+  // entao sem refazer o "Todos" mostraria so a carteira anterior.
+  async function escolherVendedor(slug: string | null) {
+    setVendFiltro(slug);
+    setMenuVend(false);
+    setCarteira(null);   // a agenda vem do servidor: refaz quando a aba abrir
+    try {
+      await fetch("/api/ver-como", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ carteira: slug }),
+      });
+    } catch {
+      // cookie bloqueado ou rota fora: o filtro local segue valendo nesta tela,
+      // so nao viaja para o board. Degrada, nao quebra.
+    }
+    void carregarLista();
+  }
 
   // catálogo carregado uma vez: muda com deploy de admin, não durante o turno
   useEffect(() => {
@@ -2737,12 +2766,21 @@ export default function Chat() {
   // vendedores que REALMENTE têm conversa aqui — a lista de carteira_config
   // traz gente sem nenhuma, e chip que filtra para o vazio só atrapalha
   const coresVend = new Map(vendedores.map((v) => [v.slug, v.cor]));
-  const vendedoresComConversa = [...new Set(baseLinha.filter((c) => !c.na_fila && c.vendedor).map((c) => c.vendedor as string))]
+  // Sem simulacao, so entram carteiras que REALMENTE tem conversa aqui: opcao
+  // que filtra para o vazio so atrapalha. Simulando, o servidor ja mandou uma
+  // carteira so -- a lista tem de vir do cadastro (`vendedores`), senao o
+  // seletor perde as outras opcoes e nao ha como trocar nem voltar para "Todos".
+  const comConversa = [...new Set(baseLinha.filter((c) => !c.na_fila && c.vendedor).map((c) => c.vendedor as string))];
+  const vendedoresComConversa = [...new Set(vendFiltro ? [...vendedores.map((v) => v.slug), ...comConversa] : comConversa)]
     .sort()
     .map((slug) => ({
       slug,
       cor: coresVend.get(slug) ?? null,
-      total: baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length,
+      // o numero so vale para a carteira que o servidor mandou: contar as outras
+      // daria zero e a tela prometeria vazio onde ha conversa.
+      total: !vendFiltro || slug === vendFiltro
+        ? baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length
+        : null,
     }));
 
   const filtradas = noEscopo.filter((c) => {
@@ -3301,7 +3339,9 @@ export default function Chat() {
                 // filas e seus contadores (via `noEscopo`), a busca no conteúdo e a
                 // aba Minha carteira. É o mesmo alcance que o board tem.
                 const atual = vendedoresComConversa.find((v) => v.slug === vendFiltro) ?? null;
-                const totalGeral = baseLinha.filter((c) => !c.na_fila).length;
+                // simulando, a lista que esta na memoria e de UMA carteira: o
+                // total de "Todos os vendedores" seria o dela, com o nome errado.
+                const totalGeral = vendFiltro ? null : baseLinha.filter((c) => !c.na_fila).length;
                 return (
                   <div style={{ position: "relative" }}>
                     <button
@@ -3329,12 +3369,12 @@ export default function Chat() {
                         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 101,
                           background: M.surface, border: `1px solid ${M.border}`, borderRadius: 9,
                           boxShadow: "0 10px 26px rgba(28,14,27,.18)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
-                          {[{ slug: null as string | null, cor: null as string | null, total: totalGeral },
+                          {[{ slug: null as string | null, cor: null as string | null, total: totalGeral as number | null },
                             ...vendedoresComConversa].map((v) => {
                             const on = vendFiltro === v.slug;
                             return (
                               <button key={v.slug ?? "todos"}
-                                onClick={() => { setVendFiltro(v.slug); setMenuVend(false); }}
+                                onClick={() => { void escolherVendedor(v.slug); }}
                                 style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left",
                                   padding: "8px 11px", fontSize: 12.5, fontWeight: on ? 800 : 600,
                                   color: on ? M.wine : M.ink, background: on ? M.roxoSoft : "transparent",
@@ -3343,7 +3383,9 @@ export default function Chat() {
                                   ? <span style={{ width: 8, height: 8, borderRadius: 8, background: v.cor, flexShrink: 0 }} />
                                   : <span style={{ width: 8, flexShrink: 0 }} />}
                                 {v.slug ? cap(v.slug) : "Todos os vendedores"}
-                                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: M.muted }}>{v.total}</span>
+                                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: M.muted }}>
+                                  {v.total ?? ""}
+                                </span>
                               </button>
                             );
                           })}

@@ -477,7 +477,17 @@ export default function Page() {
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
   const [isMobile, setIsMobile] = useState(false); // < 768px -> layout empilhado (colunas viram faixas)
-  const [filtro, setFiltro] = useState<string>("todos");
+  const [filtro, setFiltro] = useState<string>("todos");
+  // "Ver como <vendedor>": a MESMA escolha dos chips, so que gravada num cookie
+  // (lib/verComo.ts) e valendo no servidor. Sem isso ela morria aqui: nao valia
+  // no /chat, nao valia nos indicadores nem nos relatorios, e sumia a cada
+  // recarregamento. `filtro` continua sendo o filtro local instantaneo -- os
+  // dois andam juntos, e e por isso que o clique escreve os dois.
+  const [verComo, setVerComo] = useState<string | null>(null);
+  // lista de carteiras do CADASTRO. Enquanto se simula alguem, os cards sao de
+  // UMA carteira so, e uma lista tirada deles perderia as outras opcoes -- nao
+  // haveria como trocar de vendedor nem voltar para "Todos".
+  const [vendTodos, setVendTodos] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
   const [trocandoPapel, setTrocandoPapel] = useState(false);
@@ -697,7 +707,8 @@ export default function Page() {
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
       setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
-      setVendMeta(Object.fromEntries((j.vendedores ?? []).filter((v: any) => v?.slug).map((v: any) => [v.slug, { rca: v.rca_num ?? null, time: v.time ?? null }])));
+      setVendMeta(Object.fromEntries((j.vendedores ?? []).filter((v: any) => v?.slug).map((v: any) => [v.slug, { rca: v.rca_num ?? null, time: v.time ?? null }])));
+      setVendTodos((j.vendedores ?? []).map((v: any) => v?.slug).filter(Boolean));
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
       setErro(String(e?.message ?? e));
@@ -784,6 +795,10 @@ export default function Page() {
       if (!r.ok) { alert("Não foi possível trocar de papel: " + (j?.error ?? r.status)); return; }
       const s = await fetch("/api/session").then((x) => x.json());
       setSessao(s);
+      // /api/trocar-papel apaga o cookie de simulacao; a tela nao pode ficar
+      // com o chip de um vendedor que o servidor ja esqueceu.
+      setVerComo(null);
+      setFiltro("todos");
     } catch (e: any) {
       alert("Erro ao trocar de papel: " + (e?.message ?? e));
     } finally {
@@ -1152,7 +1167,14 @@ export default function Page() {
     } catch {}
     fetch("/api/session")
       .then((r) => (r.ok ? r.json() : null))
-      .then((s) => setSessao(s))
+      .then((s) => {
+        setSessao(s);
+        // o servidor ja vai devolver o board estreitado; o chip precisa dizer o
+        // mesmo, senao a tela mostra uma carteira com "Todos" marcado.
+        const vc = (s?.ver_como as string | null) ?? null;
+        setVerComo(vc);
+        if (vc) setFiltro(vc);
+      })
       .catch(() => setSessao(null))
       .finally(() => setChecando(false));
   }, []);
@@ -1290,10 +1312,12 @@ export default function Page() {
     return () => clearInterval(t);
   }, [syncRodando]);
 
-  const vendedores = useMemo(
-    () => [...new Set(cards.map((c) => c.vendedor).filter((v): v is string => !!v))].sort(),
-    [cards]
-  );
+  const vendedores = useMemo(() => {
+    const dosCards = cards.map((c) => c.vendedor).filter((v): v is string => !!v);
+    // simulando, o servidor ja mandou so uma carteira: a lista tem de vir do
+    // cadastro, senao o seletor vira um chip so e nao ha volta para "Todos".
+    return [...new Set(verComo ? [...vendTodos, ...dosCards] : dosCards)].sort();
+  }, [cards, vendTodos, verComo]);
   // filtro por produto: um card "casa" se o cliente comprou o(s) produto(s) no período.
   // Casamos por qualquer identificador — cliente_id do RD (contato real), codcli (cards
   // winthor:/venda: da prospecção/venda) ou os últimos 8 dígitos do telefone.
@@ -1765,12 +1789,35 @@ export default function Page() {
       return { ...prev, [colKey]: Math.min(atual + LOTE_INCREMENTO, total) };
     });
   }
+  // Escolher um vendedor nos chips: o filtro local muda NA HORA (era assim
+  // antes, e continua sendo -- ninguem espera rede para filtrar uma tela que ja
+  // esta carregada), o cookie de escopo vai atras, e so entao os dados sao
+  // buscados de novo. O recarregamento importa mesmo ao voltar para "Todos": a
+  // ultima busca veio estreitada pelo servidor, e sem ele "Todos" mostraria
+  // apenas a carteira anterior.
+  async function escolherVendedor(val: string) {
+    const alvo = val === "todos" ? null : val;
+    setFiltro(val);
+    setVerComo(alvo);
+    try {
+      await fetch("/api/ver-como", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ carteira: alvo }),
+      });
+    } catch {
+      // cookie bloqueado ou rota fora do ar: o filtro local continua valendo
+      // nesta tela, so nao viaja para o chat. Degrada, nao quebra.
+    }
+    load();
+  }
+
   const chip = (label: string, val: string, cor?: string) => {
     const ativo = filtro === val;
     return (
       <button
         key={val}
-        onClick={() => setFiltro(val)}
+        onClick={() => escolherVendedor(val)}
         style={{
           display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
           background: ativo ? RD.cyanSoft : RD.surface,

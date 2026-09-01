@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe } from "../../../lib/papel";
+import { escopoCarteira } from "../../../lib/verComo";
 import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao } from "../../../lib/crmConfig";
 import { diagnosticar } from "../../../lib/saudeCanal";
 import { linhaDeEnvio } from "../../../lib/whatsapp";
@@ -11,7 +11,7 @@ export async function GET() {
   // autorização: admin e home veem tudo; vendedor vê só a própria carteira (filtro no SERVIDOR)
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;

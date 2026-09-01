@@ -5150,3 +5150,130 @@ O `allow="clipboard-write; microphone; autoplay"` do hub está no lugar
 desconhecida** — a mensagem nova é que vai nomeá-la na próxima tentativa. Se
 disser "o navegador JÁ tem permissão", o conserto é no Windows ou em uma
 extensão, não neste repositório.
+
+## 67. "Ver como <vendedor>" — a escolha do board passou a valer no sistema inteiro (01/09/2026)
+
+Pedido do usuário: escolher um vendedor e ver **as conversas, os clientes, a
+carteira e o resto** como se estivesse acessando no lugar dele. E depois, ao
+apontar o print dos chips do board: *"já temos essa seleção por vendedor, mas
+não reflete no chat"*.
+
+### 67.1 O que existia, e por que não bastava
+
+A escolha existia **duas vezes, sem se falarem**: os chips do board
+(`app/page.tsx`) e o dropdown 🧑‍💼 da sidebar do chat (§23.5). Ambos só de tela,
+ambos perdidos no primeiro recarregamento — e nenhum dos dois alcançava os
+indicadores, os relatórios ou as visões, que são escopados no **servidor**.
+
+Por isso não entrou um terceiro controle: seria o erro da §32.5 (dois controles
+sobre o mesmo assunto acabam se contradizendo). Os dois que existem passaram a
+escrever **o mesmo estado**, e o estado saiu da tela.
+
+### 67.2 Três regras que sustentam o desenho
+
+Estão em `web/lib/verComo.ts`, e afrouxar qualquer uma quebra coisa distinta:
+
+1. **Estreita, nunca alarga.** O cookie `crm_ver_como` só é lido quando a sessão
+   já vê tudo (admin/home) — e é `httpOnly` porque quem escreve é
+   `/api/ver-como`, que confere o papel e confere o slug contra
+   `carteira_config`. Medido: vendedor com o cookie de outra carteira na mão
+   continua vendo a própria (6 linhas, `kamilly`, não `luana`).
+2. **É escopo, não papel.** `podeAdmin` continua valendo e `/admin` fica **de
+   fora** — quem simula não perde as telas de administração no meio do caminho,
+   e uma campanha de disparo não sai escopada sem ninguém reparar. Conferido: o
+   disparo em massa oferece as 7 carteiras com a simulação ligada.
+3. **NÃO troca a identidade de quem escreve.** `usuarioDaSessao()` continua
+   sendo a pessoa de verdade. Se a simulação virasse identidade, o admin abrindo
+   uma conversa **zeraria o "não lida" do vendedor** (`chat_leitura` é por
+   usuário) e ele perderia a própria fila sem entender por quê. Vale igual para
+   autoria de nota, de transferência e de encerramento.
+
+Pela mesma razão as checagens de **autorização** (transferir, vincular, salvar
+cadastro, ligar) seguem lendo `carteiraDe(sessao)` direto: é a régua da §31.2 —
+esconder não pode virar agir sem saber, e permissão se resolve contra o dado
+autoritativo, nunca contra uma view deliberadamente parcial. Quem simula não
+deve ser bloqueado pelo próprio filtro.
+
+### 67.3 Onde pega, e o que isso custou de código
+
+`escopoCarteira()` substituiu `carteiraDe(sessao)` nas rotas de **leitura**:
+`/api/chat`, `buscar`, `carteira`, `indicadores`, `/api/funil`, `visoes`,
+`melhores-clientes`, `descartados` (só a listagem) e os quatro `/api/relatorios/*`
+— nesses últimos o rótulo "Todas as carteiras" passa a dizer o nome do vendedor
+sozinho. `/api/relatorio` não precisou: já recebia o vendedor selecionado no
+corpo, vindo do board.
+
+Medido em 01/09: board 4.349 → 949 cards; chat 22 → 6 conversas (1 da Luana + as
+5 da fila de espera, que **o vendedor de verdade também vê**).
+
+### 67.4 A lista de opções não pode sair dos dados estreitados
+
+A armadilha desta feature, nas duas telas: os chips do board vinham de
+`cards.map(c => c.vendedor)` e o dropdown do chat de `baseLinha`. Com o servidor
+narrando uma carteira só, a lista viraria **um item** — sem outras opções e
+**sem volta para "Todos"**. Agora, enquanto se simula, ela vem do cadastro
+(`carteira_config`, que já chega nos dois payloads).
+
+Pelo mesmo motivo os contadores do dropdown do chat só aparecem para a carteira
+que o servidor mandou: contar as outras daria zero e a tela prometeria vazio
+onde há conversa.
+
+### 67.5 Voltar para "Todos" EXIGE recarregar
+
+O filtro local continua instantâneo (ninguém espera rede para filtrar uma tela
+já carregada), mas a busca seguinte é obrigatória — e o caso que a torna
+obrigatória é o inverso do intuitivo: ao **voltar** para "Todos", os dados em
+memória vieram estreitados, e sem refazer o "Todos" mostraria apenas a carteira
+anterior.
+
+O `/api/trocar-papel` apaga o cookie: assumir "vendedor" enquanto se vê como
+outra carteira seriam dois escopos disputando a mesma tela.
+
+### 67.6 O selo, e por que ele NÃO aparece no board nem no chat
+
+Escopo que persiste e não se anuncia é a parte perigosa: quem esquecer que
+escolheu a Luana abre um relatório na segunda-feira vendo um sétimo da operação
+e conclui que sumiu cliente. `app/verComo.tsx` (no layout raiz) é o antídoto —
+selo fixo no canto inferior esquerdo com o nome e o botão **ver tudo**.
+
+Ele some no board e no `/chat` de propósito: as duas telas já mostram a escolha
+no próprio seletor, e um selo flutuante ali seria a mesma informação duas vezes,
+por cima do conteúdo, o dia inteiro. Some também na lupa (`embed=1`), que é um
+iframe nosso dentro do board — apareceria duas vezes na mesma janela.
+
+O "ver tudo" **recarrega a página**: o escopo é do servidor e cada tela busca os
+próprios dados; pedir a cada uma que saiba desfazer seria uma régua nova em cada
+tela, divergindo na primeira.
+
+### 67.7 O cookie tem de ser `SameSite=None; Secure`
+
+Dentro do hub (§17) o documento de topo é outro site e cookie `Lax` é descartado
+como cookie de terceiro — a escolha não colaria justamente onde o time trabalha.
+Fora de https o par None/Secure é inválido; ali vale `Lax`. A rota decide pelo
+`x-forwarded-proto`.
+
+⚠️ **Achado de lambuja, não corrigido:** `/api/trocar-papel` seta `crm_sessao`
+com `sameSite: "lax"`. Pela mesma regra, **a troca de papel provavelmente não
+funciona dentro do hub hoje** — o navegador descarta o `Set-Cookie`. Não foi
+verificado ao vivo nem alterado nesta frente.
+
+### 67.8 Como foi verificado
+
+`tsc` e `next build` passam e não provam nada (§55). O que provou, contra o
+build de produção local e o Supabase real:
+
+- as quatro recusas da rota (sem sessão 401 · vendedor 403 · carteira inexistente
+  400 · válida 200 com `Set-Cookie`);
+- o cookie forjado por um vendedor sendo ignorado;
+- Chrome headless por CDP (receita da §35.1): clicar "Luana" no board grava o
+  escopo e mantém os 8 chips; abrir o `/chat` em seguida traz o dropdown já em
+  "Luana 1" com a lista estreitada; o dropdown do chat lista as 8 opções mesmo
+  estreitado; "Todos os vendedores" limpa o cookie e a lista volta a 17;
+  `/chat/indicadores` mostra só a linha da Luana **com o selo**, e o "ver tudo"
+  devolve as 7 linhas;
+- `/admin` intacto com a simulação ligada.
+
+⚠️ **Armadilha de ambiente, nova:** no Git Bash, passar `"/"` como argumento vira
+um caminho do Windows (MSYS path conversion) e o `Page.navigate` responde
+`Cannot navigate to invalid URL` — que parece erro de CDP e é do shell. Use
+`MSYS_NO_PATHCONV=1`.
