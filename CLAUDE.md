@@ -5150,3 +5150,109 @@ O `allow="clipboard-write; microphone; autoplay"` do hub está no lugar
 desconhecida** — a mensagem nova é que vai nomeá-la na próxima tentativa. Se
 disser "o navegador JÁ tem permissão", o conserto é no Windows ou em uma
 extensão, não neste repositório.
+
+
+## 67. O chat no celular tinha metade da tela fora da tela (01/09/2026)
+
+Relato do usuário: *"analise a responsividade, para celular. algumas coisas
+estão fora da tela"*, e logo em seguida *"prioritariamente o chat"*.
+
+### 67.1 Os números, antes de mexer em nada
+
+Chrome headless por CDP com `Emulation.setDeviceMetricsOverride` em 390×844
+(a receita da §35.1, agora com viewport de aparelho). A lista estava correta;
+o estrago aparecia ao ABRIR uma conversa:
+
+| | medido |
+|---|---|
+| largura da página × largura da tela | **685px em 390px** |
+| fora da tela | Transferir (293→393), Resolver (403→496), WhatsApp (506→589), 📊 Cliente (599→684) |
+| caixa de mensagem | **16px** — a pílula tinha 298 de largura para 348 de conteúdo |
+| lista de templates | 151→**485**, ancorada em `left: 0` de um botão que vive no meio da barra |
+
+Nenhum dos três dava erro: `tsc` e `next build` passavam limpos, e não havia
+exceção no console. É o padrão da §61.5 — **o que revela isso é medir
+`scrollWidth` contra `clientWidth`, não ler o código.**
+
+### 67.2 A causa era uma só, e já tinha nome no projeto
+
+O cabeçalho da conversa monta as ações com `display: "contents"` dentro de uma
+linha `flexWrap: "nowrap"`, e cada botão é `whiteSpace: "nowrap"`. Com o texto
+inteiro ("↪ Transferir", "WhatsApp ↗"), a soma não cabe e o flex não tem como
+encolher — a página inteira estica.
+
+**A lupa do board já tinha passado por isso** (§41.5) e o remédio existia:
+`compacto` troca o rótulo pelo ícone e deixa o `title` como legenda. Faltava
+alguém ligar o mesmo interruptor para o celular. O mesmo vale para o
+compositor: a §51 mediu a conta da pílula na lupa e mandou os três secundários
+para trás do "⋯" — no celular ninguém fez.
+
+Daí as duas constantes novas, e a distinção entre elas é o que importa:
+
+| | quem | por quê |
+|---|---|---|
+| `acoesSoIcone = compacto \|\| isMobile` | rótulo vira ícone | falta largura nos dois |
+| `acoesEmFaixa = isMobile && !compacto` | as ações ganham LINHA PRÓPRIA | na lupa o que falta é altura (§41.5); no celular sobra altura e falta largura |
+
+Ou seja: a lupa continua com as ações na linha do nome, e o celular ganha uma
+faixa de 40px com os cinco ícones inteiros. **Faixa que rola escondendo botão é
+pior que faixa que custa 40px de uma tela de 844.**
+
+`barraEnxuta = compacto || isMobile` faz o mesmo pelo compositor. Dá o mesmo
+valor de `acoesSoIcone` hoje, e fica separado de propósito: governam regiões
+diferentes, e mexer numa régua não deve arrastar a outra.
+
+### 67.3 A ficha do cliente abria por cima da conversa
+
+`painelAberto` nasce `true` — e no desktop está certo, porque ali ele é a
+COLUNA ao lado do diálogo, que é justamente o que o RD não tem (§18/P1). No
+celular o MESMO estado vira uma folha modal: abrir um atendimento mostrava o
+ERP e escondia as mensagens que a pessoa foi ler.
+
+Fecha uma vez, quando a tela se descobre estreita (`useRef` de guarda, não a
+cada resize — senão reabrir seria desfeito ao girar o aparelho). Depois disso
+quem manda é o botão 📊.
+
+⚠️ Isso alcançava **a lupa também**: lá `isMobile` é verdadeiro porque o iframe
+tem 500px, então a condição `(d1 || compacto) && isMobile && sel && painelAberto`
+era satisfeita na primeira abertura.
+
+### 67.4 Efeitos colaterais que a foto pegou e a sonda não
+
+- **O `BotaoLigar` escapou de novo.** Mora em `ligacao.tsx`, então a troca do
+  `rot()` não o alcançou e o cabeçalho ficou com cinco ícones e um botão com
+  texto no meio. É literalmente a armadilha registrada na §60.8 — *quando a
+  mudança é "trocar todos os X da tela", conferir se algum X mora em outro
+  arquivo*. Ganhou `pad`/`fonte` opcionais, passados **só** no celular, para a
+  lupa continuar byte por byte o que era.
+- **A sub-linha do nome quebrava em três linhas.** Carteira e selo da linha
+  saem no celular pela mesma razão já escrita ali para o compacto: as duas
+  aparecem no rodapé da conversa.
+- **O rodapé passou a poder quebrar.** Ele era `nowrap` sem guarda e cortava
+  "↪ de Romulo" no meio a 360px — e, com o cabeçalho não repetindo mais
+  carteira e linha, ele virou o ÚNICO lugar onde elas aparecem. Cortar deixou
+  de ser redundância e virou perda.
+
+### 67.5 O teste — `testes/casos/regressao-responsivo-celular.mjs`
+
+Seis passos: 390 e 360 (o Android mais apertado da equipe), lista, conversa e
+**os menus abertos**, que é onde o transbordo se esconde — foi assim que a
+lista de templates apareceu.
+
+Uma ressalva importante na sonda: **elemento largo dentro de uma faixa que rola
+na horizontal não é transbordo** (a régua de abas da ficha do cliente é assim).
+Sem isso o teste vira flaky e ensina a ignorar o próprio alarme.
+
+Estado depois: `scrollWidth == clientWidth` nas duas larguras, caixa de texto
+122px a 390 e 92px a 360, zero exceção. Desktop conferido inalterado (rótulos
+com texto, painel do ERP à direita, campo de 440px) e `ciclo9` verde.
+
+### 67.6 O que NÃO foi feito
+
+- **A faixa de filas aparece duas vezes no celular** — os quatro contadores no
+  alto da lista e a barra fixa embaixo, com os mesmos números. São ~72px de
+  altura repetidos, mas nada sai da tela, e tirar um controle que a equipe usa
+  é decisão de desenho, não conserto de bug.
+- A 360px a caixa de texto fica com 92px. Passa, e é 5,7× o que era, mas é o
+  ponto a atacar se alguém quiser mais folga — o caminho seria o TEMPLATE sair
+  da pílula, e ele já tem o botão próprio na faixa de janela fechada.

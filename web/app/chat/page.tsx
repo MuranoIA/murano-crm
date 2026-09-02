@@ -1508,6 +1508,20 @@ export default function Chat() {
     return () => window.removeEventListener("resize", mq);
   }, []);
 
+  // `painelAberto` nasce `true` porque no desktop ele é uma COLUNA ao lado da
+  // conversa — o ERP ao lado do diálogo é justamente o que o RD não tem. No
+  // celular o mesmo estado vira uma FOLHA por cima da conversa: abrir um
+  // atendimento mostrava a ficha do cliente e escondia as mensagens.
+  // Fecha uma vez, quando a tela se descobre estreita. Depois disso quem manda
+  // é o botão 📊 — inclusive para reabrir.
+  const jaFechouNoCelular = useRef(false);
+  useEffect(() => {
+    if (isMobile && !jaFechouNoCelular.current) {
+      jaFechouNoCelular.current = true;
+      setPainelAberto(false);
+    }
+  }, [isMobile]);
+
   useEffect(() => {
     fetch("/api/session", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -2887,28 +2901,52 @@ export default function Chat() {
   // so, senao a conversa — que e o motivo da janela existir — fica espremida.
   // Viram icone; o `title` que cada botao ja tinha vira a legenda no hover.
   const compacto = embutido;
+  // No CELULAR o aperto é o mesmo, e o estrago era maior: os botões do
+  // cabeçalho saíam com o texto inteiro numa linha `nowrap`, então Transferir,
+  // Resolver, WhatsApp e Cliente ficavam FORA DA TELA — medido em 01/09/2026
+  // num aparelho de 390px, `scrollWidth` 684 contra `clientWidth` 390, e a
+  // página inteira passava a rolar de lado. Ícone também aqui, pelo mesmo
+  // motivo, e o `title` continua sendo a legenda.
+  const acoesSoIcone = compacto || isMobile;
+  // A diferença entre os dois casos: na lupa as ações dividem a linha do nome,
+  // porque ali o que falta é ALTURA (§41.5). No celular sobra altura e falta
+  // largura — então elas ganham uma faixa própria, onde os cinco ícones cabem
+  // inteiros. Faixa que rola escondendo botão é pior que faixa que custa 40px.
+  const acoesEmFaixa = isMobile && !compacto;
   // `bancada` troca o emoji por traço monocromático (item 18 do laudo): sete
   // emoji lado a lado são sete pesos e sete cores decididos pela fonte do
   // sistema, não por nós. Os outros desenhos seguem com o emoji — trocar o
   // ícone de quem não pediu quebraria o rollback exato.
   const rot = (icone: string, texto: string, n?: NomeIcone, limpo?: string) => {
-    if (!bc || !n) return compacto ? icone : texto;
+    if (!bc || !n) return acoesSoIcone ? icone : texto;
     return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: compacto ? 0 : 6 }}>
-        <Icone n={n} />{!compacto && (limpo ?? texto)}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: acoesSoIcone ? 0 : 6 }}>
+        <Icone n={n} />{!acoesSoIcone && (limpo ?? texto)}
       </span>
     );
   };
   // -20% no compacto: sao 4 pilulas de icone competindo com o nome na MESMA
   // linha desde a mudanca anterior; cada pixel a menos aqui e um pixel a mais
   // para o nome antes das reticencias.
-  const padBotao = compacto ? "4px 7px" : "5px 11px";
-  const fonteBotao = compacto ? 9.5 : 11.5;
+  // No celular é o contrário: com faixa própria sobra largura, e o que falta é
+  // ÁREA DE TOQUE — o ícone cresce e o padding com ele, para o botão chegar
+  // perto dos 44px de piso que a pílula do compositor já respeita.
+  const padBotao = compacto ? "4px 7px" : acoesEmFaixa ? "10px 13px" : "5px 11px";
+  const fonteBotao = compacto ? 9.5 : acoesEmFaixa ? 15 : 11.5;
   // Os nove botões de dentro da pílula repetiam o mesmo par de literais. Aqui
   // eles passam a sair da grade — uma altura por contexto, e nada fora dela:
   // 42/30 no desenho de hoje, 32/28 em `bancada`. No celular o piso de toque é
   // 44 px, que é a régua de acessibilidade e não uma preferência.
   const pilBtn = isMobile && !compacto ? 44 : compacto ? G.pilBtnC : G.pilBtn;
+  // Medido em 01/09/2026 num aparelho de 390px: a pílula tinha 298px de largura
+  // para 348px de conteúdo (📎 🎤 ⏸ ⚡ 🗒️ + TEMPLATE), e a caixa de texto
+  // sobrava com DEZESSEIS pixels — o campo principal da tela, invisível. É a
+  // mesma conta que a §51 fez para a lupa, e a mesma saída: os três secundários
+  // vão para trás do "⋯" e o TEMPLATE vira "T". Ficam à vista os dois gestos
+  // que o WhatsApp também deixa dentro do campo, anexo e áudio.
+  // (mesmo valor de `acoesSoIcone` hoje; separados de propósito — um governa o
+  //  cabeçalho e o outro o compositor, e mexer num não deve arrastar o outro.)
+  const barraEnxuta = compacto || isMobile;
   const raioPilBtn = compacto ? G.raioPilC : G.raioPil;
   // SVG dentro de <button> nao se centraliza sozinho como texto se centraliza.
   // So em `bancada`, onde o filho e um <svg>: nos outros o filho e emoji e o
@@ -3632,7 +3670,7 @@ export default function Chat() {
                     preço de cortar o telefone de quem tem nome comprido.
                     No compacto ele segue medindo o que precisa: 56 comeria a
                     conversa, que é o motivo de a lupa existir. */}
-                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: "nowrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : acoesEmFaixa ? "8px 12px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: acoesEmFaixa ? "wrap" : "nowrap" }}>
                   {isMobile && !compacto && (
                     <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
@@ -3648,11 +3686,11 @@ export default function Chat() {
                           logo abaixo ("Carteira Milene | Murano Pro"). Repetir ali
                           em cima custava exatamente a linha que o cabecalho tinha
                           acabado de ganhar. */}
-                      {sel.telefone ?? "sem telefone"}{!compacto && sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
+                      {sel.telefone ?? "sem telefone"}{!acoesSoIcone && sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
                           ativa, é o que evita responder pela linha errada (a janela
                           de 24h é por par número+cliente) */}
-                      {linha && !compacto && (
+                      {linha && !acoesSoIcone && (
                         <span title={`Esta conversa corre pelo ${linha.rotulo}`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3,
                           color: linha.canal === "rd" ? M.gray : M.roxo,
                           background: linha.canal === "rd" ? "#eee8ed" : M.roxoSoft,
@@ -3661,7 +3699,7 @@ export default function Chat() {
                              quebrava o cabecalho em duas linhas num quadro de 500px --
                              a mesma linha que acabamos de ganhar juntando as acoes ao
                              nome. Fica no `title`, como ja acontece nos chips da lista. */}
-                          {compacto ? linha.rotulo.replace(/\s*\([^)]*\)\s*/g, " ").trim() : linha.rotulo}
+                          {acoesSoIcone ? linha.rotulo.replace(/\s*\([^)]*\)\s*/g, " ").trim() : linha.rotulo}
                         </span>
                       )}
                       {/* anti-colisão: quem mais está com ESTA conversa aberta */}
@@ -3684,7 +3722,14 @@ export default function Chat() {
                       esta mudança acabou de ganhar. */}
                   <span style={compacto
                     ? { display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflowX: "auto", flexShrink: 0, maxWidth: "62%" }
-                    : { display: "contents" }}>
+                    : acoesEmFaixa
+                      // `flexBasis: 100%` joga a faixa para a segunda linha do
+                      // cabeçalho. `overflowX` é só rede de proteção: com cinco
+                      // ícones ela não é usada, mas uma conversa com Pegar e
+                      // Devolver ao mesmo tempo rola em vez de vazar da tela.
+                      ? { flexBasis: "100%", display: "flex", alignItems: "center", gap: 6,
+                          flexWrap: "nowrap", overflowX: "auto", marginTop: 6 }
+                      : { display: "contents" }}>
                   {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
                   {sel.na_fila && (
                     sessao.carteira ? (
@@ -3716,7 +3761,11 @@ export default function Chat() {
                     ocupado={lig.ocupado}
                     emChamada={!!lig.chamada}
                     onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
-                    compacto={compacto}
+                    compacto={acoesSoIcone}
+                    // `pad`/`fonte` só no celular: sem eles a lupa continua
+                    // com os literais que já tinha, byte por byte.
+                    pad={acoesEmFaixa ? padBotao : undefined}
+                    fonte={acoesEmFaixa ? fonteBotao : undefined}
                     bancada={bc}
                   />
                   {/* Devolver só aparece quando o cliente NÃO tem dono comercial
@@ -3762,10 +3811,10 @@ export default function Chat() {
                   {d1 && isMobile && (
                     <button onClick={() => { setAbaContato(abaPadrao); setPainelAberto(true); }}
                       title="Ver os dados de compra desta cliente"
-                      style={{ minHeight: 34, fontSize: 11.5, fontWeight: 800, color: M.wine, background: M.roxoSoft,
-                        border: `1px solid ${M.border}`, borderRadius: 999, padding: "5px 12px", cursor: "pointer",
-                        fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                      📊 Cliente
+                      style={{ fontSize: fonteBotao, fontWeight: 800, color: M.wine, background: M.roxoSoft,
+                        border: `1px solid ${M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer",
+                        fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }}>
+                      {rot("📊", "📊 Cliente", "cliente", "Cliente")}
                     </button>
                   )}
                   </span>
@@ -4149,7 +4198,7 @@ export default function Chat() {
                      Aqui diz de quem é a carteira e por qual linha a conversa corre —
                      a janela de 24h é por par número+cliente, então errar a linha é
                      errar o envio. ---- */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 8, rowGap: 2, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0, textAlign: "center" }}>
                   <span>{sel.vendedor ? `Carteira ${cap(sel.vendedor)}` : "Sem dono"}</span>
                   <span style={{ opacity: 0.5 }}>|</span>
                   <span>{linha ? linha.rotulo : "linha não identificada"}</span>
@@ -4340,7 +4389,7 @@ export default function Chat() {
                 )}
 
                 {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
-                <div style={{ display: "flex", gap: 8, padding: compacto ? "8px 10px" : G.compPad, background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
+                <div style={{ display: "flex", gap: isMobile && !compacto ? 6 : 8, padding: compacto ? "8px 10px" : isMobile ? "8px 8px" : G.compPad, background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
                   {/* anexo: foto, áudio, documento — o texto digitado vira legenda
                       da PRIMEIRA. `multiple`: dá para escolher várias fotos de uma vez */}
                   <input
@@ -4360,7 +4409,7 @@ export default function Chat() {
                       passa para o container, os botoes ficam transparentes, e o
                       campo ocupa o que sobra. O enviar fica de FORA, como la. */}
                   <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "flex-end", gap: 2,
-                    padding: compacto ? "3px 4px" : G.pilPad,
+                    padding: barraEnxuta ? "3px 4px" : G.pilPad,
                     background: modoNota ? M.surface : M.bg,
                     // A borda da pílula é de CONTROLE, não divisória: é ela que
                     // diz onde se digita. Por isso `lineStrong` (3,53:1) e não
@@ -4471,12 +4520,12 @@ export default function Chat() {
                       de qualquer chat, onde o campo domina. No modo compacto eles
                       passam a viver atras de "⋯"; na tela cheia continuam todos a
                       vista, porque la sobra largura. */}
-                  {compacto ? (
+                  {barraEnxuta ? (
                     <div style={{ position: "relative", flexShrink: 0 }}>
                       <button
                         onClick={() => setMaisAberto((v) => !v)}
                         title="Mais: pausa, respostas rapidas e nota interna"
-                        style={{ width: 30, height: 30, borderRadius: 9,
+                        style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn,
                           border: "none",
                           background: maisAberto ? M.roxo : "transparent", color: maisAberto ? "#fff" : M.gray,
                           fontSize: 15, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
@@ -4569,18 +4618,30 @@ export default function Chat() {
                           onClick={() => (doCanal.length ? setMenuTemplate((v) => !v) : enviarTemplate())}
                           disabled={enviando}
                           title="Escolher um template — reabre a conversa fora da janela de 24h"
-                          style={{ height: pilBtn, width: compacto ? pilBtn : undefined, padding: compacto ? 0 : "0 12px", borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: compacto ? 13 : 11.5, fontWeight: bc ? 700 : 800, letterSpacing: compacto ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                          style={{ height: pilBtn, width: barraEnxuta ? pilBtn : undefined, padding: barraEnxuta ? 0 : "0 12px", borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: menuTemplate ? M.roxo : "transparent", color: menuTemplate ? "#fff" : M.wine, fontSize: barraEnxuta ? (compacto ? 13 : 15) : 11.5, fontWeight: bc ? 700 : 800, letterSpacing: barraEnxuta ? 0 : 0.3, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
                         >
                           {/* Na lupa a palavra sozinha comia ~90px de um compositor
                               de 500px. Vira "T", como os demais icones da barra —
                               o que ela faz ja esta no title. */}
-                          {compacto ? "T" : <>TEMPLATE{doCanal.length > 0 && <span style={{ fontSize: 9, marginLeft: 4, opacity: .8 }}>▾</span>}</>}
+                          {barraEnxuta ? "T" : <>TEMPLATE{doCanal.length > 0 && <span style={{ fontSize: 9, marginLeft: 4, opacity: .8 }}>▾</span>}</>}
                         </button>
 
                         {menuTemplate && doCanal.length > 0 && (
                           <>
                             <div onClick={fecharTemplate} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
-                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201, width: 360, maxHeight: 440, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
+                            {/* `left: 0` ancorava a lista na borda ESQUERDA do
+                                botão, e o botão vive no meio da pílula: num
+                                aparelho de 360px ela ia de 151 a 485 — 125px
+                                fora da tela, medido em 01/09/2026. Largura
+                                cravada de 360 também não cabia. No celular ela
+                                passa a nascer centrada no botão, que fica
+                                sempre por volta do meio da barra (📎 🎤 ⋯ T),
+                                e a largura cede à viewport. */}
+                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", zIndex: 201,
+                              ...(acoesEmFaixa
+                                ? { left: "50%", transform: "translateX(-50%)", width: "min(340px, calc(100vw - 24px))" }
+                                : { left: 0, width: "min(360px, calc(100vw - 28px))" }),
+                              maxHeight: 440, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
                               {compondo ? (
                                 <CompositorTemplate
                                   t={compondo.t}
