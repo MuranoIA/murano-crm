@@ -428,7 +428,7 @@ export function useLigacao(opts: {
 // seria pior — convida a clicar e ensina que o sistema não funciona. Quem manda
 // de verdade é o servidor, que barra a chamada de qualquer jeito.
 // ---------------------------------------------------------------------------
-export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, compacto, bancada }: {
+export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, compacto, pad, fonte, bancada }: {
   onLigar: () => void;
   ocupado: boolean; emChamada: boolean; temTelefone: boolean; naCloud: boolean;
   /** desenho `bancada`: icone de traco no lugar do emoji. Sem isto, este
@@ -439,6 +439,10 @@ export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, 
   /** dentro da lupa do board a largura util e ~500px: so o icone, com o texto
    *  no `title` que este botao ja tinha (§41.5) */
   compacto?: boolean;
+  /** padding e tamanho do ícone, quando quem chama precisa alinhar este botão
+   *  com os vizinhos (o celular usa alvos maiores que o desktop). */
+  pad?: string;
+  fonte?: number;
 }) {
   if (!temTelefone || !naCloud) return null;
 
@@ -446,8 +450,8 @@ export function BotaoLigar({ onLigar, ocupado, emChamada, temTelefone, naCloud, 
   return (
     <button onClick={onLigar} disabled={travado}
       title={emChamada ? "já há uma ligação em andamento" : "Ligar para o cliente pelo WhatsApp"}
-      style={{ fontSize: 11.5, fontWeight: 700, color: M.verde, background: M.verdeSoft,
-        border: "1px solid #bfe0cb", borderRadius: 999, padding: compacto ? "5px 9px" : "5px 11px",
+      style={{ fontSize: fonte ?? 11.5, fontWeight: 700, color: M.verde, background: M.verdeSoft,
+        border: "1px solid #bfe0cb", borderRadius: 999, padding: pad ?? (compacto ? "5px 9px" : "5px 11px"),
         cursor: travado ? "default" : "pointer", opacity: travado ? 0.55 : 1,
         fontFamily: "inherit", whiteSpace: "nowrap" }}>
       {ocupado ? "…" : bancada ? (
