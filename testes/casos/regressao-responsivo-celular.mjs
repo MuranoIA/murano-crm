@@ -18,7 +18,9 @@
 export const ciclo = "Regressão — responsividade do chat no celular";
 
 // 390 = iPhone 12/13/14. 360 = o Android popular, o mais apertado que a equipe usa.
-const LARGURAS = [390, 360];
+// `CRM_LARGURAS=412,360` reproduz um aparelho específico quando alguém mandar um
+// print — foi assim que o relato de 02/09/2026 foi conferido na largura dele.
+const LARGURAS = (process.env.CRM_LARGURAS ?? "390,360").split(",").map(Number);
 
 // Elemento largo DENTRO de uma faixa que rola na horizontal não é transbordo: é
 // a faixa fazendo o trabalho dela (a régua de abas da ficha do cliente é assim).
