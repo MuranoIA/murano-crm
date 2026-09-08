@@ -19,6 +19,12 @@ export const maxDuration = 30;
 //     A linha nunca vem por parâmetro — é o mesmo recorte da §20.3, e o motivo é
 //     o mesmo: o número oficial de produção não pode ser alcançado por uma rota
 //     nossa nem por engano.
+//   · ⚠️ Usa `linhaDeEnvio()` (a env), não `linhaPadrao()` (0123, a escolha do
+//     admin em Linhas). De propósito: calling tem pré-requisito PRÓPRIO por
+//     número (pagamento, campo `calls` assinado, este mesmo interruptor) que
+//     não deve mudar sozinho quando alguém troca só a linha padrão de mensagem
+//     — isso ligaria/desligaria calling numa linha diferente da que a pessoa
+//     pensa que está mexendo.
 //
 // O que esta rota NÃO resolve (não é código, é conta — ver §22):
 //   · limite de mensagens da WABA >= 2.000/24h, exigência da Meta para calling;

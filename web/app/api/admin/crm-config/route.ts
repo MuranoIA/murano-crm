@@ -1,5 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
-import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO } from "../../../../lib/crmConfig";
+import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO, linhaPadraoCloud } from "../../../../lib/crmConfig";
 import { lerCampos, type CampoCadastro } from "../../../../lib/cadastroCampos";
 import { lerLocais, type Local } from "../../../../lib/locais";
 
@@ -122,6 +122,13 @@ export async function GET() {
   const { data: cl } = await sb.from("crm_config").select("locais").eq("id", 1).maybeSingle();
   const locais: Local[] = lerLocais((cl as any)?.locais);
 
+  // A linha Cloud que "cloud" resolve de fato hoje (0123): a escolha do admin
+  // em Linhas, senão a env. Só para dar nome à opção abaixo — não é fonte de
+  // verdade (essa é `linhaPadrao()` em lib/whatsapp.ts).
+  const envAtual = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? "").replace(/[^\x21-\x7E]/g, "") || null;
+  const linhaResolvidaId = linhaPadraoCloud(cfg) ?? envAtual;
+  const linhaResolvidaRotulo = cfg.linhas.find((l) => l.phone_number_id === linhaResolvidaId)?.rotulo ?? null;
+
   // `padrao` viaja junto para a tela poder dizer "este é o estado de fábrica"
   // sem repetir a regra do lado do navegador.
   return Response.json({
@@ -214,17 +221,24 @@ export async function GET() {
       envio: {
         rotulo: "Número de envio",
         resumo:
-          "Por qual número o CRM FALA: mensagem, template e ligação, em qualquer contato. " +
+          "Por qual CANAL o CRM fala mensagem e template, em qualquer contato — RD ou Cloud. " +
           "É diferente de quais conversas aparecem na tela — dá para acompanhar o histórico " +
-          "do RD e já estar respondendo pelo número novo.",
+          "do RD e já estar respondendo pelo canal novo. QUAL linha Cloud (quando há mais de " +
+          "uma) é a aba Linhas, não aqui. Não afeta ligação, que é sempre Cloud.",
         atual: cfg.numero_envio,
         opcoes: [
           { v: null, rotulo: "Automático (como hoje)",
             desc: "Responde pelo canal em que o cliente falou por último. Contato novo sai pela Cloud." },
           { v: "rd", rotulo: "Murano Pro (RD Conversas)",
             desc: "Tudo pelo número oficial. Mensagem livre só alcança quem o RD já conhece; template alcança qualquer número." },
-          { v: "cloud", rotulo: "Murano Professional",
-            desc: "Tudo pelo número novo. Para quem tem histórico no número antigo, a conversa chega como de um número desconhecido." },
+          { v: "cloud", rotulo: "Cloud (WhatsApp direto)",
+            // o nome da linha que hoje resolve "cloud" para quem ainda não tem
+            // conversa própria — sem isso a tela mentiria assim que houvesse
+            // mais de uma linha Cloud e "Murano Professional" ficasse hardcoded
+            desc: `Tudo pela Cloud API. Quem ainda não tem linha própria sai por ` +
+              `"${linhaResolvidaRotulo ?? "a linha padrão (ver aba Linhas)"}". ` +
+              `Para quem tem histórico só no RD, a conversa chega como de um número desconhecido.`,
+          },
         ],
       },
       linhas: {
@@ -431,7 +445,7 @@ export async function PUT(req: Request) {
         ? "Voltou ao automático: cada conversa responde pelo canal em que o cliente falou por último."
         : v === "rd"
           ? "Tudo passa a sair pelo Murano Pro (RD Conversas). Contatos que só existem no nosso banco continuam saindo pela Cloud — o RD não os conhece."
-          : "Tudo passa a sair pelo Murano Professional, inclusive para quem tem histórico no número antigo.",
+          : "Tudo passa a sair pela Cloud API, inclusive para quem tem histórico no número antigo. Qual linha Cloud, quando houver mais de uma, é a aba Linhas.",
     });
   }
 

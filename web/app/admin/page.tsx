@@ -412,27 +412,53 @@ export default function Admin() {
           titulo="Linhas de WhatsApp"
           ajuda={<>
             O rótulo aparece no cabeçalho da conversa, para o vendedor saber por qual número está falando.
-            <b> Esta tela não escolhe por onde a mensagem sai</b> — quem manda nisso é a variável
-            <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>WHATSAPP_PHONE_NUMBER_ID</code>
-            na Vercel. Aqui é só o cadastro do que já existe na Meta.
+            <b> "Linha padrão" abaixo</b> escolhe por qual número Cloud sai mensagem de conversa nova (ou sem
+            linha própria ainda) — o resto continua saindo pelo número em que o cliente falou por último.
+            Sem escolha, vale a variável <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>WHATSAPP_PHONE_NUMBER_ID</code> na
+            Vercel. <b>Isto não afeta ligação</b> — calling continua preso à variável, sempre.
           </>}
         >
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+            <BotaoLeve cor={M.azul} onClick={() => enviar("linhas", "POST", { acao: "sincronizar" }, "Sincronizado com a Meta.")}>
+              🔄 Buscar números na Meta
+            </BotaoLeve>
+            <span style={{ fontSize: 12, color: M.gray }}>
+              Lê os números já cadastrados na conta da Meta (WHATSAPP_WABA_ID) e cadastra aqui os que faltam —
+              sem precisar digitar phone_number_id. Não cria, nem muda nada do lado da Meta.
+            </span>
+          </div>
+
+          {!dados.todasVisiveis && (
+            <div style={{ fontSize: 12.5, color: M.laranja, background: "#fff4e8",
+              border: `1px solid ${M.laranja}`, borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
+              ⚠️ "Conversas visíveis" (aba Mecanismos) está numa lista fixa, não em "todas" — uma linha nova
+              cadastrada aqui <b>não aparece sozinha</b> no board nem no chat até alguém marcá-la lá.
+            </div>
+          )}
+
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
               <thead><tr>
                 <th style={th}>Rótulo</th><th style={th}>Número</th><th style={th}>phone_number_id</th>
-                <th style={th}>Situação</th><th style={th} />
+                <th style={th}>Situação</th><th style={th}>Linha padrão (mensagem)</th><th style={th} />
               </tr></thead>
               <tbody>
                 {dados.linhas.map((l: any) => {
-                  const enviando = dados.linhaDeEnvio === l.phone_number_id;
+                  const éRd = l.phone_number_id === "rd";
+                  const éPadrao = dados.linhaEmUso === l.phone_number_id;
+                  const éEscolhaExplicita = dados.linhaPadraoCloud === l.phone_number_id;
+                  const apareceNaTela = dados.todasVisiveis || (dados.linhasVisiveis ?? []).includes(l.phone_number_id);
                   return (
                     <tr key={l.phone_number_id} style={{ opacity: l.ativo ? 1 : 0.55 }}>
                       <td style={td}>
                         <input value={val(l.phone_number_id, "rotulo", l.rotulo)}
                           onChange={(e) => editar(l.phone_number_id, "rotulo", e.target.value)}
                           style={{ ...inputBase, width: 210, padding: "5px 7px", fontWeight: 600 }} />
-                        {enviando && <div style={{ fontSize: 11, fontWeight: 700, color: M.azul, marginTop: 3 }}>↑ é por esta que enviamos hoje</div>}
+                        {!apareceNaTela && (
+                          <div style={{ fontSize: 11, fontWeight: 700, color: M.laranja, marginTop: 3 }}>
+                            não aparece no board/chat hoje
+                          </div>
+                        )}
                       </td>
                       <td style={td}>
                         <input value={val(l.phone_number_id, "numero", l.numero ?? "")} placeholder="+55 91 …"
@@ -441,6 +467,19 @@ export default function Admin() {
                       </td>
                       <td style={{ ...td, fontSize: 11.5, color: M.gray, fontVariantNumeric: "tabular-nums" }}>{l.phone_number_id}</td>
                       <td style={td}><Selo ok={l.ativo} sim="ativa" nao="inativa" /></td>
+                      <td style={td}>
+                        {éRd ? (
+                          <span style={{ fontSize: 11.5, color: M.gray }}>— (não é linha Cloud)</span>
+                        ) : (
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: l.ativo ? "pointer" : "not-allowed" }}>
+                            <input type="radio" name="linha-padrao" disabled={!l.ativo} checked={éEscolhaExplicita}
+                              onChange={() => enviar("linhas", "PATCH", { padrao: l.phone_number_id }, "Linha padrão atualizada.")} />
+                            {éPadrao
+                              ? <b style={{ color: M.azul }}>↑ é por esta que saem hoje</b>
+                              : "usar esta"}
+                          </label>
+                        )}
+                      </td>
                       <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
                         {sujo(l.phone_number_id) && (
                           <span style={{ marginRight: 6 }}>
@@ -462,6 +501,14 @@ export default function Admin() {
             </table>
           </div>
 
+          {dados.linhaPadraoCloud && (
+            <div style={{ marginTop: 10 }}>
+              <BotaoLeve cor={M.gray} onClick={() => enviar("linhas", "PATCH", { padrao: null }, "Voltou ao padrão de fábrica.")}>
+                Usar a variável da Vercel (padrão de fábrica) em vez de uma escolha fixa
+              </BotaoLeve>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 16, paddingTop: 16, borderTop: `1px solid ${M.bg}` }}>
             <input placeholder="phone_number_id" value={novo.phone_number_id ?? ""}
               onChange={(e) => setNovo({ ...novo, phone_number_id: e.target.value })} style={{ ...inputBase, width: 200 }} />
@@ -469,7 +516,7 @@ export default function Admin() {
               onChange={(e) => setNovo({ ...novo, rotulo: e.target.value })} style={{ ...inputBase, width: 190 }} />
             <input placeholder="número (opcional)" value={novo.numero ?? ""}
               onChange={(e) => setNovo({ ...novo, numero: e.target.value })} style={{ ...inputBase, width: 170 }} />
-            <Botao onClick={() => enviar("linhas", "POST", novo, "Linha cadastrada.")}>Cadastrar linha</Botao>
+            <Botao onClick={() => enviar("linhas", "POST", novo, "Linha cadastrada.")}>Cadastrar à mão</Botao>
           </div>
         </Bloco>
       )}

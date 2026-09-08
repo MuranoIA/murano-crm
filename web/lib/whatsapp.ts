@@ -12,6 +12,7 @@
 // (sent/delivered/read) e atualiza a linha em `mensagens` pelo wamid.
 
 import { deveSimular, wamidSimulado } from "./simulacaoEnvio";
+import { lerCrmConfig, linhaPadraoCloud } from "./crmConfig";
 
 const GRAPH_VERSION = "v22.0";
 
@@ -250,6 +251,31 @@ export function linhaDeEnvio(): string | null {
 }
 
 /**
+ * A linha Cloud PADRÃO de saída — a que vale quando não há conversa própria
+ * ainda (contato novo, ou histórico só no RD). Com um número só, isto sempre
+ * foi `linhaDeEnvio()`; com dois ou mais (0123), o admin pode escolher em
+ * /admin → Linhas (`crm_config.linha_padrao_cloud`).
+ *
+ * FALHA PARA O LADO DO QUE JÁ FUNCIONAVA (mesmo princípio de `lerCrmConfig`):
+ * tabela ausente, erro de leitura ou escolha apontando pra linha inativa caem
+ * na env, que é o comportamento de sempre.
+ *
+ * ⚠️ Só para MENSAGEM. Ligação (lib/whatsappCalling.ts, app/api/chat/ligacao,
+ * app/api/admin/ligacao) continua lendo `linhaDeEnvio()` direto, de propósito:
+ * calling tem pré-requisito próprio por número (pagamento, campo `calls`
+ * assinado, interruptor ligado — §22.7) que não deve mudar sozinho quando o
+ * admin troca só a linha padrão de mensagem.
+ */
+export async function linhaPadrao(sb: { from: (t: string) => any }): Promise<string | null> {
+  try {
+    const cfg = await lerCrmConfig(sb);
+    return linhaPadraoCloud(cfg) ?? linhaDeEnvio();
+  } catch {
+    return linhaDeEnvio();
+  }
+}
+
+/**
  * POR QUAL NÚMERO responder esta conversa.
  *
  * ⚠️ ISTO É O QUE PERMITE DOIS NÚMEROS AO MESMO TEMPO. Até 30/08/2026 todo
@@ -269,11 +295,12 @@ export function linhaDeEnvio(): string | null {
  * quem a mandou, então usá-la deixaria a conversa "grudada" no número errado
  * depois do primeiro engano.
  *
- * Cai no padrão (a env) quando a conversa ainda não tem mensagem recebida com
- * linha: contato novo criado à mão, ou conversa que só existe no RD.
+ * Cai no padrão (a escolha do admin em /admin → Linhas, ou a env na falta
+ * dela — ver `linhaPadrao`) quando a conversa ainda não tem mensagem recebida
+ * com linha: contato novo criado à mão, ou conversa que só existe no RD.
  */
 export async function linhaDaConversa(sb: any, clienteId: string): Promise<string | null> {
-  const padrao = linhaDeEnvio();
+  const padrao = await linhaPadrao(sb);
   try {
     const { data } = await sb
       .from("mensagens")
