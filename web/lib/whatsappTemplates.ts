@@ -83,6 +83,13 @@ export async function subirImagemDeCabecalho(bytes: Uint8Array, mime: string, no
   return handle;
 }
 
+// Tipo, limites e validação de botão moram em `templateVars.ts` — módulo puro
+// que já roda dos dois lados (servidor e navegador, §templateVars). Reexportado
+// aqui para quem só conhecia este arquivo.
+export { validarBotoes, MAX_BOTOES, MAX_URL, MAX_TELEFONE, MAX_TEXTO_BOTAO } from "./templateVars";
+export type { BotaoTemplate } from "./templateVars";
+import type { BotaoTemplate } from "./templateVars";
+
 export type NovoTemplate = {
   metaNome: string;             // minúsculo com underline — identificador na Meta
   categoria: "MARKETING" | "UTILITY" | "AUTHENTICATION";
@@ -92,6 +99,7 @@ export type NovoTemplate = {
   rodape?: string | null;
   cabecalhoTexto?: string | null;
   imagemHandle?: string | null; // vindo de subirImagemDeCabecalho
+  botoes?: BotaoTemplate[];     // já validados e ordenados (validarBotoes)
 };
 
 // Valores de exemplo mandados à Meta na hora de aprovar, um por variável. O
@@ -123,6 +131,18 @@ export function componentesDe(t: NovoTemplate): unknown[] {
   });
 
   if (t.rodape) comps.push({ type: "FOOTER", text: t.rodape });
+
+  if (t.botoes?.length) {
+    comps.push({
+      type: "BUTTONS",
+      buttons: t.botoes.map((b) => (
+        b.tipo === "URL" ? { type: "URL", text: b.texto, url: b.valor }
+        : b.tipo === "PHONE_NUMBER" ? { type: "PHONE_NUMBER", text: b.texto, phone_number: b.valor }
+        : { type: "QUICK_REPLY", text: b.texto }
+      )),
+    });
+  }
+
   return comps;
 }
 

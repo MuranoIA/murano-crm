@@ -79,3 +79,63 @@ export function conferirVariaveis(corpo: string | null | undefined, valores: str
   }
   return null;
 }
+
+// --- botões do template (0122) ----------------------------------------------
+// O pedido comparou com o RD Conversas, que deixa anexar um botão (CTA — link
+// ou telefone — ou Resposta rápida) ao criar o template. Aqui o cadastro cria
+// o template DE VERDADE na Meta (§24), então o botão tem de ir no componente
+// `BUTTONS` da criação — mesmo formato na TELA (admin), na ROTA
+// (templates-whatsapp) e no BANCO (`crm_templates.botoes`), para não converter
+// ida e volta. `QUICK_REPLY` volta como mensagem de texto comum no webhook (o
+// `type: "button"` que `/api/whatsapp/webhook` já trata, §16.3) — nenhuma
+// mudança lá foi necessária. `URL` e `PHONE_NUMBER` só abrem link/discador no
+// aparelho da cliente; não geram resposta nenhuma.
+export type BotaoTemplate = {
+  tipo: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+  texto: string;              // rótulo do botão, até 25 caracteres
+  valor?: string | null;      // URL (tipo URL) ou telefone em E.164 (tipo PHONE_NUMBER)
+};
+
+// Limites que a TELA respeita, mais estreitos que o teto real da Meta (ela
+// aceita até 10 botões, 2 URL, 1 telefone). Igual à experiência do RD Conversas
+// que originou o pedido — "um botão de cada tipo, dois no total" — só que com 3
+// em vez de 2, porque "duas respostas rápidas" é um caso comum e negar isso na
+// nossa tela sem motivo da Meta seria mais restritivo do que precisa.
+export const MAX_BOTOES = 3;
+export const MAX_URL = 1;
+export const MAX_TELEFONE = 1;
+export const MAX_TEXTO_BOTAO = 25;
+
+/**
+ * Valida a lista de botões e devolve na ORDEM que a Meta exige: os de
+ * call-to-action (URL/telefone) antes dos de resposta rápida — misturar as duas
+ * famílias fora dessa ordem é recusado na criação, silenciosamente reordenado
+ * pela Meta em algumas contas e não em outras; melhor não depender disso.
+ */
+export function validarBotoes(botoes: BotaoTemplate[]): { erro: string | null; ordenados: BotaoTemplate[] } {
+  if (botoes.length > MAX_BOTOES) {
+    return { erro: `no máximo ${MAX_BOTOES} botões por template`, ordenados: botoes };
+  }
+  const qtdUrl = botoes.filter((b) => b.tipo === "URL").length;
+  const qtdTel = botoes.filter((b) => b.tipo === "PHONE_NUMBER").length;
+  if (qtdUrl > MAX_URL) return { erro: "só um botão de link por template", ordenados: botoes };
+  if (qtdTel > MAX_TELEFONE) return { erro: "só um botão de telefone por template", ordenados: botoes };
+
+  for (const b of botoes) {
+    const t = String(b.texto ?? "").trim();
+    if (!t) return { erro: "todo botão precisa de um texto", ordenados: botoes };
+    if (t.length > MAX_TEXTO_BOTAO) return { erro: `o texto do botão "${t}" passa de ${MAX_TEXTO_BOTAO} caracteres`, ordenados: botoes };
+    if (b.tipo === "URL") {
+      const v = String(b.valor ?? "").trim();
+      if (!/^https?:\/\/.+/i.test(v)) return { erro: `o link do botão "${t}" precisa começar com http:// ou https://`, ordenados: botoes };
+    }
+    if (b.tipo === "PHONE_NUMBER") {
+      const v = String(b.valor ?? "").trim();
+      if (!/^\+?[0-9]{8,15}$/.test(v)) return { erro: `o telefone do botão "${t}" não parece válido — use o formato +55DDNÚMERO`, ordenados: botoes };
+    }
+  }
+
+  const cta = botoes.filter((b) => b.tipo === "URL" || b.tipo === "PHONE_NUMBER");
+  const respostas = botoes.filter((b) => b.tipo === "QUICK_REPLY");
+  return { erro: null, ordenados: [...cta, ...respostas] };
+}
