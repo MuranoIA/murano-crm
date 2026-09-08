@@ -21,6 +21,12 @@ export const maxDuration = 30;
 // ESCOPO: só conversas que já correm na Cloud API — hoje, a linha piloto. Conversa
 // do RD/Tallos não tem ligação (decisão do usuário em 17/08/2026); o RD não tem
 // API de voz e não faria sentido oferecer meia funcionalidade ali.
+//
+// ⚠️ `linhaDeEnvio()` aqui é de propósito, não esquecimento: com mais de uma
+// linha Cloud viva (0123), a linha PADRÃO de mensagem pode ser escolhida em
+// /admin → Linhas, mas calling continua preso à env — tem pré-requisito
+// próprio por número (pagamento, `calls` assinado, interruptor ligado, §22.7)
+// que não deve seguir uma troca pensada só para mensagem.
 // ---------------------------------------------------------------------------
 
 export async function GET(req: Request) {

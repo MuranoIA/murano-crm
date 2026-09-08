@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
-import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao, linhaPadraoCloud } from "../../../lib/crmConfig";
 import { diagnosticar } from "../../../lib/saudeCanal";
 import { linhaDeEnvio } from "../../../lib/whatsapp";
 
@@ -455,7 +455,10 @@ export async function GET() {
   const cfg = await cfgP;
   // Falha aqui não pode derrubar o board: um alerta que quebra a tela que ele
   // deveria proteger é pior que nenhum alerta.
-  const saude = await diagnosticar(sb, linhaDeEnvio()).catch(() => null);
+  // A linha PADRÃO de mensagem (0123) — `cfg` já está em mãos, então não vale
+  // a pena mais uma leitura de crm_config só para repetir o que `linhaPadrao`
+  // faria.
+  const saude = await diagnosticar(sb, linhaPadraoCloud(cfg) ?? linhaDeEnvio()).catch(() => null);
 
   return Response.json({
     ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false

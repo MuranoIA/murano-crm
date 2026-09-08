@@ -1,6 +1,6 @@
 import { sbAdmin, guardaAdmin } from "../../../../lib/adminApi";
 import { diagnosticar } from "../../../../lib/saudeCanal";
-import { envWa, linhaDeEnvio } from "../../../../lib/whatsapp";
+import { envWa, linhaPadrao } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -38,14 +38,17 @@ export async function GET() {
   if (g.erro) return g.erro;
 
   const sb = sbAdmin();
-  const linha = linhaDeEnvio();
+  // A linha PADRÃO de mensagem (0123: escolha do admin em Linhas, senão a env)
+  // — não confundir com a linha de CALLING, que segue presa à env de propósito.
+  const linha = await linhaPadrao(sb);
   const banco = await diagnosticar(sb, linha).catch(() => null);
 
   let token: string, waba: string, numero: string;
   try {
+    if (!linha) throw new Error("nenhuma linha padrão configurada (nem escolha no admin, nem WHATSAPP_PHONE_NUMBER_ID)");
+    numero = linha;
     token = envWa("WHATSAPP_TOKEN");
     waba = envWa("WHATSAPP_WABA_ID");
-    numero = envWa("WHATSAPP_PHONE_NUMBER_ID");
   } catch (e: any) {
     return Response.json({
       banco,

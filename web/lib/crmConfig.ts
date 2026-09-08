@@ -23,7 +23,9 @@ export type CrmConfig = {
    * Número pelo qual o CRM ENVIA (0102). Decisão do admin, valendo para
    * mensagem, template e ligação em qualquer contato.
    *   'rd'    -> Murano Pro (RD Conversas)
-   *   'cloud' -> Murano Professional (a linha da env WHATSAPP_PHONE_NUMBER_ID)
+   *   'cloud' -> a Cloud API — QUAL linha, quando houver mais de uma ativa, é
+   *              `linha_padrao_cloud` logo abaixo (0123), senão a env
+   *              WHATSAPP_PHONE_NUMBER_ID
    *   null    -> automático: responde pelo canal em que o cliente falou por último
    *
    * NÃO confundir com `linhas_visiveis`, que é o que a TELA mostra. Ver e falar
@@ -31,6 +33,16 @@ export type CrmConfig = {
    * assim já estar respondendo pelo número novo.
    */
   numero_envio: "rd" | "cloud" | null;
+  /**
+   * QUAL linha Cloud é a padrão de saída, quando a conversa ainda não tem uma
+   * própria (0123). NULO = a env WHATSAPP_PHONE_NUMBER_ID (estado de fábrica).
+   * Só vale para MENSAGEM — ligação continua presa à env (ver `linhaDeEnvio`
+   * em lib/whatsapp.ts, e o comentário da migration 0123 sobre o porquê).
+   *
+   * Ler resolvido (contra linha inativa/desconhecida) por `linhaPadraoCloud()`
+   * logo abaixo — nunca o campo cru.
+   */
+  linha_padrao_cloud: string | null;
   /**
    * Oferecer o botão "ver histórico" na conversa quando existirem mensagens em
    * linhas que `linhas_visiveis` esconde (na prática, o RD). NÃO mistura nada na
@@ -71,6 +83,7 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   linhas_visiveis: null,
   linhas: [],
   numero_envio: null,
+  linha_padrao_cloud: null,
   historico_rd: true,
   texto_pausa: "",
   carteira_rd_ativa: true,
@@ -163,6 +176,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       ciclo_ativo: data.ciclo_ativo !== false,
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
       numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
+      linha_padrao_cloud: typeof data.linha_padrao_cloud === "string" ? data.linha_padrao_cloud : null,
       historico_rd: data.historico_rd !== false,
       texto_pausa: String(data.texto_pausa ?? ""),
       carteira_rd_ativa: data.carteira_rd_ativa !== false,
@@ -219,6 +233,21 @@ export const POSICAO_MIGRACAO = {
  */
 export const canalEscolhido = (cfg: CrmConfig): "rd" | "whatsapp" | null =>
   cfg.numero_envio === "rd" ? "rd" : cfg.numero_envio === "cloud" ? "whatsapp" : null;
+
+/**
+ * A linha Cloud escolhida em /admin como padrão de saída (0123), já validada
+ * contra o cadastro: aponta para linha desconhecida ou desativada? Trata como
+ * se não houvesse escolha — `null` aqui significa "cai na env
+ * WHATSAPP_PHONE_NUMBER_ID", que é quem resolve de fato (`linhaDeEnvio()` em
+ * lib/whatsapp.ts). Sem esta validação, desativar a linha que estava marcada
+ * como padrão deixaria a escolha "fantasma": salva no banco, silenciosamente
+ * sem efeito, e ninguém entenderia por que o envio voltou pra env sozinho.
+ */
+export const linhaPadraoCloud = (cfg: CrmConfig): string | null => {
+  const v = cfg.linha_padrao_cloud;
+  if (!v || v === "rd") return null;
+  return cfg.linhas.some((l) => l.phone_number_id === v && l.ativo) ? v : null;
+};
 
 /** Atalho para quem só precisa do ciclo (a maioria dos consumidores). */
 export async function cicloAtivo(sb: Sb): Promise<boolean> {
