@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
 import { canalDeResposta, linhaDaConversa } from "../../../../lib/whatsapp";
+import { conversaNaCloud } from "../../../../lib/ligacao";
 
 export const dynamic = "force-dynamic";
 
@@ -179,30 +180,7 @@ export async function GET(req: Request) {
   // só de EXIBIÇÃO, buscando o corpo no cadastro pelo identificador.
   await textoDoTemplate(sb, mensagens, cli?.nome_completo);
 
-  // por qual linha esta conversa corre: a da última mensagem que tem linha.
-  // Sem linha = conversa do RD Conversas (o ETL não tem esse conceito).
   const rotulos = new Map((linhas ?? []).map((l: any) => [l.phone_number_id, l.rotulo]));
-  const ultimaComLinha = [...mensagens].reverse().find((m: any) => m.linha_id);
-  // ⚠️ TRÊS casos, não dois. O código antigo tinha só dois e por isso mentia:
-  //
-  //   tem mensagem com linha_id  -> aquela linha
-  //   tem mensagem SEM linha_id  -> RD Conversas (o ETL não tem esse conceito)
-  //   NÃO TEM MENSAGEM NENHUMA   -> linha nenhuma
-  //
-  // O terceiro caía no segundo, e um contato recém-criado — que nunca trocou
-  // uma palavra com ninguém — aparecia no cabeçalho etiquetado
-  // "MURANO PRO (RD CONVERSAS)". Além de falso, nomeia justamente o sistema que
-  // o modo migração diz não existir (§44). Visto em produção em 27/08.
-  const semConversa = mensagens.length === 0;
-  const linha = ultimaComLinha
-    ? { id: ultimaComLinha.linha_id, rotulo: rotulos.get(ultimaComLinha.linha_id) ?? "linha nova", canal: "whatsapp" }
-    : semConversa
-      // sem etiqueta: a tela não desenha o chip, em vez de chutar um número
-      ? null
-      // o número oficial também tem cadastro desde a 0089 (id sintético 'rd'), e o
-      // rótulo vem de lá — assim o cabeçalho da conversa e o filtro da sidebar
-      // chamam o mesmo número pelo mesmo nome
-      : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
 
   // Por qual canal ESTA conversa vai sair — já com a escolha do admin aplicada
   // (0102). A tela precisa disto para calcular a janela de 24h da linha CERTA:
@@ -218,6 +196,63 @@ export async function GET(req: Request) {
   const linhaEnvio = canalEnvio === "whatsapp"
     ? await linhaDaConversa(sb, cliente_id).catch(() => null)
     : null;
+
+  // ---- POR QUAL LINHA ESTA CONVERSA CORRE ---------------------------------
+  //
+  // O chip do cabeçalho promete, no próprio `title`, "esta conversa corre pelo
+  // X". Isso é uma afirmação sobre o FUTURO — por onde a próxima mensagem vai
+  // sair —, e é assim que o vendedor lê. Só que ele era montado a partir do
+  // PASSADO: a última mensagem que tivesse `linha_id`, ou "RD Conversas" quando
+  // não houvesse nenhuma.
+  //
+  // As duas coisas deixaram de coincidir quando passou a existir linha padrão
+  // (0124): `linhaDaConversa()` devolve a linha forçada em /admin para TODA
+  // conversa, ignorando o vínculo antigo — de propósito, porque é assim que se
+  // migra de número sem deixar cliente para trás. Com a padrão em Murano
+  // Professional, uma cliente que só falou no RD em junho é respondida hoje
+  // pela Murano Professional; o chip, mesmo assim, dizia "MURANO PRO (RD
+  // CONVERSAS)". Além de falso, o chat inteiro se pendura nesse rótulo: era
+  // dele que saía o canal do seletor de template, e como não há template de RD
+  // cadastrado (§26.3) a lista vinha vazia — dava para ver a conversa e não
+  // dava para reabri-la. Relatado em 09/09/2026.
+  //
+  // Então a ordem passa a ser: quem MANDA na resposta decide o rótulo; o
+  // histórico só rotula quando não há linha de envio a anunciar.
+  const ultimaComLinha = [...mensagens].reverse().find((m: any) => m.linha_id);
+  // ⚠️ TRÊS casos no ramo do histórico, não dois. Antes eram dois e por isso
+  // mentia:
+  //
+  //   tem mensagem com linha_id  -> aquela linha
+  //   tem mensagem SEM linha_id  -> RD Conversas (o ETL não tem esse conceito)
+  //   NÃO TEM MENSAGEM NENHUMA   -> linha nenhuma
+  //
+  // O terceiro caía no segundo, e um contato recém-criado — que nunca trocou
+  // uma palavra com ninguém — aparecia no cabeçalho etiquetado
+  // "MURANO PRO (RD CONVERSAS)". Além de falso, nomeia justamente o sistema que
+  // o modo migração diz não existir (§44). Visto em produção em 27/08.
+  const semConversa = mensagens.length === 0;
+  const linha = linhaEnvio
+    ? { id: linhaEnvio, rotulo: rotulos.get(linhaEnvio) ?? "linha nova", canal: "whatsapp" }
+    : ultimaComLinha
+      ? { id: ultimaComLinha.linha_id, rotulo: rotulos.get(ultimaComLinha.linha_id) ?? "linha nova", canal: "whatsapp" }
+      : semConversa
+        // sem etiqueta: a tela não desenha o chip, em vez de chutar um número
+        ? null
+        // o número oficial também tem cadastro desde a 0089 (id sintético 'rd'), e o
+        // rótulo vem de lá — assim o cabeçalho da conversa e o filtro da sidebar
+        // chamam o mesmo número pelo mesmo nome
+        : { id: "rd", rotulo: rotulos.get("rd") ?? "RD Conversas", canal: "rd" };
+
+  // ---- o botão de ligar para de adivinhar pelo rótulo ---------------------
+  //
+  // Ele decidia aparecer por `linha.canal === "whatsapp"`. Com o chip passando
+  // a anunciar a linha de ENVIO, isso passaria a dar `true` para toda conversa
+  // — inclusive as que a rota de ligação recusa com 422 `foraDoPiloto`, porque
+  // `conversaNaCloud()` tem régua própria (e mais estreita: ela não olha
+  // `numero_envio`, só o `wa:`, a env e a última mensagem recebida). Botão que
+  // aparece e falha é pior que botão ausente, então quem responde agora é a
+  // MESMA função que a rota usa para decidir — uma verdade, não duas (§29.3).
+  const podeLigar = await conversaNaCloud(sb as any, cliente_id).catch(() => false);
 
   // Quantas mensagens a seleção de linhas está escondendo. Duas contagens de
   // cabeçalho (o total menos o visível) em vez de negar o filtro: a negação de
@@ -236,6 +271,8 @@ export async function GET(req: Request) {
     canal_envio: canalEnvio,
     // por qual número esta conversa será respondida (null = RD, ou desconhecido)
     linha_envio: linhaEnvio,
+    // pode ligar? mesma regua da rota de ligacao, resolvida no servidor
+    pode_ligar: podeLigar,
     // quantas mensagens existem em linhas escondidas (0 = nada a oferecer)
     historico_oculto: historicoOculto,
     // veio COM o histórico? a tela usa para rotular as antigas e não reoferecer

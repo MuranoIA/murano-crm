@@ -1393,6 +1393,10 @@ export default function Chat() {
   // para todas as conversas.
   const [cicloAtivo, setCicloAtivo] = useState(true);
   const [linha, setLinha] = useState<{ id: string | null; rotulo: string; canal: string } | null>(null);
+  // Pode ligar para esta conversa? Vem RESOLVIDO do servidor (`pode_ligar`),
+  // pela mesma `conversaNaCloud()` que a rota de ligacao usa para decidir.
+  // Antes a tela deduzia do rotulo da linha -- e rotulo e outra pergunta.
+  const [podeLigar, setPodeLigar] = useState(false);
   // presença: cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta
   const [presentes, setPresentes] = useState<Record<string, string[]>>({});
   const presencaCanalRef = useRef<any>(null);
@@ -1601,6 +1605,7 @@ export default function Chat() {
     setTransferencias(j?.transferencias ?? []);
     setLigacoes(j?.ligacoes ?? []);
     setLinha(j?.linha ?? null);
+    setPodeLigar(!!j?.pode_ligar);
     setTemMais(!!j?.tem_mais);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
   }, []);
@@ -3788,7 +3793,7 @@ export default function Chat() {
                       'rd' esconde o botão, porque o RD não tem API de voz. */}
                   <BotaoLigar
                     temTelefone={!!sel.telefone}
-                    naCloud={linha?.canal === "whatsapp"}
+                    naCloud={podeLigar}
                     ocupado={lig.ocupado}
                     emChamada={!!lig.chamada}
                     onLigar={() => lig.ligar(sel.cliente_id, sel.cliente)}
@@ -4674,7 +4679,23 @@ export default function Chat() {
                     // Só os templates do canal DESTA conversa: oferecer um da
                     // Cloud numa conversa do RD (ou o contrário) manda um id que
                     // o outro lado não conhece, e a falha só apareceria depois.
-                    const canalAqui = linha?.canal === "rd" ? "rd" : "cloud";
+                    //
+                    // A pergunta certa é "por onde a mensagem VAI SAIR", e quem
+                    // responde isso é `canal_envio` — o mesmo `canalDeResposta`
+                    // que o /api/send-template usa para escolher o ramo, já com
+                    // a escolha do admin (`numero_envio`, 0102) aplicada. Antes
+                    // olhávamos `linha.canal`, que é outra coisa: por onde a
+                    // conversa CORREU. Os dois divergem sempre que o admin fixa
+                    // o número de envio — e aí a lista vinha vazia (não existe
+                    // template de RD cadastrado, §26.3) enquanto o servidor
+                    // teria mandado pela Cloud sem problema nenhum. Dava para
+                    // ver a conversa e não dava para reabri-la. Isso volta a
+                    // acontecer sozinho quando alguém liga "mostrar histórico
+                    // do RD", que é justamente uma chave feita para ser ligada.
+                    //
+                    // `canalEnvio` nulo = a thread ainda não respondeu: cai em
+                    // "cloud", que é o padrão do sistema hoje (§44).
+                    const canalAqui = canalEnvio === "rd" ? "rd" : "cloud";
                     const doCanal = templates.filter((t) => (t.canal === "cloud" ? "cloud" : "rd") === canalAqui);
                     const primeiroNome = String(sel?.cliente ?? "").trim().split(/\s+/)[0] || "cliente";
                     return (
