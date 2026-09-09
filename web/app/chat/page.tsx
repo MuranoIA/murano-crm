@@ -1587,8 +1587,28 @@ export default function Chat() {
   const recargaLenta = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
+  // Qual conversa a tela esta mostrando. Alem de servir ao Realtime e a
+  // presenca, e a resposta autoritativa da pergunta "esta resposta de rede
+  // ainda interessa?" -- ver `aindaAberta` logo abaixo.
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
+  /**
+   * ⚠️ Toda resposta de rede que escreve na conversa aberta precisa dizer
+   * PARA QUEM ela e.
+   *
+   * O consultor manda uma mensagem para A e clica em B em seguida. A recarga
+   * que o envio disparou (`carregarThread(A)`) ainda esta no ar quando B abre,
+   * e ao chegar escrevia as mensagens de A na tela de B -- que so sumiam ao
+   * clicar em B de novo, porque ai a thread era montada do zero. O mesmo vale
+   * para o painel do ERP, para o lote antigo e para o incremental do Realtime:
+   * trocar de conversa e sempre mais rapido que a rede.
+   *
+   * Nao e cancelamento de requisicao de proposito -- a resposta pode ate
+   * chegar, ela so nao pinta mais nada. Abortar exigiria carregar um
+   * AbortController por chamada em nove pontos diferentes para o mesmo
+   * efeito visivel.
+   */
+  const aindaAberta = useCallback((id: string) => selRef.current?.cliente_id === id, []);
   // guarda de in-flight: nunca empilha recargas (mesmo padrão do board).
   //
   // ⚠️ `pedidaDeNovo` NAO estava aqui, e a falta dela contrariava o proprio
@@ -1666,6 +1686,9 @@ export default function Chat() {
       `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}`,
       { cache: "no-store" });
     const j = await r.json().catch(() => null);
+    // o consultor ja abriu outra conversa: esta foto e de uma tela que nao
+    // existe mais, e pinta-la aqui e o vazamento de A para B
+    if (!aindaAberta(c.cliente_id)) return;
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
     // ⚠️ MERGE, nao substituicao seca.
     //
@@ -1688,7 +1711,7 @@ export default function Chat() {
     setPodeLigar(!!j?.pode_ligar);
     setTemMais(!!j?.tem_mais);
     if (scroll) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "auto" }), 30);
-  }, []);
+  }, [aindaAberta]);
 
   /**
    * Junta a foto do servidor com o que ja apareceu na tela depois dela.
@@ -1719,6 +1742,7 @@ export default function Chat() {
       { cache: "no-store" });
     if (!r.ok) return 0;                       // silencioso de proposito: a recarga coalescida cobre
     const j = await r.json().catch(() => null);
+    if (!aindaAberta(c.cliente_id)) return 0;
     // Tiques primeiro: valem mesmo quando nao chegou mensagem nenhuma -- o
     // aviso do Realtime dispara tambem por mudanca de status.
     const estados: { id: string; status?: string | null; erro?: string | null }[] = j?.estados ?? [];
@@ -1750,7 +1774,7 @@ export default function Chat() {
     guardarCitadas(j?.citadas ?? []);
     if (noFim) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
     return novas.length;
-  }, [carregarThread]);
+  }, [carregarThread, aindaAberta]);
   apanharNovasRef.current = apanharNovas;
 
   /**
@@ -1779,6 +1803,7 @@ export default function Chat() {
         `&antes=${encodeURIComponent(primeira.criada_em)}`,
         { cache: "no-store" });
       const j = await r.json().catch(() => null);
+      if (!aindaAberta(sel.cliente_id)) return;
       if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
       const lote = j?.mensagens ?? [];
       setTemMais(!!j?.tem_mais);
@@ -2026,6 +2051,7 @@ export default function Chat() {
       // não ficar uma conversa aberta que já não é mais minha
       const minha = sessao?.carteira ?? null;
       if (minha && para !== minha) {
+        selRef.current = null;
         setSel(null); setMsgs(null); setNotas([]); setTransferencias([]);
       } else {
         // admin/home continuam vendo: acompanha o novo dono no cabeçalho
@@ -2137,8 +2163,13 @@ export default function Chat() {
   function carregarContatoDe(clienteId: string) {
     fetch(`/api/chat/contato?cliente_id=${encodeURIComponent(clienteId)}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false); })
-      .catch(() => setContato(null));
+      .then((j) => {
+        // mesma corrida da thread: a ficha do ERP de A nao pode aterrissar
+        // sobre a conversa de B
+        if (!aindaAberta(clienteId)) return;
+        setContato(j ?? null); if (j) setCicloAtivo(j.ciclo_ativo !== false);
+      })
+      .catch(() => { if (aindaAberta(clienteId)) setContato(null); });
   }
 
   // "É a mesma pessoa": o consultor confirma que o contato sem cadastro é o
@@ -2217,6 +2248,10 @@ export default function Chat() {
     !!meuEndereco && !!c.vendedor && c.vendedor === meuEndereco;
 
   function abrir(c: Conversa) {
+    // ⚠️ ANTES de qualquer setState. `selRef.current = sel` roda no render, e
+    // ate ele acontecer o ref ainda apontaria para a conversa anterior -- a
+    // guarda compararia a resposta que chega com quem acabou de sair da tela.
+    selRef.current = c;
     setSel(c); setMsgs(null); setCitadas({}); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
@@ -2991,6 +3026,11 @@ export default function Chat() {
       });
       const j = await r.json().catch(() => null);
       if (!r.ok) {
+        // ⚠️ se o consultor ja trocou de conversa, o texto que falhou NAO volta
+        // para a caixa: ela agora e de outra cliente, e o proximo Enter mandaria
+        // para a pessoa errada. A bolha otimista morre junto com a thread de
+        // origem, que e remontada do zero quando ele voltar.
+        if (!aindaAberta(sel.cliente_id)) return;
         setMsgs((m) => (m ?? []).filter((x) => x.id !== otimista.id));
         setAviso(j?.foraDaJanela
           ? "Fora da janela de 24h do WhatsApp — use o botão TEMPLATE aqui do lado para reabrir a conversa."
@@ -4325,7 +4365,7 @@ export default function Chat() {
                     conversa, que é o motivo de a lupa existir. */}
                 <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : acoesEmFaixa ? "8px 12px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: acoesEmFaixa ? "wrap" : "nowrap" }}>
                   {isMobile && !compacto && (
-                    <button onClick={() => { setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
+                    <button onClick={() => { selRef.current = null; setSel(null); setMsgs(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
                   <span style={{ width: 34, height: 34, borderRadius: 34, background: M.wine, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, flexShrink: 0 }}>
                     {(sel.cliente ?? "?").trim().charAt(0).toUpperCase()}

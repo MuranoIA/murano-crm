@@ -5433,3 +5433,85 @@ vez. A coluna fica, com `DEFAULT false` para ninguém religar por inserção.
 `pg_cron` continua disparando o 401 a cada 10/15 min contra um workflow que já
 não existe. Os workflows em si já estão `disabled_manually` no GitHub e fora
 do repositório.
+## 70. A conversa de A aparecendo dentro da de B (09/09/2026)
+
+Relatado com o passo a passo: o consultor manda mensagem para a cliente A, clica
+no nome da cliente B em seguida, e por alguns segundos as mensagens de A
+aparecem na tela de B. Clicar em B de novo "conserta".
+
+### 70.1 O que era
+
+Uma CORRIDA no navegador, não dado errado no servidor. `enviar()` termina com
+`carregarThread(sel, false)` sem `await` — uma recarga completa da conversa que
+acabou de receber a mensagem. Essa resposta demora de 0,5 a 1 s; trocar de
+conversa é um clique. Quando ela chegava, `setMsgs` escrevia **na thread que
+estivesse aberta**, porque nenhuma das idas ao servidor dizia PARA QUEM ela era.
+
+E `juntar()` não protege disso — ao contrário: numa recarga completa a foto que
+chegou é a autoritativa (§65.3), então a foto de A vira a base e a conversa de B
+some por baixo dela.
+
+Não é só o envio. `carregarThread` é chamada de **doze** lugares (abrir, poll de
+60 s, ligação, transferência, resolver, template, mídia, pedir dados…), e o
+mesmo valia para `apanharNovas`, `carregarAntigas` e o painel do ERP.
+
+### 70.2 A correção: uma guarda, não doze
+
+`aindaAberta(cliente_id)` compara com `selRef.current` no momento em que a
+resposta chega, e vive nos quatro caminhos que escrevem na conversa aberta. A
+resposta velha pode até chegar — ela só não pinta mais nada.
+
+**Não é `AbortController`** de propósito: abortar exigiria carregar um por
+chamada em nove pontos para o mesmo efeito visível.
+
+⚠️ **`abrir()` marca `selRef.current` ANTES do `setSel`.** A linha
+`selRef.current = sel` roda no render; até ele acontecer o ref ainda aponta para
+a conversa anterior, e a guarda compararia a resposta que chega com quem acabou
+de sair da tela. Os dois pontos que FECHAM a conversa (transferir para fora da
+minha carteira, e o ← do celular) zeram o ref pelo mesmo motivo.
+
+De quebra, o mesmo `if` conserta um vazamento pior e silencioso: quando o envio
+falhava, `setTexto(t)` devolvia o texto à caixa — que a essa altura era **de
+outra cliente**, e o próximo Enter mandaria para a pessoa errada.
+
+### 70.3 ⚠️ O defeito é um PISCAR, e medir o fim NÃO o encontra
+
+O primeiro teste passou VERDE contra o código defeituoso, e por pouco isso não
+foi tomado como prova de que não havia bug.
+
+Se a resposta de B chega **depois** da de A, ela cobre o vazamento em um ou dois
+segundos e a tela termina certa — exatamente o "aparecem e então desaparecem" do
+relato. O teste tirava uma foto no fim e via a tela certa.
+
+`testes/casos/regressao-thread-de-outra-conversa.mjs` amostra a conversa de
+150 em 150 ms durante ~6 s: o que se afirma é que as mensagens de A **nunca
+aparecem**, não que sumiram. Com essa mudança ele acusou **18 de 18 mensagens de
+A dentro da conversa de B** no código sem a correção, e nenhuma com ela.
+
+Outras duas armadilhas do próprio teste, ambas falso-verde:
+
+- **`document.body.textContent` não é a conversa.** A barra lateral mostra a
+  prévia da última mensagem de cada conversa, então um texto de A está
+  legitimamente na tela. A pista foi a cadeia de ancestrais do achado terminar
+  em BUTTON. A régua estrutural: prévia vive dentro de `<button>`, bolha não.
+- **"as duas primeiras da lista" não serve.** A ordem é por atividade e muda
+  sozinha em base viva; numa rodada o topo era uma conversa de UMA mensagem e o
+  caso virou PULADO sem ter medido nada. As conversas passaram a ser escolhidas
+  pelo conteúdo.
+
+### 70.4 O harness dirigia o navegador de OUTRA sessão
+
+`subirChrome()` fixava a porta 9222. Com ela ocupada, o Chrome novo não sobe —
+mas `/json/version` responde assim mesmo, porque quem responde é o navegador de
+outra frente. O driver então abre a aba no perfil alheio: o cookie vai para
+outro jarro e o teste trava ou mede a tela errada, sem erro nenhum. Agora a
+porta pedida é só o ponto de partida e vale a primeira LIVRE (§0: as outras
+sessões existem e não se enxergam).
+
+### 70.5 Método
+
+- **`next start` continua vivo depois de `TaskStop`** (morre o `npx`, não o
+  node). O sintoma é `EADDRINUSE` no servidor novo e a porta respondendo 200 com
+  o BUILD_ID velho — a tela então nem carrega, e parece defeito do código.
+- Vale a §60.5 outra vez: a rodada só provou alguma coisa quando o servidor foi
+  derrubado de fato e o build refeito entre as duas medições.
