@@ -124,7 +124,15 @@ export const VIEW_FUNIL_TELA = "vw_funil_visivel" as const;
 export const linhasVisiveis = (cfg: CrmConfig): string[] =>
   cfg.linhas_visiveis ?? cfg.linhas.filter((l) => l.ativo).map((l) => l.phone_number_id);
 
-/** Está tudo marcado? A tela usa para não anunciar filtro onde não há. */
+/**
+ * Está tudo marcado? A tela usa para não anunciar filtro onde não há.
+ *
+ * ⚠️ "Tudo marcado" é sobre o SELETOR, não sobre a tabela `mensagens`. Ele
+ * pergunta se toda linha ATIVA está escolhida — e linha desativada continua
+ * tendo mensagem no banco. Não usar isto para concluir "não há nada a
+ * excluir": foi exatamente esse atalho que deixou o RD Conversas vazar
+ * (ver `filtroLinhas`).
+ */
 export const tudoVisivel = (cfg: CrmConfig): boolean => {
   const sel = new Set(linhasVisiveis(cfg));
   return cfg.linhas.filter((l) => l.ativo).every((l) => sel.has(l.phone_number_id));
@@ -139,10 +147,35 @@ export const tudoVisivel = (cfg: CrmConfig): boolean => {
  *
  * A linha do RD é `linha_id IS NULL` (o conceito nasceu no webhook da Meta,
  * §23.4), então ela não cabe num `.in(...)` e precisa do `.or(...)`.
+ *
+ * ⚠️ NÃO TEM ATALHO, e o atalho que existia era o bug. O código antigo abria
+ * com `if (tudoVisivel(cfg)) return q;` — "está tudo marcado, não há nada a
+ * excluir". As duas metades da frase não são a mesma coisa: `tudoVisivel`
+ * olha as linhas ATIVAS do catálogo, e `mensagens` guarda linha desativada
+ * também. No dia em que a linha 'rd' foi marcada `ativo=false` no
+ * `chat_linha`, ela saiu do catálogo, `tudoVisivel` virou `true` — e este
+ * filtro parou de filtrar. Resultado medido em 09/09/2026: com o seletor
+ * dizendo "só Murano Professional", a thread, a lupa do card e a busca no
+ * conteúdo voltaram a mostrar conversa do RD Conversas, e o cabeçalho passou
+ * a etiquetá-la "MURANO PRO (RD CONVERSAS)" — o sistema que a §44 diz não
+ * existir mais. De quebra, o seletor de template do chat segue esse rótulo, e
+ * como não há template de RD cadastrado (§26.3) a lista vinha vazia: dava para
+ * ver a conversa e não dava para reabri-la.
+ *
+ * A `vw_funil_visivel` nunca teve o atalho — ela filtra sempre, com a mesma
+ * régua (`coalesce(m.linha_id,'rd') = any(sel)`). Era só o lado TypeScript que
+ * divergia, e por isso o board escondia a conversa que a thread mostrava.
+ * Agora os dois fazem a mesma coisa.
  */
 export function filtroLinhas<T>(q: T, cfg: CrmConfig): T {
-  if (tudoVisivel(cfg)) return q;
   const sel = linhasVisiveis(cfg);
+  // Seleção vazia = não sabemos nada (leitura da config falhou e caiu no
+  // padrão, ou o catálogo veio vazio). Aqui a rede de proteção é NÃO filtrar,
+  // pelo mesmo princípio de `lerCrmConfig`: instabilidade do banco não pode
+  // esvaziar a tela da equipe. O admin nunca grava lista vazia — a rota recusa
+  // com "marque ao menos um número" —, então isto não engole escolha de
+  // ninguém.
+  if (!sel.length) return q;
   const cloud = sel.filter((l) => l !== "rd");
   const comRd = sel.includes("rd");
   const anyQ = q as any;
