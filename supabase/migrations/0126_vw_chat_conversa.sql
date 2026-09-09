@@ -114,3 +114,26 @@ left join carteira_config ccr on ccr.rca_num = wcar.rca_num and ccr.ativo;
 
 comment on view vw_chat_conversa is
   'Lista de conversas do /chat. Só clientes COM mensagem visível — sem os ramos de prospecção/ociosos e sem as colunas que só o board usa. Ver 0126.';
+
+-- ---------------------------------------------------------------------------
+-- A view nasce SEM leitura por anon/authenticated.
+--
+-- O padrão do projeto (§12.5) fechou as TABELAS com RLS, e as views seguiram
+-- funcionando "porque rodam como dono" — o que também significa que elas
+-- ATRAVESSAM o RLS que as tabelas ganharam. Com o SELECT que o schema `public`
+-- concede por padrão, a chave anon (que vai no bundle do navegador, para o
+-- signInWithOAuth e o Realtime) lê a view inteira.
+--
+-- ⚠️ Verificado ao vivo em 09/09/2026, com a anon key deste projeto:
+--     vw_funil_visivel -> 200, com nome, telefone e conteúdo da última mensagem
+--     clientes         -> []   (RLS pegando)
+--     mensagens        -> []   (RLS pegando)
+-- Ou seja: as tabelas estão fechadas e as views são a porta aberta. Isso é
+-- ANTERIOR a esta migration e vale para as 37 views do projeto — não foi
+-- corrigido aqui, porque revogar em massa pode calar um consumidor sem erro
+-- (o PostgREST devolve [], não falha). Está anotado para decisão à parte.
+--
+-- O que esta migration garante é só não abrir mais uma porta: o app lê esta
+-- view pelo `service_role`, nas rotas /api/*, que ignora RLS.
+revoke all on public.vw_chat_conversa from anon, authenticated;
+grant select on public.vw_chat_conversa to service_role;
