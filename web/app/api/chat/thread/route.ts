@@ -102,7 +102,14 @@ export async function GET(req: Request) {
       const { data: c } = await sb.from("clientes").select("nome_completo").eq("id", cliente_id).maybeSingle();
       await textoDoTemplate(sb, novas, c?.nome_completo);
     }
-    return Response.json({ incremental: true, mensagens: novas, estados: est ?? [], atualizado_em: new Date().toISOString() });
+    return Response.json({
+      incremental: true, mensagens: novas, estados: est ?? [],
+      // a mensagem que acabou de chegar pode citar uma foto antiga — sem isto a
+      // bolha nova nasceria sem o trecho e só ganharia a miniatura na próxima
+      // recarga completa da thread
+      citadas: await citadasDoLote(sb, novas, cfgThread, querHistorico),
+      atualizado_em: new Date().toISOString(),
+    });
   }
 
   let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
@@ -285,11 +292,52 @@ export async function GET(req: Request) {
     continuacao: !!antes,
     linha,
     mensagens,
+    // trechos citados que não estão neste lote (foto respondida lá atrás)
+    citadas: await citadasDoLote(sb, mensagens, cfgThread, querHistorico),
     notas: notas ?? [],
     transferencias: transferencias ?? [],
     ligacoes: ligacoes ?? [],
     atualizado_em: new Date().toISOString(),
   });
+}
+
+/**
+ * As mensagens CITADAS que não estão no próprio lote.
+ *
+ * Quando a cliente responde citando uma foto — o gesto normal de quem mandou
+ * cinco imagens e comenta a terceira —, a bolha precisa mostrar A FOTO, e a
+ * tela só sabia procurar o alvo dentro das 200 mensagens carregadas. Numa
+ * conversa longa a foto citada quase sempre está atrás disso, e o resultado era
+ * "mensagem citada (fora do histórico carregado)" justamente nas conversas mais
+ * antigas, que são as das melhores clientes.
+ *
+ * Medido em 09/09/2026: 249 citações em 30 dias, 44 apontando para mídia
+ * (41 imagens, 3 áudios), e as 41 imagens com o arquivo no bucket.
+ *
+ * Respeita `filtroLinhas` como o resto da rota: se a mensagem citada está numa
+ * linha que a seleção esconde, ela continua escondida — a tela cai no aviso de
+ * "fora do histórico", que é a verdade. Trazer o trecho por uma porta lateral
+ * contrariaria a §44, que é o ponto inteiro daquela chave.
+ */
+async function citadasDoLote(
+  sb: any, lote: any[], cfg: any, querHistorico: boolean,
+): Promise<any[]> {
+  const noLote = new Set(lote.map((m: any) => m.id));
+  const faltam = Array.from(new Set(
+    lote.map((m: any) => m.resposta_a).filter((id: any) => id && !noLote.has(id)),
+  ));
+  if (!faltam.length) return [];
+  // teto de segurança: `.in()` com lista gigante estoura o tamanho da URL do
+  // PostgREST. 60 é folgado — um lote de 200 mensagens não cita tanto para fora.
+  let q = sb.from("mensagens")
+    .select("id,conteudo,enviada_por,criada_em,midia_tipo,midia_mime,midia_nome,midia_path")
+    .in("id", faltam.slice(0, 60));
+  if (!querHistorico) q = filtroLinhas(q, cfg);
+  const { data, error } = await q;
+  // falhar aqui não pode derrubar a conversa: sem as citadas a thread continua
+  // legível, com o mesmo aviso de antes no lugar do trecho
+  if (error) { console.warn("[chat/thread] citadas:", error.message); return []; }
+  return data ?? [];
 }
 
 /**

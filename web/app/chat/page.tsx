@@ -1179,6 +1179,23 @@ export default function Chat() {
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<Conversa | null>(null);
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
+  // Mensagens CITADAS que não estão no lote carregado — a foto respondida lá
+  // atrás. Acumula (nunca substitui): `carregarAntigas` traz outro lote e as
+  // citadas dele têm de se somar às que já vieram, senão a bolha do topo perde
+  // o trecho justamente enquanto a pessoa rola para lê-la.
+  const [citadas, setCitadas] = useState<Record<string, Msg>>({});
+
+  const guardarCitadas = (lista: any[]) => {
+    if (!lista?.length) return;
+    setCitadas((c) => {
+      const n = { ...c };
+      for (const m of lista) if (m?.id) n[m.id] = m as Msg;
+      return n;
+    });
+  };
+  /** O alvo de uma citação: primeiro no lote em tela, senão no que o servidor mandou à parte. */
+  const acharCitada = (id: string): Msg | null =>
+    (msgs ?? []).find((x) => x.id === id) ?? citadas[id] ?? null;
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -1597,6 +1614,7 @@ export default function Chat() {
     // O criterio e o unico defensavel: o que for estritamente mais novo que a
     // linha mais recente da foto chegou DEPOIS dela, entao sobrevive.
     setMsgs((atual) => juntar(atual, j?.mensagens ?? []));
+    guardarCitadas(j?.citadas ?? []);
     setCanalEnvio(j?.canal_envio ?? null);
     setLinhaEnvio(j?.linha_envio ?? null);
     setOcultas(j?.historico_oculto ?? 0);
@@ -1668,6 +1686,7 @@ export default function Chat() {
     const cx = rolagemRef.current;
     const noFim = !cx || cx.scrollHeight - cx.scrollTop - cx.clientHeight < 120;
     setMsgs((atual) => juntar(atual, novas, true));
+    guardarCitadas(j?.citadas ?? []);
     if (noFim) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
     return novas.length;
   }, [carregarThread]);
@@ -1704,6 +1723,7 @@ export default function Chat() {
       setTemMais(!!j?.tem_mais);
       if (!lote.length) return;
       setMsgs((atual) => [...lote, ...(atual ?? [])]);
+      guardarCitadas(j?.citadas ?? []);
       // depois do render, devolve a posição de leitura
       setTimeout(() => {
         const el = rolagemRef.current;
@@ -2083,8 +2103,18 @@ export default function Chat() {
     );
   }, [sel]);
 
+  // ESPELHO da régua do servidor (lib/chatEscopo.enderecosDeAtendimento). Uma
+  // pessoa atende sob os endereços que tem: hoje, só a carteira dela — quem não
+  // tem carteira (admin, home) não atende nada por padrão e apenas observa.
+  //
+  // Compara com `c.vendedor`, que já é o dono EFETIVO (o /api/chat aplica as
+  // transferências antes de mandar), e não com a carteira crua do cliente: quem
+  // pega uma conversa da fila passa a atendê-la de fato, e precisa marcá-la.
+  const souQuemAtende = (c: Conversa) =>
+    !!sessao?.carteira && !!c.vendedor && c.vendedor === sessao.carteira;
+
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
+    setSel(c); setMsgs(null); setCitadas({}); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
     // o compositor guarda o nome da cliente ANTERIOR nos campos: deixá-lo aberto
@@ -2097,14 +2127,22 @@ export default function Chat() {
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     carregarContatoDe(c.cliente_id);
-    // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
-    if (c.nao_lida) {
-      setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
+    // marca como lida (otimista na lista; o servidor guarda a marca por usuário).
+    //
+    // SÓ QUEM ATENDE MARCA. Abrir a conversa de outra pessoa é conferência, não
+    // atendimento: marcar apagaria o próprio número de "esperando resposta" no
+    // gesto de olhar. Quem decide é o servidor (/api/chat/lida) — a guarda aqui
+    // evita o OTIMISMO, que tiraria o negrito na hora e o traria de volta na
+    // recarga seguinte da lista, que é pior que nunca tirar.
+    if (souQuemAtende(c)) {
+      if (c.nao_lida) {
+        setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
+      }
+      fetch("/api/chat/lida", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: c.cliente_id }),
+      }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
     }
-    fetch("/api/chat/lida", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cliente_id: c.cliente_id }),
-    }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
   }
   // ponte para o efeito do deep link, que roda acima desta declaração
   abrirRef.current = abrir;
@@ -2234,6 +2272,108 @@ export default function Chat() {
   // Prévia é de UMA conversa: trocar de cliente com áudio pendente e clicar em
   // Enviar mandaria a gravação para a pessoa errada.
   useEffect(() => { soltarPrevia(); }, [sel?.cliente_id]);
+
+  // ==========================================================================
+  // COLAR (Ctrl+V) E ARRASTAR ARQUIVO PARA DENTRO DA CONVERSA
+  //
+  // Era a falta mais sentida contra o RD e o WhatsApp Web: existia só o botão de
+  // clipe, então a foto que a pessoa já tinha na área de transferência precisava
+  // primeiro virar arquivo salvo no disco para poder ser enviada.
+  //
+  // Não abre caminho novo de envio: os dois gestos desembocam em `enviarArquivos`,
+  // que já faz a fila sequencial, o corte por tamanho e a tradução de erro.
+  //
+  // MAS PASSAM POR CONFIRMAÇÃO, e o botão de clipe não passa. A diferença é o
+  // acidente: escolher no seletor de arquivos é deliberado; soltar o mouse alguns
+  // pixels adiante, ou colar num campo que não era o esperado, não é. E mensagem
+  // enviada não se apaga — a Cloud API não tem esse endpoint (§49), então o erro
+  // fica na tela da cliente para sempre. A prévia custa um clique e é o mesmo
+  // freio que o áudio gravado já tem logo acima.
+  // ==========================================================================
+  const [pendentes, setPendentes] = useState<{ files: File[]; urls: (string | null)[] } | null>(null);
+  const [sobreSoltar, setSobreSoltar] = useState(false);
+  // `dragleave` dispara também ao cruzar a borda de qualquer FILHO, então um
+  // booleano simples apagaria o aviso no meio do caminho, com o arquivo ainda
+  // pairando. O contador de profundidade é o jeito conhecido de saber que se
+  // saiu do container de verdade.
+  const arrastoFundo = useRef(0);
+  const urlsPrevia = useRef<string[]>([]);
+
+  function limparUrlsPrevia() {
+    for (const u of urlsPrevia.current) URL.revokeObjectURL(u);
+    urlsPrevia.current = [];
+  }
+  function soltarPendentes() { limparUrlsPrevia(); setPendentes(null); }
+
+  // URL de blob vive até alguém revogar. Acumular no ref (em vez de amarrar a
+  // um efeito por `pendentes`) é o que permite ACRESCENTAR arquivos ao lote sem
+  // revogar as miniaturas que já estavam na tela.
+  useEffect(() => () => limparUrlsPrevia(), []);
+
+  // Mesmo cuidado do áudio: lote pendente é de UMA conversa. Trocar de cliente e
+  // clicar em Enviar mandaria as fotos para a pessoa errada.
+  useEffect(() => { soltarPendentes(); }, [sel?.cliente_id]);
+
+  /**
+   * Imagem vinda da área de transferência não tem nome: o navegador entrega
+   * "image.png" para toda e qualquer uma. Cinco prints colados chegariam à
+   * cliente como cinco "image.png", indistinguíveis na lista de arquivos dela.
+   */
+  function nomearColado(f: File, i: number): File {
+    if (f.name && !/^image\.(png|jpe?g|webp|gif)$/i.test(f.name)) return f;
+    const ext = ((f.type.split("/")[1] || "png").split("+")[0]).replace("jpeg", "jpg");
+    const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
+    const carimbo = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    return new File([f], `foto-${carimbo}${i ? `-${i + 1}` : ""}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  }
+
+  const LIMITE_PENDENTES = 30;   // o mesmo teto que `enviarArquivos` já aplica
+
+  function receberArquivos(brutos: File[], colados: boolean) {
+    if (!brutos.length) return;
+    if (!sel) { setAviso("Abra uma conversa antes de soltar o arquivo aqui."); return; }
+    if (enviandoArquivo) { setAviso("Espere o envio em andamento terminar para anexar outros."); return; }
+    const files = colados ? brutos.map(nomearColado) : brutos;
+    setPendentes((p) => {
+      const antes = p?.files ?? [];
+      const espaco = Math.max(0, LIMITE_PENDENTES - antes.length);
+      if (!espaco) { setAviso(`Máximo de ${LIMITE_PENDENTES} arquivos por vez.`); return p; }
+      const add = files.slice(0, espaco);
+      if (add.length < files.length) setAviso(`Máximo de ${LIMITE_PENDENTES} arquivos por vez — os últimos ficaram de fora.`);
+      return {
+        files: [...antes, ...add],
+        // miniatura só de imagem: para PDF e áudio o navegador não desenha nada
+        // útil, e o nome do arquivo diz mais do que um retângulo vazio.
+        urls: [...(p?.urls ?? []), ...add.map((f) => {
+          if (!f.type.startsWith("image/")) return null;
+          const u = URL.createObjectURL(f);
+          urlsPrevia.current.push(u);
+          return u;
+        })],
+      };
+    });
+  }
+
+  function tirarPendente(i: number) {
+    setPendentes((p) => {
+      if (!p) return p;
+      const u = p.urls[i];
+      if (u) { URL.revokeObjectURL(u); urlsPrevia.current = urlsPrevia.current.filter((x) => x !== u); }
+      const files = p.files.filter((_, k) => k !== i);
+      return files.length ? { files, urls: p.urls.filter((_, k) => k !== i) } : null;
+    });
+  }
+
+  async function enviarPendentes() {
+    const p = pendentes;
+    if (!p || enviandoArquivo) return;
+    soltarPendentes();     // revogar as URLs não invalida os File: o envio usa os File
+    await enviarArquivos(p.files);
+  }
+
+  /** Arrasto de texto ou de link não deve acender o aviso de soltar arquivo. */
+  const arrastaArquivo = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
   async function alternarGravacao() {
     if (gravando) { recRef.current?.stop(); return; }
@@ -2818,6 +2958,14 @@ export default function Chat() {
   const contaResolvidas = noEscopo.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
   const contaFila = noEscopo.filter((c) => c.na_fila).length;
   const contaPendentes = noEscopo.filter((c) => c.nao_lida && !c.na_fila).length;
+  // A dica de "Mensagens não lidas" muda de sentido conforme quem olha, porque a
+  // régua mudou: quem só observa não marca leitura ao abrir (ver `abrir`), então
+  // para essa pessoa a fila não esvazia quando ela LÊ — esvazia quando alguém
+  // RESPONDE. Um texto só descreveria a régua errada para metade da equipe.
+  const dicaDaFila = (k: Fila) =>
+    k === "pendentes" && !sessao?.carteira
+      ? "o cliente falou e ninguém respondeu ainda — abrir para conferir não tira daqui"
+      : FILAS.find((x) => x.k === k)?.dica;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
   const jaNaLista = new Set(ordenadas.map((c) => c.cliente_id));
   // a busca no conteúdo respeita o filtro por vendedor (o servidor devolve o
@@ -3211,7 +3359,7 @@ export default function Chat() {
                           : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
                         return (
-                          <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={f.dica}
+                          <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={dicaDaFila(f.k)}
                             style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
                             <span style={{ fontSize: 14, width: 18, textAlign: "center" }}>{f.icone}</span>
                             <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
@@ -3249,7 +3397,7 @@ export default function Chat() {
                     const vazia = f.n === 0;
                     return (
                       <button key={f.k} onClick={() => setFiltro(f.k)}
-                        title={FILAS.find((x) => x.k === f.k)?.dica}
+                        title={dicaDaFila(f.k)}
                         style={{
                           flex: 1, minWidth: 0, padding: "5px 4px 6px", cursor: "pointer", fontFamily: "inherit",
                           borderRadius: 9, textAlign: "center", lineHeight: 1.15,
@@ -3679,7 +3827,40 @@ export default function Chat() {
 
         {/* ---- thread ---- */}
         {mostraThread && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: M.bgThread }}>
+          <div
+            onDragEnter={(e) => { if (!arrastaArquivo(e)) return; e.preventDefault(); arrastoFundo.current++; setSobreSoltar(true); }}
+            onDragOver={(e) => { if (!arrastaArquivo(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+            onDragLeave={(e) => {
+              if (!arrastaArquivo(e)) return;
+              arrastoFundo.current = Math.max(0, arrastoFundo.current - 1);
+              if (!arrastoFundo.current) setSobreSoltar(false);
+            }}
+            onDrop={(e) => {
+              if (!arrastaArquivo(e)) return;
+              // sem o preventDefault o navegador ABRE o arquivo, trocando a
+              // aba do CRM pela foto — e o trabalho em andamento se perde
+              e.preventDefault();
+              arrastoFundo.current = 0; setSobreSoltar(false);
+              receberArquivos(Array.from(e.dataTransfer.files ?? []), false);
+            }}
+            style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: M.bgThread }}>
+            {/* aviso de soltar: `pointerEvents: none` é obrigatório — uma camada
+                que captura o mouse engoliria o próprio `drop` que ela anuncia */}
+            {sobreSoltar && (
+              <div style={{ position: "absolute", inset: 0, zIndex: 40, pointerEvents: "none",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "rgba(255,255,255,.82)", border: `2px dashed ${M.roxo}`, borderRadius: 8 }}>
+                <div style={{ textAlign: "center", color: M.roxo }}>
+                  <div style={{ fontSize: 34, marginBottom: 6 }}>📎</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800 }}>
+                    {sel ? "Solte para anexar" : "Abra uma conversa primeiro"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: M.gray, marginTop: 2 }}>
+                    {sel ? "você confere antes de enviar" : "o arquivo precisa de um destinatário"}
+                  </div>
+                </div>
+              </div>
+            )}
             {!sel && (
               bc ? (
                 <Estado alto glifo="💬" titulo="Selecione uma conversa ao lado"
@@ -4104,12 +4285,68 @@ export default function Chat() {
                               {/* trecho citado: dá sentido à resposta quando a conversa
                                   tem vários assuntos ao mesmo tempo */}
                               {m.resposta_a && (() => {
-                                const alvo = (msgs ?? []).find((x) => x.id === m.resposta_a);
+                                const alvo = acharCitada(m.resposta_a);
+                                // MOSTRA A MÍDIA CITADA, não o nome dela. Quando a
+                                // cliente manda cinco fotos e responde à terceira, o
+                                // trecho é a única coisa que diz DE QUAL ela está
+                                // falando — e um "📷 Imagem" escrito serve para as
+                                // cinco. A miniatura sai da mesma rota da bolha
+                                // (`/api/chat/midia`, URL assinada), então não há
+                                // caminho novo nem chave exposta.
+                                const ehImagem = !!alvo?.midia_path
+                                  && (alvo.midia_tipo === "image" || alvo.midia_tipo === "sticker");
+                                const autor = !alvo ? null
+                                  : alvo.enviada_por === "customer" ? (sel?.cliente ?? "Cliente") : "Você";
+                                // Legenda de verdade é texto útil; rótulo automático
+                                // ("📷 Imagem") e NOME DE ARQUIVO não são.
+                                //
+                                // O nome estava vazando: visto no navegador, a citação
+                                // saía "Você · WhatsApp Image 2026-08-25 at 16.02.04.jpeg"
+                                // ao lado da miniatura — que é literalmente a queixa que
+                                // originou este item ("o consultor apenas vê o nome da
+                                // imagem"). Com a foto ao lado, o nome não informa nada.
+                                const nomeDeArquivo = (t: string) =>
+                                  /^(whatsapp|img[-_]|image[-_]|video[-_]|audio[-_]|photo[-_]|foto-)/i.test(t.trim())
+                                  || /\.(jpe?g|png|webp|gif|mp4|3gp|ogg|opus|m4a|aac|pdf|docx?|xlsx?)$/i.test(t.trim());
+                                const legenda = alvo?.conteudo
+                                  && !/^(📷|🎬|🎤|📎|🙂)/.test(alvo.conteudo)
+                                  && !(alvo.midia_tipo && nomeDeArquivo(alvo.conteudo))
+                                  ? alvo.conteudo : "";
                                 return (
-                                  <div style={{ borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: "4px 8px", marginBottom: 4, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden" }}>
-                                    {alvo
-                                      ? (alvo.conteudo || rotuloMidia(alvo.midia_tipo ?? "")).slice(0, 120)
-                                      : "mensagem citada (fora do histórico carregado)"}
+                                  <div style={{ display: "flex", gap: 7, alignItems: "stretch", borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: ehImagem ? 4 : "4px 8px", marginBottom: 4, overflow: "hidden" }}>
+                                    <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden", padding: ehImagem ? "2px 0 2px 5px" : 0 }}>
+                                      {alvo ? (
+                                        <>
+                                          {autor && <b style={{ display: "block", color: M.roxo, fontSize: 11 }}>{autor}</b>}
+                                          {legenda || (alvo.midia_tipo
+                                            // documento é o caso em que o nome É a
+                                            // informação ("orcamento-setembro.pdf"); em
+                                            // foto e áudio o nome é do aparelho de quem
+                                            // mandou, e o rótulo diz mais
+                                            ? (alvo.midia_tipo === "document"
+                                                ? (alvo.midia_nome || "Documento")
+                                                : rotuloMidia(alvo.midia_tipo))
+                                            : "")}
+                                        </>
+                                      ) : (
+                                        // 27% das citações apontam para mensagem que
+                                        // nunca esteve conosco (medido em 09/09/2026):
+                                        // citação a algo anterior à nossa entrada no
+                                        // número. Não é lote pequeno, é dado ausente —
+                                        // por isso o texto não promete "carregue mais".
+                                        "mensagem citada (não está no histórico)"
+                                      )}
+                                    </div>
+                                    {alvo && !ehImagem && alvo.midia_tipo && (
+                                      <span style={{ fontSize: 15, alignSelf: "center", flexShrink: 0 }}>
+                                        {alvo.midia_tipo === "audio" ? "🎤" : alvo.midia_tipo === "video" ? "🎬" : "📎"}
+                                      </span>
+                                    )}
+                                    {ehImagem && (
+                                      <img src={`/api/chat/midia?id=${encodeURIComponent(alvo!.id)}`}
+                                        alt={legenda || "imagem citada"}
+                                        style={{ width: 42, height: 42, borderRadius: 5, objectFit: "cover", flexShrink: 0, display: "block" }} />
+                                    )}
                                   </div>
                                 );
                               })()}
@@ -4217,7 +4454,14 @@ export default function Chat() {
                 {/* ---- botões flutuantes de rolagem (⌃ ⌄), como os do RD, colados
                      na borda direita da área de mensagens ---- */}
                 {!!msgs?.length && (
-                  <div style={{ position: "absolute", right: 16, bottom: 96, display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
+                  // ⚠️ `bottom` SOMA as faixas que aparecem acima do compositor. Era
+                  // 96 fixo, e visto no navegador o ⌃ ficava POR CIMA do botão Enviar
+                  // da prévia de arquivos — a faixa mede ~108 px. Vale também para a
+                  // prévia de áudio (~52 px), que tinha o mesmo defeito desde antes,
+                  // menor só porque é de uma linha. Duas faixas nunca aparecem juntas
+                  // hoje, mas somar as duas é o que continua certo se um dia
+                  // aparecerem — e é mais honesto que escolher uma.
+                  <div style={{ position: "absolute", right: 16, bottom: 96 + (pendentes ? 108 : 0) + (previa ? 52 : 0), display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
                     {([["⌃", "Ir para o começo", () => rolagemRef.current?.scrollTo({ top: 0, behavior: "smooth" })],
                        ["⌄", "Ir para a última mensagem", () => fimRef.current?.scrollIntoView({ behavior: "smooth" })]] as const).map(([ic, t, fn]) => (
                       <button key={ic} onClick={fn} title={t}
@@ -4420,6 +4664,55 @@ export default function Chat() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ---- arquivos colados ou arrastados, esperando confirmação ----
+                    Mesma faixa e mesmo vocabulário da prévia de áudio logo acima
+                    ("descartar" / "Enviar"): são o mesmo gesto — conferir antes
+                    de mandar algo que não dá para apagar depois. */}
+                {pendentes && (
+                  <div style={{ padding: compacto ? "8px 10px" : "10px 12px", background: M.surface, borderTop: `1px solid ${M.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <b style={{ fontSize: 12.5, color: M.ink }}>
+                        {pendentes.files.length === 1 ? "1 arquivo" : `${pendentes.files.length} arquivos`} para enviar
+                      </b>
+                      <span style={{ fontSize: 11.5, color: M.muted }}>
+                        {texto.trim() ? "o texto digitado vai como legenda da primeira" : "digite abaixo para mandar uma legenda junto"}
+                      </span>
+                      <button onClick={soltarPendentes} title="Descartar e não enviar"
+                        style={{ marginLeft: "auto", background: "transparent", border: "none", color: M.gray,
+                          fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                        descartar
+                      </button>
+                      <button onClick={enviarPendentes} disabled={enviandoArquivo}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8,
+                          border: "none", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", color: "#fff",
+                          background: bc ? M.azul : M.roxo, flexShrink: 0,
+                          cursor: enviandoArquivo ? "default" : "pointer", opacity: enviandoArquivo ? 0.6 : 1 }}>
+                        {bc ? <Icone n="enviar" tamanho={14} /> : null} Enviar
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+                      {pendentes.files.map((f, i) => (
+                        <div key={`${f.name}-${i}`} title={`${f.name} · ${(f.size / 1024).toFixed(0)} KB`}
+                          style={{ position: "relative", width: 64, height: 64, flexShrink: 0, borderRadius: 8,
+                            border: `1px solid ${M.border}`, background: M.bg, overflow: "hidden",
+                            display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {pendentes.urls[i]
+                            ? <img src={pendentes.urls[i] as string} alt={f.name}
+                                style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <div style={{ textAlign: "center", padding: 4, overflow: "hidden" }}>
+                                <div style={{ fontSize: 18 }}>{f.type.startsWith("audio/") ? "🎤" : f.type.startsWith("video/") ? "🎬" : "📄"}</div>
+                                <div style={{ fontSize: 8.5, color: M.muted, lineHeight: 1.15, wordBreak: "break-all" }}>{f.name.slice(0, 18)}</div>
+                              </div>}
+                          <button onClick={() => tirarPendente(i)} title="Tirar este arquivo"
+                            style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 18,
+                              border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 11, lineHeight: 1,
+                              background: "rgba(28,14,27,.62)", color: "#fff" }}>×</button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -4803,6 +5096,15 @@ export default function Chat() {
                       ? "Nota interna — só a equipe vê. Enter salva."
                       : "Enter envia · Shift+Enter quebra linha · / abre as respostas rápidas"}
                     rows={1}
+                    // COLAR ARQUIVO. Só intercepta quando há arquivo de verdade
+                    // na área de transferência — sem esta guarda, colar TEXTO
+                    // (que é o uso comum do Ctrl+V aqui) pararia de funcionar.
+                    onPaste={(e) => {
+                      const fs = Array.from(e.clipboardData?.files ?? []);
+                      if (!fs.length) return;      // colagem de texto segue o caminho normal
+                      e.preventDefault();
+                      receberArquivos(fs, true);
+                    }}
                     onInput={crescer}
                     style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", padding: compacto ? "6px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
                   />

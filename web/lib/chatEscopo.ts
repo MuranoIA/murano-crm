@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { carteiraDe } from "./papel";
 
 // ---------------------------------------------------------------------------
 // Quem atende cada conversa, depois das transferências (migration 0081).
@@ -74,4 +75,57 @@ export function emLotes<T>(itens: T[], tamanho = 200): T[][] {
   const lotes: T[][] = [];
   for (let i = 0; i < itens.length; i += tamanho) lotes.push(itens.slice(i, i + tamanho));
   return lotes;
+}
+
+// ---------------------------------------------------------------------------
+// SOU EU QUEM ATENDE ESTA CONVERSA?
+//
+// Nasceu para a marca de leitura (§18 item 3): admin, home e pós-venda abrem a
+// conversa dos outros para CONFERIR, e conferir não é atender — marcar como
+// lida ali apagaria o próprio número de "esperando resposta" no gesto de olhar.
+//
+// A régua é DONO EFETIVO, não papel, e a diferença não é teórica:
+//   · Romulo entra como `admin` e TEM a carteira `romulo` — pelo papel, nunca
+//     marcaria as próprias conversas;
+//   · quem pega uma conversa da fila passa a atendê-la de verdade e precisa
+//     marcar, mesmo sendo admin;
+//   · um consultor que abre a conversa de outro também está só conferindo.
+// Uma régua por papel erra nos três; esta acerta nos três com uma frase.
+//
+// `enderecosDeAtendimento` é o ponto de extensão: hoje uma pessoa só atende sob
+// a carteira dela, então quem não tem carteira não atende nada e nunca marca.
+// Quando admin/home/pós-venda ganharem atendimentos próprios, é AQUI que entra
+// o segundo endereço (o e-mail, sob o prefixo `u:`) — e a marca de leitura, o
+// transferir e o escopo passam a enxergá-lo juntos, sem cada um inventar o seu.
+// ---------------------------------------------------------------------------
+export function enderecosDeAtendimento(
+  sessao: string | null | undefined,
+  _usuario?: string | null,
+): string[] {
+  const carteira = carteiraDe(sessao);
+  return carteira ? [carteira] : [];
+}
+
+/**
+ * Duas consultas pontuais por id, em paralelo — o mesmo par que a rota de
+ * transferência já faz para decidir permissão. A alternativa barata seria a
+ * tela mandar "eu sou o dono": não serve. A aba pode estar aberta desde antes
+ * de uma troca de papel (/api/trocar-papel reescreve o cookie sem recarregar a
+ * página), e quem decide quem atende não pode ser quem está pedindo.
+ */
+export async function souDonoDaConversa(
+  sb: SupabaseClient,
+  clienteId: string,
+  sessao: string | null | undefined,
+  usuario?: string | null,
+): Promise<boolean> {
+  const meus = enderecosDeAtendimento(sessao, usuario);
+  if (!meus.length) return false;   // sem endereço de atendimento, não atende nada
+
+  const [{ data: linha }, atrib] = await Promise.all([
+    sb.from("vw_funil").select("cliente_id,vendedor").eq("cliente_id", clienteId).maybeSingle(),
+    carregarAtribuicoes(sb),
+  ]);
+  const dono = donoEfetivo(clienteId, (linha?.vendedor as string) ?? null, atrib);
+  return dono !== null && meus.includes(dono);
 }
