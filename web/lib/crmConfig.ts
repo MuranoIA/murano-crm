@@ -44,6 +44,15 @@ export type CrmConfig = {
    */
   linha_padrao_cloud: string | null;
   /**
+   * QUAL linha origina/recebe CHAMADA de voz (0124). Independente da de cima —
+   * calling tem pré-requisito próprio por número (pagamento, campo `calls`
+   * assinado, interruptor ligado em /admin → Linhas) que não deve seguir uma
+   * troca pensada só para mensagem. NULO = a env WHATSAPP_PHONE_NUMBER_ID.
+   *
+   * Ler resolvido por `linhaPadraoCalling()` logo abaixo — nunca o campo cru.
+   */
+  linha_padrao_calling: string | null;
+  /**
    * Oferecer o botão "ver histórico" na conversa quando existirem mensagens em
    * linhas que `linhas_visiveis` esconde (na prática, o RD). NÃO mistura nada na
    * thread sozinho — o vendedor clica e as antigas aparecem, rotuladas (0103).
@@ -84,6 +93,7 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   linhas: [],
   numero_envio: null,
   linha_padrao_cloud: null,
+  linha_padrao_calling: null,
   historico_rd: true,
   texto_pausa: "",
   carteira_rd_ativa: true,
@@ -177,6 +187,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
       numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
       linha_padrao_cloud: typeof data.linha_padrao_cloud === "string" ? data.linha_padrao_cloud : null,
+      linha_padrao_calling: typeof data.linha_padrao_calling === "string" ? data.linha_padrao_calling : null,
       historico_rd: data.historico_rd !== false,
       texto_pausa: String(data.texto_pausa ?? ""),
       carteira_rd_ativa: data.carteira_rd_ativa !== false,
@@ -245,6 +256,17 @@ export const canalEscolhido = (cfg: CrmConfig): "rd" | "whatsapp" | null =>
  */
 export const linhaPadraoCloud = (cfg: CrmConfig): string | null => {
   const v = cfg.linha_padrao_cloud;
+  if (!v || v === "rd") return null;
+  return cfg.linhas.some((l) => l.phone_number_id === v && l.ativo) ? v : null;
+};
+
+/**
+ * A linha escolhida em /admin para ORIGINAR/RECEBER chamada (0124), já validada
+ * contra o cadastro — mesma regra da de cima, mesmo motivo: linha desativada ou
+ * desconhecida não pode ficar "escolhida" só no papel.
+ */
+export const linhaPadraoCalling = (cfg: CrmConfig): string | null => {
+  const v = cfg.linha_padrao_calling;
   if (!v || v === "rd") return null;
   return cfg.linhas.some((l) => l.phone_number_id === v && l.ativo) ? v : null;
 };

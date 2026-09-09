@@ -165,8 +165,14 @@ export async function GET() {
           "(todas as linhas, histórico e carteira do RD de volta, envio no automático). Ligada, " +
           "espere um chat quase vazio no primeiro dia — hoje 92.864 mensagens são do RD contra " +
           "poucas dezenas do número próprio, e é exatamente essa a foto do dia seguinte ao corte.",
-        // as quatro que o modo controla — a tela usa para travá-las
-        controla: ["linhas_visiveis", "historico_rd", "carteira_rd_ativa", "numero_envio"],
+        // as chaves que o modo TRAVA na tela (não deixa editar direto — a
+        // tela usa para isso). `linhas_visiveis` saiu daqui em 09/09/2026: ela
+        // é só a foto de quais linhas mostrar, não uma "posição" como as
+        // outras — pode ser editada com o Modo ligado sem contradição (ver o
+        // comentário do seletor de linhas em admin/page.tsx). O próprio
+        // `modoMigracao()` (lib/crmConfig.ts) continua exigindo o RD fora
+        // dela para o selo "Ligado" aparecer — isso não mudou, só a UI.
+        controla: ["historico_rd", "carteira_rd_ativa", "numero_envio"],
       },
       // ENVIO ≠ VISIBILIDADE. São duas perguntas diferentes e a tela precisa
       // dizer isso, senão o admin muda uma achando que mudou a outra.

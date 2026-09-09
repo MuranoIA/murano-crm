@@ -14,7 +14,7 @@
 // ⚠️ Nos outros desenhos os emoji CONTINUAM. Este arquivo não é importado por
 // eles, e trocar o ícone de quem não pediu quebraria o rollback exato.
 //
-// O dicionário é fechado de propósito: 15 nomes, os que a tela usa. Ícone que
+// O dicionário é fechado de propósito: 16 nomes, os que a tela usa. Ícone que
 // não é usado é peso morto que ninguém percebe estar quebrado.
 
 import React from "react";
@@ -54,6 +54,8 @@ const CAMINHOS: Record<string, string[]> = {
   raio: ["M13 2L3 14h9l-1 8 10-12h-9l1-8z"],
   /** nota interna */
   nota: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6", "M8 13h8", "M8 17h5"],
+  /** emoji — carinha sorrindo */
+  emoji: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M8.5 10v.01", "M15.5 10v.01", "M8 14.5c1 1.2 2.4 1.8 4 1.8s3-.6 4-1.8"],
   /** enviar */
   enviar: ["M22 2L11 13", "M22 2l-7 20-4-9-9-4 20-7z"],
 };
