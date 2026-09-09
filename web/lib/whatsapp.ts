@@ -260,11 +260,11 @@ export function linhaDeEnvio(): string | null {
  * tabela ausente, erro de leitura ou escolha apontando pra linha inativa caem
  * na env, que é o comportamento de sempre.
  *
- * ⚠️ Só para MENSAGEM. Ligação (lib/whatsappCalling.ts, app/api/chat/ligacao,
- * app/api/admin/ligacao) continua lendo `linhaDeEnvio()` direto, de propósito:
- * calling tem pré-requisito próprio por número (pagamento, campo `calls`
- * assinado, interruptor ligado — §22.7) que não deve mudar sozinho quando o
- * admin troca só a linha padrão de mensagem.
+ * ⚠️ Só para MENSAGEM. Ligação tem sua PRÓPRIA escolha (`linhaCalling()`,
+ * lib/whatsappCalling.ts, 0124) — de propósito: calling tem pré-requisito
+ * próprio por número (pagamento, campo `calls` assinado, interruptor ligado
+ * — §22.7) que não deve mudar sozinho quando o admin troca só a linha padrão
+ * de mensagem.
  */
 export async function linhaPadrao(sb: { from: (t: string) => any }): Promise<string | null> {
   try {
@@ -272,6 +272,22 @@ export async function linhaPadrao(sb: { from: (t: string) => any }): Promise<str
     return linhaPadraoCloud(cfg) ?? linhaDeEnvio();
   } catch {
     return linhaDeEnvio();
+  }
+}
+
+/**
+ * A escolha EXPLÍCITA do admin (`crm_config.linha_padrao_cloud`), sem cair no
+ * fallback da env — `null` aqui é "ninguém escolheu", diferente de `null` em
+ * `linhaPadrao()`, que pode significar "escolheu, mas a env também não existe".
+ * Existe separada porque `linhaDaConversa()` precisa saber a diferença: uma
+ * escolha explícita tem PRECEDÊNCIA sobre a conversa (ver o comentário dela);
+ * a falta de escolha não deve forçar nada.
+ */
+async function linhaForcada(sb: { from: (t: string) => any }): Promise<string | null> {
+  try {
+    return linhaPadraoCloud(await lerCrmConfig(sb));
+  } catch {
+    return null;
   }
 }
 
@@ -290,16 +306,31 @@ export async function linhaPadrao(sb: { from: (t: string) => any }): Promise<str
  *      no número oficial; responder pelo outro cai em 131047 mesmo com a tela
  *      dizendo, corretamente, que há conversa aberta.
  *
- * A regra é a única que não depende de configuração: responde-se pelo número
- * em que a CLIENTE falou. Mensagem enviada não conta — ela carrega a linha de
- * quem a mandou, então usá-la deixaria a conversa "grudada" no número errado
- * depois do primeiro engano.
+ * A regra descrita acima é a que vale QUANDO NINGUÉM DECIDIU nada — responde-se
+ * pelo número em que a CLIENTE falou. Mensagem enviada não conta — ela carrega
+ * a linha de quem a mandou, então usá-la deixaria a conversa "grudada" no
+ * número errado depois do primeiro engano.
  *
- * Cai no padrão (a escolha do admin em /admin → Linhas, ou a env na falta
- * dela — ver `linhaPadrao`) quando a conversa ainda não tem mensagem recebida
- * com linha: contato novo criado à mão, ou conversa que só existe no RD.
+ * ⚠️ ESCOLHA EXPLÍCITA DO ADMIN GANHA DE TUDO (decisão de 09/09/2026, na
+ * consolidação do número oficial). Antes disso, mesmo com `linha_padrao_cloud`
+ * definido, uma conversa que já tinha linha PRÓPRIA (outra linha Cloud ativa)
+ * continuava nela — a proteção do item 1/2 acima. O pedido foi o oposto:
+ * *"se está marcado em admin, é o número que deve aparecer para todos os
+ * vendedores"* — mesmo para quem já fala com outra linha Cloud viva (o caso
+ * real: consolidar tudo na linha oficial recém-migrada, aposentando a
+ * secundária). Isso reintroduz os dois riscos do item 1/2 PARA QUEM ESTIVER
+ * NUMA LINHA DIFERENTE DA ESCOLHIDA — aceito conscientemente, não descoberto
+ * depois. Sem escolha explícita (`linha_padrao_cloud` nulo), nada muda: a
+ * proteção de sempre continua de pé.
+ *
+ * Cai no padrão (a escolha do admin, ou a env na falta dela — ver
+ * `linhaPadrao`) quando a conversa ainda não tem mensagem recebida com linha:
+ * contato novo criado à mão, ou conversa que só existe no RD.
  */
 export async function linhaDaConversa(sb: any, clienteId: string): Promise<string | null> {
+  const forcada = await linhaForcada(sb);
+  if (forcada) return forcada;
+
   const padrao = await linhaPadrao(sb);
   try {
     const { data } = await sb

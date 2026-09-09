@@ -1162,6 +1162,17 @@ function resumoDasFalhas(falhas: Falha[], total: number): string {
   return `Não enviei ${falhas.length} de ${total}. ${partes.join(" · ")}`;
 }
 
+// Emoji do compositor (09/09/2026) — os mais usados numa conversa de venda por
+// WhatsApp, não a lista inteira do teclado. Grade fixa, sem categoria nem
+// busca: cobre o gesto real ("mandar um 😊 ou um 👍") sem o custo de uma lib de
+// picker completa só para isso.
+const EMOJIS = [
+  "😀", "😁", "😂", "🤣", "😊", "🙂", "😉", "😍", "😘", "🥰",
+  "😎", "🤔", "😅", "😢", "😭", "😡", "😴", "🙏", "👍", "👎",
+  "👏", "🙌", "💪", "🤝", "👋", "✅", "❌", "⚠️", "🔥", "🎉",
+  "🎂", "🥳", "❤️", "💜", "😇", "🤷", "😬", "😮", "🫶", "📦",
+] as const;
+
 export default function Chat() {
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null } | null | undefined>(undefined);
   const [conversas, setConversas] = useState<Conversa[]>([]);
@@ -1318,6 +1329,10 @@ export default function Chat() {
   // a localizacao nao custa mais um icone na barra -- e o gesto ja e o que a
   // pessoa conhece ("clipe = mandar alguma coisa que nao e texto").
   const [anexoAberto, setAnexoAberto] = useState(false);
+  // Emoji, como no WhatsApp (09/09/2026): grade fixa dos mais usados — não é
+  // um picker completo com categorias/busca, é o mesmo custo-benefício do
+  // clipe acima, sem precisar de uma lib nova só para isso.
+  const [emojiAberto, setEmojiAberto] = useState(false);
   // Paginação para trás: a thread trazia 200 mensagens e PARAVA SEM AVISAR --
   // numa cliente de anos, a conversa mais antiga não existia para quem rolava.
   const [temMais, setTemMais] = useState(false);
@@ -2679,6 +2694,22 @@ export default function Chat() {
     const ehAtalho = /^\/[a-zA-Z0-9]*$/.test(v);
     setPicker(ehAtalho);
     if (ehAtalho) setPickerIdx(0);
+  }
+
+  /**
+   * Insere no PONTO DO CURSOR, não no fim — quem clica um emoji no meio de uma
+   * frase espera continuar dali, como no WhatsApp. `setTimeout` porque o
+   * cursor só pode ser reposicionado depois que o React repintar o novo
+   * `value`; fazer isso na mesma passada reposiciona sobre o texto antigo.
+   */
+  function inserirEmoji(e: string) {
+    const el = textoRef.current;
+    const ini = el?.selectionStart ?? texto.length;
+    const fim = el?.selectionEnd ?? texto.length;
+    const novo = texto.slice(0, ini) + e + texto.slice(fim);
+    setTexto(novo);
+    const pos = ini + e.length;
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos, pos); }, 0);
   }
 
   async function enviar() {
@@ -4416,6 +4447,40 @@ export default function Chat() {
                     // a linha clara das seções, que some contra o fundo.
                     border: `1px solid ${modoNota ? NOTA.borda : M.lineStrong}`,
                     borderRadius: compacto ? 16 : 22, transition: "border-color .15s" }}>
+                  {/* 😊 emoji — primeiro da pílula, como no WhatsApp */}
+                  <div style={{ position: "relative", flexShrink: 0 }}>
+                  <button
+                    onClick={() => setEmojiAberto((v) => !v)}
+                    disabled={modoNota}
+                    title={modoNota ? "Nota interna não leva emoji" : "Emoji"}
+                    style={{ width: pilBtn, height: pilBtn, borderRadius: raioPilBtn, ...(bc ? CENTRO : null), border: "none", background: emojiAberto ? M.roxo : "transparent", color: emojiAberto ? "#fff" : M.gray, fontSize: 17, opacity: modoNota ? 0.4 : 1, cursor: modoNota ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}
+                  >
+                    {bc ? <Icone n="emoji" /> : "😊"}
+                  </button>
+                  {emojiAberto && (
+                    <>
+                      <div onClick={() => setEmojiAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
+                      {/* grade de 10 colunas: 40 emoji cabem em 4 linhas, sem
+                          rolagem — mesma lógica do menu de anexo: um clique
+                          fecha tudo, então não vale a pena paginar */}
+                      <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, zIndex: 201,
+                        width: 260, padding: 8, display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: 2,
+                        background: M.surface, border: `1px solid ${M.border}`, borderRadius: 11,
+                        boxShadow: "0 12px 30px rgba(28,14,27,.20)" }}>
+                        {EMOJIS.map((e) => (
+                          <button key={e} onClick={() => inserirEmoji(e)}
+                            style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: 17, background: "transparent", border: "none", borderRadius: 6, cursor: "pointer" }}
+                            onMouseEnter={(ev) => { ev.currentTarget.style.background = M.bg; }}
+                            onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; }}
+                          >
+                            {e}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  </div>
                   <div style={{ position: "relative", flexShrink: 0 }}>
                   <button
                     // Antes: sem endereço cadastrado o clipe ia direto para o

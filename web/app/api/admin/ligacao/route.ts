@@ -1,6 +1,5 @@
-import { guardaAdmin, corpo } from "../../../../lib/adminApi";
-import { lerConfigChamadas, definirConfigChamadas } from "../../../../lib/whatsappCalling";
-import { linhaDeEnvio } from "../../../../lib/whatsapp";
+import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
+import { lerConfigChamadas, definirConfigChamadas, linhaCalling } from "../../../../lib/whatsappCalling";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -15,16 +14,16 @@ export const maxDuration = 30;
 //
 // Escreve na conta da Meta, então:
 //   · só admin (guardaAdmin);
-//   · age SOMENTE sobre WHATSAPP_PHONE_NUMBER_ID, a linha que já é a de envio.
-//     A linha nunca vem por parâmetro — é o mesmo recorte da §20.3, e o motivo é
-//     o mesmo: o número oficial de produção não pode ser alcançado por uma rota
-//     nossa nem por engano.
-//   · ⚠️ Usa `linhaDeEnvio()` (a env), não `linhaPadrao()` (0123, a escolha do
-//     admin em Linhas). De propósito: calling tem pré-requisito PRÓPRIO por
-//     número (pagamento, campo `calls` assinado, este mesmo interruptor) que
-//     não deve mudar sozinho quando alguém troca só a linha padrão de mensagem
-//     — isso ligaria/desligaria calling numa linha diferente da que a pessoa
-//     pensa que está mexendo.
+//   · a linha é sempre `linhaCalling()` (0124) — a escolha do admin em
+//     /admin → Linhas, com fallback pra env WHATSAPP_PHONE_NUMBER_ID. NUNCA
+//     vem de parâmetro de request: só entre linhas já cadastradas em
+//     `chat_linha`, nunca um phone_number_id arbitrário digitado na hora —
+//     mesmo espírito de proteção da §20.3 original ("o número oficial de
+//     produção não pode ser alcançado por engano"), por outro caminho.
+//   · ⚠️ Não é a mesma escolha de `linhaPadrao()` (0123, mensagem). São
+//     interruptores separados de propósito: calling tem pré-requisito PRÓPRIO
+//     por número (pagamento, campo `calls` assinado, este mesmo interruptor)
+//     que não deve mudar sozinho quando alguém troca só a linha de mensagem.
 //
 // O que esta rota NÃO resolve (não é código, é conta — ver §22):
 //   · limite de mensagens da WABA >= 2.000/24h, exigência da Meta para calling;
@@ -35,11 +34,11 @@ export async function GET() {
   const g = guardaAdmin("ver a configuração de chamadas");
   if (g.erro) return g.erro;
 
-  const linha = linhaDeEnvio();
+  const linha = await linhaCalling(sbAdmin());
   if (!linha) return Response.json({ error: "WHATSAPP_PHONE_NUMBER_ID não configurado na Vercel" }, { status: 500 });
 
   try {
-    return Response.json({ linha, calling: await lerConfigChamadas() });
+    return Response.json({ linha, calling: await lerConfigChamadas(linha) });
   } catch (e: any) {
     // erro do Graph aqui costuma ser o próprio diagnóstico (permissão do token,
     // linha fora da Cloud API) — devolve o texto em vez de engolir
@@ -56,9 +55,10 @@ export async function POST(req: Request) {
     return Response.json({ error: "informe { ligado: true | false }" }, { status: 400 });
   }
 
+  const linha = await linhaCalling(sbAdmin());
   try {
-    await definirConfigChamadas(b.ligado);
-    return Response.json({ ok: true, ligado: b.ligado, calling: await lerConfigChamadas() });
+    await definirConfigChamadas(b.ligado, linha);
+    return Response.json({ ok: true, ligado: b.ligado, calling: await lerConfigChamadas(linha) });
   } catch (e: any) {
     return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
   }

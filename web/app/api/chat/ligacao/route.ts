@@ -3,9 +3,8 @@ import {
   COLS_LIGACAO, VIVOS, encerramento,
 } from "../../../../lib/ligacao";
 import {
-  iniciarChamada, consultarPermissao, pedirPermissaoDeChamada, encerrar, GraphCallingError,
+  iniciarChamada, consultarPermissao, pedirPermissaoDeChamada, encerrar, GraphCallingError, linhaCalling,
 } from "../../../../lib/whatsappCalling";
-import { linhaDeEnvio } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -22,11 +21,10 @@ export const maxDuration = 30;
 // do RD/Tallos não tem ligação (decisão do usuário em 17/08/2026); o RD não tem
 // API de voz e não faria sentido oferecer meia funcionalidade ali.
 //
-// ⚠️ `linhaDeEnvio()` aqui é de propósito, não esquecimento: com mais de uma
-// linha Cloud viva (0123), a linha PADRÃO de mensagem pode ser escolhida em
-// /admin → Linhas, mas calling continua preso à env — tem pré-requisito
-// próprio por número (pagamento, `calls` assinado, interruptor ligado, §22.7)
-// que não deve seguir uma troca pensada só para mensagem.
+// ⚠️ A linha usada aqui é `linhaCalling()` (0124), NÃO `linhaPadrao()`
+// (0123, mensagem) — são escolhas separadas de propósito: calling tem
+// pré-requisito próprio por número (pagamento, `calls` assinado, interruptor
+// ligado, §22.7) que não deve seguir uma troca pensada só para mensagem.
 // ---------------------------------------------------------------------------
 
 export async function GET(req: Request) {
@@ -87,6 +85,9 @@ export async function POST(req: Request) {
   const telefone = telefoneE164(cli?.telefone, cliente_id);
   if (!telefone) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
 
+  // uma leitura só, reusada em toda a rota — evitar N idas ao crm_config
+  const linha = await linhaCalling(s.sb);
+
   // ---- pedir autorização para ligar --------------------------------------
   // Caminho que a própria API indica quando não há permissão. Fica ANTES da
   // trava de "chamada em andamento": pedir autorização não é discar.
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     const texto = String(b?.texto ?? "").trim() ||
       "Podemos te ligar aqui pelo WhatsApp para falar sobre o seu pedido?";
     try {
-      const { wamid } = await pedirPermissaoDeChamada(telefone, texto);
+      const { wamid } = await pedirPermissaoDeChamada(telefone, texto, linha);
       // espelha na conversa: a cliente VÊ este cartão, então ele tem de estar na
       // thread como qualquer mensagem que enviamos — senão o vendedor não sabe
       // que já pediu, e queima a cota de 1 por dia pedindo de novo
@@ -105,9 +106,9 @@ export async function POST(req: Request) {
         id: wamid, cliente_id, vendedor_carteira: cli?.carteira ?? dono ?? null,
         enviada_por: "operator", tipo: "mensagem",
         conteudo: `📞 ${texto}`,
-        status: "wait", criada_em: new Date().toISOString(), linha_id: linhaDeEnvio(),
+        status: "wait", criada_em: new Date().toISOString(), linha_id: linha,
       }, { onConflict: "id" });
-      return Response.json({ ok: true, pedido: true, permissao: await consultarPermissao(telefone) });
+      return Response.json({ ok: true, pedido: true, permissao: await consultarPermissao(telefone, linha) });
     } catch (e: any) {
       const foraDaJanela = e?.graphCode === 131047 || /131047/.test(String(e?.message ?? ""));
       return Response.json({
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
 
   // checagem barata antes de gastar a chamada: sem permissão o Graph recusa, e o
   // vendedor só descobriria depois de já ter aberto o microfone
-  const permissao = await consultarPermissao(telefone);
+  const permissao = await consultarPermissao(telefone, linha);
   if (!permissao.pode_ligar) {
     return Response.json({
       error: permissao.pode_pedir
@@ -166,12 +167,12 @@ export async function POST(req: Request) {
   // grava ANTES de chamar o Graph: se o webhook chegar antes da resposta HTTP
   // (acontece — são processos diferentes), a linha já existe para ele atualizar.
   const { data: linhaLig, error: errIns } = await s.sb.from("chat_ligacao")
-    .insert({ ...base, status: "discando", linha_id: linhaDeEnvio() })
+    .insert({ ...base, status: "discando", linha_id: linha })
     .select("id").single();
   if (errIns) return Response.json({ error: errIns.message }, { status: 500 });
 
   try {
-    const { call_id } = await iniciarChamada(telefone, sdp, `lig:${linhaLig.id}`);
+    const { call_id } = await iniciarChamada(telefone, sdp, `lig:${linhaLig.id}`, linha);
     const { data } = await s.sb.from("chat_ligacao")
       .update({ call_id }).eq("id", linhaLig.id).select(COLS_LIGACAO).single();
     return Response.json({ ok: true, canal: "whatsapp", ligacao: data, permissao });
@@ -222,7 +223,7 @@ export async function PATCH(req: Request) {
   const observacao = String(b?.observacao ?? "").trim().slice(0, 500) || null;
 
   const { data: atual } = await s.sb
-    .from("chat_ligacao").select("id,cliente_id,canal,call_id,status,atendida_em")
+    .from("chat_ligacao").select("id,cliente_id,canal,call_id,status,atendida_em,linha_id")
     .eq("id", id).maybeSingle();
   if (!atual) return Response.json({ error: "ligação não encontrada" }, { status: 404 });
 
@@ -243,7 +244,11 @@ export async function PATCH(req: Request) {
     // desligar na Meta pode falhar (chamada já caiu do outro lado). Isso NÃO
     // pode impedir o fechamento do registro local — senão a linha fica viva para
     // sempre e a barra de chamada não sai da tela.
-    try { await encerrar(atual.call_id); } catch (e: any) { erroGraph = e?.message ?? String(e); }
+    // A linha é a que a PRÓPRIA chamada gravou ao começar (0124) — não a de
+    // agora: se o admin trocar a linha padrão no meio de uma chamada em curso,
+    // o comando de desligar tem de ir pro mesmo número que originou/atendeu.
+    const linhaChamada = atual.linha_id ? String(atual.linha_id) : await linhaCalling(s.sb);
+    try { await encerrar(atual.call_id, linhaChamada); } catch (e: any) { erroGraph = e?.message ?? String(e); }
   }
 
   const status = String(b?.status ?? "").trim() ||

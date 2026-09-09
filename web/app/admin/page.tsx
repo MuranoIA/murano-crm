@@ -412,10 +412,12 @@ export default function Admin() {
           titulo="Linhas de WhatsApp"
           ajuda={<>
             O rótulo aparece no cabeçalho da conversa, para o vendedor saber por qual número está falando.
-            <b> "Linha padrão" abaixo</b> escolhe por qual número Cloud sai mensagem de conversa nova (ou sem
-            linha própria ainda) — o resto continua saindo pelo número em que o cliente falou por último.
-            Sem escolha, vale a variável <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>WHATSAPP_PHONE_NUMBER_ID</code> na
-            Vercel. <b>Isto não afeta ligação</b> — calling continua preso à variável, sempre.
+            <b> "Linha padrão (mensagem)"</b> escolhe por qual número Cloud o CRM fala — uma vez marcada,
+            vale para <b>toda conversa, de todo vendedor</b>, mesmo quem já falava por outra linha Cloud
+            ativa (decisão de 09/09/2026, ao consolidar o número oficial). <b>"Linha padrão (chamadas)"</b> é
+            separada de propósito: calling tem pré-requisito próprio por número (pagamento, campo <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>calls</code> assinado,
+            interruptor abaixo) que não deve mudar sozinho quando você só troca a linha de mensagem.
+            Sem nenhuma escolha, as duas caem na variável <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>WHATSAPP_PHONE_NUMBER_ID</code> na Vercel.
           </>}
         >
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
@@ -437,16 +439,19 @@ export default function Admin() {
           )}
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1020 }}>
               <thead><tr>
                 <th style={th}>Rótulo</th><th style={th}>Número</th><th style={th}>phone_number_id</th>
-                <th style={th}>Situação</th><th style={th}>Linha padrão (mensagem)</th><th style={th} />
+                <th style={th}>Situação</th><th style={th}>Linha padrão (mensagem)</th>
+                <th style={th}>Linha padrão (chamadas)</th><th style={th} />
               </tr></thead>
               <tbody>
                 {dados.linhas.map((l: any) => {
                   const éRd = l.phone_number_id === "rd";
                   const éPadrao = dados.linhaEmUso === l.phone_number_id;
                   const éEscolhaExplicita = dados.linhaPadraoCloud === l.phone_number_id;
+                  const éPadraoCalling = dados.linhaCallingEmUso === l.phone_number_id;
+                  const éEscolhaCallingExplicita = dados.linhaPadraoCalling === l.phone_number_id;
                   const apareceNaTela = dados.todasVisiveis || (dados.linhasVisiveis ?? []).includes(l.phone_number_id);
                   return (
                     <tr key={l.phone_number_id} style={{ opacity: l.ativo ? 1 : 0.55 }}>
@@ -473,9 +478,23 @@ export default function Admin() {
                         ) : (
                           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: l.ativo ? "pointer" : "not-allowed" }}>
                             <input type="radio" name="linha-padrao" disabled={!l.ativo} checked={éEscolhaExplicita}
-                              onChange={() => enviar("linhas", "PATCH", { padrao: l.phone_number_id }, "Linha padrão atualizada.")} />
+                              onChange={() => enviar("linhas", "PATCH", { padrao: l.phone_number_id },
+                                "Linha padrão de mensagem atualizada — vale pra todo mundo agora, mesmo quem já falava por outra linha.")} />
                             {éPadrao
                               ? <b style={{ color: M.azul }}>↑ é por esta que saem hoje</b>
+                              : "usar esta"}
+                          </label>
+                        )}
+                      </td>
+                      <td style={td}>
+                        {éRd ? (
+                          <span style={{ fontSize: 11.5, color: M.gray }}>— (não é linha Cloud)</span>
+                        ) : (
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: l.ativo ? "pointer" : "not-allowed" }}>
+                            <input type="radio" name="linha-padrao-calling" disabled={!l.ativo} checked={éEscolhaCallingExplicita}
+                              onChange={() => enviar("linhas", "PATCH", { padraoCalling: l.phone_number_id }, "Linha de chamada atualizada.")} />
+                            {éPadraoCalling
+                              ? <b style={{ color: M.azul }}>↑ é por esta que liga/atende hoje</b>
                               : "usar esta"}
                           </label>
                         )}
@@ -501,11 +520,18 @@ export default function Admin() {
             </table>
           </div>
 
-          {dados.linhaPadraoCloud && (
-            <div style={{ marginTop: 10 }}>
-              <BotaoLeve cor={M.gray} onClick={() => enviar("linhas", "PATCH", { padrao: null }, "Voltou ao padrão de fábrica.")}>
-                Usar a variável da Vercel (padrão de fábrica) em vez de uma escolha fixa
-              </BotaoLeve>
+          {(dados.linhaPadraoCloud || dados.linhaPadraoCalling) && (
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {dados.linhaPadraoCloud && (
+                <BotaoLeve cor={M.gray} onClick={() => enviar("linhas", "PATCH", { padrao: null }, "Mensagem volta a usar a variável da Vercel.")}>
+                  Mensagem: usar a variável da Vercel (padrão de fábrica)
+                </BotaoLeve>
+              )}
+              {dados.linhaPadraoCalling && (
+                <BotaoLeve cor={M.gray} onClick={() => enviar("linhas", "PATCH", { padraoCalling: null }, "Chamada volta a usar a variável da Vercel.")}>
+                  Chamadas: usar a variável da Vercel (padrão de fábrica)
+                </BotaoLeve>
+              )}
             </div>
           )}
 
@@ -617,9 +643,10 @@ function ChamadasVoz() {
     <Bloco
       titulo="Chamadas de voz (WhatsApp)"
       ajuda={<>
-        Liga a <b>ligação por voz</b> na linha de envio — é o que permite o botão 📞 do chat.
-        A Meta <b>não</b> entrega isso ligado. Além deste interruptor, dois passos são feitos no
-        painel da Meta e não têm como ser feitos daqui: assinar o campo <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>calls</code>
+        Liga a <b>ligação por voz</b> na linha abaixo — é o que permite o botão 📞 do chat. Qual linha é
+        essa se escolhe na tabela acima, em <b>"Linha padrão (chamadas)"</b>. A Meta <b>não</b> entrega
+        isso ligado. Além deste interruptor, dois passos são feitos no painel da Meta e não têm como ser
+        feitos daqui: assinar o campo <code style={{ fontSize: 11.5, background: M.bg, padding: "1px 5px", borderRadius: 4, margin: "0 3px" }}>calls</code>
         no webhook, e ter limite de mensagens de 2.000/24h na conta.
       </>}
     >
@@ -3398,12 +3425,18 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
         )}
 
         {/* ---- seletor de linhas -------------------------------------------
-            Some enquanto o modo migração está ligado: quem escolhe as linhas
-            ali é o modo, e deixar o seletor editável abriria a porta para
-            "modo migração ligado" com o RD marcado — dois controles decidindo a
-            mesma coisa. `display:none` em vez de desmontar para não mexer na
-            estrutura de quem já lê `sel` mais acima. */}
-        <div style={{ display: migracao?.ligado ? "none" : "block", border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+            Decisão de 09/09/2026: fica visível e editável SEMPRE, mesmo com o
+            Modo migração ligado. Antes ele sumia (dois controles decidindo a
+            mesma coisa) — mas isso obrigava desligar e religar o Modo migração
+            só para acrescentar uma linha nova à lista, o que também pisca
+            `carteira_rd_ativa`/`historico_rd` de volta por um instante. Sem
+            necessidade: `linhas_visiveis` não é uma "posição" travada como as
+            outras três (§45.1) — é só a foto de quais linhas mostrar, e o
+            próprio `modoMigracao()` já lê o resultado (RD fora da lista) sem
+            precisar de UI trancada para isso. Marcar o RD de volta aqui, com o
+            Modo ligado, simplesmente faz o selo "Ligado" virar "Desligado" —
+            correto, porque nem todas as quatro condições valem mais. */}
+        <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{linhasInfo.rotulo}</div>
             <Selo ok={!!linhasInfo.tudo} sim="Todos os números" nao="Filtrado" />

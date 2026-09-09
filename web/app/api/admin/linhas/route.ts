@@ -1,5 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo, texto } from "../../../../lib/adminApi";
-import { lerCrmConfig, linhaPadraoCloud, linhasVisiveis } from "../../../../lib/crmConfig";
+import { lerCrmConfig, linhaPadraoCloud, linhaPadraoCalling, linhasVisiveis } from "../../../../lib/crmConfig";
 import { listarNumerosMeta, normalizarNumero } from "../../../../lib/whatsappLinhas";
 
 export const dynamic = "force-dynamic";
@@ -14,10 +14,15 @@ export const dynamic = "force-dynamic";
 //     "WHATSAPP_PHONE_NUMBER_ID resolve sozinho" deixou de bastar quando
 //     existe mais de uma linha Cloud ativa ao mesmo tempo).
 // O que isto NÃO decide: por qual número CADA CONVERSA sai — isso é
-// `linhaDaConversa()` (lib/whatsapp.ts), que segue o número em que o CLIENTE
-// falou por último. A escolha daqui só vale de fallback (conversa nova, ou
-// sem linha própria ainda). E não decide NADA de calling, que fica preso à
-// env de propósito (ver o comentário em lib/whatsapp.ts sobre `linhaDeEnvio`).
+// `linhaDaConversa()` (lib/whatsapp.ts). Ela segue o número em que o CLIENTE
+// falou por último, A MENOS que exista escolha explícita aqui (decisão de
+// 09/09/2026: uma vez marcada a padrão, ela ganha de qualquer linha própria
+// que a conversa já tivesse — ver o comentário de `linhaDaConversa`).
+//
+// Desde a 0124, também escolhe QUAL linha faz CHAMADA — campo próprio
+// (`padraoCalling`), separado do de mensagem: calling tem pré-requisito
+// próprio por número (pagamento, campo `calls` assinado, interruptor ligado)
+// que não deve seguir uma troca pensada só para mensagem.
 
 const COLS = "phone_number_id,numero,rotulo,carteira,ativo,criado_em";
 
@@ -33,7 +38,8 @@ export async function GET() {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const envAtual = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? "").replace(/[^\x21-\x7E]/g, "") || null;
-  const escolhaAdmin = linhaPadraoCloud(cfg);   // já validada contra linha ativa
+  const escolhaAdmin = linhaPadraoCloud(cfg);       // já validada contra linha ativa
+  const escolhaCalling = linhaPadraoCalling(cfg);   // idem, para chamada (0124)
   const visiveis = linhasVisiveis(cfg);
 
   return Response.json({
@@ -42,9 +48,11 @@ export async function GET() {
     linhaDeEnvio: envAtual,
     // a escolha salva em /admin (pode ser null = "segue a env")
     linhaPadraoCloud: cfg.linha_padrao_cloud,
-    // a resolvida de fato: o que `linhaDaConversa()` usa hoje para conversa
-    // sem linha própria — é isto que a tela deve destacar como "em uso"
+    linhaPadraoCalling: cfg.linha_padrao_calling,
+    // a resolvida de fato: o que `linhaDaConversa()`/`linhaCalling()` usam
+    // hoje — é isto que a tela deve destacar como "em uso" de cada uma
     linhaEmUso: escolhaAdmin ?? envAtual,
+    linhaCallingEmUso: escolhaCalling ?? envAtual,
     // quais linhas o board/chat mostram hoje — para a tela avisar quando uma
     // linha recém-cadastrada não vai aparecer sozinha (§32.1: só some da
     // congelada se alguém marcar; a lista congelada não pega linha nova)
@@ -160,7 +168,35 @@ export async function PATCH(req: Request) {
       ok: true,
       aviso: v === null
         ? "Voltou ao padrão de fábrica: quem decide agora é WHATSAPP_PHONE_NUMBER_ID, na Vercel."
-        : "Linha padrão de mensagem atualizada. Vale para conversa nova ou sem linha própria ainda — quem já tem histórico continua saindo por onde já saía.",
+        : "Linha padrão de mensagem atualizada. Vale para TODO mundo agora, mesmo quem já falava por outra linha Cloud — não é mais só fallback de conversa nova.",
+    });
+  }
+
+  // ---- escolher a linha de CHAMADA (0124) -----------------------------------
+  // Mesmo desenho do `padrao` acima, campo próprio: aqui não é mensagem, é
+  // quem disca/atende. Nunca aceita o RD (não é linha Cloud) nem linha inativa
+  // — e "inativa" aqui pesa mais, porque calling tem pré-requisito PRÓPRIO por
+  // número que uma linha recém-cadastrada quase certamente não tem ainda
+  // (pagamento, campo `calls`, interruptor) — ligar sem isso falha na Meta,
+  // não aqui, e o vendedor só saberia no meio de uma tentativa de chamada.
+  if ("padraoCalling" in b) {
+    const v = b.padraoCalling === null ? null : texto(b.padraoCalling);
+    if (v !== null) {
+      if (v === "rd") return Response.json({ error: "o RD não é uma linha Cloud — não faz chamada" }, { status: 400 });
+      const { data: linha } = await sbAdmin().from("chat_linha").select("ativo").eq("phone_number_id", v).maybeSingle();
+      if (!linha) return Response.json({ error: "linha desconhecida — cadastre ou sincronize primeiro" }, { status: 404 });
+      if (!linha.ativo) return Response.json({ error: "essa linha está inativa — reative antes de marcar como padrão" }, { status: 409 });
+    }
+    const { error } = await sbAdmin().from("crm_config").upsert({
+      id: 1, linha_padrao_calling: v,
+      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({
+      ok: true,
+      aviso: v === null
+        ? "Chamada volta a usar WHATSAPP_PHONE_NUMBER_ID, na Vercel."
+        : "Linha de chamada atualizada. Confira em Chamadas de voz se calling está ligado NESSA linha — o interruptor é por número, não segue essa escolha sozinho.",
     });
   }
 
@@ -178,18 +214,28 @@ export async function PATCH(req: Request) {
   if (typeof b.ativo === "boolean") patch.ativo = b.ativo;
   if (!Object.keys(patch).length) return Response.json({ error: "nada pra atualizar" }, { status: 400 });
 
-  // desativar a linha que está enviando esconderia o rótulo das conversas em
-  // curso, que continuariam saindo por ela — inconsistência silenciosa
+  // desativar a linha que está enviando/ligando esconderia o rótulo das
+  // conversas em curso, que continuariam saindo por ela — inconsistência
+  // silenciosa. Duas checagens, mensagem e chamada, porque desde a 0124 podem
+  // apontar para linhas diferentes.
   if (patch.ativo === false) {
     const db = sbAdmin();
     const emUsoEnv = (process.env.WHATSAPP_PHONE_NUMBER_ID ?? "").replace(/[^\x21-\x7E]/g, "");
     const cfg = await lerCrmConfig(db);
-    const emUso = linhaPadraoCloud(cfg) ?? emUsoEnv;
-    if (emUso && emUso === phone_number_id) {
+    const emUsoMsg = linhaPadraoCloud(cfg) ?? emUsoEnv;
+    const emUsoCalling = linhaPadraoCalling(cfg) ?? emUsoEnv;
+    if (emUsoMsg === phone_number_id) {
       return Response.json({
         error: cfg.linha_padrao_cloud === phone_number_id
           ? "esta é a linha padrão de mensagem hoje — escolha outra em \"linha padrão\" antes de desativar"
           : "esta é a linha que envia hoje (WHATSAPP_PHONE_NUMBER_ID na Vercel) — troque a variável antes de desativar",
+      }, { status: 409 });
+    }
+    if (emUsoCalling === phone_number_id) {
+      return Response.json({
+        error: cfg.linha_padrao_calling === phone_number_id
+          ? "esta é a linha de chamada hoje — escolha outra em \"linha padrão (chamadas)\" antes de desativar"
+          : "esta é a linha de chamada hoje (WHATSAPP_PHONE_NUMBER_ID na Vercel) — troque a variável antes de desativar",
       }, { status: 409 });
     }
   }

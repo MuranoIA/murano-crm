@@ -32,6 +32,7 @@
 // contrário da mensagem de serviço. Conta sem meio de pagamento válido recebe
 // 131044 ANTES de discar. Linha sandbox da Meta não passa por essa checagem.
 import { envWa } from "./whatsapp";
+import { lerCrmConfig, linhaPadraoCalling } from "./crmConfig";
 
 // A Calling API não existe na v22.0 que o envio de mensagens usa. Constante
 // separada de propósito: subir a versão das MENSAGENS (§16.5 item 4) é uma
@@ -108,9 +109,29 @@ function detalharErro(e: any, status: number): string {
   return texto || `HTTP ${status}`;
 }
 
-/** phone_number_id da linha que origina/atende chamadas hoje (mesma env do envio). */
-export function linhaDeLigacao(): string {
-  return envWa("WHATSAPP_PHONE_NUMBER_ID");
+/**
+ * phone_number_id da linha que origina/atende chamadas. `linha`, quando vem, é
+ * a escolha já resolvida por `linhaCalling()` (0124) — passar direto aqui, e
+ * não outra chamada a `lerCrmConfig`, é o que evita uma leitura de banco por
+ * comando de sinalização (accept/reject/terminate chegam em rajada).
+ */
+export function linhaDeLigacao(linha?: string | null): string {
+  return (linha ?? "").trim() || envWa("WHATSAPP_PHONE_NUMBER_ID");
+}
+
+/**
+ * A linha escolhida em /admin para chamada (0124), com fallback pra env em
+ * qualquer falha — mesmo princípio de `linhaPadrao()` em lib/whatsapp.ts.
+ * ⚠️ Só governa QUEM disca/atende. Não confundir com `linhaPadrao()`
+ * (mensagem): as duas podem apontar para números diferentes de propósito.
+ */
+export async function linhaCalling(sb: { from: (t: string) => any }): Promise<string> {
+  try {
+    const cfg = await lerCrmConfig(sb);
+    return linhaDeLigacao(linhaPadraoCalling(cfg));
+  } catch {
+    return linhaDeLigacao();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,8 +150,9 @@ export async function iniciarChamada(
   to: string,
   sdpOffer: string,
   rastro?: string,
+  linha?: string | null,
 ): Promise<{ call_id: string }> {
-  const body = await graph(`${linhaDeLigacao()}/calls`, {
+  const body = await graph(`${linhaDeLigacao(linha)}/calls`, {
     method: "POST",
     body: JSON.stringify({
       messaging_product: "whatsapp",
@@ -154,25 +176,25 @@ export async function iniciarChamada(
  * estabelece o caminho de mídia enquanto o vendedor ainda está clicando, o que
  * corta o silêncio inicial dos primeiros segundos da chamada.
  */
-export function preAceitar(callId: string, sdpAnswer: string): Promise<any> {
-  return comando(callId, "pre_accept", { sdp_type: "answer", sdp: sdpAnswer });
+export function preAceitar(callId: string, sdpAnswer: string, linha?: string | null): Promise<any> {
+  return comando(callId, "pre_accept", { sdp_type: "answer", sdp: sdpAnswer }, linha);
 }
 
-export function aceitar(callId: string, sdpAnswer: string): Promise<any> {
-  return comando(callId, "accept", { sdp_type: "answer", sdp: sdpAnswer });
+export function aceitar(callId: string, sdpAnswer: string, linha?: string | null): Promise<any> {
+  return comando(callId, "accept", { sdp_type: "answer", sdp: sdpAnswer }, linha);
 }
 
-export function recusar(callId: string): Promise<any> {
-  return comando(callId, "reject");
+export function recusar(callId: string, linha?: string | null): Promise<any> {
+  return comando(callId, "reject", undefined, linha);
 }
 
 /** Desligar. Serve tanto para cancelar o que está tocando quanto para encerrar o que está em curso. */
-export function encerrar(callId: string): Promise<any> {
-  return comando(callId, "terminate");
+export function encerrar(callId: string, linha?: string | null): Promise<any> {
+  return comando(callId, "terminate", undefined, linha);
 }
 
-function comando(callId: string, action: AcaoLigacao, session?: Sdp): Promise<any> {
-  return graph(`${linhaDeLigacao()}/calls`, {
+function comando(callId: string, action: AcaoLigacao, session?: Sdp, linha?: string | null): Promise<any> {
+  return graph(`${linhaDeLigacao(linha)}/calls`, {
     method: "POST",
     body: JSON.stringify({
       messaging_product: "whatsapp",
@@ -205,10 +227,10 @@ export type Permissao = {
  * Falha de consulta NÃO bloqueia a discagem — devolve `pode_ligar: true` e deixa
  * o Graph decidir. Uma indisponibilidade da consulta não deve impedir o trabalho.
  */
-export async function consultarPermissao(waId: string): Promise<Permissao> {
+export async function consultarPermissao(waId: string, linha?: string | null): Promise<Permissao> {
   try {
     const body = await graph(
-      `${linhaDeLigacao()}/call_permissions?user_wa_id=${encodeURIComponent(waId)}`,
+      `${linhaDeLigacao(linha)}/call_permissions?user_wa_id=${encodeURIComponent(waId)}`,
       { method: "GET" },
     );
     const p = body?.permission ?? body?.data?.[0] ?? body ?? {};
@@ -245,8 +267,8 @@ export async function consultarPermissao(waId: string): Promise<Permissao> {
  * dela). E tem cota apertada — 1 por dia, 2 por semana por cliente —, então não
  * é algo para disparar em loop.
  */
-export async function pedirPermissaoDeChamada(to: string, texto: string): Promise<{ wamid: string }> {
-  const body = await graph(`${linhaDeLigacao()}/messages`, {
+export async function pedirPermissaoDeChamada(to: string, texto: string, linha?: string | null): Promise<{ wamid: string }> {
+  const body = await graph(`${linhaDeLigacao(linha)}/messages`, {
     method: "POST",
     body: JSON.stringify({
       messaging_product: "whatsapp",
@@ -270,18 +292,20 @@ export async function pedirPermissaoDeChamada(to: string, texto: string): Promis
 // ---------------------------------------------------------------------------
 
 /** Lê as configurações de chamada da linha: se está habilitada, ícone, horários. */
-export async function lerConfigChamadas(): Promise<any> {
-  const body = await graph(`${linhaDeLigacao()}/settings?include=calling`, { method: "GET" });
+export async function lerConfigChamadas(linha?: string | null): Promise<any> {
+  const body = await graph(`${linhaDeLigacao(linha)}/settings?include=calling`, { method: "GET" });
   return body?.calling ?? body ?? null;
 }
 
 /**
  * Liga/desliga a chamada na linha. É uma escrita na conta da Meta — a rota que
- * chama isto exige admin, e a linha só pode ser a que está na env (o número
- * oficial de produção nunca passa por aqui; mesmo recorte da §20.3).
+ * chama isto exige admin, e `linha` nunca vem de parâmetro de request: só de
+ * `linhaCalling()` (0124), que só resolve para uma linha já cadastrada em
+ * `chat_linha` — nunca um phone_number_id arbitrário digitado na hora (mesmo
+ * espírito de proteção da §20.3, por outro caminho).
  */
-export function definirConfigChamadas(ligado: boolean): Promise<any> {
-  return graph(`${linhaDeLigacao()}/settings`, {
+export function definirConfigChamadas(ligado: boolean, linha?: string | null): Promise<any> {
+  return graph(`${linhaDeLigacao(linha)}/settings`, {
     method: "POST",
     body: JSON.stringify({
       calling: {
