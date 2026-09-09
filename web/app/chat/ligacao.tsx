@@ -15,7 +15,7 @@ import { Icone } from "./icones";
 //
 // ESCOPO: só o piloto. A voz corre pela WhatsApp Business Calling API, no
 // navegador, e por isso existe apenas onde a conversa já está na Cloud API — hoje
-// a linha piloto. Em conversa do RD o botão nem aparece (decisão do usuário em
+// o nosso número na Cloud API. Fora dela o botão nem aparece (decisão do usuário em
 // 17/08/2026: nada de ligação por RD ou amarrada a ele).
 // ---------------------------------------------------------------------------
 
