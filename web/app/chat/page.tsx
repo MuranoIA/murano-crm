@@ -279,6 +279,10 @@ type ContatoCarteira = {
   codcli: number; cliente_id: string | null; cliente: string;
   telefone: string | null; cidade: string | null; vendedor: string | null;
   impedimento: string | null;
+  // sem contato ainda, mas o telefone do cadastro serve: o clique cria e abre
+  criar_no_clique?: boolean;
+  // o CRM não tem como saber o número — o clique abre o campo para digitar
+  precisa_telefone?: boolean;
 };
 
 // Abas do contato — mesma posição das do RD (Perfil · Etiquetas · Atividades ·
@@ -1273,6 +1277,10 @@ export default function Chat() {
   const [novoNome, setNovoNome] = useState("");
   const [novoOcupado, setNovoOcupado] = useState(false);
   const [novosLocais, setNovosLocais] = useState<Conversa[]>([]);
+  // quando o formulário está servindo a um cliente do ERP (veio da agenda), e
+  // não a um número solto: o servidor usa o `codcli` para trazer nome, dono e
+  // CPF do cadastro, e para registrar o pedido de correção do telefone
+  const [novoCodcli, setNovoCodcli] = useState<number | null>(null);
 
   // ---- agenda da carteira (§38) -------------------------------------------
   // Buscada UMA vez, e só quando a aba é aberta: são até 961 linhas por
@@ -1979,14 +1987,25 @@ export default function Chat() {
   // Cria (ou acha) o contato e abre a conversa na hora. A rota NÃO envia nada:
   // cadastrar e mandar mensagem são gestos separados de propósito — um clique em
   // "abrir conversa" nunca deve disparar mensagem para um número digitado errado.
-  async function criarContato() {
-    const tel = novoTel.trim();
-    if (!tel || novoOcupado) return;
+  //
+  // Um chamador a mais desde 09/09: a agenda. Com `codcli`, o telefone pode nem
+  // ser digitado — vem do cadastro do WinThor —, e o que for digitado vira
+  // pedido de correção para quem edita o ERP.
+  async function criarContato(codcli?: number | null, telefone?: string, nome?: string) {
+    const cod = codcli ?? novoCodcli;
+    const tel = (telefone ?? novoTel).trim();
+    // sem cliente do ERP por trás, o número é a única identidade que existe
+    if (!tel && !cod) return;
+    if (novoOcupado) return;
     setNovoOcupado(true);
     try {
       const r = await fetch("/api/chat/novo-contato", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telefone: tel, nome: novoNome.trim() || undefined }),
+        body: JSON.stringify({
+          telefone: tel || undefined,
+          nome: (nome ?? novoNome).trim() || undefined,
+          codcli: cod ?? undefined,
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setAviso(j?.error ?? `não consegui abrir (erro ${r.status})`); return; }
@@ -1994,16 +2013,31 @@ export default function Chat() {
       const jaNaLista = conversas.find((x) => x.cliente_id === j.cliente_id);
       const conv: Conversa = jaNaLista ?? {
         cliente_id: j.cliente_id, cliente: j.nome, vendedor: j.carteira ?? null,
-        etapa: null, telefone: tel, ultima_atividade: null,
+        // o número vem do servidor: vindo da agenda ninguém digitou nada, e o
+        // cabeçalho diria "sem telefone" numa conversa aberta por telefone
+        etapa: null, telefone: j.telefone ?? tel ?? null, ultima_atividade: null,
         ultima_mensagem: null, ultima_enviada_por: null,
-        na_fila: !j.carteira,
+        na_fila: !j.carteira, carteira_dona: j.carteira_dona ?? null,
       };
       // sem conversa ainda, o servidor não o devolve na lista (a view exige
       // mensagem): fica aqui até o primeiro envio, e some daqui quando o
       // servidor passar a mandá-lo
       if (!jaNaLista) setNovosLocais((n) => [conv, ...n.filter((x) => x.cliente_id !== conv.cliente_id)]);
-      setNovoAberto(false); setNovoTel(""); setNovoNome("");
-      setAviso(j.ja_existia ? `Esse número já estava na base como “${j.nome}”.` : null);
+      setNovoAberto(false); setNovoTel(""); setNovoNome(""); setNovoCodcli(null);
+      // a agenda guarda `cliente_id: null` para este cliente; sem atualizar, a
+      // linha continuaria pedindo o telefone que acabou de ser informado
+      if (j.cliente_id) {
+        setCarteira((c) => c && c.map((x) => x.codcli === (cod ?? j.codcli)
+          ? { ...x, cliente_id: j.cliente_id, impedimento: null,
+              criar_no_clique: false, precisa_telefone: false,
+              telefone: j.telefone ?? tel ?? x.telefone }
+          : x));
+      }
+      setAviso(
+        j.pedido_cadastro
+          ? `Conversa aberta. O número novo foi enviado para correção no cadastro do WinThor.`
+          : j.ja_existia ? `Esse número já estava na base como “${j.nome}”.` : null,
+      );
       abrir(conv);
     } catch (e: any) {
       setAviso(String(e?.message ?? e));
@@ -2015,14 +2049,31 @@ export default function Chat() {
   // Abre a conversa de um contato da agenda. Se ele JÁ está na lista carregada,
   // seleciona aquele objeto — assim não-lidas, status e transferência ficam
   // certos; senão monta a conversa na hora, como o botão + faz.
+  //
+  // Sem contato ainda, há dois desfechos e nenhum deles é o beco sem saída de
+  // antes (§38.3, que só mostrava o motivo num aviso):
+  //   · o telefone do cadastro serve  -> cria e abre, sem perguntar nada;
+  //   · não serve                     -> abre o campo, já com o nome do ERP.
   function abrirDaCarteira(k: ContatoCarteira) {
-    if (!k.cliente_id) { setAviso(`${k.cliente}: ${k.impedimento}`); return; }
+    if (!k.cliente_id && k.criar_no_clique) { void criarContato(k.codcli); return; }
+    if (!k.cliente_id) {
+      // o formulário do "+" vira o formulário DESTE cliente: mesmo campo, mesma
+      // rota, só que agora com o codcli — não vale ter duas telas de digitar
+      // número, elas divergiriam na primeira mudança
+      setNovoCodcli(k.codcli); setNovoTel(""); setNovoNome(k.cliente ?? "");
+      setNovoAberto(true); setAviso(null);
+      return;
+    }
     const existente = conversas.find((c) => c.cliente_id === k.cliente_id);
     if (existente) { abrir(existente); return; }
     const conv: Conversa = {
       cliente_id: k.cliente_id, cliente: k.cliente, vendedor: k.vendedor,
       etapa: null, telefone: k.telefone, ultima_atividade: null,
       ultima_mensagem: null, ultima_enviada_por: null, na_fila: !k.vendedor,
+      // na agenda o `vendedor` da linha E o dono comercial: ele vem do RCA do
+      // WinThor, nao de transferencia. Sem dizer isso, a conversa abria com um
+      // "Devolver" que o servidor recusa (56) - botao que promete o que nao faz.
+      carteira_dona: k.vendedor,
     };
     setNovosLocais((n) => [conv, ...n.filter((x) => x.cliente_id !== conv.cliente_id)]);
     abrir(conv);
@@ -3426,7 +3477,7 @@ export default function Chat() {
                   <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: M.muted, pointerEvents: "none" }}>🔍</span>
                 </div>
                 <button
-                  onClick={() => { setNovoAberto((v) => !v); setNovoTel(""); setNovoNome(""); }}
+                  onClick={() => { setNovoAberto((v) => !v); setNovoTel(""); setNovoNome(""); setNovoCodcli(null); }}
                   title="Nova conversa — digite o número"
                   style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, cursor: "pointer",
                     background: novoAberto ? M.roxo : M.bg, color: novoAberto ? "#fff" : M.gray,
@@ -3437,8 +3488,16 @@ export default function Chat() {
               {novoAberto && (
                 <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 10, background: M.surface }}>
                   <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: M.muted, marginBottom: 6 }}>
-                    Nova conversa
+                    {novoCodcli ? `Telefone do cliente ${novoCodcli}` : "Nova conversa"}
                   </div>
+                  {novoCodcli != null && (
+                    <div style={{ fontSize: 11.5, color: M.gray, lineHeight: 1.45, marginBottom: 7 }}>
+                      O cadastro do WinThor não tem um número que sirva para{" "}
+                      <b style={{ color: M.ink }}>{novoNome || `cliente ${novoCodcli}`}</b>. Informe
+                      o dela para abrir a conversa — o pedido de correção do cadastro vai junto,
+                      para quem edita o ERP.
+                    </div>
+                  )}
                   <input
                     autoFocus
                     value={novoTel}
@@ -3455,7 +3514,7 @@ export default function Chat() {
                     style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", fontSize: 13, fontFamily: "inherit", color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, outline: "none", marginBottom: 8 }}
                   />
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    <button onClick={() => setNovoAberto(false)}
+                    <button onClick={() => { setNovoAberto(false); setNovoCodcli(null); }}
                       style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: M.gray, background: "transparent", border: `1px solid ${M.border}`, borderRadius: 8, cursor: "pointer", fontFamily: "inherit" }}>
                       Cancelar
                     </button>
@@ -3469,6 +3528,7 @@ export default function Chat() {
                   <div style={{ fontSize: 10.5, color: M.gray, marginTop: 7, lineHeight: 1.45 }}>
                     Se o número já estiver na base, abre a conversa existente. Fora da janela de
                     24h, o primeiro contato sai por <b>template</b>.
+                    {novoCodcli != null && " O CRM não escreve no WinThor: a correção vai para a fila de cadastro."}
                   </div>
                 </div>
               )}
@@ -3624,12 +3684,15 @@ export default function Chat() {
                   <>
                     <div style={{ padding: "8px 12px", fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: M.muted, background: M.bg }}>
                       {carteiraVisivel.length} cliente{carteiraVisivel.length === 1 ? "" : "s"}
-                      {(carteira ?? []).some((k) => !k.cliente_id) && " · alguns sem contato"}
+                      {(carteira ?? []).some((k) => k.precisa_telefone) && " · alguns sem telefone no cadastro"}
                     </div>
                     {carteiraVisivel.slice(0, carteiraLimite).map((k) => {
                       const conv = conversas.find((c) => c.cliente_id === k.cliente_id);
                       const ativa = !!k.cliente_id && sel?.cliente_id === k.cliente_id;
-                      const inerte = !k.cliente_id;
+                      // "inerte" agora é só quem depende de alguém digitar o número.
+                      // Quem tem telefone bom no cadastro abre no clique, mesmo sem
+                      // contato criado — então não há razão para parecer desligado.
+                      const inerte = !!k.precisa_telefone;
                       return (
                         <button
                           key={k.codcli}
@@ -3637,8 +3700,8 @@ export default function Chat() {
                           title={k.impedimento ?? undefined}
                           style={{ display: "flex", gap: 10, width: "100%", textAlign: "left", padding: "10px 12px",
                             background: ativa ? M.roxoSoft : "transparent", border: "none",
-                            borderBottom: `1px solid ${M.bg}`, cursor: inerte ? "default" : "pointer",
-                            fontFamily: "inherit", opacity: inerte ? 0.55 : 1 }}
+                            borderBottom: `1px solid ${M.bg}`, cursor: "pointer",
+                            fontFamily: "inherit", opacity: inerte ? 0.7 : 1 }}
                         >
                           <span style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 38,
                             background: inerte ? M.muted : ativa ? M.roxo : M.wine, color: "#fff",
@@ -3657,7 +3720,11 @@ export default function Chat() {
                                 : `${k.telefone ?? ""}${k.cidade ? ` · ${k.cidade}` : ""}`}
                             </span>
                           </span>
-                          {!inerte && !conv && (
+                          {inerte ? (
+                            <span style={{ flexShrink: 0, alignSelf: "center", fontSize: 9.5, fontWeight: 800,
+                              color: M.laranja, background: M.bg, border: `1px solid ${M.border}`,
+                              borderRadius: 20, padding: "2px 7px" }}>informar</span>
+                          ) : !conv && (
                             <span style={{ flexShrink: 0, alignSelf: "center", fontSize: 9.5, fontWeight: 800,
                               color: M.gray, background: M.bg, border: `1px solid ${M.border}`,
                               borderRadius: 20, padding: "2px 7px" }}>sem conversa</span>
