@@ -1,7 +1,7 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig, linhasVisiveis, modoMigracao } from "../../../../lib/crmConfig";
-import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
+import { montarPublico, lerFiltros, todasAsLinhas, LIMITE_MAX } from "../../../../lib/publicoDisparo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -45,13 +45,20 @@ export async function GET() {
       .select("id,nome,canal,rd_template_id,meta_nome,corpo,cabecalho_tipo,status,padrao")
       .eq("ativo", true).order("id"),
     db.from("carteira_config").select('slug,cor,"time"').eq("ativo", true).order("slug"),
-    (() => {
+    // ⚠️ PAGINADO. O `.limit(5000)` que morava aqui era ilusão: o teto de
+    // linhas do PostgREST é 1000, e ele corta em silêncio. São 255 linhas em 30
+    // dias hoje, então nunca deu problema — mas o teto de uma campanha subiu
+    // para 2000, e UMA campanha grande já passa o extrato do mês do limite. Aí
+    // o histórico de disparos começaria a mentir para menos, sem erro nenhum.
+    todasAsLinhas((de, ate) => {
       let q = db.from("disparos_template")
         .select("criada_em,template_id,vendedor")
         .gte("criada_em", new Date(Date.now() - 30 * 86_400_000).toISOString());
       if (soCloud) q = q.like("id", "wamid.%");   // ver a nota do topo
-      return q.order("criada_em", { ascending: false }).limit(5000);
-    })(),
+      return q.order("criada_em", { ascending: false })
+        .order("cliente_id", { ascending: true })   // desempate: sem ele, paginar perde e repete linha
+        .range(de, ate);
+    }),
   ]);
 
   if (tplRes.error) return Response.json({ error: tplRes.error.message }, { status: 500 });
@@ -79,7 +86,7 @@ export async function GET() {
   // Extrato por dia+template: é o histórico de campanha que o board nunca teve
   // — dava para disparar 500 templates e não sobrar nada legível depois.
   const porDia = new Map<string, { dia: string; template_id: string; enviados: number; vendedores: Set<string> }>();
-  for (const d of histRes.data ?? []) {
+  for (const d of histRes) {
     const dia = new Date(new Date(d.criada_em as string).getTime() - 3 * 3600_000).toISOString().slice(0, 10);
     const chave = `${dia}|${d.template_id ?? "—"}`;
     const linha = porDia.get(chave)

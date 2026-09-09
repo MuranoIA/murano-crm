@@ -5256,3 +5256,157 @@ com texto, painel do ERP à direita, campo de 440px) e `ciclo9` verde.
 - A 360px a caixa de texto fica com 92px. Passa, e é 5,7× o que era, mas é o
   ponto a atacar se alguém quiser mais folga — o caminho seria o TEMPLATE sair
   da pílula, e ele já tem o botão próprio na faixa de janela fechada.
+
+## 68. O assistente de campanha não era burro — era relógio, e o motor era cego (09/09/2026)
+
+Relato do usuário, com print: pediu *"uma lista com um total de 2 mil clientes,
+das carteiras de thiago, luana, thamires, kamilly, anne, milene e romulo,
+desconsiderando quem recebeu mensagem hoje"* e recebeu **"Não consegui montar
+isso"** — com uma proposta de público montada e correta no cartão logo abaixo.
+A leitura dele foi *"o chat não está inteligente como o Claude chat original, ou
+não tem acesso aos dados"*. As duas hipóteses estavam erradas, e a segunda é o
+oposto da verdade: o assistente tem 30+ filtros e um SELECT livre (§63, 0119).
+
+### 68.1 A aritmética do fracasso, cronometrada
+
+Medido em 09/09/2026 contra a API real, no mesmo pedido:
+
+| | |
+|---|---|
+| modelo, 1ª chamada (Opus, raciocínio adaptativo) | **24,2 s** |
+| `montar_publico` com o cache frio | **12,5 s** |
+| modelo, 2ª chamada | **14,1 s** |
+| **total** | **50,8 s**, contra 45 s de orçamento |
+
+O laço quebrava no orçamento **antes** de o modelo escrever a resposta, e a rota
+caía num texto fixo — *"Não consegui montar isso"* — que valia para QUALQUER
+turno sem texto, inclusive os que tinham público pronto ao lado.
+
+**Uma tela que nega e mostra a coisa ao mesmo tempo não é erro de redação: ela
+ensina a não confiar no que está na tela.** Foi o que aconteceu — o usuário
+concluiu que o modelo era fraco, quando o modelo tinha acertado os filtros.
+
+E o orçamento de 45 s era otimista do outro lado: uma chamada iniciada aos 44 s
+levaria o turno a ~68 s e morreria no corte de 60 s da Vercel, sem devolver
+nada. Um número fixo estava errado nas duas pontas.
+
+### 68.2 ⚠️ O motor estava cego para 40% dos disparos do dia
+
+Achado ao medir, não ao ler o código. Duas consultas do `montarPublico` não
+paginavam, e **o teto de linhas do PostgREST neste projeto é 1000** — ele corta
+em silêncio, sem erro e sem aviso:
+
+| consulta | linhas reais | lidas |
+|---|---|---|
+| `disparos_template` (60 d) — o **anti-repetição** | 1.719 | **1.000** |
+| `mensagens` de cliente nas 24 h — **conversa aberta** | 1.416 | **1.000** |
+
+A primeira não tinha `.order()` nenhum, então o que se perdia era arbitrário — e
+na prática, o mais recente. **Dos 140 templates disparados naquele dia, o motor
+enxergava 83** (132 clientes distintos receberam template no dia). Ou seja:
+exatamente o que o usuário pediu no print — "desconsidere quem recebeu mensagem
+hoje" — era o que estava quebrado. Cada repetição custa R$ 0,43 e uma cliente
+incomodada.
+
+A segunda tinha `.limit(5000)`, que **não** resolve nada: o teto do servidor
+vence o limite do cliente. O corte de "conversa aberta" perdia ~30%.
+
+É a doença do §61.2 outra vez. **A regra que fica: consulta que alimenta corte de
+campanha ou pagina, ou prova que o universo é pequeno.** `todasAsLinhas()` faz
+isso, e exige consulta ORDENADA — sem desempate estável, paginar perde e duplica
+linha.
+
+Também paginadas por precaução: `vw_ciclo_card` (981 linhas — a um passo do
+teto), `vw_chat_linha_cliente`, `chat_conversa`, `wth_descartados` e as falhas de
+90 dias (122 hoje; no dia em que passarem de mil, as **mais novas** é que
+sumiriam, e é a mais nova que decide se o número está morto).
+
+### 68.3 O banco saiu do caminho crítico
+
+`aquecerPublico(db, cache)` dispara a varredura da `vw_funil_visivel` e o
+contexto **no instante em que a requisição chega**, antes da primeira chamada ao
+modelo. Nada disso depende de filtro — carteira e etapa são peneiradas em memória
+depois —, então os 12,5 s correm por baixo dos ~24 s em que o modelo está
+pensando e **somem da conta do turno**.
+
+O cache virou promessa em vez de valor. Continua nascendo e morrendo na
+requisição: o público tem de refletir o banco de agora.
+
+### 68.4 A decisão de continuar olha o relógio de verdade
+
+Saiu o orçamento fixo, entrou `decorrido + duração_da_última_chamada × 1,2 >
+teto`. Turno de chamadas rápidas usa o tempo todo; turno de chamadas lentas para
+antes de ser morto pela Vercel. **Parar por conta própria devolve o que já
+existe; ser morto lá fora não devolve nada.**
+
+### 68.5 Um TURNO pode precisar de mais de uma REQUISIÇÃO
+
+O teto da Vercel é por requisição, e um pedido rico leva o modelo a três ou
+quatro raciocínios de ~20 s. Medido antes de existir a retomada: o pedido *"não
+compraram este mês, da luana, que compraram no mês passado, com ticket de uns
+400"* voltava **sem o filtro de ticket** — o modelo foi interrompido antes de
+aplicá-lo.
+
+**Isso é pior que demorar: a lista sai errada com cara de certa.**
+
+Agora a rota devolve `incompleto: true` com o histórico até ali, e a tela repete
+a chamada **sem texto novo** (`{ continuar: true, mensagens }`), até 4 vezes.
+Para quem olha é um turno só, um pouco mais longo. O pareamento
+tool_use/tool_result continua exato porque quem devolve o histórico pronto é a
+rota — a tela só ecoa (§63.7).
+
+⚠️ Dois cuidados que a retomada obrigou:
+
+- **`slice(-40)` podia começar num `tool_result` órfão**, e a API recusa a
+  conversa inteira com um erro que não diz isso. `aparar()` anda para a frente
+  até uma mensagem que abre assunto por conta própria. Era raro com histórico
+  curto; deixa de ser quando um turno vira quatro requisições.
+- **A resposta entrava DUAS vezes no histórico** quando o laço terminava em
+  ferramenta: `r.content` já traz os blocos de texto, e havia um `push` extra no
+  fim da rota. O turno seguinte lia a mesma fala duplicada, uma delas vencida.
+
+### 68.6 O teto subiu para 2000 — e agora ele fala
+
+`LIMITE_MAX` era 1000. O pedido do print era 2 mil, e `lerFiltros` fazia
+`Math.min` **em silêncio**: a tela mostrava 1000 e ninguém dizia por quê.
+
+Duas mudanças: o teto passou a 2000 (o preço é tempo de aba aberta — ~60 min, já
+que o envio é um laço do navegador com 1,8 s entre clientes, §26.2), e o que for
+aparado vira aviso em português (`avisoDeTeto`), na caixa âmbar da tela **e** na
+resposta ao modelo. O sistema também instrui: pedido acima do teto se responde
+montando no teto e **dizendo** que o resto sai numa segunda rodada.
+
+⚠️ O teto novo tornou real um truncamento que era latente: **uma campanha de 2000
+num dia estoura o extrato de 30 dias** do GET (255 linhas hoje, com um
+`.limit(5000)` inútil). Paginado junto.
+
+A prévia passou a avisar, acima de 30 minutos, que o envio acontece **naquela
+aba** e que fechá-la interrompe a campanha — dá para retomar, porque quem já
+recebeu cai fora pela anti-repetição.
+
+### 68.7 O resultado, medido no build de produção
+
+Mesmo pedido do print: **2.000 clientes em 32 s**, com a distribuição por
+carteira, o custo (R$ 860), o tempo (~60 min), o que ficou de fora e por quê, e a
+informação de que só com ociosos + tentativa de contato havia **42** elegíveis —
+foi preciso incluir prospecção para chegar aos 2 mil. Ajuste seguinte ("agora
+coloca cota de 200 por vendedor"): **16 s**, 1.400 clientes, 200 por carteira.
+
+O pedido no estilo antigo do Claude chat (mês passado + ticket ~400) fecha em
+**56 s / 2 requisições**, traduz "mês passado" e "aproximadamente 400" em
+filtros, **diz que traduziu**, explica o que encolheu o público (717 pelo
+financeiro, 81 pela recência, 50 sem telefone, 14 sem cadastro no ERP) e oferece
+alternativas com número: "R$ 350 a 450 devolve 3; abrindo para 200–700, mais".
+
+### 68.8 Método
+
+- **Três defeitos, zero erros.** `tsc` e `next build` passaram limpos o tempo
+  todo. O que revelou tudo foi cronometrar a API real e **conferir os números
+  contra o banco** — a mesma lição do §61.5.
+- **`pkill` não mata `next start` no Windows.** Um teste inteiro rodou contra o
+  build ANTIGO e mostrou comportamento que já não existia no código; só foi
+  percebido porque a resposta trazia um texto que eu havia removido. Matar por
+  `Get-CimInstance Win32_Process` filtrando pela worktree, e **conferir que o
+  servidor no ar é o build novo** antes de acreditar num teste.
+- **`prerender-manifest.json` aparece antes de o build terminar** (§60.5); o
+  sinal confiável de fim é a tabela `Route (app)` no log.

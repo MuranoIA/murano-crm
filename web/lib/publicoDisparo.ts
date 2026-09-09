@@ -1,4 +1,7 @@
-import { lerCrmConfig, linhasVisiveis, canalEscolhido, filtroLinhas, VIEW_FUNIL_TELA } from "./crmConfig";
+import {
+  lerCrmConfig, linhasVisiveis, canalEscolhido, filtroLinhas, VIEW_FUNIL_TELA,
+  type CrmConfig,
+} from "./crmConfig";
 import { codigoMeta, FALHA_DO_NUMERO } from "./erroMeta";
 
 // ---------------------------------------------------------------------------
@@ -29,8 +32,17 @@ import { codigoMeta, FALHA_DO_NUMERO } from "./erroMeta";
 const PAGE = 1000;
 const COLS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,telefone,venda_valor,rd_cliente_id,codcli";
 
-/** Teto de um disparo. 1000 × 1,8s de espaço entre envios ≈ 30 min de aba aberta. */
-export const LIMITE_MAX = 1000;
+/**
+ * Teto de um disparo.
+ *
+ * O preço dele é TEMPO DE ABA ABERTA: o envio é um laço do navegador com 1,8 s
+ * entre um cliente e o outro (§26.2), então 2000 ≈ 60 minutos com a tela
+ * ligada. Era 1000, e na primeira campanha de verdade a supervisão pediu 2 mil:
+ * o pedido foi cortado pela metade EM SILÊNCIO, porque `lerFiltros` só fazia
+ * `Math.min`. O teto subiu, e o corte — quando ainda acontece — passou a ser
+ * dito em voz alta (`avisoDeTeto`).
+ */
+export const LIMITE_MAX = 2000;
 
 /** Buckets de compra que a `vw_pedido_bi_card` já calcula — não invente outros. */
 export const PERIODOS_COMPRA = ["hoje", "ontem", "semana", "quinzena", "mes"] as const;
@@ -178,6 +190,30 @@ export function lerFiltros(f: any): FiltrosPublico {
   };
 }
 
+/**
+ * O que `lerFiltros` teve de aparar, em português.
+ *
+ * Existe porque teto silencioso é pior que teto: quem pediu 2 mil e recebeu mil
+ * sem nenhum recado conclui que o sistema não entendeu o pedido — e conclusão
+ * errada vira pedido de mudança na coisa errada (§37). O `Math.min` continua lá
+ * (ele protege), só deixou de ser mudo.
+ */
+export function avisoDeTeto(pedido: any, f: FiltrosPublico): string[] {
+  const avisos: string[] = [];
+  const pedLim = Number(pedido?.limite);
+  if (Number.isFinite(pedLim) && pedLim > f.limite) {
+    avisos.push(
+      `Você pediu ${pedLim} clientes, e o teto de uma campanha é ${LIMITE_MAX} — esta lista ficou `
+      + `com ${f.limite}. Para alcançar o resto, rode uma segunda campanha depois desta.`,
+    );
+  }
+  const pedCota = Number(pedido?.porVendedor);
+  if (Number.isFinite(pedCota) && pedCota > f.porVendedor) {
+    avisos.push(`A cota por carteira foi limitada a ${f.porVendedor} (você pediu ${pedCota}).`);
+  }
+  return avisos;
+}
+
 export type Alvo = {
   envio_id: string; cliente_id: string; cliente: string; primeiro_nome: string;
   vendedor: string | null; etapa: string | null; dias: number | null;
@@ -266,6 +302,38 @@ async function coletarCod(fazer: (de: number, ate: number) => any): Promise<Set<
 }
 
 /**
+ * Lê TODAS as linhas de uma consulta, página por página.
+ *
+ * ⚠️ `.limit(5000)` NÃO faz isto. O teto de linhas do PostgREST neste projeto é
+ * 1000, e ele corta EM SILÊNCIO: devolve mil linhas, sem erro e sem aviso.
+ *
+ * Medido em 09/09/2026, com este motor em produção:
+ *   - `disparos_template` dos últimos 60 dias: 1.719 linhas reais, 1.000 lidas;
+ *   - dos 140 templates disparados NAQUELE DIA, o motor enxergava 83.
+ * Ou seja, o corte de anti-repetição — a única coisa que impede mandar template
+ * duas vezes para a mesma pessoa no mesmo dia — estava cego para 40% do dia, e
+ * cada repetição custa R$ 0,43 e uma cliente incomodada. A consulta de conversa
+ * aberta tinha o mesmo furo (1.416 reais, 1.000 lidas).
+ *
+ * É a doença do §61.2: um `limit` sobre um universo que ninguém mediu é um
+ * filtro invisível. A regra que fica: consulta que alimenta corte de campanha
+ * pagina, ou prova que o universo é pequeno.
+ *
+ * Exige que a consulta venha ORDENADA — sem ordem estável, paginar perde e
+ * duplica linha (a mesma razão do desempate por `cliente_id` na varredura).
+ */
+export async function todasAsLinhas(fazer: (de: number, ate: number) => any): Promise<any[]> {
+  const linhas: any[] = [];
+  for (let de = 0; ; de += PAGE) {
+    const { data, error } = await fazer(de, de + PAGE - 1);
+    if (error) throw new Error(error.message);
+    linhas.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  return linhas;
+}
+
+/**
  * Memória de UM turno do assistente.
  *
  * O modelo chama `montarPublico` várias vezes no mesmo turno — ele explora,
@@ -277,10 +345,54 @@ async function coletarCod(fazer: (de: number, ate: number) => any): Promise<Set<
  * usuários nem entre turnos, porque o público tem de refletir o banco de AGORA.
  */
 export type CachePublico = {
-  cards?: any[];
-  ctx?: any;
+  cfg?: Promise<CrmConfig>;
+  cards?: Promise<any[]>;
+  ctx?: Promise<Contexto>;
   compras?: Map<string, { cod: Set<number>; cli: Set<string> }>;
   sets?: Map<string, Set<number> | null>;
+};
+
+/**
+ * Começa a buscar o que NÃO depende dos filtros, antes de saber quais serão.
+ *
+ * A varredura da `vw_funil_visivel` (4.060 linhas, 5 páginas sequenciais) custa
+ * 11,7 s medidos, e o contexto mais 0,8 s. Isso é a mesma coisa para qualquer
+ * público — carteira e etapa são peneiradas em memória depois. Só que ela
+ * acontecia DEPOIS de o modelo decidir os filtros, e ali ela é caríssima: o
+ * turno que falhou em 09/09 gastou 24,2 s pensando + 12,5 s de banco + 14,1 s
+ * pensando = 50,8 s, contra 45 s de orçamento. O usuário recebeu "não consegui".
+ *
+ * Aquecendo o cache no instante em que a requisição chega, esses 12,5 s correm
+ * DENTRO dos 24 s em que o modelo está pensando, e somem da conta. Não é cache
+ * entre requisições: nasce e morre no turno, porque o público tem de refletir o
+ * banco de agora.
+ *
+ * Quem chama não precisa esperar — `montarPublico` espera a mesma promessa.
+ */
+export function aquecerPublico(db: any, cache: CachePublico): void {
+  cache.cfg ??= lerCrmConfig(db);
+  cache.cards ??= buscarCards(db);
+  cache.ctx ??= cache.cfg.then((cfg) => buscarContexto(db, cfg));
+  // uma falha aqui é tratada quando alguém der `await`; sem isto o Node derruba
+  // o processo por promessa rejeitada sem dono
+  cache.cfg.catch(() => {}); cache.cards.catch(() => {}); cache.ctx.catch(() => {});
+}
+
+/** A view do funil inteira, uma vez. A peneira de carteira/etapa é em memória. */
+function buscarCards(db: any): Promise<any[]> {
+  return todasAsLinhas((de, ate) => db.from(VIEW_FUNIL_TELA).select(COLS)
+    .order("ultima_atividade", { ascending: false, nullsFirst: false })
+    // ⚠️ MESMO DESEMPATE DO /api/funil, e aqui o preço é maior: sem ele a
+    // paginação perde e duplica linhas (medido: 30 clientes fora, 22 em dobro),
+    // e este laço monta o PÚBLICO DA CAMPANHA. Perder alguém aqui é não abordar
+    // quem devia; duplicar é ranquear a mesma pessoa duas vezes.
+    .order("cliente_id", { ascending: true })
+    .range(de, ate));
+}
+
+type Contexto = {
+  disparos: any[]; descartados: any[]; ciclo: any[]; naCloud: any[];
+  morto: Set<string>; falouAgora: any[]; marcadaAberta: any[];
 };
 
 /** Interseção que trata `null` como "sem restrição". */
@@ -306,42 +418,16 @@ function consultaItem(db: any, r: RecorteItem, modo: "comprou" | "sem_comprar_ha
   };
 }
 
-export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
-  const carteiras = await carteirasDosTimes(db, f);
-  const avisos: string[] = [];
-
-  // 1) cards do funil. Busca a view INTEIRA uma vez e filtra carteira/etapa em
-  //    memória: o assistente refaz o público várias vezes no mesmo turno, e
-  //    repetir a varredura a cada tentativa foi o que estourou o tempo.
-  if (!cache.cards) {
-    const todos: any[] = [];
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await db.from(VIEW_FUNIL_TELA).select(COLS)
-        .order("ultima_atividade", { ascending: false, nullsFirst: false })
-        // ⚠️ MESMO DESEMPATE DO /api/funil, e aqui o preço é maior: sem ele a
-        // paginação perde e duplica linhas (medido: 30 clientes fora, 22 em
-        // dobro), e este laço monta o PÚBLICO DA CAMPANHA. Perder alguém aqui é
-        // não abordar quem devia; duplicar é ranquear a mesma pessoa duas vezes.
-        .order("cliente_id", { ascending: true })
-        .range(from, from + PAGE - 1);
-      if (error) throw new Error(error.message);
-      todos.push(...(data ?? []));
-      if (!data || data.length < PAGE) break;
-    }
-    cache.cards = todos;
-  }
-  const setCarteiras = carteiras.length ? new Set(carteiras) : null;
-  const setEtapas = f.etapas.length ? new Set(f.etapas) : null;
-  const cards = cache.cards.filter((c: any) =>
-    (!setCarteiras || setCarteiras.has(String(c.vendedor)))
-    && (!setEtapas || setEtapas.has(String(c.etapa))));
-
-  // 2) contexto: último disparo, lixeira, ciclo de compra, canal, compras e
-  //    conversa aberta. Nenhum depende do outro, então vão em paralelo.
-  // ⚠️ A janela do anti-repetição é do FILTRO (pode ser 1 dia), mas o cache
-  // guarda sempre os 60 dias — o máximo aceito — e a comparação por dia é feita
-  // em memória. Cachear a janela pedida faria a segunda chamada do turno usar a
-  // janela da primeira, e o número mudaria sem ninguém entender por quê.
+/**
+ * Contexto do disparo: último template de cada um, lixeira, ciclo, canal,
+ * número que não recebe e quem está em conversa agora.
+ *
+ * ⚠️ A janela do anti-repetição é do FILTRO (pode ser 1 dia), mas aqui se
+ * guardam sempre os 60 dias — o máximo aceito — e a comparação por dia é feita
+ * em memória. Guardar a janela pedida faria a segunda chamada do turno usar a
+ * janela da primeira, e o número mudaria sem ninguém entender por quê.
+ */
+async function buscarContexto(db: any, cfg: CrmConfig): Promise<Contexto> {
   const desdeDisparo = new Date(Date.now() - 60 * 86_400_000).toISOString();
   // ⚠️ A memória de FALHA tem janela própria, e não a do anti-repetição.
   // Um número que não recebe no WhatsApp continua não recebendo amanhã — com a
@@ -352,42 +438,53 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   // nesse meio tempo: condenar um número para sempre pelo pior dia dele seria
   // o erro simétrico.
   const desdeFalha = new Date(Date.now() - 90 * 86_400_000).toISOString();
-  const cfg = await lerCrmConfig(db);
-  const soCloudP = !linhasVisiveis(cfg).includes("rd");
+  const soCloud = !linhasVisiveis(cfg).includes("rd");
 
-  if (!cache.ctx) cache.ctx = await (async () => {
-  const [dispRes, descRes, cicloRes, linhaRes, desfRes, abertaRes, statusRes] = await Promise.all([
-    (() => {
-      // anti-repetição: só conta template que saiu pelo número em uso
-      const q = db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo);
-      return soCloudP ? q.like("id", "wamid.%") : q;
-    })(),
-    db.from("wth_descartados").select("cliente_id,codcli,tel8"),
-    // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
-    // passa a ser só tempo parado + ticket — ver o cálculo de `score` abaixo
-    // sempre buscado (o cache é do turno inteiro); quem decide se vale é o
-    // `cfg.ciclo_ativo` no cálculo do score, mais abaixo
-    db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade"),
-    db.from("vw_chat_linha_cliente").select("cliente_id"),
-    // Só as FALHAS. Medido em 27/08: 32 linhas em 90 dias.
-    db.from("mensagens")
+  const [disparos, descartados, ciclo, naCloud, falhas, falouAgora, marcadaAberta] = await Promise.all([
+    // anti-repetição: só conta template que saiu pelo número em uso.
+    // ⚠️ PAGINADO. Sem isto ele lia 1.000 das 1.719 linhas e perdia justamente
+    // os disparos mais recentes — ver a nota de `todasAsLinhas`.
+    todasAsLinhas((de, ate) => {
+      const q = db.from("disparos_template").select("cliente_id,criada_em")
+        .gte("criada_em", desdeDisparo)
+        .order("criada_em", { ascending: false }).order("cliente_id", { ascending: true })
+        .range(de, ate);
+      return soCloud ? q.like("id", "wamid.%") : q;
+    }),
+    todasAsLinhas((de, ate) => db.from("wth_descartados").select("cliente_id,codcli,tel8")
+      .order("codcli", { ascending: true, nullsFirst: false }).range(de, ate)),
+    // motor desligado (crm_config, 0097): quem decide se isto vale é o
+    // `cfg.ciclo_ativo` no cálculo do score, mais abaixo. Sempre buscado
+    // porque o cache é do turno inteiro. 981 linhas hoje — a um passo do teto.
+    todasAsLinhas((de, ate) => db.from("vw_ciclo_card")
+      .select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade")
+      .order("codcli", { ascending: true, nullsFirst: false }).range(de, ate)),
+    todasAsLinhas((de, ate) => db.from("vw_chat_linha_cliente").select("cliente_id")
+      .order("cliente_id", { ascending: true }).range(de, ate)),
+    // Só as FALHAS. Medido em 09/09: 122 linhas em 90 dias — mas o dia em que
+    // passarem de mil é o dia em que as mais NOVAS sumiriam, e é justamente a
+    // mais nova que decide se o número está morto.
+    todasAsLinhas((de, ate) => db.from("mensagens")
       .select("cliente_id,erro,criada_em")
       .eq("enviada_por", "operator").eq("status", "failed")
       .gte("criada_em", desdeFalha)
-      .order("criada_em", { ascending: true }).limit(2000),
+      .order("criada_em", { ascending: true }).order("cliente_id", { ascending: true })
+      .range(de, ate)),
     // conversa aberta = a cliente falou nas últimas 24h. ⚠️ Passa por
     // `filtroLinhas`: com o RD escondido, conversa que só existe lá não conta
     // (§44) — senão o corte esconderia gente que, para o resto do sistema, não
-    // está falando com ninguém. Sempre buscado: são poucas dezenas de linhas, e
-    // condicionar ao filtro tornaria o cache dependente dele.
-    filtroLinhas(
+    // está falando com ninguém. Sempre buscado: condicionar ao filtro tornaria
+    // o cache dependente dele.
+    todasAsLinhas((de, ate) => filtroLinhas(
       db.from("mensagens").select("cliente_id")
         .eq("enviada_por", "customer")
         .gte("criada_em", new Date(Date.now() - 24 * 3600_000).toISOString())
-        .limit(5000),
+        .order("criada_em", { ascending: false }).order("cliente_id", { ascending: true })
+        .range(de, ate),
       cfg,
-    ),
-    db.from("chat_conversa").select("cliente_id").eq("status", "aberta"),
+    )),
+    todasAsLinhas((de, ate) => db.from("chat_conversa").select("cliente_id")
+      .eq("status", "aberta").order("cliente_id", { ascending: true }).range(de, ate)),
   ]);
 
   // ---- NÚMERO QUE NÃO RECEBE (item 5) ------------------------------------
@@ -397,7 +494,7 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   //   2. Vale o ÚLTIMO desfecho, não "já falhou alguma vez": quem falhou em
   //      junho e recebeu em agosto instalou o WhatsApp nesse meio tempo.
   const falhaEm = new Map<string, string>();
-  for (const m of desfRes.data ?? []) {          // já vem em ordem crescente
+  for (const m of falhas) {                      // já vem em ordem crescente
     const id = String((m as any).cliente_id ?? "");
     if (!id) continue;
     const cod = codigoMeta((m as any).erro);
@@ -410,28 +507,47 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     const { data: vivos } = await db.from("mensagens")
       .select("cliente_id,criada_em")
       .eq("enviada_por", "operator").in("status", ["success", "read"])
-      .in("cliente_id", ids).gte("criada_em", desdeFalha).limit(3000);
+      .in("cliente_id", ids).gte("criada_em", desdeFalha).limit(1000);
     for (const v of vivos ?? []) {
       const id = String((v as any).cliente_id ?? "");
       if (String((v as any).criada_em) > (falhaEm.get(id) ?? "")) morto.delete(id);
     }
   }
-  return { dispRes, descRes, cicloRes, linhaRes, morto, abertaRes, statusRes };
-  })();
-  const { dispRes, descRes, cicloRes, linhaRes, morto, abertaRes, statusRes } = cache.ctx;
+  return { disparos, descartados, ciclo, naCloud, morto, falouAgora, marcadaAberta };
+}
+
+export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
+  // Se ninguém aqueceu, aquece agora — as três buscas saem juntas em vez de
+  // uma depois da outra, e a de carteiras corre por cima delas.
+  aquecerPublico(db, cache);
+  const [carteiras, cfg, todosOsCards, ctx] = await Promise.all([
+    carteirasDosTimes(db, f), cache.cfg!, cache.cards!, cache.ctx!,
+  ]);
+  const avisos: string[] = [];
+
+  // 1) cards do funil: a view INTEIRA, uma vez por turno, peneirada em memória.
+  //    O assistente refaz o público várias vezes no mesmo turno, e repetir a
+  //    varredura a cada tentativa foi o que estourou o tempo.
+  const setCarteiras = carteiras.length ? new Set(carteiras) : null;
+  const setEtapas = f.etapas.length ? new Set(f.etapas) : null;
+  const cards = todosOsCards.filter((c: any) =>
+    (!setCarteiras || setCarteiras.has(String(c.vendedor)))
+    && (!setEtapas || setEtapas.has(String(c.etapa))));
+
+  const { disparos, descartados, ciclo, naCloud: naCloudLinhas, morto, falouAgora, marcadaAberta } = ctx;
 
   // Montado FORA do cache, a partir da lista de 60 dias que ele guarda: o corte
   // usa a janela do filtro, comparada dia a dia mais abaixo.
   const ultimoDisparo = new Map<string, string>();
-  for (const d of dispRes.data ?? []) {
+  for (const d of disparos) {
     const id = String(d.cliente_id ?? "");
     const atual = ultimoDisparo.get(id);
     if (!atual || String(d.criada_em) > atual) ultimoDisparo.set(id, String(d.criada_em));
   }
 
-  const descCli = new Set((descRes.data ?? []).map((d: any) => d.cliente_id).filter(Boolean));
-  const descCod = new Set((descRes.data ?? []).map((d: any) => d.codcli).filter((x: any) => x != null).map(Number));
-  const descTel = new Set((descRes.data ?? []).map((d: any) => d.tel8).filter(Boolean));
+  const descCli = new Set(descartados.map((d: any) => d.cliente_id).filter(Boolean));
+  const descCod = new Set(descartados.map((d: any) => d.codcli).filter((x: any) => x != null).map(Number));
+  const descTel = new Set(descartados.map((d: any) => d.tel8).filter(Boolean));
 
   // "não compraram no período": os buckets já vêm prontos da view da nota
   // fiscal, e são o MESMO número que a coluna Pedido emitido do board usa.
@@ -448,13 +564,13 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
 
   const emConversa = f.semConversaAberta
     ? new Set<string>([
-        ...(abertaRes.data ?? []).map((r: any) => String(r.cliente_id)),
-        ...(statusRes.data ?? []).map((r: any) => String(r.cliente_id)),
+        ...falouAgora.map((r: any) => String(r.cliente_id)),
+        ...marcadaAberta.map((r: any) => String(r.cliente_id)),
       ])
     : new Set<string>();
 
   const cicloCli = new Map<string, any>(), cicloCod = new Map<number, any>(), cicloTel = new Map<string, any>();
-  for (const r of (cfg.ciclo_ativo ? cicloRes.data ?? [] : [])) {
+  for (const r of (cfg.ciclo_ativo ? ciclo : [])) {
     if (r.cliente_id) cicloCli.set(String(r.cliente_id), r);
     if (r.codcli != null) cicloCod.set(Number(r.codcli), r);
     const t = tel8(r.telefone);
@@ -575,7 +691,7 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   // por conversa: com o admin escolhendo Cloud, todo mundo sai pela Cloud.
   const envioPadraoCloud = canalEscolhido(cfg) === "whatsapp"
     || process.env.WHATSAPP_ENVIO_PADRAO === "true";
-  const naCloud = new Set((linhaRes.data ?? []).map((r: any) => String(r.cliente_id)));
+  const naCloud = new Set(naCloudLinhas.map((r: any) => String(r.cliente_id)));
   const canalDe = (id: string): "whatsapp" | "rd" =>
     envioPadraoCloud || id.startsWith("wa:") || naCloud.has(id) ? "whatsapp" : "rd";
 

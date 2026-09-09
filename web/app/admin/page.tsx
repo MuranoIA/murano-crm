@@ -1427,15 +1427,47 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
     setSeg(0);
     setIndo(true);
     try {
-      const r = await fetch("/api/admin/disparo-massa/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ texto: t, canal, mensagens: historico }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.error) { setErro(j.error ?? `erro ${r.status}`); return; }
+      // ⚠️ UM turno pode precisar de MAIS DE UMA requisição.
+      //
+      // O teto da Vercel é por requisição (60 s), e um pedido rico leva o
+      // modelo a três ou quatro raciocínios de ~20 s. Quando o tempo acaba com
+      // ele ainda trabalhando, a rota devolve `incompleto` e o histórico até
+      // ali; aqui a chamada é repetida SEM texto novo, e o turno continua de
+      // onde parou. Medido antes disto existir: o público voltava com o filtro
+      // de ticket faltando — lista errada com cara de certa, que é pior que
+      // demorar. Para quem olha, é um turno só, um pouco mais longo.
+      let j: any = null;
+      let msgs = historico;
+      const consultas: any[] = [];   // as retomadas trazem só as suas; junta todas
+      for (let tentativa = 0; tentativa < 4; tentativa++) {
+        const r = await fetch("/api/admin/disparo-massa/chat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            tentativa === 0
+              ? { texto: t, canal, mensagens: msgs }
+              : { continuar: true, canal, mensagens: msgs },
+          ),
+        });
+        const atual = await r.json().catch(() => ({}));
+        if (!r.ok || atual.error) {
+          // já houve resposta útil antes? mostra ela, e o erro como aviso
+          if (!j) { setErro(atual.error ?? `erro ${r.status}`); return; }
+          break;
+        }
+        j = atual;
+        consultas.push(...(atual.consultas ?? []));
+        msgs = atual.mensagens ?? msgs;
+        if (!atual.incompleto) break;
+      }
+      if (!j) return;
       setHistorico(j.mensagens ?? []);
       setLinhas((v) => [...v, {
-        quem: "ia", texto: j.texto, proposta: j.proposta, resultado: j.resultado, consultas: j.consultas,
+        quem: "ia",
+        texto: j.incompleto
+          ? `${j.texto}\n\nParei por aqui: o pedido é grande e o tempo da requisição acabou. `
+            + "Se faltou alguma coisa, peça o ajuste na próxima mensagem — não preciso recomeçar."
+          : j.texto,
+        proposta: j.proposta, resultado: j.resultado, consultas,
       }]);
     } catch (e: any) {
       setErro(e?.message ?? String(e));
@@ -1551,6 +1583,9 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
                             <b style={{ color: M.verde }}>
                               {moedaBR(l.resultado.selecionados * CUSTO_TEMPLATE)}
                             </b>
+                            {l.resultado.selecionados >= 67 && (
+                              <> · ~<b>{Math.ceil((l.resultado.selecionados * 1.8) / 60)} min</b> de aba aberta</>
+                            )}
                           </div>
                         )}
                         <div style={{ marginTop: 10 }}>
@@ -1566,7 +1601,8 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
               {indo && (
                 <div style={{ fontSize: 12.5, color: M.muted }}>
                   conferindo no banco… {seg}s
-                  {seg >= 12 && <span> · costuma levar uns 30 segundos</span>}
+                  {seg >= 12 && seg < 60 && <span> · costuma levar uns 40 segundos</span>}
+                  {seg >= 60 && <span> · pedido grande, ainda montando (pode passar de um minuto)</span>}
                 </div>
               )}
               <div ref={fim} />
@@ -2084,6 +2120,20 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               <b style={{ color: M.verde }}>{moedaBR(custo)}</b>
               {minutos >= 2 && <> · ~<b>{minutos} min</b> de aba aberta</>}
             </div>
+
+            {/* O teto subiu para 2000, e 2000 são ~60 minutos com a tela ligada:
+                o envio é um laço do NAVEGADOR, um cliente por vez (§26.2). Quem
+                fecha a aba no meio para a campanha no meio — e isso tem de ser
+                dito ANTES de confirmar, não descoberto depois. */}
+            {minutos >= 30 && (
+              <div style={{ marginTop: 10 }}>
+                <Recado tipo="aviso">
+                  São ~{minutos} minutos de envio, e ele acontece <b>nesta aba</b>: fechá-la, dormir a
+                  máquina ou cair a internet interrompe a campanha onde estiver. Dá para retomar — é só
+                  rodar de novo, que quem já recebeu fica de fora pela janela de anti-repetição.
+                </Recado>
+              </div>
+            )}
 
             {Object.keys(previa.porVendedor ?? {}).length > 1 && (
               <div style={{ fontSize: 12.5, color: M.gray, marginTop: 6, lineHeight: 1.6 }}>

@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sbAdmin, guardaAdmin, corpo } from "../../../../../lib/adminApi";
 import { lerCrmConfig, linhasVisiveis, modoMigracao } from "../../../../../lib/crmConfig";
 import {
-  montarPublico, lerFiltros,
+  montarPublico, lerFiltros, aquecerPublico, avisoDeTeto,
   FILTROS_PADRAO, LIMITE_MAX, PERIODOS_COMPRA, DIMENSOES_ITEM,
   type FiltrosPublico, type CachePublico,
 } from "../../../../../lib/publicoDisparo";
@@ -51,12 +51,28 @@ const MODEL = "claude-opus-5";
 const MAX_VOLTAS = 6;        // com três ferramentas, o caminho normal usa 2-3
 const MAX_HISTORICO = 40;
 
-// ⚠️ A Vercel corta a rota em `maxDuration`. Medido em 28/08, ANTES do cache do
-// motor: um turno com vocabulário + três tentativas de público levou 85 s e
-// teria morrido no meio. O cache resolveu o grosso, mas a rede da Meta e do
-// modelo não são previsíveis -- então o laço PARA por conta própria antes do
-// limite e responde com o que já tem, em vez de estourar e não responder nada.
-const ORCAMENTO_MS = 45_000;
+// ⚠️ A Vercel corta a rota em `maxDuration`, e passar disso não é "resposta
+// curta": é NENHUMA resposta. Então o laço para por conta própria antes.
+//
+// O orçamento fixo de 45 s que existia aqui tinha os dois defeitos possíveis ao
+// mesmo tempo. Media 09/09/2026, no turno que a supervisão reportou:
+//
+//   modelo, 1a chamada .... 24,2 s   (Opus com raciocínio adaptativo)
+//   montar_publico ........ 12,5 s   (varredura fria da vw_funil)
+//   modelo, 2a chamada .... 14,1 s
+//   -------------------------------
+//   50,8 s -> estourou o orçamento, o laço quebrou sem texto nenhum, e a tela
+//             respondeu "Não consegui montar isso" COM uma proposta pronta ao
+//             lado. O assistente tinha acertado; quem mentiu foi o recado.
+//
+// E era otimista do outro lado: uma chamada iniciada aos 44 s ainda podia levar
+// o turno a 68 s e morrer no corte da Vercel, sem devolver nada.
+//
+// Hoje: o banco saiu do caminho crítico (`aquecerPublico` corre por baixo do
+// raciocínio do modelo) e a decisão de continuar olha o tempo que a ÚLTIMA
+// chamada levou, em vez de um número fixo — ver `cabeOutraVolta`.
+const MARGEM_MS = 6_000;                       // resposta, serialização, rede
+const TETO_MS = maxDuration * 1000 - MARGEM_MS;
 
 type Bloco = Anthropic.ContentBlockParam;
 
@@ -217,6 +233,19 @@ function sistema(ctx: {
     "  'Usar este público'. Se você explorar alternativas para comparar números, TERMINE chamando",
     "  de novo com o público que você está de fato recomendando — senão o texto diz um número e o",
     "  botão aplica outro.",
+    "- Você tem cerca de um minuto por turno, e cada raciocínio seu come uns 20 segundos dele.",
+    "  Vá direto: monte o público que foi pedido e responda. Comparar variações é bom quando a",
+    "  pessoa pede comparação, e caro quando ela só quer a lista.",
+    "",
+    "QUANDO O PEDIDO NÃO CABE",
+    `- O teto de UMA campanha é ${LIMITE_MAX} clientes, porque o envio é um laço com a aba aberta`,
+    `  (${LIMITE_MAX} ≈ ${Math.round(LIMITE_MAX * 1.8 / 60)} minutos). Se pedirem mais que isso, DIGA na resposta:`,
+    "  monte a campanha no teto e explique que o resto sai numa segunda rodada. Nunca corte o número",
+    "  pedido em silêncio — quem pede 3 mil e recebe uma lista de 2 mil sem explicação conclui que",
+    "  você não entendeu o pedido.",
+    "- Se o público elegível for MENOR que o pedido, diga isso também, e diga o que o encolheu",
+    "  (os cortes vêm nomeados na resposta da ferramenta). 'Só deu 400 dos 800 porque 900 já tinham",
+    "  recebido template esta semana' é uma resposta útil; '400 clientes' sozinho, não.",
     "",
     "QUANDO USAR `consultar_base`",
     "- Só quando a pergunta não couber nos campos de `montar_publico`. Os filtros estruturados já",
@@ -288,6 +317,42 @@ function recadoDoErro(e: any): string {
     return "A API da Anthropic falhou do lado deles. Tente de novo em instantes.";
   }
   return `O assistente não respondeu${status ? ` (${status})` : ""}. ${cru}`;
+}
+
+/**
+ * Corta o histórico no teto SEM quebrar par de ferramenta.
+ *
+ * ⚠️ `slice(-40)` sozinho pode começar a lista num `tool_result` cujo
+ * `tool_use` ficou para trás — e a API recusa a conversa inteira com um erro
+ * que não diz isso. Fica raro com o histórico curto, e deixa de ser raro com a
+ * retomada automática, que multiplica as mensagens de um turno só.
+ */
+function aparar(msgs: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const ehResultado = (m: Anthropic.MessageParam) =>
+    Array.isArray(m.content) && m.content.some((c: any) => c?.type === "tool_result");
+  let corte = Math.max(0, msgs.length - MAX_HISTORICO);
+  // anda para a frente até cair numa mensagem que abre assunto por conta própria
+  while (corte < msgs.length && (msgs[corte].role === "assistant" || ehResultado(msgs[corte]))) corte++;
+  return msgs.slice(corte);
+}
+
+/**
+ * O recado quando o modelo não chegou a escrever — mas o público existe.
+ *
+ * Acontece quando o turno acaba com o modelo ainda querendo refazer a conta: a
+ * última coisa que ele produziu foi uma chamada de ferramenta, não texto. O
+ * público montado é REAL (saiu da mesma peneira da prévia), então o certo é
+ * dizer o que ele é, com os números que temos, em vez de negar.
+ */
+function textoDoResultado(f: FiltrosPublico | null, r: any): string {
+  if (!f || !r) return "Não consegui montar isso. Tente descrever o público de outro jeito.";
+  const custo = (r.selecionados * 0.43).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const minutos = Math.ceil((r.selecionados * 1.8) / 60);
+  const carteiras = (r.carteirasUsadas ?? []).length
+    ? ` das carteiras ${r.carteirasUsadas.join(", ")}` : " de todas as carteiras";
+  return `Montei o público${carteiras}: ${r.total} clientes elegíveis, e ${r.selecionados} entram nesta `
+    + `campanha (${custo}, cerca de ${minutos} min com a aba aberta). Confira a proposta abaixo antes `
+    + "de aplicar.";
 }
 
 /** O que volta para o modelo: contagem, nunca cliente. */
@@ -384,10 +449,38 @@ export async function POST(req: Request) {
   const b = await corpo(req);
   if (!b) return Response.json({ error: "body inválido" }, { status: 400 });
 
+  // ---------------------------------------------------------------------
+  // CONTINUAÇÃO: o mesmo turno, numa segunda requisição.
+  //
+  // O teto da Vercel é por REQUISIÇÃO, não por pergunta. Um pedido rico —
+  // "não compraram este mês, da luana, que compraram no mês passado, com
+  // ticket de uns 400" — leva o modelo a três ou quatro raciocínios de ~20 s,
+  // e não cabe em 60. Parar no meio devolvia um público com um filtro
+  // faltando (medido: o de ticket sumia da proposta), o que é PIOR que
+  // demorar: a lista sai errada e parece certa.
+  //
+  // Então, quando o tempo acaba com o modelo ainda trabalhando, a rota diz
+  // `incompleto: true` e a tela repete a chamada com o mesmo histórico — sem
+  // texto novo, sem perguntar nada. Para quem está olhando é um turno só, um
+  // pouco mais longo. O pareamento tool_use/tool_result continua exato porque
+  // o histórico volta pronto daqui (a tela só ecoa).
+  const continuar = b.continuar === true && Array.isArray(b.mensagens) && b.mensagens.length > 0;
+
   const texto = String(b.texto ?? "").trim().slice(0, 4000);
-  if (!texto) return Response.json({ error: "escreva o que você quer montar" }, { status: 400 });
+  if (!texto && !continuar) {
+    return Response.json({ error: "escreva o que você quer montar" }, { status: 400 });
+  }
 
   const db = sbAdmin();
+
+  // ⚠️ AQUI, e não lá embaixo: uma memória por requisição, aquecida ANTES da
+  // primeira chamada ao modelo. A varredura da view do funil não depende de
+  // nenhum filtro, então os 12,5 s dela correm por baixo dos ~24 s em que o
+  // modelo está pensando, e saem da conta do turno. O cache morre com a
+  // requisição — o público tem de refletir o banco de agora.
+  const cache: CachePublico = {};
+  aquecerPublico(db, cache);
+
   const [cfg, cartRes, objRes] = await Promise.all([
     lerCrmConfig(db),
     db.from("carteira_config").select('slug,"time"').eq("ativo", true).order("slug"),
@@ -408,28 +501,39 @@ export async function POST(req: Request) {
   // tabela e uma limpeza; e o pareamento tool_use/tool_result tem que ser
   // exato, então quem devolve a lista pronta é esta rota — a tela só ecoa.
   const anteriores: Anthropic.MessageParam[] = Array.isArray(b.mensagens)
-    ? (b.mensagens as Anthropic.MessageParam[]).slice(-MAX_HISTORICO)
+    ? aparar(b.mensagens as Anthropic.MessageParam[])
     : [];
-  const mensagens: Anthropic.MessageParam[] = [...anteriores, { role: "user", content: texto }];
+  const mensagens: Anthropic.MessageParam[] = continuar
+    ? [...anteriores]                                   // retomada: nada de novo a dizer
+    : [...anteriores, { role: "user", content: texto }];
 
   const client = new Anthropic({ apiKey: chave });
   const comecou = Date.now();
-  // uma memória por requisição: o modelo refaz o público várias vezes no mesmo
-  // turno, e sem isto cada tentativa repetia a varredura inteira da vw_funil
-  const cache: CachePublico = {};
 
   let proposta: FiltrosPublico | null = null;
   let resultado: any = null;
   let resposta = "";
-  let avisoTempo = "";
+  /** o turno acabou por tempo, com o modelo ainda trabalhando */
+  let incompleto = false;
+  /** a resposta escrita já entrou no histórico dentro do laço */
+  let respostaNoHistorico = false;
   const consultas: { sql: string; motivo: string; linhas: number; conjunto: string | null; erro?: string }[] = [];
 
   try {
+    let ultimaChamadaMs = 0;
     for (let volta = 0; volta < MAX_VOLTAS; volta++) {
-      if (volta > 0 && Date.now() - comecou > ORCAMENTO_MS) {
-        avisoTempo = "Parei aqui para não estourar o tempo da requisição — se faltou algo, pergunte de novo.";
+      // Cabe mais uma volta? A conta olha quanto a ÚLTIMA chamada levou, com
+      // uma folga de 20%, em vez de um limite fixo — assim um turno de chamadas
+      // rápidas aproveita o tempo todo, e um de chamadas lentas para antes de
+      // ser morto pela Vercel. Parar aqui devolve o que já existe; ser morto lá
+      // não devolve nada.
+      const decorrido = Date.now() - comecou;
+      if (volta > 0 && decorrido + ultimaChamadaMs * 1.2 > TETO_MS) {
+        // O modelo ainda tinha o que fazer: a tela retoma daqui (`continuar`).
+        incompleto = true;
         break;
       }
+      const antes = Date.now();
       const r = await client.messages.create({
         model: MODEL,
         max_tokens: 8000,
@@ -439,12 +543,18 @@ export async function POST(req: Request) {
         messages: mensagens,
       });
 
+      ultimaChamadaMs = Date.now() - antes;
+
       const chamadas = r.content.filter((c): c is Anthropic.ToolUseBlock => c.type === "tool_use");
       resposta = r.content.filter((c) => c.type === "text").map((c: any) => c.text).join("\n").trim();
 
-      if (!chamadas.length) break;
+      if (!chamadas.length) { respostaNoHistorico = false; break; }
 
       mensagens.push({ role: "assistant", content: r.content as Bloco[] });
+      // ⚠️ `r.content` JÁ traz os blocos de texto. Sem esta marca, o `push` do
+      // fim da rota repetiria a mesma fala como uma segunda mensagem — e o
+      // turno seguinte leria a resposta duas vezes, uma delas já vencida.
+      respostaNoHistorico = true;
 
       const devolucoes: Anthropic.ToolResultBlockParam[] = [];
       for (const ch of chamadas) {
@@ -456,6 +566,11 @@ export async function POST(req: Request) {
             // o assistente promete e o da prévia divergem.
             const f = lerFiltros({ ...(ch.input as any), canal: canalTpl });
             const p = await montarPublico(db, f, cache);
+            // ⚠️ O que `lerFiltros` aparou tem de aparecer nos DOIS lados: na
+            // tela (caixa âmbar) e na resposta ao modelo. Sem isto, quem pediu
+            // 2 mil e recebeu mil ficava sem nenhuma explicação em lugar nenhum
+            // — e concluía, com razão, que o pedido não tinha sido entendido.
+            p.avisos.push(...avisoDeTeto(ch.input, f));
             proposta = f;
             resultado = {
               total: p.total, selecionados: p.selecionados.length, cortes: p.cortes,
@@ -524,11 +639,20 @@ export async function POST(req: Request) {
     return Response.json({ error: recadoDoErro(e) }, { status: 502 });
   }
 
-  if (resposta) mensagens.push({ role: "assistant", content: resposta });
+  if (resposta && !respostaNoHistorico) mensagens.push({ role: "assistant", content: resposta });
 
   return Response.json({
-    texto: [resposta || "Não consegui montar isso. Tente descrever o público de outro jeito.", avisoTempo]
-      .filter(Boolean).join("\n\n"),
+    // ⚠️ "Não consegui montar isso" SÓ quando não há proposta nenhuma.
+    //
+    // Era o texto de qualquer turno sem resposta escrita — inclusive quando o
+    // público estava montado e conferido logo ali no cartão ao lado. Uma tela
+    // que nega e mostra a coisa ao mesmo tempo não é um erro de redação: ela
+    // ensina a não confiar no que está na tela.
+    texto: resposta || textoDoResultado(proposta, resultado),
+    // A tela retoma o MESMO turno numa segunda requisição. Só ela sabe quantas
+    // vezes já retomou, então a decisão de desistir é dela — daqui sai só o
+    // fato: "o modelo ainda estava trabalhando quando o tempo acabou".
+    incompleto,
     // a tela usa isto para desenhar o cartão com o botão. Sem proposta, foi só
     // conversa — e a tela não oferece botão nenhum, que é o certo.
     proposta,
