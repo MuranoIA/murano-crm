@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../../lib/papel";
+import { situacaoDoTelefone, impedimentoDe } from "../../../../lib/contatoDoErp";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,28 @@ export const dynamic = "force-dynamic";
 //   2. senão, um `clientes` com o mesmo telefone (8 últimos dígitos, §16.3)
 //   3. senão NULO — a linha aparece inerte, com o motivo. Some em silêncio
 //      seria a doença que a tela de Pendências existe para curar (§36).
+//
+// ---------------------------------------------------------------------------
+// O TERCEIRO CASO NÃO ERA UM CASO SÓ (09/09/2026)
+//
+// Relato do usuário: clientes da carteira apareciam com "sem contato" e não
+// abriam. A suspeita levantada era outra tabela de telefone no ERP (contato de
+// cobrança, de entrega). **Medido e descartado:** `psv_contato` e `wth_ciclo`
+// repetem o mesmo número, e recuperam ZERO dos que estão sem; casar por nome
+// também dá zero. O telefone que falta, falta mesmo.
+//
+// O que a medição achou foi outra coisa. Dos 118 inertes das 7 carteiras:
+//
+//   24  o telefone do ERP é PERFEITO (DDD + 9 dígitos) — só nunca ninguém criou
+//       o contato. O provisionamento em massa de 37.4 rodou uma vez, em agosto;
+//       quem entrou na carteira depois ficou de fora e ninguém percebeu.
+//   31  telefone quebrado no cadastro (sem DDD, ou com um dígito a mais)
+//   63  cadastro sem telefone nenhum
+//
+// Então a linha deixou de ter dois estados (abre / não abre) e passou a ter
+// três, porque as ações são diferentes: o primeiro grupo abre no clique, e os
+// outros dois pedem o número ao consultor — que é quem está com a cliente na
+// frente — e mandam a correção para quem edita o WinThor.
 // ---------------------------------------------------------------------------
 
 const PAGE = 1000;
@@ -98,6 +121,7 @@ export async function GET() {
 
   const carteira = clientes.map((c) => {
     const cliente_id = porCodcli.get(Number(c.codcli)) ?? (c.tel8 ? porTel8.get(c.tel8) ?? null : null);
+    const sit = situacaoDoTelefone(c.telefone);
     return {
       codcli: c.codcli,
       cliente_id,
@@ -105,10 +129,13 @@ export async function GET() {
       telefone: c.telefone ?? null,
       cidade: c.cidade ?? null,
       vendedor: slugPorRca.get(c.rca_num) ?? null,
-      // por que não dá para abrir — a linha aparece mesmo assim, inerte
-      impedimento: cliente_id ? null
-        : !c.telefone ? "sem telefone no cadastro do WinThor"
-        : "sem contato no CRM — telefone não confere com nenhum",
+      // sem contato ainda, mas o número do cadastro serve: o clique cria o
+      // contato e abre a conversa (POST desta mesma aba, com o codcli)
+      criar_no_clique: !cliente_id && sit.pode,
+      // o CRM não consegue sozinho — precisa do número, que só quem está com a
+      // cliente na frente tem. A linha continua clicável: ela abre o campo.
+      precisa_telefone: !cliente_id && !sit.pode,
+      impedimento: cliente_id ? null : impedimentoDe(sit),
     };
   });
 
@@ -116,5 +143,8 @@ export async function GET() {
     carteira,
     total: carteira.length,
     sem_contato: carteira.filter((c) => !c.cliente_id).length,
+    // o que ainda depende de alguém digitar — é o número que vale acompanhar,
+    // porque o outro grupo se resolve sozinho no primeiro clique
+    sem_telefone: carteira.filter((c) => c.precisa_telefone).length,
   });
 }
