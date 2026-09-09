@@ -3606,6 +3606,18 @@ export default function Chat() {
                     </span>
                   )}
                 </button>
+                {/* atalho da agenda, ao lado do da fila — a carteira era a
+                    única fila muito usada que custava 2 cliques (abrir o
+                    dropdown e descer até o último item). Mesmo ícone do item no
+                    dropdown de propósito: é o que faz o botão ser lido como
+                    atalho DAQUELE item, e não como um sexto lugar.
+                    Sem contador: a agenda só é buscada quando a aba abre (§38),
+                    então um número aqui nasceria vazio e só apareceria depois da
+                    primeira visita — pior que não ter. */}
+                <button onClick={() => setFiltro("carteira")} title="Minha carteira — todos os clientes do seu RCA, com ou sem conversa"
+                  style={{ marginLeft: 2, flexShrink: 0, background: "transparent", border: "none", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "carteira" ? 1 : 0.75 }}>
+                  📇
+                </button>
                 {menuFila && (
                   <>
                     <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
