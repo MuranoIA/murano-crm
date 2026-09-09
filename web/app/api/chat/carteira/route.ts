@@ -94,28 +94,64 @@ export async function GET() {
   // ---- resolve o contato: vínculo primeiro, telefone depois ----------------
   const codclis = clientes.map((c) => c.codcli);
   const porCodcli = new Map<number, string>();
-  for (let i = 0; i < codclis.length; i += 300) {
-    const { data } = await sb.from("wth_vinculo").select("codcli,cliente_id").in("codcli", codclis.slice(i, i + 300));
-    for (const v of data ?? []) porCodcli.set(Number((v as any).codcli), (v as any).cliente_id);
+  // Os lotes existem por causa do tamanho da URL (um `in.(...)` com 4 mil
+  // codclis nao passa), NAO por causa do banco. Mas eles eram disparados EM
+  // SERIE: para uma carteira de 685 clientes, 3 idas de ~260 ms cada.
+  // Medido: 787 ms em serie contra 278 ms com os mesmos lotes em paralelo.
+  const LOTE_VINC = 800;
+  const pedacos: number[][] = [];
+  for (let i = 0; i < codclis.length; i += LOTE_VINC) pedacos.push(codclis.slice(i, i + LOTE_VINC));
+  const vincRes = await Promise.all(
+    pedacos.map((p) => sb.from("wth_vinculo").select("codcli,cliente_id").in("codcli", p)),
+  );
+  for (const r of vincRes) {
+    for (const v of (r as any).data ?? []) porCodcli.set(Number((v as any).codcli), (v as any).cliente_id);
   }
 
-  // Para os que sobraram, casa por telefone. Uma varredura só de `clientes`
-  // indexada por tel8: 300 consultas `like` seriam muito mais caras que ler a
-  // tabela inteira uma vez (são ~5 mil linhas).
+  // ---- os que sobraram: casa por telefone --------------------------------
+  //
+  // Isto varria a tabela `clientes` INTEIRA (5.040 linhas, 6 paginas
+  // sequenciais, ~1.050 ms medidos) para montar um mapa por tel8 -- e usava
+  // esse mapa para resolver, na pratica, entre 5 e 30 contatos:
+  //
+  //     romulo 5 · luana 30 · kamilly 22 · milene 14 · anne 8 · thiago 6 · thamires 13
+  //
+  // O comentario antigo dizia que 300 consultas `like` seriam mais caras que
+  // ler a tabela toda. A premissa estava certa e a conclusao nao: nao sao 300
+  // consultas, e UMA consulta com os poucos telefones que faltam. Medido: 182 ms.
   const faltam = clientes.filter((c) => !porCodcli.has(Number(c.codcli)) && c.tel8);
   const porTel8 = new Map<string, string>();
   if (faltam.length) {
-    for (let from = 0; ; from += PAGE) {
-      const { data } = await sb.from("clientes").select("id,telefone")
-        .order("id", { ascending: true })   // desempate: `range` sem `order` nao tem ordem prometida entre paginas
-        .range(from, from + PAGE - 1);
-      for (const cl of data ?? []) {
-        const t8 = String((cl as any).telefone ?? "").replace(/\D/g, "").slice(-8);
-        // preferência estável: o primeiro que aparecer fica; o telefone é a
-        // chave fraca, e trocar de contato entre recargas confundiria mais
-        if (t8.length === 8 && !porTel8.has(t8)) porTel8.set(t8, (cl as any).id);
+    const alvos = [...new Set(faltam.map((c) => String(c.tel8)).filter((t) => t.length === 8))];
+    // Teto defensivo: se um dia a maioria da carteira ficar sem vinculo, a
+    // consulta dirigida deixa de ser dirigida (URL enorme) e a varredura volta
+    // a ser o caminho barato. Hoje o maior caso e 30.
+    const dirigida = alvos.length > 0 && alvos.length <= 400;
+    if (dirigida) {
+      for (let i = 0; i < alvos.length; i += 100) {
+        const bloco = alvos.slice(i, i + 100);
+        const { data } = await sb.from("clientes").select("id,telefone")
+          // preferencia estavel: o menor id ganha, como na varredura antiga
+          .order("id", { ascending: true })
+          .or(bloco.map((t) => `telefone.like.*${t}`).join(","));
+        for (const cl of data ?? []) {
+          const t8 = String((cl as any).telefone ?? "").replace(/\D/g, "").slice(-8);
+          if (t8.length === 8 && !porTel8.has(t8)) porTel8.set(t8, (cl as any).id);
+        }
       }
-      if (!data || data.length < PAGE) break;
+    } else {
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await sb.from("clientes").select("id,telefone")
+          .order("id", { ascending: true })   // desempate: `range` sem `order` nao tem ordem prometida entre paginas
+          .range(from, from + PAGE - 1);
+        for (const cl of data ?? []) {
+          const t8 = String((cl as any).telefone ?? "").replace(/\D/g, "").slice(-8);
+          // preferencia estavel: o primeiro que aparecer fica; o telefone e a
+          // chave fraca, e trocar de contato entre recargas confundiria mais
+          if (t8.length === 8 && !porTel8.has(t8)) porTel8.set(t8, (cl as any).id);
+        }
+        if (!data || data.length < PAGE) break;
+      }
     }
   }
 

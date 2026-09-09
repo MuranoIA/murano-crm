@@ -96,6 +96,29 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
  */
 export const VIEW_FUNIL_TELA = "vw_funil_visivel" as const;
 
+/**
+ * A lista de conversas do CHAT (`/api/chat`) — migration 0126.
+ *
+ * NÃO é a mesma coisa que `VIEW_FUNIL_TELA`, e a diferença é o ponto:
+ *
+ *     board -> "todo cliente da carteira, tenha conversa ou não"
+ *     chat  -> "quem tem conversa"
+ *
+ * A `vw_funil_visivel` responde a primeira pergunta, com três ramos (conversas,
+ * ociosos sem cadastro e prospecção do ERP) e as colunas que só o card usa
+ * (as 3 últimas mensagens em jsonb, o valor faturado, `sem_cadastro`). O chat
+ * jogava 95% disso fora a cada chamada — e é a rota mais chamada do sistema
+ * (a cada 60 s por aba, mais uma recarga por mensagem recebida).
+ *
+ * Medido em produção, mesmas 309 linhas de resultado:
+ *     vw_funil_visivel   647 ms   206.498 buffers
+ *     vw_chat_conversa   234 ms     7.214 buffers
+ *
+ * ⚠️ As duas repetem a régua de etapa. Se ela mudar numa, muda na outra —
+ * duplicação consciente, mesma da 0098.
+ */
+export const VIEW_CHAT_LISTA = "vw_chat_conversa" as const;
+
 /** A seleção efetiva: NULO na config significa "todas as linhas ativas". */
 export const linhasVisiveis = (cfg: CrmConfig): string[] =>
   cfg.linhas_visiveis ?? cfg.linhas.filter((l) => l.ativo).map((l) => l.phone_number_id);

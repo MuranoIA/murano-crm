@@ -1395,8 +1395,36 @@ export default function Chat() {
   // avisa disso no comentário do `abaPadrao`; eu caí mesmo assim, e só o teste
   // no navegador pegou.
   useEffect(() => {
-    if (filtro === "carteira" && carteira === null && !carteiraCarregando) void carregarCarteira();
-  }, [filtro, carteira, carteiraCarregando, carregarCarteira]);
+    // abriu a aba: carrega agora (e o estado de "carregando" aparece na tela)
+    if (filtro === "carteira") {
+      if (carteira === null && !carteiraCarregando) void carregarCarteira();
+      return;
+    }
+
+    // ---- PRE-CARREGAMENTO (pedido do usuario, 09/09/2026) -----------------
+    //
+    // A agenda e a queixa mais concreta dos consultores: clicar em "Minha
+    // carteira" e esperar. Buscar em segundo plano, ANTES do clique, faz a aba
+    // abrir instantanea.
+    //
+    // Duas condicoes para isso nao virar o vicio da §15.1 (custo que escala com
+    // abas abertas, nao com trabalho):
+    //
+    //   1. so DEPOIS que a lista de conversas chegou. O carregamento inicial do
+    //      chat e o que a pessoa esta esperando -- disputar banco com ele
+    //      atrasaria o que ela ESTA olhando para adiantar o que ela TALVEZ olhe.
+    //   2. uma vez por sessao. `carteira !== null` corta a repeticao, e o
+    //      timeout e cancelado se a pessoa abrir a aba antes (o ramo de cima
+    //      assume) ou trocar de filtro.
+    //
+    // Isto so vale a pena porque a rota ficou barata: ela varria as 5.040
+    // linhas de `clientes` e disparava os lotes de vinculo em serie. Antes
+    // dessa correcao, pre-carregar teria custado ~2,3 s de banco por sessao,
+    // inclusive de quem nunca abre a aba.
+    if (embutido || carteira !== null || carteiraCarregando || !conversas.length) return;
+    const t = setTimeout(() => { void carregarCarteira(); }, 2500);
+    return () => clearTimeout(t);
+  }, [filtro, carteira, carteiraCarregando, carregarCarteira, embutido, conversas.length]);
 
   const [menuFila, setMenuFila] = useState(false);   // dropdown "Meus atendimentos"
   const [menuVend, setMenuVend] = useState(false);   // dropdown de vendedor (admin/home)
