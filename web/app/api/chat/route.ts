@@ -124,7 +124,8 @@ export async function GET() {
   // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
-  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso, esperaRes] = await Promise.all([
+  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso, esperaRes,
+    notasRes, notasVistasRes] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
@@ -152,11 +153,46 @@ export async function GET() {
     // tela também criaria um segundo número, que diverge do dos indicadores no
     // primeiro ajuste da régua.
     sb.from("vw_chat_espera").select("cliente_id,minutos"),
+    // ---- item: nota interna vira AVISO para o dono da conversa (0129) ------
+    //
+    // Entra neste mesmo Promise.all pelo motivo de sempre (§15.1): rota nova
+    // seria mais uma chamada por aba aberta, e o custo escalaria com o numero
+    // de abas em vez de com o trabalho. Aqui nao custa round-trip nenhum.
+    //
+    // Duas consultas pequenas: as notas de OUTRAS pessoas, e as marcas de
+    // leitura deste usuario. O cruzamento e feito abaixo, em memoria, porque
+    // as duas tabelas sao minusculas (dezenas de linhas) e um `not exists` no
+    // PostgREST exigiria uma view so para isso.
+    //
+    // `neq("autor", ...)` e o que impede o supervisor de ser avisado do proprio
+    // bilhete. Sem isso, quem escreve a nota veria o aviso dela.
+    sb.from("chat_nota").select("id,cliente_id,autor,criada_em")
+      .neq("autor", usuario ?? "").order("criada_em", { ascending: false }).limit(1000),
+    // o coringa '*' marca as notas anteriores ao recurso — ver a migration
+    sb.from("chat_nota_vista").select("nota_id").in("usuario", [usuario ?? "", "*"]),
   ]);
   const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e]));
 
+  // ---- quais conversas tem recado nao lido (0129) --------------------------
+  // "Nota para mim" = nota de outra pessoa numa conversa que esta na MINHA
+  // lista. Nao ha uma segunda regua de dono aqui de proposito: `conversas` ja
+  // saiu de `aplicaEscopo`, entao o escopo da lista E o destinatario. Duas
+  // reguas divergiriam no primeiro ajuste de uma delas.
+  const vistas = new Set((notasVistasRes.data ?? []).map((v: any) => Number(v.nota_id)));
+  const notaPorCliente = new Map<string, { n: number; em: string; autor: string }>();
+  for (const n of (notasRes.data ?? []) as any[]) {
+    if (vistas.has(Number(n.id))) continue;
+    const j = notaPorCliente.get(n.cliente_id);
+    // as notas vem da mais nova para a mais velha: a primeira que chega de cada
+    // cliente e a que a tela mostra; as seguintes so somam no contador
+    if (j) j.n += 1;
+    else notaPorCliente.set(n.cliente_id, { n: 1, em: n.criada_em, autor: n.autor });
+  }
+
   for (const c of conversas) {
+    const nota = notaPorCliente.get(c.cliente_id);
+    if (nota) { c.nota_nova = nota.n; c.nota_autor = nota.autor; c.nota_em = nota.em; }
     const marca = lidaAte.get(c.cliente_id);
     c.nao_lida = c.ultima_enviada_por === "customer" &&
       (!marca || new Date(c.ultima_atividade) > new Date(marca));
