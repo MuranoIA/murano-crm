@@ -17,11 +17,34 @@
 > **Interruptor global que você ligar, você desliga** — use `db.mexerConfig()`,
 > que já agenda a restauração.
 
+> ## A faixa de ensaio é invisível por padrão
+>
+> Os clientes fictícios vivem em `55 91 9 0000-00NN` (id `wa:559190000…`), e
+> **nenhuma tela mostra essa faixa** a menos que o servidor diga que é de
+> ensaio: `ENSAIO_VISIVEL=1` (ou `SIMULACAO_ENVIO=1`, que vale junto). Na Vercel
+> nenhuma das duas existe — então produção esconde sem depender de ninguém
+> configurar nada.
+>
+> **Por que:** em 10/09/2026 uma rodada foi interrompida às 11:33 sem limpar. Os
+> 25 clientes fictícios ficaram meia hora na sidebar dos consultores, que os
+> atenderam como se fossem reais — um chegou a responder, e o envio saiu para a
+> Graph API pela linha de produção (só não chegou a ninguém porque a Meta
+> recusou o número, 131026).
+>
+> Duas coisas mudaram por causa disso, e valem mesmo se alguém esquecer tudo o
+> resto: a faixa **não aparece** sem o interruptor, e mensagem endereçada a ela
+> **nunca sai** para a Meta (`lib/ensaio.ts` + `lib/simulacaoEnvio.ts`), venha de
+> onde vier. O `run.mjs` também limpa com Ctrl+C, que é o buraco que deixou o
+> lixo no banco naquele dia.
+
 ## Como rodar
 
 ```bash
 # 1. suba o servidor (uma vez)
-cd web && npm run build && npm start        # porta 3100
+#    ENSAIO_VISIVEL=1 e OBRIGATORIO: sem ele os clientes ficticios ficam
+#    invisiveis em toda tela, e os casos de chat/board falham dizendo que a
+#    conversa nao apareceu. Ver o quadro abaixo.
+cd web && npm run build && ENSAIO_VISIVEL=1 npm start        # porta 3100
 
 # 2. rode a suíte
 node testes/run.mjs                 # tudo

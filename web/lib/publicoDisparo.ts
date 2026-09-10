@@ -1,4 +1,5 @@
 import { lerCrmConfig, linhasVisiveis, canalEscolhido, filtroLinhas, VIEW_FUNIL_TELA } from "./crmConfig";
+import { semEnsaio } from "./ensaio";
 import { codigoMeta, FALHA_DO_NUMERO } from "./erroMeta";
 
 // ---------------------------------------------------------------------------
@@ -316,7 +317,7 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   if (!cache.cards) {
     const todos: any[] = [];
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await db.from(VIEW_FUNIL_TELA).select(COLS)
+      const { data, error } = await semEnsaio(db.from(VIEW_FUNIL_TELA).select(COLS))
         .order("ultima_atividade", { ascending: false, nullsFirst: false })
         // ⚠️ MESMO DESEMPATE DO /api/funil, e aqui o preço é maior: sem ele a
         // paginação perde e duplica linhas (medido: 30 clientes fora, 22 em

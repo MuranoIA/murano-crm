@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { semEnsaio } from "../../../lib/ensaio";
 import { lerCrmConfig, filtroLinhas } from "../../../lib/crmConfig";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ export async function GET(req: Request) {
     .select("conteudo,enviada_por,tipo,criada_em")
     .eq("cliente_id", cliente_id);
   q = filtroLinhas(q, cfgMsg);
+  q = semEnsaio(q);
   const { data, error } = await q
     .order("criada_em", { ascending: false })
     .limit(60);

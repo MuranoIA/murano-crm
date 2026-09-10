@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { carteiraDe } from "../../../../lib/papel";
 import { carregarAtribuicoes, aplicaEscopo, emLotes } from "../../../../lib/chatEscopo";
 import { lerCrmConfig, VIEW_FUNIL_TELA, filtroLinhas } from "../../../../lib/crmConfig";
+import { semEnsaio } from "../../../../lib/ensaio";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,7 @@ export async function GET(req: Request) {
     .ilike("conteudo", `%${termo}%`)
     .neq("tipo", "evento_sistema");
   busca = filtroLinhas(busca, cfg);
+  busca = semEnsaio(busca);
   const { data: achadas, error } = await busca
     .order("criada_em", { ascending: false })
     .limit(TETO_MSGS);

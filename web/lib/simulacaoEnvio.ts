@@ -29,6 +29,7 @@
 // rodadas e duas oportunidades de subir a errada.
 // -----------------------------------------------------------------------------
 import { randomUUID } from "node:crypto";
+import { ehTelefoneDeEnsaio } from "./ensaio";
 
 /** A chave-mestra. Ausente = comportamento normal, em todo o resto do arquivo. */
 export function simulacaoLigada(): boolean {
@@ -55,6 +56,13 @@ export function destinoReal(to: string): boolean {
 
 /** Interceptar este envio? */
 export function deveSimular(to: string): boolean {
+  // A faixa reservada do ensaio nunca sai, ACONTECA O QUE ACONTECER — nem de
+  // producao, nem com a chave desligada, nem com o numero na lista de destinos
+  // reais. Em 10/09/2026 um consultor respondeu a uma conversa falsa que tinha
+  // ficado na tela, e o envio foi de verdade para a Graph API: so nao chegou a
+  // ninguem porque a Meta recusou o numero (131026). Esta linha e o que torna
+  // aquele caminho inofensivo, em vez de depender de sorte. Ver `lib/ensaio.ts`.
+  if (ehTelefoneDeEnsaio(to)) return true;
   return simulacaoLigada() && !destinoReal(to);
 }
 
