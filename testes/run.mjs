@@ -166,6 +166,28 @@ async function main() {
     } catch { /* servidor antigo, sem o campo: segue */ }
   }
 
+  // A linha telefonica do ensaio vem do CADASTRO, uma vez, AQUI — antes de
+  // qualquer caso e nao dentro de um deles. O id estava cravado em
+  // simulacao.mjs e o numero foi migrado em 09/09/2026: o antigo virou a
+  // linha "Murano 2", inativa, e `crm_config.linhas_visiveis` so deixa
+  // passar a ativa — entao as conversas do ensaio nasciam invisiveis e o
+  // ciclo 10 acusava "a consultora enxerga so 0 conversas", que aponta para
+  // o lugar errado.
+  //
+  // Resolver no runner, e nao em cada ciclo, e o que faz a correcao alcancar
+  // TODO caso: o ciclo 11 tambem escreve pela linha padrao e nao chamava
+  // nada. Um ciclo novo nasce coberto sem ninguem lembrar.
+  try {
+    const sim = await import("./simulacao.mjs");
+    if (typeof sim.resolverLinha === "function") {
+      const linha = await sim.resolverLinha(db);
+      console.log(`linha do ensaio: ${linha}`);
+    }
+  } catch (e) {
+    // fallback e o valor antigo: o ensaio roda como rodava, em vez de nao rodar
+    console.log(`nao consegui resolver a linha do ensaio (${e.message}) — seguindo com o padrao`);
+  }
+
   const arquivos = readdirSync(join(AQUI, "casos")).filter((f) => f.endsWith(".mjs")).sort()
     .filter((f) => !filtro || f.includes(filtro));
 

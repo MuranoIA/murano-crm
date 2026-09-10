@@ -65,6 +65,16 @@ export default async function (t) {
     return "wamid simulado — a faixa fictícia está isolada da Meta";
   });
 
+  await t.passo("a linha do ensaio é a que está ATIVA no cadastro", "✅", async () => {
+    // Sem isto o ensaio escreve numa linha que `linhas_visiveis` esconde, e as
+    // conversas somem da lista — ver o comentário de `LINHA` em simulacao.mjs.
+    const linha = await sim.resolverLinha(t.db);
+    const { data } = await t.db.sb.from("chat_linha")
+      .select("rotulo,ativo").eq("phone_number_id", linha).limit(1);
+    if (!data?.[0]?.ativo) throw new Error(`a linha ${linha} não está ativa no cadastro`);
+    return `${linha} (${data[0].rotulo})`;
+  });
+
   await t.passo("a faixa fictícia não colide com cliente real", "✅", async () => {
     const tel8 = [...Array(POR_CONSULTOR * sim.CONSULTORES.length + 10).keys()]
       .map((i) => sim.telefoneFicticio(i + 1).slice(-8));

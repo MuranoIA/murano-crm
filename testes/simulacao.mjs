@@ -32,8 +32,34 @@ export const SUPERVISORES = [
   { rotulo: "jonatas (admin)", sessao: { crm_sessao: "admin", crm_email: "jonatassilva@muranoprofessional.com.br" } },
 ];
 
-/** A linha em uso (Murano Professional). É o que o webhook carimba em `linha_id`. */
-export const LINHA = "1264458800091787";
+/**
+ * A linha em uso — o que o webhook carimba em `linha_id`.
+ *
+ * ⚠️ RESOLVIDA DO BANCO, não cravada. Estava fixa em `1264458800091787` e o
+ * número foi migrado em 09/09/2026: aquele id virou a linha "Murano 2",
+ * **inativa**, e a ativa passou a ser `1267537293116190`. Como
+ * `crm_config.linhas_visiveis` só deixa passar a linha ativa, as conversas do
+ * ensaio nasciam invisíveis — e o ciclo 10 acusava "a consultora enxerga só 0
+ * das 24 conversas da fila", que parece defeito de escopo e não é.
+ *
+ * `let` + live binding do ESM de propósito: quem já importou `LINHA` enxerga o
+ * valor novo depois de `resolverLinha()`, sem que os chamadores mudem.
+ */
+export let LINHA = "1264458800091787";
+
+/**
+ * Descobre a linha ativa e a fixa para o resto do ensaio. Chamar UMA vez, no
+ * começo do ciclo. O fallback é o valor antigo — se a consulta falhar, o ensaio
+ * roda como rodava, em vez de não rodar.
+ */
+export async function resolverLinha(db) {
+  try {
+    const { data } = await db.sb.from("chat_linha")
+      .select("phone_number_id").eq("ativo", true).neq("phone_number_id", "rd").limit(1);
+    if (data?.[0]?.phone_number_id) LINHA = String(data[0].phone_number_id);
+  } catch { /* fica o padrão */ }
+  return LINHA;
+}
 
 /** Prefixo do telefone fictício. NÃO MUDAR sem reconferir colisão de tel8. */
 const RAIZ_FICTICIA = "55919";
