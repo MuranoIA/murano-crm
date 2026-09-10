@@ -41,6 +41,40 @@ export async function POST(req: Request) {
   return Response.json({ ok: true, nota: data });
 }
 
+/**
+ * PATCH — "eu já vi os recados desta conversa" (0129).
+ *
+ * Chamado pela tela ao ABRIR uma conversa que tinha aviso, junto do
+ * /api/chat/lida. É a mesma ideia da marca de leitura: o aviso some porque a
+ * pessoa chegou onde o recado estava, sem um clique de "ok" para dispensar.
+ *
+ * Marca TODAS as notas do cliente, não só as de outra pessoa: as próprias já
+ * não avisam ninguém (o GET da lista corta por `autor`), e uma linha a mais
+ * aqui é mais barata que uma condição a mais que pode divergir da de lá.
+ *
+ * Idempotente: `upsert` com a chave (nota_id, usuario). Abrir a mesma conversa
+ * dez vezes não escreve dez linhas — e a data guardada é a da PRIMEIRA vez,
+ * que é a que responde "quando ele viu".
+ */
+export async function PATCH(req: Request) {
+  const usuario = usuarioDaSessao();
+  if (!usuario) return Response.json({ error: "não autenticado" }, { status: 401 });
+
+  let b: any;
+  try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
+  const cliente_id = String(b?.cliente_id ?? "").trim();
+  if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
+
+  const db = sb();
+  const { data: notas } = await db.from("chat_nota").select("id").eq("cliente_id", cliente_id);
+  if (!notas?.length) return Response.json({ ok: true, marcadas: 0 });
+
+  const { error } = await db.from("chat_nota_vista")
+    .upsert(notas.map((n: any) => ({ nota_id: n.id, usuario })), { onConflict: "nota_id,usuario", ignoreDuplicates: true });
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true, marcadas: notas.length });
+}
+
 // Apagar: só quem escreveu, ou o admin. Nota é registro de atendimento —
 // um vendedor não apaga a observação do outro.
 export async function DELETE(req: Request) {
