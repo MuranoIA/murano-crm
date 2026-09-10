@@ -265,7 +265,7 @@ const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
 // de quem tem papel `vendedor`: a lista dele já vem cortada por carteira no
 // SERVIDOR (`/api/chat`), então "de todo o time" seria a mesma lista com um
 // nome que promete mais.
-type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "semresposta" | "carteira";
+type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "semresposta" | "carteira" | "notas";
 const FILAS: { k: Fila; icone: string; rotulo: string; dica: string; soGestor?: boolean }[] = [
   { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
   { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
@@ -283,6 +283,13 @@ const FILAS: { k: Fila; icone: string; rotulo: string; dica: string; soGestor?: 
   // espera sem dono é justamente a que mais corre risco de ficar parada.
   { k: "semresposta", icone: "⏳", rotulo: "Todas sem resposta", soGestor: true,
     dica: "clientes de QUALQUER vendedor que falaram por último e ainda não foram respondidos" },
+  // Recados da supervisao (0129). Fica ao lado da fila de espera porque as duas
+  // respondem a mesma pergunta -- "tem alguma coisa esperando por MIM?" -- e
+  // porque o gesto e o mesmo: um icone com bolinha que zera ao ser atendido.
+  // Atravessa o recorte de dono, como "Todas sem resposta": recado numa
+  // conversa sem dono e justamente o que ninguem esta olhando.
+  { k: "notas", icone: "🗒️", rotulo: "Recados da supervisão",
+    dica: "alguém escreveu uma nota interna numa conversa e você ainda não viu" },
   { k: "resolvidas", icone: "✓", rotulo: "Encerradas", dica: "atendimentos já resolvidos" },
   // A carteira NÃO é um recorte da lista de conversas como as quatro acima: é a
   // agenda inteira do vendedor, buscada à parte e só quando aberta (§38).
@@ -323,6 +330,10 @@ type Conversa = {
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
   na_fila?: boolean;   // sem dono: qualquer um pode puxar
+  // recado interno que ainda nao vi (0129): quantos, de quem, e de quando e o
+  // mais recente. `nota_nova` e CONTAGEM, nao booleano -- 3 recados numa
+  // conversa e uma informacao diferente de 1, e o dono decide por onde comecar
+  nota_nova?: number; nota_autor?: string | null; nota_em?: string | null;
   /** dono COMERCIAL cru (carteira/RCA), antes da transferência — governa o "devolver" */
   carteira_dona?: string | null;
   // por qual NÚMERO a conversa corre (migration 0089): phone_number_id da Cloud
@@ -2220,6 +2231,17 @@ export default function Chat() {
         body: JSON.stringify({ cliente_id: c.cliente_id }),
       }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
     }
+    // recado interno: o aviso some porque a pessoa CHEGOU onde o bilhete
+    // estava, sem um botão de "ok, dispensar" — mesma ideia da marca de
+    // leitura. Só chama quando há o que marcar: sem esta guarda, toda abertura
+    // de conversa pagaria um round-trip para não escrever nada.
+    if (c.nota_nova) {
+      setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nota_nova: 0 } : x)));
+      fetch("/api/chat/notas", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: c.cliente_id }),
+      }).catch(() => { /* silencioso, como a marca de leitura acima */ });
+    }
   }
   // ponte para o efeito do deep link, que roda acima desta declaração
   abrirRef.current = abrir;
@@ -3058,6 +3080,14 @@ export default function Chat() {
     if (filtro === "semresposta") {
       if (st === "resolvida") return false;
       if (c.ultima_enviada_por !== "customer") return false;
+    } else if (filtro === "notas") {
+      // Recado atravessa o recorte de dono pelo mesmo motivo de "Todas sem
+      // resposta": conversa sem dono e a que mais corre risco de ficar parada,
+      // e nao ha razao para esconder um bilhete deixado nela.
+      // Encerrada TAMBEM entra: o supervisor pode anotar justamente sobre uma
+      // conversa ja encerrada ("faltou combinar a entrega"), e esconde-la faria
+      // o contador prometer um numero que a lista nao mostra.
+      if (!c.nota_nova) return false;
     } else if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
     if (filtro === "pendentes" && !(st === "aberta" && c.nao_lida)) return false;
     if (filtro === "resolvidas" && st !== "resolvida") return false;
@@ -3078,6 +3108,11 @@ export default function Chat() {
   const contaResolvidas = noEscopo.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
   const contaFila = noEscopo.filter((c) => c.na_fila).length;
   const contaPendentes = noEscopo.filter((c) => c.nao_lida && !c.na_fila).length;
+  // conta CONVERSAS com recado, nao recados: o badge fica ao lado de um icone
+  // que leva a uma LISTA, e a lista tem uma linha por conversa. Contar notas
+  // faria o "3" prometer tres linhas e entregar uma. Mesma escolha do chip
+  // abaixo, pelo mesmo motivo.
+  const contaNotas = noEscopo.filter((c) => c.nota_nova).length;
   // conta CONVERSAS, como as outras quatro — se contasse mensagens seria o
   // único número da tela medindo outra coisa, e "18" viraria dois valores
   // diferentes conforme o chip.
@@ -3487,6 +3522,29 @@ export default function Chat() {
                     </span>
                   )}
                 </button>
+                {/* ---- recados da supervisão (0129) ----
+                    Ao lado do da fila, e com a mesma forma (ícone + bolinha),
+                    porque respondem a mesma pergunta: tem alguma coisa
+                    esperando por mim? A nota interna já existia, mas era um
+                    bilhete que só quem abrisse a conversa por acaso encontrava.
+
+                    Aparece SEMPRE, apagado quando é zero — nunca escondido. É
+                    a regra que a faixa de filas do D1 já segue: controle que
+                    some faz o olho procurar onde ele foi, e no dia em que
+                    chegar um recado a pessoa não saberia que aquele lugar
+                    existe. */}
+                <button onClick={() => setFiltro("notas")}
+                  title={contaNotas > 0
+                    ? `${contaNotas} conversa${contaNotas > 1 ? "s" : ""} com recado interno que você ainda não viu`
+                    : "Recados da supervisão — notas internas escritas nas suas conversas"}
+                  style={{ marginLeft: 2, position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "notas" ? 1 : contaNotas > 0 ? 0.9 : 0.45 }}>
+                  🗒️
+                  {contaNotas > 0 && (
+                    <span style={{ position: "absolute", top: -3, right: -4, minWidth: 15, height: 15, padding: "0 3px", boxSizing: "border-box", borderRadius: 15, background: M.laranja, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {contaNotas}
+                    </span>
+                  )}
+                </button>
                 {menuFila && (
                   <>
                     <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
@@ -3495,6 +3553,7 @@ export default function Chat() {
                         const n = f.k === "pendentes" ? contaPendentes
                           : f.k === "fila" ? contaFila
                           : f.k === "semresposta" ? contaSemResposta
+                          : f.k === "notas" ? contaNotas
                           : f.k === "resolvidas" ? contaResolvidas
                           : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
@@ -3504,7 +3563,7 @@ export default function Chat() {
                             <span style={{ fontSize: 14, width: 18, textAlign: "center" }}>{f.icone}</span>
                             <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
                             {n > 0 && (
-                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
+                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" || f.k === "notas" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" || f.k === "notas" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
                                 {n}
                               </span>
                             )}
@@ -3889,6 +3948,25 @@ export default function Chat() {
                         <span style={{ fontSize: 12, color: M.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
                           {c.ultima_enviada_por === "operator" ? "Você: " : ""}{c.ultima_mensagem ?? "…"}
                         </span>
+                        {/* recado interno nao visto (0129). Fica na linha da
+                            conversa, e nao so no contador do icone, porque o
+                            contador diz QUANTOS e a lista precisa dizer QUAIS —
+                            sem isto, clicar no icone daria uma lista sem nada
+                            que distinguisse as conversas umas das outras. */}
+                        {!!c.nota_nova && (
+                          <span title={`${c.nota_autor ? `recado de ${c.nota_autor}` : "recado interno"}${c.nota_em ? ` · ${rotuloTempo(c.nota_em)}` : ""}`}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, color: "#fff", background: M.laranja, borderRadius: 999, padding: "2px 6px", flexShrink: 0 }}>
+                            {/* ⚙ traco monocromatico, nao emoji: aqui o icone fica SOBRE cor
+                                cheia, e emoji tem cores proprias que ignoram `color` --
+                                o caderninho colorido vira uma mancha ilegivel sobre o
+                                laranja (medido em captura de tela). O `Icone` herda a
+                                cor do selo, que e o que a §60.8 comprou ao criar o
+                                dicionario. Este selo nasce agora, entao usa-lo em todos
+                                os desenhos nao quebra rollback de ninguem. */}
+                            <Icone n="nota" tamanho={10} traco={2.1} />
+                            {c.nota_nova > 1 ? c.nota_nova : ""}
+                          </span>
+                        )}
                         {c.transferida_de && (
                           <span title={`recebida de ${rotuloEndereco(c.transferida_de)}`}
                             style={{ fontSize: 9.5, fontWeight: 800, color: M.wine, background: "#f6e8f0", border: `1px solid ${M.border}`, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>

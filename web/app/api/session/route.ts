@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { papelDe, carteiraDe } from "../../../lib/papel";
+import { ensaioVisivel } from "../../../lib/ensaio";
 
 export const dynamic = "force-dynamic";
 
@@ -31,5 +32,9 @@ export async function GET() {
     } catch { /* mantém o fallback [role] */ }
   }
 
-  return Response.json({ role, carteira, papeis, email });
+  // `ensaio_visivel` nao e para a tela: e o que o runner dos testes consulta
+  // para avisar, ANTES de rodar, que o servidor vai esconder os clientes
+  // ficticios — senao o ensaio falha cinco minutos adiante dizendo que a
+  // conversa nao apareceu, que e um sintoma que nao aponta para a causa.
+  return Response.json({ role, carteira, papeis, email, ensaio_visivel: ensaioVisivel() });
 }

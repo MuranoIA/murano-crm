@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
 import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao, linhaPadraoCloud } from "../../../lib/crmConfig";
+import { semEnsaio } from "../../../lib/ensaio";
 import { diagnosticar } from "../../../lib/saudeCanal";
 import { linhaDeEnvio } from "../../../lib/whatsapp";
 
@@ -82,7 +83,7 @@ export async function GET() {
     let cols = COLS_FULL;
     const out: any[] = [];
     for (let from = 0; ; from += PAGE) {
-      let q = sb.from(VIEW_FUNIL_TELA).select(cols)
+      let q = semEnsaio(sb.from(VIEW_FUNIL_TELA).select(cols))
         .order("ultima_atividade", { ascending: false, nullsFirst: false })
         // ⚠️ DESEMPATE OBRIGATÓRIO — sem ele o board PERDE cliente, em silêncio.
         //

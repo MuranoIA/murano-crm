@@ -1,4 +1,5 @@
 import { sbAdmin, guardaAdmin } from "../../../../lib/adminApi";
+import { semEnsaio } from "../../../../lib/ensaio";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,12 @@ export async function GET(req: Request) {
 
   const linhas: any[] = [];
   for (let from = 0; ; from += PAGE) {
-    let q = sb.from("vw_pendencias_admin")
-      .select("grupo,chave,codcli,cliente_id,nome,telefone,cpf,carteira,rca_num,rca_nome,detalhe,ultima_atividade")
+    // ⚠️ `semEnsaio` DEPOIS do `.select()`: antes dele o objeto e um
+    // PostgrestQueryBuilder, que nao tem `.not()` — e o erro so aparece em
+    // runtime, com 500 e "e.not is not a function". `tsc` e `next build`
+    // passam limpos, porque o builder e tipado como `any` no caminho.
+    let q = semEnsaio(sb.from("vw_pendencias_admin")
+      .select("grupo,chave,codcli,cliente_id,nome,telefone,cpf,carteira,rca_num,rca_nome,detalhe,ultima_atividade"))
       .order("grupo")
       .order("nome")
       .range(from, from + PAGE - 1);
@@ -45,7 +50,7 @@ export async function GET(req: Request) {
   // chips precisam mostrar o total de cada grupo, não o do grupo aberto
   const totais: Record<string, number> = {};
   if (grupo) {
-    const { data } = await sb.from("vw_pendencias_admin").select("grupo").range(0, 9999);
+    const { data } = await semEnsaio(sb.from("vw_pendencias_admin").select("grupo")).range(0, 9999);
     for (const r of data ?? []) totais[(r as any).grupo] = (totais[(r as any).grupo] ?? 0) + 1;
   } else {
     for (const r of linhas) totais[r.grupo] = (totais[r.grupo] ?? 0) + 1;

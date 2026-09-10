@@ -85,12 +85,86 @@ function fazerT(ciclo) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Encerramento: a limpeza roda SEMPRE, inclusive com Ctrl+C.
+//
+// 10/09/2026: uma rodada foi interrompida às 11:33 e a limpeza nunca aconteceu.
+// Vinte e cinco conversas falsas ficaram meia hora na tela dos consultores, e um
+// deles chegou a responder uma delas. O `catch` do `main()` cobria "o runner
+// morreu"; não cobria SIGINT, que mata o processo sem passar por lá — e SIGINT é
+// justamente como se interrompe um ensaio que está demorando.
+//
+// A varredura por PREFIXO (`limparEnsaio`) vem DEPOIS do rastro em memória, e
+// não no lugar dele: o rastro sabe desfazer o que não é cliente fictício
+// (interruptores do /admin, por exemplo), e o prefixo acha o que o rastro perdeu
+// quando o processo morre no meio. Os dois erram de lados opostos.
+// ---------------------------------------------------------------------------
+let encerrando = false;
+
+async function encerrar(motivo) {
+  if (encerrando) return [];       // segundo Ctrl+C não atropela a limpeza em curso
+  encerrando = true;
+  const sobrou = [];
+  try {
+    sobrou.push(...(await db.limpar()));
+  } catch (e) {
+    sobrou.push(`rastro em memória — ${e.message}`);
+  }
+  try {
+    // dinâmico e tolerante de propósito: se `limparEnsaio` for renomeado um dia,
+    // a suíte perde a rede extra com um aviso, em vez de morrer sem limpar nada.
+    const sim = await import("./simulacao.mjs");
+    if (typeof sim.limparEnsaio === "function") {
+      const relato = await sim.limparEnsaio(db.sb);
+      const restos = relato.filter((l) => l.includes("ERRO"));
+      if (restos.length) sobrou.push(...restos);
+    } else {
+      sobrou.push("simulacao.mjs não exporta limparEnsaio — varredura por prefixo NÃO rodou");
+    }
+  } catch (e) {
+    sobrou.push(`varredura por prefixo — ${e.message}`);
+  }
+  if (motivo) {
+    console.log(`\n${motivo} — limpei antes de sair.`);
+    if (sobrou.length) for (const x of sobrou) console.log(`    ⚠️  ${x}`);
+  }
+  return sobrou;
+}
+
+for (const sinal of ["SIGINT", "SIGTERM"]) {
+  process.on(sinal, async () => {
+    await encerrar(`recebi ${sinal}`);
+    if (chrome) fecharChrome(chrome);
+    process.exit(130);
+  });
+}
+
 async function main() {
   mkdirSync(SAIDAS, { recursive: true });
 
   const noAr = await api.servidorNoAr();
   console.log(`servidor em ${api.BASE}: ${noAr ? "no ar" : "FORA DO AR — casos de rota serão pulados"}`);
   ctx.servidorNoAr = noAr;
+
+  // A faixa de telefone do ensaio é invisível por padrão em toda tela
+  // (`web/lib/ensaio.ts`) — é o que impede um cliente fictício de cair na fila
+  // de um consultor. O servidor precisa dizer que é de ensaio para enxergá-la,
+  // e o aviso vem AQUI, antes de qualquer caso: sem ele o sintoma aparece cinco
+  // minutos adiante, como "a conversa não apareceu na lista", e aponta para o
+  // lugar errado.
+  if (noAr) {
+    try {
+      const r = await api.chamar("/api/session");
+      if (r.status === 200 && r.json && r.json.ensaio_visivel === false) {
+        console.log(
+          "\n⚠️  O servidor está ESCONDENDO os clientes de ensaio.\n" +
+          "    Os casos que olham a lista do chat ou o board vão falhar dizendo\n" +
+          "    que a conversa não apareceu — e o motivo é este, não o código.\n" +
+          "    Suba o servidor com ENSAIO_VISIVEL=1 (ver testes/README.md).\n"
+        );
+      }
+    } catch { /* servidor antigo, sem o campo: segue */ }
+  }
 
   const arquivos = readdirSync(join(AQUI, "casos")).filter((f) => f.endsWith(".mjs")).sort()
     .filter((f) => !filtro || f.includes(filtro));
@@ -113,7 +187,7 @@ async function main() {
   }
 
   // -- restauração: tudo que a suíte escreveu no banco volta atrás ----------
-  const sobrou = await db.limpar();
+  const sobrou = await encerrar(null);
 
   const conta = (r) => resultados.filter((x) => x.resultado === r).length;
   const placar = {
@@ -144,7 +218,7 @@ async function main() {
 
 main().catch(async (e) => {
   console.error("runner morreu:", e);
-  try { await db.limpar(); } catch {}
+  await encerrar("o runner morreu");
   if (chrome) fecharChrome(chrome);
   process.exit(2);
 });
