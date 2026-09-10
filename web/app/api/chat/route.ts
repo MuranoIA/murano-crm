@@ -5,6 +5,7 @@ import { usuarioDaSessao } from "../../../lib/chatUsuario";
 import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
 import { lerCrmConfig, VIEW_FUNIL_TELA, modoMigracao } from "../../../lib/crmConfig";
+import { semEnsaio } from "../../../lib/ensaio";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,11 @@ export async function GET() {
   // 39 deles — invisíveis entre 3.908 conversas do RD. Com o RD escondido eles
   // passariam a ser 39 de 41 itens, e o chat pareceria quebrado. O corte por
   // `ultima_atividade` não os pega: o card de venda carrega a data da nota.
-  const soConversa = (q: any) => q.not("cliente_id", "like", "venda:%").not("cliente_id", "like", "winthor:%");
+  // `semEnsaio` entra aqui, e nao em cada consulta, porque as tres leituras da
+  // view passam por este ponto. A faixa reservada do ensaio e invisivel por
+  // padrao — em 10/09/2026 ela ficou na sidebar por meia hora e um consultor
+  // chegou a responder a uma conversa falsa. Ver `lib/ensaio.ts`.
+  const soConversa = (q: any) => semEnsaio(q.not("cliente_id", "like", "venda:%").not("cliente_id", "like", "winthor:%"));
 
   // transferências vigentes (0081): mudam quem atende, sem tocar na carteira
   const atrib = await carregarAtribuicoes(sb);
