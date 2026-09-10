@@ -12,12 +12,32 @@ export default async function (t) {
   const { db, api } = t;
   if (!t.servidorNoAr) { t.pular("(ciclo inteiro)", "✅", `servidor fora do ar em ${api.BASE}`); return; }
 
-  // alvo: uma conversa da carteira romulo com atividade (para as duas abas abrirem a mesma)
+  // alvo: uma conversa cujo DONO EFETIVO seja romulo, com atividade (para as duas
+  // abas abrirem a mesma).
+  //
+  // ⚠️ `vw_funil_visivel.vendedor` é a carteira CRUA, de antes das transferências
+  // (§18). Pegar o primeiro dali dava um cliente que o Angelo tinha passado para a
+  // kamilly em 09/09 — a conversa não está mais com o romulo, então ela some da
+  // lista dele, com toda a razão, e o passo 1 falhava. Os passos 3 e 6 caíam em
+  // cascata: sem A ter assumido, não havia o que transferir nem o que contar.
+  //
+  // Três falhas fantasma, todas por dado real de produção, nenhuma por código.
+  // Por isso o alvo agora é conferido contra `vw_chat_atribuicao`, que é onde
+  // mora quem atende de fato.
   const { data: cands } = await db.sb.from("vw_funil_visivel")
     .select("cliente_id,cliente,vendedor").eq("vendedor", "romulo")
-    .not("ultima_atividade", "is", null).order("ultima_atividade", { ascending: false }).limit(1);
-  const alvo = cands?.[0];
-  if (!alvo) { t.pular("(ciclo inteiro)", "✅", "nenhuma conversa da carteira romulo com atividade"); return; }
+    .not("ultima_atividade", "is", null).order("ultima_atividade", { ascending: false }).limit(30);
+  const { data: transf } = await db.sb.from("vw_chat_atribuicao")
+    .select("cliente_id,para_carteira")
+    .in("cliente_id", (cands ?? []).map((c) => c.cliente_id));
+  // existe transferência -> vale o destino dela, MESMO NULO (nulo = devolvida
+  // para a fila, 0112, e aí a conversa também não é do romulo). Não existe ->
+  // vale a carteira. É a régua de dois degraus de `donoEfetivo`, e um `??` aqui
+  // erraria o caso da devolução exatamente como erraria lá.
+  const destino = new Map((transf ?? []).map((x) => [x.cliente_id, x.para_carteira]));
+  const alvo = (cands ?? []).find((c) =>
+    (destino.has(c.cliente_id) ? destino.get(c.cliente_id) : c.vendedor) === "romulo");
+  if (!alvo) { t.pular("(ciclo inteiro)", "✅", "nenhuma conversa com atividade sob o romulo hoje"); return; }
 
   // ------------------------------------------------------------------ passo 1
   await t.passo("1. atendente A assume a conversa", "✅", async () => {
