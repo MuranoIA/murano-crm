@@ -144,7 +144,14 @@ export async function GET() {
     // disparo em massa, relatórios e fila de prospecção (ver lib/chatEscopo).
     // `carteira is null` é o filtro certo: quem tem carteira já está na lista
     // acima, sob o slug, e apareceria duas vezes.
-    sb.from("acesso").select("email,nome,papel").eq("ativo", true).is("carteira", null).order("email"),
+    //
+    // `atende_chat` (0130) é o que separa quem atende de quem só administra.
+    // Sem ele a régua era "não tem carteira e está ativo", e a lista de
+    // "transferir para" nascia com nove pessoas — a conta de automação e
+    // administradores de outras áreas incluídos. Quem entra aqui é escolha do
+    // admin, não consequência de não ter RCA.
+    sb.from("acesso").select("email,nome,papel")
+      .eq("ativo", true).is("carteira", null).eq("atende_chat", true).order("email"),
     // desenho da tela em vigor para todos (0095) e o piloto desta pessoa.
     // Entram NESTE Promise.all de propósito: o /chat faz um load único, e duas
     // consultas em série aqui custariam round-trip a cada abertura da tela.

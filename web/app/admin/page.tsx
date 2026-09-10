@@ -233,13 +233,16 @@ export default function Admin() {
 
       {aba === "usuarios" && dados?.usuarios && (
         <>
+          <AtendeChat usuarios={dados.usuarios} enviar={enviar} />
+
           <Bloco
             titulo="Quem entra no sistema"
             ajuda={<>
               <b>Papel de entrada</b> é como a pessoa entra ao logar. <b>Pode assumir</b> são os chapéus que
               ela alterna sem sair da conta. Vendedor enxerga só a própria carteira; <i>home</i> e{" "}
               <i>pós-venda</i> veem todas sem as funções administrativas; <i>admin</i> vê tudo.{" "}
-              Todos <b>atendem</b> no chat — têm conversas próprias e recebem transferência —, com ou sem carteira.
+              Entrar no sistema <b>não</b> é o mesmo que atender no chat: quem recebe conversa de cliente
+              se escolhe no bloco acima.
             </>}
           >
             <div style={{ overflowX: "auto" }}>
@@ -3837,5 +3840,132 @@ function Moldura({ aba, setAba, esconderAbas, children }: {
       </div>
       <div style={{ maxWidth: 1080, margin: "0 auto", padding: "20px 18px 60px" }}>{children}</div>
     </div>
+  );
+}
+
+/**
+ * QUEM ATENDE NO CHAT (0130)
+ *
+ * Antes disto, atender era CONSEQUÊNCIA: quem estava ativo e não tinha carteira
+ * entrava na lista de "transferir para" automaticamente. A lista nasceu com nove
+ * pessoas — a conta de automação e administradores de outras áreas incluídos —,
+ * e não havia onde tirar ninguém. Aqui atender vira ESCOLHA.
+ *
+ * A tela separa três situações porque elas se resolvem em lugares diferentes:
+ *   · quem atende pela CARTEIRA — nada a decidir, o dono é o RCA do WinThor;
+ *   · quem atende pelo NOME — o interruptor;
+ *   · quem só administra — o mesmo interruptor, desligado.
+ *
+ * Não há botão "remover" que apague linha: quem sai daqui continua entrando no
+ * sistema, só deixa de receber conversa de cliente. São duas permissões, e
+ * fundi-las obrigaria a tirar o acesso de alguém para tirá-lo do chat.
+ */
+function AtendeChat({ usuarios, enviar }: {
+  usuarios: any[];
+  enviar: (qual: any, metodo: "POST" | "PATCH" | "PUT", corpo: any, sucesso: string) => Promise<boolean>;
+}) {
+  const [ocupado, setOcupado] = useState<string | null>(null);
+
+  const ativos = usuarios.filter((u) => u.ativo);
+  const comCarteira = ativos.filter((u) => u.carteira);
+  const semCarteira = ativos.filter((u) => !u.carteira);
+  const atendem = semCarteira.filter((u) => u.atende_chat);
+  const fora = semCarteira.filter((u) => !u.atende_chat);
+
+  async function alternar(u: any, ligar: boolean) {
+    // Desligar quem ainda atende conversa é irreversível para a atribuição: elas
+    // voltam para a fila e alguém pode pegá-las antes de o admin se arrepender.
+    // Por isso o número aparece ANTES, no texto da confirmação — a mesma régua
+    // do "marcar não aplica" da tela de redesenho.
+    if (!ligar && u.conversas > 0) {
+      const n = u.conversas;
+      const ok = window.confirm(
+        `${u.nome || u.email} atende ${n} conversa${n > 1 ? "s" : ""} agora.\n\n` +
+        `Ao tirar do chat, ${n > 1 ? "elas voltam" : "ela volta"} para a fila de espera, ` +
+        `de onde qualquer pessoa pode pegar com o ✋.\n\nTirar mesmo assim?`
+      );
+      if (!ok) return;
+    }
+    setOcupado(u.email);
+    await enviar("usuarios", "PATCH", { email: u.email, atende_chat: ligar },
+      ligar ? `${u.nome || u.email} passa a atender no chat.` : `${u.nome || u.email} saiu do atendimento no chat.`);
+    setOcupado(null);
+  }
+
+  const Linha = ({ u, ligado }: { u: any; ligado: boolean }) => (
+    <div key={u.email} style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderRadius: 8,
+      background: ligado ? "rgba(26,107,60,.06)" : M.bg,
+      border: `1px solid ${ligado ? "rgba(26,107,60,.22)" : M.border}`,
+    }}>
+      <span style={{ fontWeight: 700, fontSize: 13 }}>{u.nome || u.email.split("@")[0]}</span>
+      <span style={{ fontSize: 11.5, color: M.muted }}>{rotuloDePapel(u.papel)}</span>
+      {ligado && u.conversas > 0 && (
+        <span style={{ fontSize: 11, color: M.gray }} title="conversas que esta pessoa atende agora">
+          · {u.conversas} conversa{u.conversas > 1 ? "s" : ""}
+        </span>
+      )}
+      <span style={{ flex: 1 }} />
+      <BotaoLeve cor={ligado ? M.laranja : M.verde}
+        titulo={ligado ? "Deixa de receber conversas; continua entrando no sistema" : "Passa a receber conversas e a aparecer em Transferir"}
+        onClick={() => { if (ocupado !== u.email) alternar(u, !ligado); }}>
+        {ocupado === u.email ? "…" : ligado ? "Tirar do chat" : "Deixar atender"}
+      </BotaoLeve>
+    </div>
+  );
+
+  return (
+    <Bloco
+      titulo="Quem atende no chat"
+      ajuda={<>
+        Só quem está aqui recebe conversa de cliente, aparece em <b>Transferir</b> e marca mensagem
+        como lida. É diferente de <b>ver</b> o chat: admin, home e pós-venda continuam enxergando
+        as conversas de todo mundo para conferir — conferir não marca nada como lido.
+      </>}
+    >
+      <div style={{ display: "grid", gap: 14 }}>
+        <div>
+          <p style={{ ...rotuloCampo, margin: '0 0 7px' }}>ATENDEM PELO PRÓPRIO NOME</p>
+          {atendem.length ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              {atendem.map((u) => <Linha key={u.email} u={u} ligado />)}
+            </div>
+          ) : (
+            <p style={{ fontSize: 12.5, color: M.muted, margin: 0 }}>
+              Ninguém — só os vendedores, pelas carteiras. Conversa transferida precisa de um destino:
+              sem ninguém aqui, admin e supervisão só observam.
+            </p>
+          )}
+        </div>
+
+        {fora.length > 0 && (
+          <div>
+            <p style={{ ...rotuloCampo, margin: '0 0 7px' }}>NÃO ATENDEM — SÓ ADMINISTRAM OU CONFEREM</p>
+            <div style={{ display: "grid", gap: 6 }}>
+              {fora.map((u) => <Linha key={u.email} u={u} ligado={false} />)}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <p style={{ ...rotuloCampo, margin: '0 0 7px' }}>ATENDEM PELA CARTEIRA — AUTOMÁTICO</p>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {comCarteira.map((u) => (
+              <span key={u.email} style={{
+                fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
+                background: M.bg, border: `1px solid ${M.border}`, color: M.gray,
+              }} title={`${u.email} — atende pela carteira “${u.carteira}”`}>
+                {u.nome || u.email.split("@")[0]} <span style={{ color: M.muted, fontWeight: 500 }}>{u.carteira}</span>
+              </span>
+            ))}
+          </div>
+          <p style={{ fontSize: 11.5, color: M.muted, margin: "7px 0 0", lineHeight: 1.5 }}>
+            Quem tem carteira atende por ela e não entra nesta escolha — a conversa chega pelo RCA do
+            WinThor, e um interruptor aqui poderia tirar a caixa de entrada de um vendedor sem
+            nenhum erro na tela. Para tirar alguém daqui, mude a carteira em <b>Quem entra no sistema</b>.
+          </p>
+        </div>
+      </div>
+    </Bloco>
   );
 }

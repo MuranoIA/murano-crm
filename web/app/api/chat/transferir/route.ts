@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     if (ehEnderecoDePessoa(alvo)) {
       const email = emailDoEndereco(alvo);
       const { data: p } = await sb
-        .from("acesso").select("email,ativo,carteira").eq("email", email).maybeSingle();
+        .from("acesso").select("email,ativo,carteira,atende_chat").eq("email", email).maybeSingle();
       // quem TEM carteira é endereçado pelo slug dela, nunca pelo e-mail: dois
       // endereços para a mesma pessoa criariam duas caixas de entrada, e uma
       // conversa transferida para `u:milene@...` não apareceria para quem
@@ -76,6 +76,17 @@ export async function POST(req: Request) {
       }
       if (!p || p.ativo === false) {
         return Response.json({ error: `“${email}” não tem acesso ativo` }, { status: 400 });
+      }
+      // 0130: atender no chat é escolha do admin, não consequência de não ter
+      // carteira. A tela já não oferece quem está fora, mas a régua tem de valer
+      // aqui também: a aba pode estar aberta desde antes da mudança, e a conversa
+      // iria para uma caixa de entrada que ninguém abre — sairia da lista de
+      // todo mundo sem entrar na de ninguém, que é o mesmo estrago do acesso
+      // desativado logo acima.
+      if (p.atende_chat !== true) {
+        return Response.json({
+          error: `“${email}” não está marcado para atender no chat — libere em Administração → Usuários`,
+        }, { status: 400 });
       }
     } else {
       const { data: c } = await sb

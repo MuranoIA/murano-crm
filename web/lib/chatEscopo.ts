@@ -117,11 +117,20 @@ export const ehEnderecoDePessoa = (e: string | null | undefined): boolean =>
 export const emailDoEndereco = (e: string): string => e.slice(PREFIXO_PESSOA.length);
 
 /**
- * O endereço sob o qual ESTA pessoa atende, ou null se não há como saber (login
- * por senha, sem e-mail — nesse caso ela só observa).
+ * O endereço sob o qual ESTA pessoa atende, ou null quando ela apenas observa.
+ *
+ * São três motivos diferentes para o null, e vale distinguir:
+ *   · login por senha, sem e-mail — não há sob quem registrar a conversa;
+ *   · acesso desativado;
+ *   · não tem carteira E não foi marcada em /admin como quem atende (0130).
  *
  * Uma consulta por chamada, pela chave primária de `acesso`. Barata, e é o preço
  * de não deixar o papel ativo decidir de quem é a conversa.
+ *
+ * ⚠️ `atende_chat` é consultado DEPOIS da carteira, nunca antes. Quem tem
+ * carteira atende por ela — é assim que a conversa chega, pelo slug. Se o
+ * interruptor pudesse tirar o atendimento de um vendedor, o sintoma seria
+ * "sumiram minhas conversas", sem erro nenhum na tela. Ver a 0130.
  */
 export async function enderecoDeAtendimento(
   sb: SupabaseClient,
@@ -133,9 +142,13 @@ export async function enderecoDeAtendimento(
   if (doCookie) return doCookie;
   if (!usuario || !usuario.includes("@")) return null;
 
-  const { data } = await sb.from("acesso").select("carteira,ativo").eq("email", usuario).maybeSingle();
+  const { data } = await sb.from("acesso")
+    .select("carteira,ativo,atende_chat").eq("email", usuario).maybeSingle();
   if (data?.ativo === false) return null;
-  return data?.carteira ? String(data.carteira) : enderecoDePessoa(usuario);
+  if (data?.carteira) return String(data.carteira);
+  // `=== true` e não a veracidade solta: linha ausente devolve `undefined`, e
+  // quem não está em `acesso` não atende coisa nenhuma.
+  return data?.atende_chat === true ? enderecoDePessoa(usuario) : null;
 }
 
 // ---------------------------------------------------------------------------
