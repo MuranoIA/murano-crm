@@ -77,6 +77,67 @@ export function emLotes<T>(itens: T[], tamanho = 200): T[][] {
   return lotes;
 }
 
+// ===========================================================================
+// ENDEREÇO DE ATENDIMENTO — de quem é a conversa
+//
+// Até aqui, "dono de conversa" era sempre um slug de `carteira_config`, ou seja,
+// um vendedor COM RCA no WinThor. Isso deixava admin, home e pós-venda de fora:
+// eles enxergavam tudo e não podiam atender nada — não havia como transferir uma
+// conversa para a Lais, nem ela ter as próprias.
+//
+// A saída ÓBVIA e errada seria criar uma carteira `lais`. `carteira_config` é a
+// tabela de vendedor com RCA e alimenta umas trinta rotas comerciais: as colunas
+// do board, os chips, o público do disparo em massa, os relatórios de venda, a
+// fila de prospecção, a tela de divergência de carteira. A Lais viraria uma
+// coluna no board e uma linha de relatório com R$ 0 de faturamento — o oposto do
+// que foi pedido ("não haverá RCA ou transferência de cliente para carteira de
+// fato, apenas conversas dentro do chat").
+//
+// Então há DOIS tipos de endereço, e um só por pessoa:
+//
+//     tem carteira  ->  o slug da carteira      ("milene", "romulo")
+//     não tem       ->  `u:` + o e-mail         ("u:lais@muranoprofessional.com.br")
+//
+// ⚠️ UM SÓ POR PESSOA é a parte que importa. A primeira versão dava os dois
+// endereços a quem tem carteira (o slug E o e-mail), e isso criaria duas caixas
+// de entrada para a mesma pessoa: uma conversa transferida para
+// `u:milene@...` não apareceria para quem filtrasse por `milene`, e ninguém
+// entenderia por quê.
+//
+// ⚠️ E a carteira vem de `acesso`, NÃO do cookie. Romulo entra como `admin` e
+// tem a carteira `romulo`: pelo cookie, `carteiraDe("admin")` é null e ele viraria
+// `u:romulo@...` — deixando de ser dono das próprias conversas, que estão sob o
+// slug. O papel ativo não pode mudar de quem é a conversa.
+// ===========================================================================
+const PREFIXO_PESSOA = "u:";
+
+export const enderecoDePessoa = (email: string) => PREFIXO_PESSOA + email.trim().toLowerCase();
+export const ehEnderecoDePessoa = (e: string | null | undefined): boolean =>
+  !!e && e.startsWith(PREFIXO_PESSOA);
+export const emailDoEndereco = (e: string): string => e.slice(PREFIXO_PESSOA.length);
+
+/**
+ * O endereço sob o qual ESTA pessoa atende, ou null se não há como saber (login
+ * por senha, sem e-mail — nesse caso ela só observa).
+ *
+ * Uma consulta por chamada, pela chave primária de `acesso`. Barata, e é o preço
+ * de não deixar o papel ativo decidir de quem é a conversa.
+ */
+export async function enderecoDeAtendimento(
+  sb: SupabaseClient,
+  sessao: string | null | undefined,
+  usuario: string | null | undefined,
+): Promise<string | null> {
+  // vendedor logado: o próprio cookie já é o slug, sem ida ao banco
+  const doCookie = carteiraDe(sessao);
+  if (doCookie) return doCookie;
+  if (!usuario || !usuario.includes("@")) return null;
+
+  const { data } = await sb.from("acesso").select("carteira,ativo").eq("email", usuario).maybeSingle();
+  if (data?.ativo === false) return null;
+  return data?.carteira ? String(data.carteira) : enderecoDePessoa(usuario);
+}
+
 // ---------------------------------------------------------------------------
 // SOU EU QUEM ATENDE ESTA CONVERSA?
 //
@@ -92,26 +153,17 @@ export function emLotes<T>(itens: T[], tamanho = 200): T[][] {
 //   · um consultor que abre a conversa de outro também está só conferindo.
 // Uma régua por papel erra nos três; esta acerta nos três com uma frase.
 //
-// `enderecosDeAtendimento` é o ponto de extensão: hoje uma pessoa só atende sob
-// a carteira dela, então quem não tem carteira não atende nada e nunca marca.
-// Quando admin/home/pós-venda ganharem atendimentos próprios, é AQUI que entra
-// o segundo endereço (o e-mail, sob o prefixo `u:`) — e a marca de leitura, o
-// transferir e o escopo passam a enxergá-lo juntos, sem cada um inventar o seu.
+// Quem não tem endereço de atendimento (login por senha, sem e-mail) apenas
+// observa: não marca leitura em conversa nenhuma.
 // ---------------------------------------------------------------------------
-export function enderecosDeAtendimento(
-  sessao: string | null | undefined,
-  _usuario?: string | null,
-): string[] {
-  const carteira = carteiraDe(sessao);
-  return carteira ? [carteira] : [];
-}
 
 /**
- * Duas consultas pontuais por id, em paralelo — o mesmo par que a rota de
- * transferência já faz para decidir permissão. A alternativa barata seria a
- * tela mandar "eu sou o dono": não serve. A aba pode estar aberta desde antes
- * de uma troca de papel (/api/trocar-papel reescreve o cookie sem recarregar a
- * página), e quem decide quem atende não pode ser quem está pedindo.
+ * Três consultas pontuais, sendo duas em paralelo — o mesmo par que a rota de
+ * transferência já faz para decidir permissão, mais o endereço de quem pergunta.
+ * A alternativa barata seria a tela mandar "eu sou o dono": não serve. A aba pode
+ * estar aberta desde antes de uma troca de papel (/api/trocar-papel reescreve o
+ * cookie sem recarregar a página), e quem decide quem atende não pode ser quem
+ * está pedindo.
  */
 export async function souDonoDaConversa(
   sb: SupabaseClient,
@@ -119,13 +171,13 @@ export async function souDonoDaConversa(
   sessao: string | null | undefined,
   usuario?: string | null,
 ): Promise<boolean> {
-  const meus = enderecosDeAtendimento(sessao, usuario);
-  if (!meus.length) return false;   // sem endereço de atendimento, não atende nada
+  const meu = await enderecoDeAtendimento(sb, sessao, usuario);
+  if (!meu) return false;   // sem endereço de atendimento, não atende nada
 
   const [{ data: linha }, atrib] = await Promise.all([
     sb.from("vw_funil").select("cliente_id,vendedor").eq("cliente_id", clienteId).maybeSingle(),
     carregarAtribuicoes(sb),
   ]);
   const dono = donoEfetivo(clienteId, (linha?.vendedor as string) ?? null, atrib);
-  return dono !== null && meus.includes(dono);
+  return dono !== null && dono === meu;
 }

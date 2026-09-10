@@ -5,6 +5,7 @@ import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
 import { nomeComCodigo } from "../lib/nomeCliente";
+import { rotuloDePapel } from "../lib/papel";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -1906,8 +1907,10 @@ export default function Page() {
               nome escolhido. Quem tem 1 papel só vê o pill estático (sem dropdown). */}
           {(() => {
             const multi = (sessao.papeis?.length ?? 0) > 1;
-            const rotulo = (r: string) => r === "admin" ? "Admin" : r === "home" ? "Home" : (cap(sessao.carteira ?? "") || "Vendedor");
-            const inicial = (r: string) => r === "admin" ? "A" : r === "home" ? "H" : cap(sessao.carteira ?? "?").charAt(0);
+            // `rotuloDePapel` é a fonte única (lib/papel); o vendedor continua
+            // aparecendo pelo nome da CARTEIRA, que é o que ele reconhece.
+            const rotulo = (r: string) => r === "vendedor" ? (cap(sessao.carteira ?? "") || "Vendedor") : rotuloDePapel(r);
+            const inicial = (r: string) => r === "vendedor" ? cap(sessao.carteira ?? "?").charAt(0) : rotuloDePapel(r).charAt(0);
             return (
               <div style={{ position: "relative", marginLeft: "auto" }}>
                 <button

@@ -374,7 +374,7 @@ type Nota = { id: number; autor: string; texto: string; criada_em: string };
 type Resposta = { id: number; atalho: string; titulo: string; corpo: string; carteira: string | null };
 // passagem de bastão registrada: aparece na thread onde aconteceu (0081)
 type Transferencia = {
-  id: number; de_carteira: string | null; para_carteira: string;
+  id: number; de_carteira: string | null; para_carteira: string | null;
   por: string; observacao: string | null; criada_em: string;
 };
 type Vendedor = { slug: string; cor: string | null };
@@ -1465,6 +1465,15 @@ export default function Chat() {
   // --- P1: transferência e busca no conteúdo --------------------------------
   const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  // Quem atende SEM carteira (admin, home, pós-venda). Endereço `u:<email>`,
+  // rótulo de gente. Lista separada de `vendedores` de propósito: aquela é
+  // `carteira_config`, a tabela de vendedor COM RCA que alimenta board,
+  // disparo em massa e relatórios — juntar as duas ali daria carteira de
+  // mentira a quem não tem (ver lib/chatEscopo).
+  const [atendentes, setAtendentes] = useState<{ endereco: string; nome: string; papel: string }[]>([]);
+  // o MEU endereço de atendimento, resolvido no servidor. Não dá para deduzir do
+  // papel: quem entra como admin pode ter carteira (o caso do Romulo).
+  const [meuEndereco, setMeuEndereco] = useState<string | null>(null);
   const [transferindo, setTransferindo] = useState(false);  // painel de destino aberto
   const [obsTransf, setObsTransf] = useState("");
   // --- ligações (0087): entram na thread como marco, ao lado das transferências
@@ -1598,6 +1607,8 @@ export default function Chat() {
       if (r.ok) {
         setConversas(j?.conversas ?? []);
         setVendedores(j?.vendedores ?? []);
+        setAtendentes(j?.atendentes ?? []);
+        setMeuEndereco(j?.meu_endereco ?? null);
         setLinhas(j?.linhas ?? []);
         if (j?.layout) setLayout(j.layout);
         setErro(null);
@@ -2170,15 +2181,14 @@ export default function Chat() {
     );
   }, [sel]);
 
-  // ESPELHO da régua do servidor (lib/chatEscopo.enderecosDeAtendimento). Uma
-  // pessoa atende sob os endereços que tem: hoje, só a carteira dela — quem não
-  // tem carteira (admin, home) não atende nada por padrão e apenas observa.
+  // ESPELHO da régua do servidor (lib/chatEscopo.enderecoDeAtendimento). Cada
+  // pessoa tem UM endereço: o slug da carteira, se tiver; senão `u:<email>`.
   //
   // Compara com `c.vendedor`, que já é o dono EFETIVO (o /api/chat aplica as
   // transferências antes de mandar), e não com a carteira crua do cliente: quem
   // pega uma conversa da fila passa a atendê-la de fato, e precisa marcá-la.
   const souQuemAtende = (c: Conversa) =>
-    !!sessao?.carteira && !!c.vendedor && c.vendedor === sessao.carteira;
+    !!meuEndereco && !!c.vendedor && c.vendedor === meuEndereco;
 
   function abrir(c: Conversa) {
     setSel(c); setMsgs(null); setCitadas({}); setNotas([]); setTransferencias([]); setAviso(null);
@@ -2217,12 +2227,16 @@ export default function Chat() {
   // puxar da fila: "pegar" é uma transferência de ninguém para mim. Reaproveita
   // /api/chat/transferir (append-only), que aceita origem nula justamente por isso.
   async function puxarDaFila() {
-    if (!sel || !sessao?.carteira || puxando) return;
+    // `meuEndereco`, e não `sessao.carteira`: quem atende sem carteira (admin,
+    // home, pós-venda) também pega da fila — é o pedido que originou o item 1.
+    // Com a guarda antiga, o clique não fazia NADA e nem avisava: a função
+    // retornava em silêncio.
+    if (!sel || !meuEndereco || puxando) return;
     setPuxando(true); setAviso(null);
     try {
       const r = await fetch("/api/chat/transferir", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: sel.cliente_id, para: sessao.carteira, observacao: "puxou da fila" }),
+        body: JSON.stringify({ cliente_id: sel.cliente_id, para: meuEndereco, observacao: "puxou da fila" }),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok) {
@@ -2234,7 +2248,7 @@ export default function Chat() {
         if (j?.perdeuACorrida) await carregarLista();
         return;
       }
-      setSel({ ...sel, na_fila: false, vendedor: sessao.carteira });
+      setSel({ ...sel, na_fila: false, vendedor: meuEndereco });
       await carregarLista();
       await carregarThread(sel, false);
     } catch (e: any) {
@@ -2991,6 +3005,39 @@ export default function Chat() {
   // não mostrava.
   for (const c of baseVend) if (c.linha_id) contaPorLinha.set(c.linha_id, (contaPorLinha.get(c.linha_id) ?? 0) + 1);
 
+  // ---- rótulo e cor de um endereço de atendimento -------------------------
+  // Um endereço é ou um slug de carteira ("milene") ou uma pessoa sem carteira
+  // ("u:lais@..."). A tela não pode mostrar o e-mail cru num chip, e quem sabe
+  // escrever o nome é quem cadastra — daí `acesso.nome` (0128).
+  const nomeAtendente = new Map(atendentes.map((a) => [a.endereco, a.nome]));
+  // Cor por PAPEL, e não de `carteira_config`: essas pessoas não têm linha lá.
+  // Púrpura é a marca (a casa), então serve para quem atende pela casa e não por
+  // uma carteira — e não briga com as cores das carteiras, que são todas outras.
+  const CORES_PAPEL: Record<string, string> = { admin: M.wine, home: M.roxo, "pos-venda": M.azul };
+  const papelAtendente = new Map(atendentes.map((a) => [a.endereco, a.papel]));
+  const rotuloEndereco = (e: string | null | undefined): string => {
+    if (!e) return "";
+    const n = nomeAtendente.get(e);
+    if (n) return n;
+    // endereço de pessoa que não está na lista (acesso desativado depois de
+    // receber a conversa): mostra o e-mail, que é feio mas verdadeiro — melhor
+    // que "u:lais@..." cru, e melhor que esconder de quem a conversa está
+    if (e.startsWith("u:")) return e.slice(2);
+    return cap(e);
+  };
+  // "carteira Fulano" só vale para quem TEM carteira. Para quem atende sem
+  // carteira a palavra seria falsa, e falsa no ponto exato que o pedido separa:
+  // a transferência de conversa não mexe em carteira nenhuma (§18). Daí dois
+  // textos, um lugar só.
+  const descreveDono = (e: string | null | undefined): string =>
+    !e ? "Sem dono" : e.startsWith("u:") ? `Atende ${rotuloEndereco(e)}` : `Carteira ${rotuloEndereco(e)}`;
+
+  const corEndereco = (e: string | null | undefined): string | null => {
+    if (!e) return null;
+    if (e.startsWith("u:")) return CORES_PAPEL[papelAtendente.get(e) ?? ""] ?? M.roxo;
+    return coresVend.get(e) ?? null;
+  };
+
   // vendedores que REALMENTE têm conversa aqui — a lista de carteira_config
   // traz gente sem nenhuma, e chip que filtra para o vazio só atrapalha
   const coresVend = new Map(vendedores.map((v) => [v.slug, v.cor]));
@@ -2998,7 +3045,7 @@ export default function Chat() {
     .sort()
     .map((slug) => ({
       slug,
-      cor: coresVend.get(slug) ?? null,
+      cor: corEndereco(slug),
       total: baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length,
     }));
 
@@ -3050,8 +3097,12 @@ export default function Chat() {
   // A diferença real está escrita na dica, porque duas filas com números
   // parecidos e sem explicação são piores que uma: esta é do escopo dele e
   // ignora a fila de espera; a outra varre tudo, inclusive quem não tem dono.
+  // ⚠️ A régua é "vê conversa que NÃO atende", e não "não tem endereço": desde o
+  // item 1 todo mundo tem endereço (a Lais atende sob `u:lais@…`), então
+  // `!meuEndereco` nunca seria verdade e a dica nova jamais apareceria — medido
+  // no navegador, mostrando a dica antiga para ela.
   const dicaDaFila = (k: Fila) =>
-    k === "pendentes" && !meuEndereco
+    k === "pendentes" && sessao?.role !== "vendedor"
       ? "a cliente falou e ninguém respondeu — abrir para conferir não tira daqui. Sem dono, veja “Todas sem resposta”"
       : FILAS.find((x) => x.k === k)?.dica;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
@@ -3647,7 +3698,7 @@ export default function Chat() {
                     >
                       <span style={{ fontSize: 12 }}>🧑‍💼</span>
                       {atual?.cor && <span style={{ width: 8, height: 8, borderRadius: 8, background: atual.cor }} />}
-                      {vendFiltro ? cap(vendFiltro) : "Todos os vendedores"}
+                      {vendFiltro ? rotuloEndereco(vendFiltro) : "Todos os vendedores"}
                       <span style={{ fontSize: 10.5, fontWeight: 800, opacity: 0.7 }}>
                         {atual ? atual.total : totalGeral}
                       </span>
@@ -3672,7 +3723,7 @@ export default function Chat() {
                                 {v.cor
                                   ? <span style={{ width: 8, height: 8, borderRadius: 8, background: v.cor, flexShrink: 0 }} />
                                   : <span style={{ width: 8, flexShrink: 0 }} />}
-                                {v.slug ? cap(v.slug) : "Todos os vendedores"}
+                                {v.slug ? rotuloEndereco(v.slug) : "Todos os vendedores"}
                                 <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: M.muted }}>{v.total}</span>
                               </button>
                             );
@@ -3839,13 +3890,13 @@ export default function Chat() {
                           {c.ultima_enviada_por === "operator" ? "Você: " : ""}{c.ultima_mensagem ?? "…"}
                         </span>
                         {c.transferida_de && (
-                          <span title={`recebida de ${cap(c.transferida_de)}`}
+                          <span title={`recebida de ${rotuloEndereco(c.transferida_de)}`}
                             style={{ fontSize: 9.5, fontWeight: 800, color: M.wine, background: "#f6e8f0", border: `1px solid ${M.border}`, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>
-                            ↪ {cap(c.transferida_de)}
+                            ↪ {rotuloEndereco(c.transferida_de)}
                           </span>
                         )}
                         {c.vendedor && sessao.carteira == null && (
-                          <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{cap(c.vendedor)}</span>
+                          <span title={descreveDono(c.vendedor)} style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{rotuloEndereco(c.vendedor)}</span>
                         )}
                         {!!presentes[c.cliente_id]?.length && (
                           <span title={`${presentes[c.cliente_id].join(", ")} com esta conversa aberta`}
@@ -4019,19 +4070,30 @@ export default function Chat() {
                           em cima custava exatamente a linha que o cabecalho tinha
                           acabado de ganhar. */}
                       {sel.telefone ?? "sem telefone"}
-                      {/* A carteira e uma TAG, com a cor do vendedor na aresta
-                          esquerda -- o mesmo desenho dos chips de "para quem"
-                          do Transferir. Como texto corrido depois do telefone
-                          ela lia como continuacao do numero; a cor tambem e o
-                          que deixa reconhecer a carteira sem ler a palavra. */}
+                      {/* O dono e uma TAG, com a cor dele na aresta esquerda -- o
+                          mesmo desenho dos chips de "para quem" do Transferir. Como
+                          texto corrido depois do telefone ela lia como continuacao
+                          do numero; a cor tambem e o que deixa reconhecer o dono sem
+                          ler a palavra.
+
+                          ⚠️ O RÓTULO NÃO É `cap(sel.vendedor)`. Desde as demandas da
+                          Lais, admin/home/pós-venda também atendem, e o dono pode ser
+                          uma pessoa SEM carteira — ali sairia
+                          "U:lais@muranoprofessional.com.br", sob a palavra "carteira",
+                          que é justamente o que essas pessoas não têm.
+                          `descreveDono` escolhe entre "Carteira Fulano" e "Atende
+                          Fulano", e `corEndereco` acha a cor nas duas fontes
+                          (carteira_config para vendedor, o papel para quem não tem). */}
                       {!compacto && sel.vendedor && (
-                        <span title={`Carteira ${cap(sel.vendedor)} — dono comercial do cliente, vindo do RCA no WinThor`}
+                        <span title={`${descreveDono(sel.vendedor)}${sel.vendedor.startsWith("u:")
+                            ? " — atende esta conversa no chat, sem carteira comercial"
+                            : " — dono comercial do cliente, vindo do RCA no WinThor"}`}
                           style={{ display: "inline-flex", alignItems: "center", marginLeft: 6, verticalAlign: "middle",
                             fontSize: 10, fontWeight: 700, color: M.ink, background: M.surface,
-                            border: `1px solid ${coresVend.get(sel.vendedor) ?? M.border}`,
-                            borderLeft: `3px solid ${coresVend.get(sel.vendedor) ?? M.roxo}`,
+                            border: `1px solid ${corEndereco(sel.vendedor) ?? M.border}`,
+                            borderLeft: `3px solid ${corEndereco(sel.vendedor) ?? M.roxo}`,
                             borderRadius: 6, padding: "1px 7px", whiteSpace: "nowrap" }}>
-                          carteira {cap(sel.vendedor)}
+                          {descreveDono(sel.vendedor).toLowerCase()}
                         </span>
                       )}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
@@ -4079,14 +4141,24 @@ export default function Chat() {
                       : { display: "contents" }}>
                   {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
                   {sel.na_fila && (
-                    sessao.carteira ? (
+                    // ⚠️ A régua é `meuEndereco`, não `sessao.carteira`. Antes, quem
+                    // não tinha carteira via no lugar do botão um selo dizendo
+                    // "admin/supervisão não têm carteira: use Transferir para
+                    // designar alguém" — ou seja, a tela AFIRMAVA que supervisão não
+                    // atende. É exatamente o que o item 1 desfaz: admin, home e
+                    // pós-venda pegam da fila como qualquer um, sob o próprio nome.
+                    //
+                    // O selo continua existindo para quem não tem endereço nenhum
+                    // (login por senha, sem e-mail): ali pegar de fato não é
+                    // possível, porque não há sob QUEM registrar o atendimento.
+                    meuEndereco ? (
                       <button onClick={puxarDaFila} disabled={puxando} title="Assumir este atendimento"
                         style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: "#1a6b3c", border: "none",
                           borderRadius: 999, padding: "6px 13px", cursor: puxando ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                         {puxando ? "…" : rot("✋", "✋ Pegar atendimento", "pegar", "Pegar atendimento")}
                       </button>
                     ) : (
-                      <span title="admin/supervisão não têm carteira: use Transferir para designar alguém"
+                      <span title="esta sessão não tem e-mail (login por senha), então não há sob quem registrar o atendimento: use Transferir para designar alguém"
                         style={{ fontSize: 10.5, fontWeight: 700, color: "#8a2f12", background: "#fdeae3", border: "1px solid #f0c4b0",
                           borderRadius: 999, padding: "4px 10px", whiteSpace: "nowrap" }}>
                         na fila — sem dono
@@ -4209,15 +4281,34 @@ export default function Chat() {
                       </div>
                     )}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                      {vendedores
-                        .filter((v) => v.slug !== (sel.vendedor ?? ""))
+                      {/* EU PRIMEIRO, e com nome próprio. "Passar para mim" é o
+                          gesto mais frequente de quem supervisiona: abre a
+                          conversa, vê que vai atender, e assume. Caçar o próprio
+                          nome no meio de dez botões para fazer isso é o tipo de
+                          atrito que faz a pessoa desistir e responder sem
+                          assumir — e aí a conversa fica sem dono e sem marca de
+                          leitura, que é o problema que o item 2 resolve. */}
+                      {!!meuEndereco && meuEndereco !== (sel.vendedor ?? "") && (
+                        <button onClick={() => transferir(meuEndereco)}
+                          style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: bc ? M.azul : M.roxo, border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+                          ✋ Para mim
+                        </button>
+                      )}
+                      {[
+                        ...vendedores.map((v) => ({ endereco: v.slug, nome: cap(v.slug), cor: v.cor as string | null })),
+                        // quem atende sem carteira entra na MESMA lista: o botão
+                        // não distingue, porque para quem transfere a pergunta é
+                        // só "quem vai atender"
+                        ...atendentes.map((a) => ({ endereco: a.endereco, nome: a.nome, cor: corEndereco(a.endereco) })),
+                      ]
+                        .filter((v) => v.endereco !== (sel.vendedor ?? "") && v.endereco !== meuEndereco)
                         .map((v) => (
-                          <button key={v.slug} onClick={() => transferir(v.slug)}
+                          <button key={v.endereco} onClick={() => transferir(v.endereco)}
                             style={{ fontSize: 12, fontWeight: 700, color: M.ink, background: M.surface, border: `1px solid ${v.cor ?? M.border}`, borderLeft: `4px solid ${v.cor ?? M.roxo}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
-                            {cap(v.slug)}
+                            {v.nome}
                           </button>
                         ))}
-                      {!vendedores.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando vendedores…</span>}
+                      {!vendedores.length && !atendentes.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando…</span>}
                     </div>
                     {!d1 && campoMotivoTransf}
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7 }}>
@@ -4321,8 +4412,16 @@ export default function Chat() {
                           return (
                             <div key={`t${t.id}`} style={{ display: "flex", justifyContent: "center", margin: "6px 0" }}>
                               <div style={{ maxWidth: "80%", textAlign: "center", fontSize: 11, color: M.gray, background: M.surface, border: `1px dashed ${M.border}`, borderRadius: 999, padding: "4px 14px", lineHeight: 1.5 }}>
-                                ↪ <b style={{ color: M.wine }}>{cap(t.de_carteira) || "sem dono"}</b> transferiu para{" "}
-                                <b style={{ color: M.roxo }}>{cap(t.para_carteira)}</b>
+                                ↪ <b style={{ color: M.wine }}>{rotuloEndereco(t.de_carteira) || "sem dono"}</b>{" "}
+                                {/* destino NULO é a devolução para a fila (0112) — sem
+                                    este ramo o marco terminava em "transferiu para ·",
+                                    com o nome em branco. E o rótulo passa por
+                                    `rotuloEndereco` porque `cap()` num endereço de
+                                    pessoa imprime "U:lais@muranoprofessional.com.br"
+                                    no meio da conversa (visto na tela). */}
+                                {t.para_carteira
+                                  ? <>transferiu para <b style={{ color: M.roxo }}>{rotuloEndereco(t.para_carteira)}</b></>
+                                  : <>devolveu para a <b style={{ color: M.roxo }}>fila de espera</b></>}
                                 <span style={{ color: M.muted }}> · {horaBR(t.criada_em)}</span>
                                 {t.observacao && (
                                   <div style={{ fontStyle: "italic", color: M.gray, marginTop: 2 }}>“{t.observacao}”</div>
@@ -4609,13 +4708,15 @@ export default function Chat() {
                      a janela de 24h é por par número+cliente, então errar a linha é
                      errar o envio. ---- */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 8, rowGap: 2, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0, textAlign: "center" }}>
-                  <span>{sel.vendedor ? `Carteira ${cap(sel.vendedor)}` : "Sem dono"}</span>
+                  <span>{descreveDono(sel.vendedor)}</span>
                   <span style={{ opacity: 0.5 }}>|</span>
                   <span>{linha ? linha.rotulo : "linha não identificada"}</span>
                   {sel.transferida_de && (
                     <>
                       <span style={{ opacity: 0.5 }}>|</span>
-                      <span title={`recebida de ${cap(sel.transferida_de)}`}>↪ de {cap(sel.transferida_de)}</span>
+                      {/* `rotuloEndereco`, não `cap`: quem passou a conversa pode ser
+                          alguém sem carteira, e ali sairia o e-mail cru. */}
+                      <span title={`recebida de ${rotuloEndereco(sel.transferida_de)}`}>↪ de {rotuloEndereco(sel.transferida_de)}</span>
                     </>
                   )}
                 </div>

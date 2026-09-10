@@ -2,7 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
-import { carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo } from "../../../lib/chatEscopo";
+import {
+  carregarAtribuicoes, aplicaEscopo, emLotes, donoEfetivo,
+  enderecoDeAtendimento, enderecoDePessoa,
+} from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
 import { lerCrmConfig, VIEW_FUNIL_TELA, modoMigracao } from "../../../lib/crmConfig";
 
@@ -124,11 +127,18 @@ export async function GET() {
   // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
-  const [{ data: leituras }, { data: estados }, { data: vendedores }, cfgLayout, meuAcesso, esperaRes] = await Promise.all([
+  const [{ data: leituras }, { data: estados }, { data: vendedores }, { data: pessoasQueAtendem }, cfgLayout, meuAcesso, esperaRes] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
+    // ...e quem atende SEM carteira: admin, home e pós-venda também têm
+    // atendimentos próprios (demandas da Lais). Vêm de `acesso`, não de
+    // `carteira_config` — dar carteira a quem não tem RCA contaminaria board,
+    // disparo em massa, relatórios e fila de prospecção (ver lib/chatEscopo).
+    // `carteira is null` é o filtro certo: quem tem carteira já está na lista
+    // acima, sob o slug, e apareceria duas vezes.
+    sb.from("acesso").select("email,nome,papel").eq("ativo", true).is("carteira", null).order("email"),
     // desenho da tela em vigor para todos (0095) e o piloto desta pessoa.
     // Entram NESTE Promise.all de propósito: o /chat faz um load único, e duas
     // consultas em série aqui custariam round-trip a cada abertura da tela.
@@ -217,10 +227,28 @@ export async function GET() {
     .filter((l) => l.total > 0)
     .sort((a, b) => b.total - a.total);
 
+  // Destinos de atendimento SEM carteira, no formato que a tela e a rota de
+  // transferência entendem. A cor não vem de `carteira_config` (eles não têm
+  // linha lá), então a tela pinta pelo papel — ver `CORES_PAPEL` no chat.
+  const atendentes = (pessoasQueAtendem ?? []).map((p: any) => ({
+    endereco: enderecoDePessoa(String(p.email)),
+    nome: (p.nome && String(p.nome).trim()) || String(p.email),
+    papel: String(p.papel ?? ""),
+  }));
+
+  // O MEU endereço de atendimento. A tela precisa dele para três coisas: saber
+  // se marca leitura ao abrir, saber o que é "meu" no filtro por vendedor, e não
+  // se oferecer como destino de transferência. Vem do servidor porque o cookie
+  // não basta: quem entra como admin pode ter carteira (o caso do Romulo), e o
+  // papel ativo não muda de quem é a conversa.
+  const meuEndereco = await enderecoDeAtendimento(sb, sessao, usuario);
+
   return Response.json({
     conversas,
     linhas,
     vendedores: vendedores ?? [],
+    atendentes,
+    meu_endereco: meuEndereco,
     nao_lidas: conversas.filter((c: any) => c.nao_lida && !c.na_fila).length,
     na_fila: conversas.filter((c: any) => c.na_fila).length,
     // qual desenho da tela esta pessoa deve ver (0095). O piloto ganha do

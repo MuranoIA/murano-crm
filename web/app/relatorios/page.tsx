@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { PAPEIS_QUE_VEEM_TUDO } from "../../lib/papel";
 
 const WINE = "#57163f", CYAN = "#0ea3dc", INK = "#142138", GRAY = "#7d8695", BORDER = "#e6e0e6", SURF = "#ffffff", BG = "#efe9ed";
 
@@ -151,7 +152,10 @@ export default function Relatorios() {
       .finally(() => setSessaoLoaded(true));
   }, []);
 
-  const veTudo = sessao?.role === "admin" || sessao?.role === "home";
+  // ⚠️ Era `role === "admin" || role === "home"` escrito à mão, e com o papel
+  // novo o pós-venda perderia as colunas de admin sem ninguém entender por quê.
+  // A régua mora em lib/papel — aqui o `role` já é o papel, não o cookie.
+  const veTudo = PAPEIS_QUE_VEEM_TUDO.includes(sessao?.role ?? "");
   const rel = RELATORIOS.find((r) => r.id === sel)!;
 
   const carregar = useCallback(async () => {
