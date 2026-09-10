@@ -260,13 +260,29 @@ const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
 ];
 
 // As "filas" da sidebar. No RD isto é o dropdown "Meus atendimentos" no alto da
-// lista; aqui são os mesmos quatro estados que os chips antigos filtravam — só
-// mudou a forma de escolher, não a regra (ver `filtradas`).
-type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "carteira";
-const FILAS: { k: Fila; icone: string; rotulo: string; dica: string }[] = [
+// lista; aqui são os mesmos estados que os chips antigos filtravam — só mudou
+// a forma de escolher, não a regra (ver `filtradas`). `soGestor` esconde a fila
+// de quem tem papel `vendedor`: a lista dele já vem cortada por carteira no
+// SERVIDOR (`/api/chat`), então "de todo o time" seria a mesma lista com um
+// nome que promete mais.
+type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "semresposta" | "carteira";
+const FILAS: { k: Fila; icone: string; rotulo: string; dica: string; soGestor?: boolean }[] = [
   { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
   { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
   { k: "fila", icone: "🚶", rotulo: "Fila de espera", dica: "sem dono — qualquer um pode pegar" },
+  // A fila do gestor. NÃO usa `nao_lida`, e essa é a decisão central dela:
+  // `nao_lida` compara o `chat_leitura` de QUEM ESTÁ OLHANDO, então um item
+  // "todas não lidas" construído em cima dele mediria o que o supervisor não
+  // abriu — e abrir para conferir apagaria o próprio número (medido em
+  // 01/09/2026: 2 clientes esperando, 0 "não lidas" para o admin, porque ele
+  // já tinha aberto as duas). A régua aqui é objetiva e não depende de quem
+  // leu: o cliente falou por último e ninguém respondeu. Some sozinha quando
+  // QUALQUER pessoa responde — o vendedor dono ou o supervisor —, que é o
+  // ponto de existir uma fila colaborativa.
+  // Inclui as sem dono de propósito: o rótulo diz "todas", e conversa que
+  // espera sem dono é justamente a que mais corre risco de ficar parada.
+  { k: "semresposta", icone: "⏳", rotulo: "Todas sem resposta", soGestor: true,
+    dica: "clientes de QUALQUER vendedor que falaram por último e ainda não foram respondidos" },
   { k: "resolvidas", icone: "✓", rotulo: "Encerradas", dica: "atendimentos já resolvidos" },
   // A carteira NÃO é um recorte da lista de conversas como as quatro acima: é a
   // agenda inteira do vendedor, buscada à parte e só quando aberta (§38).
@@ -2848,8 +2864,14 @@ export default function Chat() {
 
   const filtradas = noEscopo.filter((c) => {
     const st = c.status ?? "aberta";
-    // a fila é uma aba própria: sem dono, não polui as listas de quem tem dono
-    if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
+    // a fila é uma aba própria: sem dono, não polui as listas de quem tem dono.
+    // "Todas sem resposta" é a exceção: ela atravessa o recorte de dono porque
+    // é a visão do supervisor sobre o time inteiro, e conversa sem dono é
+    // exatamente a que ninguém está olhando.
+    if (filtro === "semresposta") {
+      if (st === "resolvida") return false;
+      if (c.ultima_enviada_por !== "customer") return false;
+    } else if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
     if (filtro === "pendentes" && !(st === "aberta" && c.nao_lida)) return false;
     if (filtro === "resolvidas" && st !== "resolvida") return false;
     if (filtro === "todas" && st === "resolvida") return false; // resolvida sai da fila
@@ -2869,6 +2891,12 @@ export default function Chat() {
   const contaResolvidas = noEscopo.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
   const contaFila = noEscopo.filter((c) => c.na_fila).length;
   const contaPendentes = noEscopo.filter((c) => c.nao_lida && !c.na_fila).length;
+  // conta CONVERSAS, como as outras quatro — se contasse mensagens seria o
+  // único número da tela medindo outra coisa, e "18" viraria dois valores
+  // diferentes conforme o chip.
+  const contaSemResposta = noEscopo.filter(
+    (c) => c.ultima_enviada_por === "customer" && (c.status ?? "aberta") !== "resolvida",
+  ).length;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
   const jaNaLista = new Set(ordenadas.map((c) => c.cliente_id));
   // a busca no conteúdo respeita o filtro por vendedor (o servidor devolve o
@@ -3255,9 +3283,10 @@ export default function Chat() {
                   <>
                     <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
                     <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, zIndex: 101, minWidth: 262, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
-                      {FILAS.map((f) => {
+                      {FILAS.filter((f) => !f.soGestor || sessao.role !== "vendedor").map((f) => {
                         const n = f.k === "pendentes" ? contaPendentes
                           : f.k === "fila" ? contaFila
+                          : f.k === "semresposta" ? contaSemResposta
                           : f.k === "resolvidas" ? contaResolvidas
                           : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
@@ -3267,7 +3296,7 @@ export default function Chat() {
                             <span style={{ fontSize: 14, width: 18, textAlign: "center" }}>{f.icone}</span>
                             <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
                             {n > 0 && (
-                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
+                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
                                 {n}
                               </span>
                             )}
@@ -3294,15 +3323,25 @@ export default function Chat() {
                     { k: "pendentes" as Fila, r: "Esperando", n: contaPendentes, cor: M.laranja },
                     { k: "todas" as Fila, r: "Meus", n: noEscopo.filter((c) => (c.status ?? "aberta") !== "resolvida" && !c.na_fila).length, cor: M.azul },
                     { k: "fila" as Fila, r: "Sem dono", n: contaFila, cor: M.azul },
+                    // o quinto chip só existe para admin/home; para o vendedor
+                    // seria a mesma lista de sempre com outro nome
+                    ...(sessao.role !== "vendedor"
+                      ? [{ k: "semresposta" as Fila, r: "Do time", n: contaSemResposta, cor: M.laranja }]
+                      : []),
                     { k: "resolvidas" as Fila, r: "Encerradas", n: contaResolvidas, cor: M.gray },
-                  ]).map((f) => {
+                  ]).map((f, _i, chips) => {
                     const on = filtro === f.k;
                     const vazia = f.n === 0;
+                    // com o quinto chip o rótulo não cabe mais em 9,5px: aperta
+                    // a fonte e as laterais em vez de deixar "Encerra…" e
+                    // "Espera…" cortados. O número é o que a faixa entrega —
+                    // ele não encolhe.
+                    const cinco = chips.length > 4;
                     return (
                       <button key={f.k} onClick={() => setFiltro(f.k)}
                         title={FILAS.find((x) => x.k === f.k)?.dica}
                         style={{
-                          flex: 1, minWidth: 0, padding: "5px 4px 6px", cursor: "pointer", fontFamily: "inherit",
+                          flex: 1, minWidth: 0, padding: cinco ? "5px 1px 6px" : "5px 4px 6px", cursor: "pointer", fontFamily: "inherit",
                           borderRadius: 9, textAlign: "center", lineHeight: 1.15,
                           background: on ? M.surface : M.bg,
                           border: `1px solid ${on ? f.cor : M.border}`,
@@ -3310,7 +3349,7 @@ export default function Chat() {
                         }}>
                         <div style={{ fontSize: 15, fontWeight: 800, fontVariantNumeric: "tabular-nums",
                           color: vazia ? M.muted : f.cor }}>{f.n}</div>
-                        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.2, color: M.gray,
+                        <div style={{ fontSize: cinco ? 8.6 : 9.5, fontWeight: 700, letterSpacing: cinco ? 0 : 0.2, color: M.gray,
                           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.r}</div>
                       </button>
                     );
@@ -3789,7 +3828,22 @@ export default function Chat() {
                           logo abaixo ("Carteira Milene | Murano Pro"). Repetir ali
                           em cima custava exatamente a linha que o cabecalho tinha
                           acabado de ganhar. */}
-                      {sel.telefone ?? "sem telefone"}{!acoesSoIcone && sel.vendedor ? ` · carteira ${cap(sel.vendedor)}` : ""}
+                      {sel.telefone ?? "sem telefone"}
+                      {/* A carteira e uma TAG, com a cor do vendedor na aresta
+                          esquerda -- o mesmo desenho dos chips de "para quem"
+                          do Transferir. Como texto corrido depois do telefone
+                          ela lia como continuacao do numero; a cor tambem e o
+                          que deixa reconhecer a carteira sem ler a palavra. */}
+                      {!compacto && sel.vendedor && (
+                        <span title={`Carteira ${cap(sel.vendedor)} — dono comercial do cliente, vindo do RCA no WinThor`}
+                          style={{ display: "inline-flex", alignItems: "center", marginLeft: 6, verticalAlign: "middle",
+                            fontSize: 10, fontWeight: 700, color: M.ink, background: M.surface,
+                            border: `1px solid ${coresVend.get(sel.vendedor) ?? M.border}`,
+                            borderLeft: `3px solid ${coresVend.get(sel.vendedor) ?? M.roxo}`,
+                            borderRadius: 6, padding: "1px 7px", whiteSpace: "nowrap" }}>
+                          carteira {cap(sel.vendedor)}
+                        </span>
+                      )}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
                           ativa, é o que evita responder pela linha errada (a janela
                           de 24h é por par número+cliente) */}
@@ -4984,6 +5038,9 @@ export default function Chat() {
             { k: "pendentes" as Fila, i: "🔔", r: "Esperando", n: contaPendentes },
             { k: "todas" as Fila, i: "💬", r: "Meus", n: noEscopo.filter((c) => (c.status ?? "aberta") !== "resolvida" && !c.na_fila).length },
             { k: "fila" as Fila, i: "🚶", r: "Sem dono", n: contaFila },
+            ...(sessao.role !== "vendedor"
+              ? [{ k: "semresposta" as Fila, i: "⏳", r: "Do time", n: contaSemResposta }]
+              : []),
             { k: "resolvidas" as Fila, i: "✓", r: "Encerradas", n: contaResolvidas },
           ]).map((f) => {
             const on = filtro === f.k;
@@ -4996,7 +5053,7 @@ export default function Chat() {
                   {f.i}
                   {f.n > 0 && (
                     <span style={{ position: "absolute", top: -4, right: -11, minWidth: 15, height: 15, padding: "0 3px",
-                      boxSizing: "border-box", borderRadius: 999, background: f.k === "pendentes" ? M.laranja : M.azul,
+                      boxSizing: "border-box", borderRadius: 999, background: f.k === "pendentes" || f.k === "semresposta" ? M.laranja : M.azul,
                       color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center",
                       justifyContent: "center", fontVariantNumeric: "tabular-nums" }}>
                       {f.n > 99 ? "99+" : f.n}
