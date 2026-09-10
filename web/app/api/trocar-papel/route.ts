@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { tokenDePapel, type Papel } from "../../../lib/papel";
+import { tokenDePapel, ehPapel, type Papel } from "../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,10 @@ export async function POST(req: Request) {
   if (!email) return NextResponse.json({ error: "sem e-mail de sessão (entre novamente com Google)" }, { status: 401 });
 
   const papel = (await req.json().then((b: any) => b?.papel).catch(() => undefined)) as Papel | undefined;
-  if (!papel || !["admin", "home", "vendedor"].includes(papel)) {
+  // `ehPapel` em vez da lista à mão: era o quarto lugar com os papéis escritos
+  // literalmente, e o `pos-venda` teria ficado de fora justamente aqui — quem
+  // tem dois papéis trocaria de chapéu e receberia "papel inválido".
+  if (!papel || !ehPapel(papel)) {
     return NextResponse.json({ error: "papel inválido" }, { status: 400 });
   }
 

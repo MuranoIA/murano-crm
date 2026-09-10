@@ -385,7 +385,7 @@ type Nota = { id: number; autor: string; texto: string; criada_em: string };
 type Resposta = { id: number; atalho: string; titulo: string; corpo: string; carteira: string | null };
 // passagem de bastão registrada: aparece na thread onde aconteceu (0081)
 type Transferencia = {
-  id: number; de_carteira: string | null; para_carteira: string;
+  id: number; de_carteira: string | null; para_carteira: string | null;
   por: string; observacao: string | null; criada_em: string;
 };
 type Vendedor = { slug: string; cor: string | null };
@@ -1210,6 +1210,23 @@ export default function Chat() {
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<Conversa | null>(null);
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
+  // Mensagens CITADAS que não estão no lote carregado — a foto respondida lá
+  // atrás. Acumula (nunca substitui): `carregarAntigas` traz outro lote e as
+  // citadas dele têm de se somar às que já vieram, senão a bolha do topo perde
+  // o trecho justamente enquanto a pessoa rola para lê-la.
+  const [citadas, setCitadas] = useState<Record<string, Msg>>({});
+
+  const guardarCitadas = (lista: any[]) => {
+    if (!lista?.length) return;
+    setCitadas((c) => {
+      const n = { ...c };
+      for (const m of lista) if (m?.id) n[m.id] = m as Msg;
+      return n;
+    });
+  };
+  /** O alvo de uma citação: primeiro no lote em tela, senão no que o servidor mandou à parte. */
+  const acharCitada = (id: string): Msg | null =>
+    (msgs ?? []).find((x) => x.id === id) ?? citadas[id] ?? null;
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -1459,6 +1476,15 @@ export default function Chat() {
   // --- P1: transferência e busca no conteúdo --------------------------------
   const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  // Quem atende SEM carteira (admin, home, pós-venda). Endereço `u:<email>`,
+  // rótulo de gente. Lista separada de `vendedores` de propósito: aquela é
+  // `carteira_config`, a tabela de vendedor COM RCA que alimenta board,
+  // disparo em massa e relatórios — juntar as duas ali daria carteira de
+  // mentira a quem não tem (ver lib/chatEscopo).
+  const [atendentes, setAtendentes] = useState<{ endereco: string; nome: string; papel: string }[]>([]);
+  // o MEU endereço de atendimento, resolvido no servidor. Não dá para deduzir do
+  // papel: quem entra como admin pode ter carteira (o caso do Romulo).
+  const [meuEndereco, setMeuEndereco] = useState<string | null>(null);
   const [transferindo, setTransferindo] = useState(false);  // painel de destino aberto
   const [obsTransf, setObsTransf] = useState("");
   // --- ligações (0087): entram na thread como marco, ao lado das transferências
@@ -1592,6 +1618,8 @@ export default function Chat() {
       if (r.ok) {
         setConversas(j?.conversas ?? []);
         setVendedores(j?.vendedores ?? []);
+        setAtendentes(j?.atendentes ?? []);
+        setMeuEndereco(j?.meu_endereco ?? null);
         setLinhas(j?.linhas ?? []);
         if (j?.layout) setLayout(j.layout);
         setErro(null);
@@ -1632,6 +1660,7 @@ export default function Chat() {
     // O criterio e o unico defensavel: o que for estritamente mais novo que a
     // linha mais recente da foto chegou DEPOIS dela, entao sobrevive.
     setMsgs((atual) => juntar(atual, j?.mensagens ?? []));
+    guardarCitadas(j?.citadas ?? []);
     setCanalEnvio(j?.canal_envio ?? null);
     setLinhaEnvio(j?.linha_envio ?? null);
     setOcultas(j?.historico_oculto ?? 0);
@@ -1703,6 +1732,7 @@ export default function Chat() {
     const cx = rolagemRef.current;
     const noFim = !cx || cx.scrollHeight - cx.scrollTop - cx.clientHeight < 120;
     setMsgs((atual) => juntar(atual, novas, true));
+    guardarCitadas(j?.citadas ?? []);
     if (noFim) setTimeout(() => fimRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
     return novas.length;
   }, [carregarThread]);
@@ -1739,6 +1769,7 @@ export default function Chat() {
       setTemMais(!!j?.tem_mais);
       if (!lote.length) return;
       setMsgs((atual) => [...lote, ...(atual ?? [])]);
+      guardarCitadas(j?.citadas ?? []);
       // depois do render, devolve a posição de leitura
       setTimeout(() => {
         const el = rolagemRef.current;
@@ -2161,8 +2192,17 @@ export default function Chat() {
     );
   }, [sel]);
 
+  // ESPELHO da régua do servidor (lib/chatEscopo.enderecoDeAtendimento). Cada
+  // pessoa tem UM endereço: o slug da carteira, se tiver; senão `u:<email>`.
+  //
+  // Compara com `c.vendedor`, que já é o dono EFETIVO (o /api/chat aplica as
+  // transferências antes de mandar), e não com a carteira crua do cliente: quem
+  // pega uma conversa da fila passa a atendê-la de fato, e precisa marcá-la.
+  const souQuemAtende = (c: Conversa) =>
+    !!meuEndereco && !!c.vendedor && c.vendedor === meuEndereco;
+
   function abrir(c: Conversa) {
-    setSel(c); setMsgs(null); setNotas([]); setTransferencias([]); setAviso(null);
+    setSel(c); setMsgs(null); setCitadas({}); setNotas([]); setTransferencias([]); setAviso(null);
     setResolvendo(false); setContato(null); setTransferindo(false);
     setModoNota(false); setPicker(false); setNovaAberta(false);
     // o compositor guarda o nome da cliente ANTERIOR nos campos: deixá-lo aberto
@@ -2175,14 +2215,22 @@ export default function Chat() {
     carregarThread(c);
     // painel do contato (WinThor) — falha aqui não atrapalha a conversa
     carregarContatoDe(c.cliente_id);
-    // marca como lida (otimista na lista; o servidor guarda a marca por usuário)
-    if (c.nao_lida) {
-      setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
+    // marca como lida (otimista na lista; o servidor guarda a marca por usuário).
+    //
+    // SÓ QUEM ATENDE MARCA. Abrir a conversa de outra pessoa é conferência, não
+    // atendimento: marcar apagaria o próprio número de "esperando resposta" no
+    // gesto de olhar. Quem decide é o servidor (/api/chat/lida) — a guarda aqui
+    // evita o OTIMISMO, que tiraria o negrito na hora e o traria de volta na
+    // recarga seguinte da lista, que é pior que nunca tirar.
+    if (souQuemAtende(c)) {
+      if (c.nao_lida) {
+        setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
+      }
+      fetch("/api/chat/lida", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: c.cliente_id }),
+      }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
     }
-    fetch("/api/chat/lida", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cliente_id: c.cliente_id }),
-    }).catch(() => { /* silencioso: a marca é conveniência, não bloqueia o uso */ });
     // recado interno: o aviso some porque a pessoa CHEGOU onde o bilhete
     // estava, sem um botão de "ok, dispensar" — mesma ideia da marca de
     // leitura. Só chama quando há o que marcar: sem esta guarda, toda abertura
@@ -2201,12 +2249,16 @@ export default function Chat() {
   // puxar da fila: "pegar" é uma transferência de ninguém para mim. Reaproveita
   // /api/chat/transferir (append-only), que aceita origem nula justamente por isso.
   async function puxarDaFila() {
-    if (!sel || !sessao?.carteira || puxando) return;
+    // `meuEndereco`, e não `sessao.carteira`: quem atende sem carteira (admin,
+    // home, pós-venda) também pega da fila — é o pedido que originou o item 1.
+    // Com a guarda antiga, o clique não fazia NADA e nem avisava: a função
+    // retornava em silêncio.
+    if (!sel || !meuEndereco || puxando) return;
     setPuxando(true); setAviso(null);
     try {
       const r = await fetch("/api/chat/transferir", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: sel.cliente_id, para: sessao.carteira, observacao: "puxou da fila" }),
+        body: JSON.stringify({ cliente_id: sel.cliente_id, para: meuEndereco, observacao: "puxou da fila" }),
       });
       const j = await r.json().catch(() => null);
       if (!r.ok) {
@@ -2218,7 +2270,7 @@ export default function Chat() {
         if (j?.perdeuACorrida) await carregarLista();
         return;
       }
-      setSel({ ...sel, na_fila: false, vendedor: sessao.carteira });
+      setSel({ ...sel, na_fila: false, vendedor: meuEndereco });
       await carregarLista();
       await carregarThread(sel, false);
     } catch (e: any) {
@@ -2323,6 +2375,108 @@ export default function Chat() {
   // Prévia é de UMA conversa: trocar de cliente com áudio pendente e clicar em
   // Enviar mandaria a gravação para a pessoa errada.
   useEffect(() => { soltarPrevia(); }, [sel?.cliente_id]);
+
+  // ==========================================================================
+  // COLAR (Ctrl+V) E ARRASTAR ARQUIVO PARA DENTRO DA CONVERSA
+  //
+  // Era a falta mais sentida contra o RD e o WhatsApp Web: existia só o botão de
+  // clipe, então a foto que a pessoa já tinha na área de transferência precisava
+  // primeiro virar arquivo salvo no disco para poder ser enviada.
+  //
+  // Não abre caminho novo de envio: os dois gestos desembocam em `enviarArquivos`,
+  // que já faz a fila sequencial, o corte por tamanho e a tradução de erro.
+  //
+  // MAS PASSAM POR CONFIRMAÇÃO, e o botão de clipe não passa. A diferença é o
+  // acidente: escolher no seletor de arquivos é deliberado; soltar o mouse alguns
+  // pixels adiante, ou colar num campo que não era o esperado, não é. E mensagem
+  // enviada não se apaga — a Cloud API não tem esse endpoint (§49), então o erro
+  // fica na tela da cliente para sempre. A prévia custa um clique e é o mesmo
+  // freio que o áudio gravado já tem logo acima.
+  // ==========================================================================
+  const [pendentes, setPendentes] = useState<{ files: File[]; urls: (string | null)[] } | null>(null);
+  const [sobreSoltar, setSobreSoltar] = useState(false);
+  // `dragleave` dispara também ao cruzar a borda de qualquer FILHO, então um
+  // booleano simples apagaria o aviso no meio do caminho, com o arquivo ainda
+  // pairando. O contador de profundidade é o jeito conhecido de saber que se
+  // saiu do container de verdade.
+  const arrastoFundo = useRef(0);
+  const urlsPrevia = useRef<string[]>([]);
+
+  function limparUrlsPrevia() {
+    for (const u of urlsPrevia.current) URL.revokeObjectURL(u);
+    urlsPrevia.current = [];
+  }
+  function soltarPendentes() { limparUrlsPrevia(); setPendentes(null); }
+
+  // URL de blob vive até alguém revogar. Acumular no ref (em vez de amarrar a
+  // um efeito por `pendentes`) é o que permite ACRESCENTAR arquivos ao lote sem
+  // revogar as miniaturas que já estavam na tela.
+  useEffect(() => () => limparUrlsPrevia(), []);
+
+  // Mesmo cuidado do áudio: lote pendente é de UMA conversa. Trocar de cliente e
+  // clicar em Enviar mandaria as fotos para a pessoa errada.
+  useEffect(() => { soltarPendentes(); }, [sel?.cliente_id]);
+
+  /**
+   * Imagem vinda da área de transferência não tem nome: o navegador entrega
+   * "image.png" para toda e qualquer uma. Cinco prints colados chegariam à
+   * cliente como cinco "image.png", indistinguíveis na lista de arquivos dela.
+   */
+  function nomearColado(f: File, i: number): File {
+    if (f.name && !/^image\.(png|jpe?g|webp|gif)$/i.test(f.name)) return f;
+    const ext = ((f.type.split("/")[1] || "png").split("+")[0]).replace("jpeg", "jpg");
+    const d = new Date(), p = (n: number) => String(n).padStart(2, "0");
+    const carimbo = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    return new File([f], `foto-${carimbo}${i ? `-${i + 1}` : ""}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  }
+
+  const LIMITE_PENDENTES = 30;   // o mesmo teto que `enviarArquivos` já aplica
+
+  function receberArquivos(brutos: File[], colados: boolean) {
+    if (!brutos.length) return;
+    if (!sel) { setAviso("Abra uma conversa antes de soltar o arquivo aqui."); return; }
+    if (enviandoArquivo) { setAviso("Espere o envio em andamento terminar para anexar outros."); return; }
+    const files = colados ? brutos.map(nomearColado) : brutos;
+    setPendentes((p) => {
+      const antes = p?.files ?? [];
+      const espaco = Math.max(0, LIMITE_PENDENTES - antes.length);
+      if (!espaco) { setAviso(`Máximo de ${LIMITE_PENDENTES} arquivos por vez.`); return p; }
+      const add = files.slice(0, espaco);
+      if (add.length < files.length) setAviso(`Máximo de ${LIMITE_PENDENTES} arquivos por vez — os últimos ficaram de fora.`);
+      return {
+        files: [...antes, ...add],
+        // miniatura só de imagem: para PDF e áudio o navegador não desenha nada
+        // útil, e o nome do arquivo diz mais do que um retângulo vazio.
+        urls: [...(p?.urls ?? []), ...add.map((f) => {
+          if (!f.type.startsWith("image/")) return null;
+          const u = URL.createObjectURL(f);
+          urlsPrevia.current.push(u);
+          return u;
+        })],
+      };
+    });
+  }
+
+  function tirarPendente(i: number) {
+    setPendentes((p) => {
+      if (!p) return p;
+      const u = p.urls[i];
+      if (u) { URL.revokeObjectURL(u); urlsPrevia.current = urlsPrevia.current.filter((x) => x !== u); }
+      const files = p.files.filter((_, k) => k !== i);
+      return files.length ? { files, urls: p.urls.filter((_, k) => k !== i) } : null;
+    });
+  }
+
+  async function enviarPendentes() {
+    const p = pendentes;
+    if (!p || enviandoArquivo) return;
+    soltarPendentes();     // revogar as URLs não invalida os File: o envio usa os File
+    await enviarArquivos(p.files);
+  }
+
+  /** Arrasto de texto ou de link não deve acender o aviso de soltar arquivo. */
+  const arrastaArquivo = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
   async function alternarGravacao() {
     if (gravando) { recRef.current?.stop(); return; }
@@ -2873,6 +3027,39 @@ export default function Chat() {
   // não mostrava.
   for (const c of baseVend) if (c.linha_id) contaPorLinha.set(c.linha_id, (contaPorLinha.get(c.linha_id) ?? 0) + 1);
 
+  // ---- rótulo e cor de um endereço de atendimento -------------------------
+  // Um endereço é ou um slug de carteira ("milene") ou uma pessoa sem carteira
+  // ("u:lais@..."). A tela não pode mostrar o e-mail cru num chip, e quem sabe
+  // escrever o nome é quem cadastra — daí `acesso.nome` (0128).
+  const nomeAtendente = new Map(atendentes.map((a) => [a.endereco, a.nome]));
+  // Cor por PAPEL, e não de `carteira_config`: essas pessoas não têm linha lá.
+  // Púrpura é a marca (a casa), então serve para quem atende pela casa e não por
+  // uma carteira — e não briga com as cores das carteiras, que são todas outras.
+  const CORES_PAPEL: Record<string, string> = { admin: M.wine, home: M.roxo, "pos-venda": M.azul };
+  const papelAtendente = new Map(atendentes.map((a) => [a.endereco, a.papel]));
+  const rotuloEndereco = (e: string | null | undefined): string => {
+    if (!e) return "";
+    const n = nomeAtendente.get(e);
+    if (n) return n;
+    // endereço de pessoa que não está na lista (acesso desativado depois de
+    // receber a conversa): mostra o e-mail, que é feio mas verdadeiro — melhor
+    // que "u:lais@..." cru, e melhor que esconder de quem a conversa está
+    if (e.startsWith("u:")) return e.slice(2);
+    return cap(e);
+  };
+  // "carteira Fulano" só vale para quem TEM carteira. Para quem atende sem
+  // carteira a palavra seria falsa, e falsa no ponto exato que o pedido separa:
+  // a transferência de conversa não mexe em carteira nenhuma (§18). Daí dois
+  // textos, um lugar só.
+  const descreveDono = (e: string | null | undefined): string =>
+    !e ? "Sem dono" : e.startsWith("u:") ? `Atende ${rotuloEndereco(e)}` : `Carteira ${rotuloEndereco(e)}`;
+
+  const corEndereco = (e: string | null | undefined): string | null => {
+    if (!e) return null;
+    if (e.startsWith("u:")) return CORES_PAPEL[papelAtendente.get(e) ?? ""] ?? M.roxo;
+    return coresVend.get(e) ?? null;
+  };
+
   // vendedores que REALMENTE têm conversa aqui — a lista de carteira_config
   // traz gente sem nenhuma, e chip que filtra para o vazio só atrapalha
   const coresVend = new Map(vendedores.map((v) => [v.slug, v.cor]));
@@ -2880,7 +3067,7 @@ export default function Chat() {
     .sort()
     .map((slug) => ({
       slug,
-      cor: coresVend.get(slug) ?? null,
+      cor: corEndereco(slug),
       total: baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length,
     }));
 
@@ -2932,6 +3119,27 @@ export default function Chat() {
   const contaSemResposta = noEscopo.filter(
     (c) => c.ultima_enviada_por === "customer" && (c.status ?? "aberta") !== "resolvida",
   ).length;
+
+  // A dica de "Mensagens não lidas" muda de sentido conforme quem olha, porque a
+  // régua mudou: quem não atende a conversa não marca leitura ao abrir (ver
+  // `abrir`), então para essa pessoa a fila não esvazia quando ela LÊ — esvazia
+  // quando alguém RESPONDE. Um texto só descreveria a régua errada para metade
+  // da equipe.
+  //
+  // ⚠️ E para o gestor essa fila passa a ser MUITO parecida com a "Todas sem
+  // resposta", que nasceu no mesmo dia por outra frente: sem marca de leitura,
+  // `nao_lida` vira "a cliente falou por último", que é quase a régua daquela.
+  // A diferença real está escrita na dica, porque duas filas com números
+  // parecidos e sem explicação são piores que uma: esta é do escopo dele e
+  // ignora a fila de espera; a outra varre tudo, inclusive quem não tem dono.
+  // ⚠️ A régua é "vê conversa que NÃO atende", e não "não tem endereço": desde o
+  // item 1 todo mundo tem endereço (a Lais atende sob `u:lais@…`), então
+  // `!meuEndereco` nunca seria verdade e a dica nova jamais apareceria — medido
+  // no navegador, mostrando a dica antiga para ela.
+  const dicaDaFila = (k: Fila) =>
+    k === "pendentes" && sessao?.role !== "vendedor"
+      ? "a cliente falou e ninguém respondeu — abrir para conferir não tira daqui. Sem dono, veja “Todas sem resposta”"
+      : FILAS.find((x) => x.k === k)?.dica;
   // resultados da busca por conteúdo que a lista local já não mostrou pelo nome
   const jaNaLista = new Set(ordenadas.map((c) => c.cliente_id));
   // a busca no conteúdo respeita o filtro por vendedor (o servidor devolve o
@@ -3350,7 +3558,7 @@ export default function Chat() {
                           : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
                         return (
-                          <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={f.dica}
+                          <button key={f.k} onClick={() => { setFiltro(f.k); setMenuFila(false); }} title={dicaDaFila(f.k)}
                             style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit" }}>
                             <span style={{ fontSize: 14, width: 18, textAlign: "center" }}>{f.icone}</span>
                             <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
@@ -3398,7 +3606,7 @@ export default function Chat() {
                     const cinco = chips.length > 4;
                     return (
                       <button key={f.k} onClick={() => setFiltro(f.k)}
-                        title={FILAS.find((x) => x.k === f.k)?.dica}
+                        title={dicaDaFila(f.k)}
                         style={{
                           flex: 1, minWidth: 0, padding: cinco ? "5px 1px 6px" : "5px 4px 6px", cursor: "pointer", fontFamily: "inherit",
                           borderRadius: 9, textAlign: "center", lineHeight: 1.15,
@@ -3549,7 +3757,7 @@ export default function Chat() {
                     >
                       <span style={{ fontSize: 12 }}>🧑‍💼</span>
                       {atual?.cor && <span style={{ width: 8, height: 8, borderRadius: 8, background: atual.cor }} />}
-                      {vendFiltro ? cap(vendFiltro) : "Todos os vendedores"}
+                      {vendFiltro ? rotuloEndereco(vendFiltro) : "Todos os vendedores"}
                       <span style={{ fontSize: 10.5, fontWeight: 800, opacity: 0.7 }}>
                         {atual ? atual.total : totalGeral}
                       </span>
@@ -3574,7 +3782,7 @@ export default function Chat() {
                                 {v.cor
                                   ? <span style={{ width: 8, height: 8, borderRadius: 8, background: v.cor, flexShrink: 0 }} />
                                   : <span style={{ width: 8, flexShrink: 0 }} />}
-                                {v.slug ? cap(v.slug) : "Todos os vendedores"}
+                                {v.slug ? rotuloEndereco(v.slug) : "Todos os vendedores"}
                                 <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: M.muted }}>{v.total}</span>
                               </button>
                             );
@@ -3760,13 +3968,13 @@ export default function Chat() {
                           </span>
                         )}
                         {c.transferida_de && (
-                          <span title={`recebida de ${cap(c.transferida_de)}`}
+                          <span title={`recebida de ${rotuloEndereco(c.transferida_de)}`}
                             style={{ fontSize: 9.5, fontWeight: 800, color: M.wine, background: "#f6e8f0", border: `1px solid ${M.border}`, borderRadius: 999, padding: "1px 6px", flexShrink: 0 }}>
-                            ↪ {cap(c.transferida_de)}
+                            ↪ {rotuloEndereco(c.transferida_de)}
                           </span>
                         )}
                         {c.vendedor && sessao.carteira == null && (
-                          <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{cap(c.vendedor)}</span>
+                          <span title={descreveDono(c.vendedor)} style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", color: M.roxo, background: M.roxoSoft, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>{rotuloEndereco(c.vendedor)}</span>
                         )}
                         {!!presentes[c.cliente_id]?.length && (
                           <span title={`${presentes[c.cliente_id].join(", ")} com esta conversa aberta`}
@@ -3863,7 +4071,40 @@ export default function Chat() {
 
         {/* ---- thread ---- */}
         {mostraThread && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: M.bgThread }}>
+          <div
+            onDragEnter={(e) => { if (!arrastaArquivo(e)) return; e.preventDefault(); arrastoFundo.current++; setSobreSoltar(true); }}
+            onDragOver={(e) => { if (!arrastaArquivo(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+            onDragLeave={(e) => {
+              if (!arrastaArquivo(e)) return;
+              arrastoFundo.current = Math.max(0, arrastoFundo.current - 1);
+              if (!arrastoFundo.current) setSobreSoltar(false);
+            }}
+            onDrop={(e) => {
+              if (!arrastaArquivo(e)) return;
+              // sem o preventDefault o navegador ABRE o arquivo, trocando a
+              // aba do CRM pela foto — e o trabalho em andamento se perde
+              e.preventDefault();
+              arrastoFundo.current = 0; setSobreSoltar(false);
+              receberArquivos(Array.from(e.dataTransfer.files ?? []), false);
+            }}
+            style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: M.bgThread }}>
+            {/* aviso de soltar: `pointerEvents: none` é obrigatório — uma camada
+                que captura o mouse engoliria o próprio `drop` que ela anuncia */}
+            {sobreSoltar && (
+              <div style={{ position: "absolute", inset: 0, zIndex: 40, pointerEvents: "none",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "rgba(255,255,255,.82)", border: `2px dashed ${M.roxo}`, borderRadius: 8 }}>
+                <div style={{ textAlign: "center", color: M.roxo }}>
+                  <div style={{ fontSize: 34, marginBottom: 6 }}>📎</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800 }}>
+                    {sel ? "Solte para anexar" : "Abra uma conversa primeiro"}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: M.gray, marginTop: 2 }}>
+                    {sel ? "você confere antes de enviar" : "o arquivo precisa de um destinatário"}
+                  </div>
+                </div>
+              </div>
+            )}
             {!sel && (
               bc ? (
                 <Estado alto glifo="💬" titulo="Selecione uma conversa ao lado"
@@ -3907,19 +4148,30 @@ export default function Chat() {
                           em cima custava exatamente a linha que o cabecalho tinha
                           acabado de ganhar. */}
                       {sel.telefone ?? "sem telefone"}
-                      {/* A carteira e uma TAG, com a cor do vendedor na aresta
-                          esquerda -- o mesmo desenho dos chips de "para quem"
-                          do Transferir. Como texto corrido depois do telefone
-                          ela lia como continuacao do numero; a cor tambem e o
-                          que deixa reconhecer a carteira sem ler a palavra. */}
+                      {/* O dono e uma TAG, com a cor dele na aresta esquerda -- o
+                          mesmo desenho dos chips de "para quem" do Transferir. Como
+                          texto corrido depois do telefone ela lia como continuacao
+                          do numero; a cor tambem e o que deixa reconhecer o dono sem
+                          ler a palavra.
+
+                          ⚠️ O RÓTULO NÃO É `cap(sel.vendedor)`. Desde as demandas da
+                          Lais, admin/home/pós-venda também atendem, e o dono pode ser
+                          uma pessoa SEM carteira — ali sairia
+                          "U:lais@muranoprofessional.com.br", sob a palavra "carteira",
+                          que é justamente o que essas pessoas não têm.
+                          `descreveDono` escolhe entre "Carteira Fulano" e "Atende
+                          Fulano", e `corEndereco` acha a cor nas duas fontes
+                          (carteira_config para vendedor, o papel para quem não tem). */}
                       {!compacto && sel.vendedor && (
-                        <span title={`Carteira ${cap(sel.vendedor)} — dono comercial do cliente, vindo do RCA no WinThor`}
+                        <span title={`${descreveDono(sel.vendedor)}${sel.vendedor.startsWith("u:")
+                            ? " — atende esta conversa no chat, sem carteira comercial"
+                            : " — dono comercial do cliente, vindo do RCA no WinThor"}`}
                           style={{ display: "inline-flex", alignItems: "center", marginLeft: 6, verticalAlign: "middle",
                             fontSize: 10, fontWeight: 700, color: M.ink, background: M.surface,
-                            border: `1px solid ${coresVend.get(sel.vendedor) ?? M.border}`,
-                            borderLeft: `3px solid ${coresVend.get(sel.vendedor) ?? M.roxo}`,
+                            border: `1px solid ${corEndereco(sel.vendedor) ?? M.border}`,
+                            borderLeft: `3px solid ${corEndereco(sel.vendedor) ?? M.roxo}`,
                             borderRadius: 6, padding: "1px 7px", whiteSpace: "nowrap" }}>
-                          carteira {cap(sel.vendedor)}
+                          {descreveDono(sel.vendedor).toLowerCase()}
                         </span>
                       )}
                       {/* por qual NÚMERO esta conversa corre — com mais de uma linha
@@ -3967,14 +4219,24 @@ export default function Chat() {
                       : { display: "contents" }}>
                   {/* fila de não atribuídos: contato sem dono, qualquer um puxa */}
                   {sel.na_fila && (
-                    sessao.carteira ? (
+                    // ⚠️ A régua é `meuEndereco`, não `sessao.carteira`. Antes, quem
+                    // não tinha carteira via no lugar do botão um selo dizendo
+                    // "admin/supervisão não têm carteira: use Transferir para
+                    // designar alguém" — ou seja, a tela AFIRMAVA que supervisão não
+                    // atende. É exatamente o que o item 1 desfaz: admin, home e
+                    // pós-venda pegam da fila como qualquer um, sob o próprio nome.
+                    //
+                    // O selo continua existindo para quem não tem endereço nenhum
+                    // (login por senha, sem e-mail): ali pegar de fato não é
+                    // possível, porque não há sob QUEM registrar o atendimento.
+                    meuEndereco ? (
                       <button onClick={puxarDaFila} disabled={puxando} title="Assumir este atendimento"
                         style={{ fontSize: 11.5, fontWeight: 800, color: "#fff", background: "#1a6b3c", border: "none",
                           borderRadius: 999, padding: "6px 13px", cursor: puxando ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                         {puxando ? "…" : rot("✋", "✋ Pegar atendimento", "pegar", "Pegar atendimento")}
                       </button>
                     ) : (
-                      <span title="admin/supervisão não têm carteira: use Transferir para designar alguém"
+                      <span title="esta sessão não tem e-mail (login por senha), então não há sob quem registrar o atendimento: use Transferir para designar alguém"
                         style={{ fontSize: 10.5, fontWeight: 700, color: "#8a2f12", background: "#fdeae3", border: "1px solid #f0c4b0",
                           borderRadius: 999, padding: "4px 10px", whiteSpace: "nowrap" }}>
                         na fila — sem dono
@@ -4097,15 +4359,34 @@ export default function Chat() {
                       </div>
                     )}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                      {vendedores
-                        .filter((v) => v.slug !== (sel.vendedor ?? ""))
+                      {/* EU PRIMEIRO, e com nome próprio. "Passar para mim" é o
+                          gesto mais frequente de quem supervisiona: abre a
+                          conversa, vê que vai atender, e assume. Caçar o próprio
+                          nome no meio de dez botões para fazer isso é o tipo de
+                          atrito que faz a pessoa desistir e responder sem
+                          assumir — e aí a conversa fica sem dono e sem marca de
+                          leitura, que é o problema que o item 2 resolve. */}
+                      {!!meuEndereco && meuEndereco !== (sel.vendedor ?? "") && (
+                        <button onClick={() => transferir(meuEndereco)}
+                          style={{ fontSize: 12, fontWeight: 800, color: "#fff", background: bc ? M.azul : M.roxo, border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+                          ✋ Para mim
+                        </button>
+                      )}
+                      {[
+                        ...vendedores.map((v) => ({ endereco: v.slug, nome: cap(v.slug), cor: v.cor as string | null })),
+                        // quem atende sem carteira entra na MESMA lista: o botão
+                        // não distingue, porque para quem transfere a pergunta é
+                        // só "quem vai atender"
+                        ...atendentes.map((a) => ({ endereco: a.endereco, nome: a.nome, cor: corEndereco(a.endereco) })),
+                      ]
+                        .filter((v) => v.endereco !== (sel.vendedor ?? "") && v.endereco !== meuEndereco)
                         .map((v) => (
-                          <button key={v.slug} onClick={() => transferir(v.slug)}
+                          <button key={v.endereco} onClick={() => transferir(v.endereco)}
                             style={{ fontSize: 12, fontWeight: 700, color: M.ink, background: M.surface, border: `1px solid ${v.cor ?? M.border}`, borderLeft: `4px solid ${v.cor ?? M.roxo}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit" }}>
-                            {cap(v.slug)}
+                            {v.nome}
                           </button>
                         ))}
-                      {!vendedores.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando vendedores…</span>}
+                      {!vendedores.length && !atendentes.length && <span style={{ fontSize: 12, color: M.gray }}>Carregando…</span>}
                     </div>
                     {!d1 && campoMotivoTransf}
                     <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 7 }}>
@@ -4209,8 +4490,16 @@ export default function Chat() {
                           return (
                             <div key={`t${t.id}`} style={{ display: "flex", justifyContent: "center", margin: "6px 0" }}>
                               <div style={{ maxWidth: "80%", textAlign: "center", fontSize: 11, color: M.gray, background: M.surface, border: `1px dashed ${M.border}`, borderRadius: 999, padding: "4px 14px", lineHeight: 1.5 }}>
-                                ↪ <b style={{ color: M.wine }}>{cap(t.de_carteira) || "sem dono"}</b> transferiu para{" "}
-                                <b style={{ color: M.roxo }}>{cap(t.para_carteira)}</b>
+                                ↪ <b style={{ color: M.wine }}>{rotuloEndereco(t.de_carteira) || "sem dono"}</b>{" "}
+                                {/* destino NULO é a devolução para a fila (0112) — sem
+                                    este ramo o marco terminava em "transferiu para ·",
+                                    com o nome em branco. E o rótulo passa por
+                                    `rotuloEndereco` porque `cap()` num endereço de
+                                    pessoa imprime "U:lais@muranoprofessional.com.br"
+                                    no meio da conversa (visto na tela). */}
+                                {t.para_carteira
+                                  ? <>transferiu para <b style={{ color: M.roxo }}>{rotuloEndereco(t.para_carteira)}</b></>
+                                  : <>devolveu para a <b style={{ color: M.roxo }}>fila de espera</b></>}
                                 <span style={{ color: M.muted }}> · {horaBR(t.criada_em)}</span>
                                 {t.observacao && (
                                   <div style={{ fontStyle: "italic", color: M.gray, marginTop: 2 }}>“{t.observacao}”</div>
@@ -4303,12 +4592,68 @@ export default function Chat() {
                               {/* trecho citado: dá sentido à resposta quando a conversa
                                   tem vários assuntos ao mesmo tempo */}
                               {m.resposta_a && (() => {
-                                const alvo = (msgs ?? []).find((x) => x.id === m.resposta_a);
+                                const alvo = acharCitada(m.resposta_a);
+                                // MOSTRA A MÍDIA CITADA, não o nome dela. Quando a
+                                // cliente manda cinco fotos e responde à terceira, o
+                                // trecho é a única coisa que diz DE QUAL ela está
+                                // falando — e um "📷 Imagem" escrito serve para as
+                                // cinco. A miniatura sai da mesma rota da bolha
+                                // (`/api/chat/midia`, URL assinada), então não há
+                                // caminho novo nem chave exposta.
+                                const ehImagem = !!alvo?.midia_path
+                                  && (alvo.midia_tipo === "image" || alvo.midia_tipo === "sticker");
+                                const autor = !alvo ? null
+                                  : alvo.enviada_por === "customer" ? (sel?.cliente ?? "Cliente") : "Você";
+                                // Legenda de verdade é texto útil; rótulo automático
+                                // ("📷 Imagem") e NOME DE ARQUIVO não são.
+                                //
+                                // O nome estava vazando: visto no navegador, a citação
+                                // saía "Você · WhatsApp Image 2026-08-25 at 16.02.04.jpeg"
+                                // ao lado da miniatura — que é literalmente a queixa que
+                                // originou este item ("o consultor apenas vê o nome da
+                                // imagem"). Com a foto ao lado, o nome não informa nada.
+                                const nomeDeArquivo = (t: string) =>
+                                  /^(whatsapp|img[-_]|image[-_]|video[-_]|audio[-_]|photo[-_]|foto-)/i.test(t.trim())
+                                  || /\.(jpe?g|png|webp|gif|mp4|3gp|ogg|opus|m4a|aac|pdf|docx?|xlsx?)$/i.test(t.trim());
+                                const legenda = alvo?.conteudo
+                                  && !/^(📷|🎬|🎤|📎|🙂)/.test(alvo.conteudo)
+                                  && !(alvo.midia_tipo && nomeDeArquivo(alvo.conteudo))
+                                  ? alvo.conteudo : "";
                                 return (
-                                  <div style={{ borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: "4px 8px", marginBottom: 4, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden" }}>
-                                    {alvo
-                                      ? (alvo.conteudo || rotuloMidia(alvo.midia_tipo ?? "")).slice(0, 120)
-                                      : "mensagem citada (fora do histórico carregado)"}
+                                  <div style={{ display: "flex", gap: 7, alignItems: "stretch", borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: ehImagem ? 4 : "4px 8px", marginBottom: 4, overflow: "hidden" }}>
+                                    <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden", padding: ehImagem ? "2px 0 2px 5px" : 0 }}>
+                                      {alvo ? (
+                                        <>
+                                          {autor && <b style={{ display: "block", color: M.roxo, fontSize: 11 }}>{autor}</b>}
+                                          {legenda || (alvo.midia_tipo
+                                            // documento é o caso em que o nome É a
+                                            // informação ("orcamento-setembro.pdf"); em
+                                            // foto e áudio o nome é do aparelho de quem
+                                            // mandou, e o rótulo diz mais
+                                            ? (alvo.midia_tipo === "document"
+                                                ? (alvo.midia_nome || "Documento")
+                                                : rotuloMidia(alvo.midia_tipo))
+                                            : "")}
+                                        </>
+                                      ) : (
+                                        // 27% das citações apontam para mensagem que
+                                        // nunca esteve conosco (medido em 09/09/2026):
+                                        // citação a algo anterior à nossa entrada no
+                                        // número. Não é lote pequeno, é dado ausente —
+                                        // por isso o texto não promete "carregue mais".
+                                        "mensagem citada (não está no histórico)"
+                                      )}
+                                    </div>
+                                    {alvo && !ehImagem && alvo.midia_tipo && (
+                                      <span style={{ fontSize: 15, alignSelf: "center", flexShrink: 0 }}>
+                                        {alvo.midia_tipo === "audio" ? "🎤" : alvo.midia_tipo === "video" ? "🎬" : "📎"}
+                                      </span>
+                                    )}
+                                    {ehImagem && (
+                                      <img src={`/api/chat/midia?id=${encodeURIComponent(alvo!.id)}`}
+                                        alt={legenda || "imagem citada"}
+                                        style={{ width: 42, height: 42, borderRadius: 5, objectFit: "cover", flexShrink: 0, display: "block" }} />
+                                    )}
                                   </div>
                                 );
                               })()}
@@ -4416,7 +4761,14 @@ export default function Chat() {
                 {/* ---- botões flutuantes de rolagem (⌃ ⌄), como os do RD, colados
                      na borda direita da área de mensagens ---- */}
                 {!!msgs?.length && (
-                  <div style={{ position: "absolute", right: 16, bottom: 96, display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
+                  // ⚠️ `bottom` SOMA as faixas que aparecem acima do compositor. Era
+                  // 96 fixo, e visto no navegador o ⌃ ficava POR CIMA do botão Enviar
+                  // da prévia de arquivos — a faixa mede ~108 px. Vale também para a
+                  // prévia de áudio (~52 px), que tinha o mesmo defeito desde antes,
+                  // menor só porque é de uma linha. Duas faixas nunca aparecem juntas
+                  // hoje, mas somar as duas é o que continua certo se um dia
+                  // aparecerem — e é mais honesto que escolher uma.
+                  <div style={{ position: "absolute", right: 16, bottom: 96 + (pendentes ? 108 : 0) + (previa ? 52 : 0), display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
                     {([["⌃", "Ir para o começo", () => rolagemRef.current?.scrollTo({ top: 0, behavior: "smooth" })],
                        ["⌄", "Ir para a última mensagem", () => fimRef.current?.scrollIntoView({ behavior: "smooth" })]] as const).map(([ic, t, fn]) => (
                       <button key={ic} onClick={fn} title={t}
@@ -4434,13 +4786,15 @@ export default function Chat() {
                      a janela de 24h é por par número+cliente, então errar a linha é
                      errar o envio. ---- */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 8, rowGap: 2, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0, textAlign: "center" }}>
-                  <span>{sel.vendedor ? `Carteira ${cap(sel.vendedor)}` : "Sem dono"}</span>
+                  <span>{descreveDono(sel.vendedor)}</span>
                   <span style={{ opacity: 0.5 }}>|</span>
                   <span>{linha ? linha.rotulo : "linha não identificada"}</span>
                   {sel.transferida_de && (
                     <>
                       <span style={{ opacity: 0.5 }}>|</span>
-                      <span title={`recebida de ${cap(sel.transferida_de)}`}>↪ de {cap(sel.transferida_de)}</span>
+                      {/* `rotuloEndereco`, não `cap`: quem passou a conversa pode ser
+                          alguém sem carteira, e ali sairia o e-mail cru. */}
+                      <span title={`recebida de ${rotuloEndereco(sel.transferida_de)}`}>↪ de {rotuloEndereco(sel.transferida_de)}</span>
                     </>
                   )}
                 </div>
@@ -4619,6 +4973,55 @@ export default function Chat() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ---- arquivos colados ou arrastados, esperando confirmação ----
+                    Mesma faixa e mesmo vocabulário da prévia de áudio logo acima
+                    ("descartar" / "Enviar"): são o mesmo gesto — conferir antes
+                    de mandar algo que não dá para apagar depois. */}
+                {pendentes && (
+                  <div style={{ padding: compacto ? "8px 10px" : "10px 12px", background: M.surface, borderTop: `1px solid ${M.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <b style={{ fontSize: 12.5, color: M.ink }}>
+                        {pendentes.files.length === 1 ? "1 arquivo" : `${pendentes.files.length} arquivos`} para enviar
+                      </b>
+                      <span style={{ fontSize: 11.5, color: M.muted }}>
+                        {texto.trim() ? "o texto digitado vai como legenda da primeira" : "digite abaixo para mandar uma legenda junto"}
+                      </span>
+                      <button onClick={soltarPendentes} title="Descartar e não enviar"
+                        style={{ marginLeft: "auto", background: "transparent", border: "none", color: M.gray,
+                          fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                        descartar
+                      </button>
+                      <button onClick={enviarPendentes} disabled={enviandoArquivo}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8,
+                          border: "none", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", color: "#fff",
+                          background: bc ? M.azul : M.roxo, flexShrink: 0,
+                          cursor: enviandoArquivo ? "default" : "pointer", opacity: enviandoArquivo ? 0.6 : 1 }}>
+                        {bc ? <Icone n="enviar" tamanho={14} /> : null} Enviar
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+                      {pendentes.files.map((f, i) => (
+                        <div key={`${f.name}-${i}`} title={`${f.name} · ${(f.size / 1024).toFixed(0)} KB`}
+                          style={{ position: "relative", width: 64, height: 64, flexShrink: 0, borderRadius: 8,
+                            border: `1px solid ${M.border}`, background: M.bg, overflow: "hidden",
+                            display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {pendentes.urls[i]
+                            ? <img src={pendentes.urls[i] as string} alt={f.name}
+                                style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            : <div style={{ textAlign: "center", padding: 4, overflow: "hidden" }}>
+                                <div style={{ fontSize: 18 }}>{f.type.startsWith("audio/") ? "🎤" : f.type.startsWith("video/") ? "🎬" : "📄"}</div>
+                                <div style={{ fontSize: 8.5, color: M.muted, lineHeight: 1.15, wordBreak: "break-all" }}>{f.name.slice(0, 18)}</div>
+                              </div>}
+                          <button onClick={() => tirarPendente(i)} title="Tirar este arquivo"
+                            style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 18,
+                              border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 11, lineHeight: 1,
+                              background: "rgba(28,14,27,.62)", color: "#fff" }}>×</button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -5002,6 +5405,15 @@ export default function Chat() {
                       ? "Nota interna — só a equipe vê. Enter salva."
                       : "Enter envia · Shift+Enter quebra linha · / abre as respostas rápidas"}
                     rows={1}
+                    // COLAR ARQUIVO. Só intercepta quando há arquivo de verdade
+                    // na área de transferência — sem esta guarda, colar TEXTO
+                    // (que é o uso comum do Ctrl+V aqui) pararia de funcionar.
+                    onPaste={(e) => {
+                      const fs = Array.from(e.clipboardData?.files ?? []);
+                      if (!fs.length) return;      // colagem de texto segue o caminho normal
+                      e.preventDefault();
+                      receberArquivos(fs, true);
+                    }}
                     onInput={crescer}
                     style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", padding: compacto ? "6px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
                   />

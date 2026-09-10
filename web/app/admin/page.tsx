@@ -5,6 +5,7 @@ import Link from "next/link";
 import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
 import { lerCoordenadas, problemaCoordenada } from "../../lib/locais";
+import { PAPEIS as PAPEIS_DO_SISTEMA, rotuloDePapel } from "../../lib/papel";
 
 // Painel administrativo — reúne o que até aqui só existia no SQL Editor do
 // Supabase: quem entra no sistema, quais são os vendedores, o horário de
@@ -50,7 +51,12 @@ const ABAS: { id: Aba; rotulo: string }[] = [
 
 const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "");
 
-const PAPEIS = ["admin", "home", "vendedor"] as const;
+// ⚠️ Reexportada de lib/papel, NÃO escrita aqui. Esta lista existia em quatro
+// lugares (esta tela, /api/admin/usuarios, /api/trocar-papel e lib/papel), e foi
+// exatamente por isso que acrescentar `pos-venda` exigiu tocar em todos: uma
+// lista duplicada esquece de crescer em um dos lados, e o sintoma é a pessoa
+// receber "papel inválido" ao trocar de chapéu.
+const PAPEIS = PAPEIS_DO_SISTEMA;
 const DIAS = [
   { n: 0, r: "Dom" }, { n: 1, r: "Seg" }, { n: 2, r: "Ter" }, { n: 3, r: "Qua" },
   { n: 4, r: "Qui" }, { n: 5, r: "Sex" }, { n: 6, r: "Sáb" },
@@ -231,14 +237,15 @@ export default function Admin() {
             titulo="Quem entra no sistema"
             ajuda={<>
               <b>Papel de entrada</b> é como a pessoa entra ao logar. <b>Pode assumir</b> são os chapéus que
-              ela alterna sem sair da conta. Vendedor enxerga só a própria carteira; <i>home</i> vê todas
-              sem as funções administrativas; <i>admin</i> vê tudo.
+              ela alterna sem sair da conta. Vendedor enxerga só a própria carteira; <i>home</i> e{" "}
+              <i>pós-venda</i> veem todas sem as funções administrativas; <i>admin</i> vê tudo.{" "}
+              Todos <b>atendem</b> no chat — têm conversas próprias e recebem transferência —, com ou sem carteira.
             </>}
           >
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
                 <thead><tr>
-                  <th style={th}>E-mail</th><th style={th}>Papel de entrada</th><th style={th}>Pode assumir</th>
+                  <th style={th}>E-mail</th><th style={th}>Nome</th><th style={th}>Papel de entrada</th><th style={th}>Pode assumir</th>
                   <th style={th}>Carteira</th><th style={th}>Situação</th><th style={th} />
                 </tr></thead>
                 <tbody>
@@ -251,27 +258,41 @@ export default function Admin() {
                           {u.email}{euMesmo && <span style={{ fontSize: 11, color: M.roxo, marginLeft: 6 }}>(você)</span>}
                         </td>
                         <td style={td}>
+                          {/* Nome de exibição (0128). Não é enfeite: é o que
+                              aparece no chip do chat e na lista de "transferir
+                              para" de quem atende SEM carteira — sem ele, o
+                              e-mail cru iria para a tela. */}
+                          <input value={val(u.email, "nome", u.nome ?? "")}
+                            onChange={(e) => editar(u.email, "nome", e.target.value)}
+                            placeholder={u.email.split("@")[0]}
+                            style={{ ...inputBase, padding: "5px 7px", minWidth: 130 }} />
+                        </td>
+                        <td style={td}>
                           <select value={val(u.email, "papel", u.papel)} onChange={(e) => editar(u.email, "papel", e.target.value)}
                             style={{ ...inputBase, padding: "5px 7px" }}>
-                            {PAPEIS.map((p) => <option key={p} value={p}>{p}</option>)}
+                            {/* `rotuloDePapel` e não o valor cru: "pos-venda" quebrava
+                                em duas linhas no checkbox ("pos-" / "venda") e ficava
+                                ilegível. O VALOR continua sendo o token do cookie. */}
+                            {PAPEIS.map((p) => <option key={p} value={p}>{rotuloDePapel(p)}</option>)}
                           </select>
                         </td>
                         <td style={td}>
                           <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
                             {PAPEIS.map((p) => (
-                              <label key={p} style={{ fontSize: 12, color: M.gray, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                              <label key={p} style={{ fontSize: 12, color: M.gray, display: "flex", alignItems: "center", gap: 4, cursor: "pointer", whiteSpace: "nowrap" }}>
                                 <input type="checkbox" checked={papeis.includes(p)}
                                   onChange={(e) => editar(u.email, "papeis",
                                     e.target.checked ? [...papeis, p] : papeis.filter((x) => x !== p))} />
-                                {p}
+                                {rotuloDePapel(p)}
                               </label>
                             ))}
                           </div>
                         </td>
                         <td style={td}>
                           <select value={val(u.email, "carteira", u.carteira ?? "")} onChange={(e) => editar(u.email, "carteira", e.target.value)}
+                            title="Carteira é o dono COMERCIAL (RCA do WinThor). Deixar em branco é o normal para admin, home e pós-venda — eles atendem no chat sob o próprio nome, com conversas próprias."
                             style={{ ...inputBase, padding: "5px 7px" }}>
-                            <option value="">—</option>
+                            <option value="">— atende pelo nome</option>
                             {dados.carteiras.map((c: string) => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
@@ -299,23 +320,33 @@ export default function Admin() {
             </div>
           </Bloco>
 
-          <Bloco titulo="Liberar acesso a alguém" ajuda="O e-mail precisa ser o mesmo da conta Google que a pessoa usa para entrar.">
+          <Bloco titulo="Liberar acesso a alguém"
+            ajuda="O e-mail precisa ser o mesmo da conta Google que a pessoa usa para entrar. Carteira só para quem vende (é o RCA do WinThor) — admin, home e pós-venda ficam sem, e atendem no chat sob o próprio nome.">
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <input placeholder="pessoa@muranoprofessional.com.br" value={novo.email ?? ""}
-                onChange={(e) => setNovo({ ...novo, email: e.target.value })} style={{ ...inputBase, minWidth: 280, flex: 1 }} />
+                onChange={(e) => setNovo({ ...novo, email: e.target.value })} style={{ ...inputBase, minWidth: 240, flex: 1 }} />
+              <input placeholder="Nome (aparece no chat)" value={novo.nome ?? ""}
+                onChange={(e) => setNovo({ ...novo, nome: e.target.value })} style={{ ...inputBase, minWidth: 170 }} />
               <select value={novo.papel ?? "vendedor"} onChange={(e) => setNovo({ ...novo, papel: e.target.value })} style={inputBase}>
-                {PAPEIS.map((p) => <option key={p} value={p}>{p}</option>)}
+                {PAPEIS.map((p) => <option key={p} value={p}>{rotuloDePapel(p)}</option>)}
               </select>
               <select value={novo.carteira ?? ""} onChange={(e) => setNovo({ ...novo, carteira: e.target.value })} style={inputBase}>
                 <option value="">sem carteira</option>
                 {dados.carteiras.map((c: string) => <option key={c} value={c}>{c}</option>)}
               </select>
               <Botao onClick={() => enviar("usuarios", "POST",
-                { email: novo.email, papel: novo.papel ?? "vendedor", papeis: [novo.papel ?? "vendedor"], carteira: novo.carteira },
+                { email: novo.email, nome: novo.nome, papel: novo.papel ?? "vendedor", papeis: [novo.papel ?? "vendedor"], carteira: novo.carteira },
                 "Acesso liberado.")}>
                 Liberar acesso
               </Botao>
             </div>
+            <p style={{ fontSize: 11.5, color: M.gray, margin: "9px 0 0", lineHeight: 1.5 }}>
+              <b>Papel de entrada</b> é com o que a pessoa entra; <b>pode assumir</b> são os chapéus que ela
+              troca sem relogar. <b>admin</b> tem B.I., ranking, sincronizar e disparo em massa;{" "}
+              <b>home</b> e <b>pós-venda</b> veem todas as carteiras sem essas quatro;{" "}
+              <b>vendedor</b> vê só a própria. Os quatro <b>atendem</b> no chat — têm conversas próprias e
+              recebem transferência —, mesmo sem carteira.
+            </p>
           </Bloco>
         </>
       )}

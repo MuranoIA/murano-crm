@@ -2,7 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe, veTudo } from "../../../../lib/papel";
 import { usuarioDaSessao } from "../../../../lib/chatUsuario";
-import { carregarAtribuicoes, donoEfetivo } from "../../../../lib/chatEscopo";
+import {
+  carregarAtribuicoes, donoEfetivo, enderecoDeAtendimento, ehEnderecoDePessoa, emailDoEndereco,
+} from "../../../../lib/chatEscopo";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +17,16 @@ export const dynamic = "force-dynamic";
 // linha em `chat_transferencia` (append-only) e a atribuição vigente passa a
 // ser a última linha. Ver migration 0081.
 //
-// Quem pode: o dono efetivo atual da conversa, ou admin/home. Um vendedor não
-// tira conversa da mão do outro.
+// Quem pode: o dono efetivo atual da conversa, ou admin/home/pos-venda. Um
+// vendedor não tira conversa da mão do outro.
+//
+// O DESTINO pode ser de dois tipos (ver lib/chatEscopo):
+//   um slug de `carteira_config`  -> vendedor com RCA
+//   `u:<email>` de `acesso`       -> admin, home, pós-venda: gente que atende sem
+//                                    ter carteira comercial
+// Decidido com o usuário em 09/09/2026: a transferência vale nos DOIS sentidos —
+// o consultor passa um caso para o pós-venda, e o pós-venda devolve ou repassa.
+// Sem isso o pós-venda não existe de fato, só recebe.
 // ---------------------------------------------------------------------------
 export async function POST(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value ?? null;
@@ -41,11 +51,39 @@ export async function POST(req: Request) {
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
-  // destino tem de ser vendedor ativo de verdade (carteira_config é a fonte única, §14.1)
-  const { data: destino } = devolver ? { data: { ativo: true } } : await sb
-    .from("carteira_config").select("slug,ativo").eq("slug", para).maybeSingle();
-  if (!destino || !destino.ativo) {
-    return Response.json({ error: `“${para}” não é uma carteira ativa` }, { status: 400 });
+  // ---- o destino existe e está ativo? ------------------------------------
+  // Duas tabelas, porque são dois tipos de destino. `carteira_config` segue
+  // sendo a fonte única para VENDEDOR (§14.1); `acesso` é a de quem atende sem
+  // carteira. Aceitar um endereço `u:` sem conferir em `acesso` deixaria a
+  // conversa endereçada a alguém que não entra mais no sistema — e ela sairia da
+  // caixa de todo mundo sem entrar na de ninguém.
+  // `alvo` estreita o tipo: `para` é null só quando `devolver`, e devolver não
+  // tem destino para conferir.
+  if (!devolver) {
+    const alvo = para as string;
+    if (ehEnderecoDePessoa(alvo)) {
+      const email = emailDoEndereco(alvo);
+      const { data: p } = await sb
+        .from("acesso").select("email,ativo,carteira").eq("email", email).maybeSingle();
+      // quem TEM carteira é endereçado pelo slug dela, nunca pelo e-mail: dois
+      // endereços para a mesma pessoa criariam duas caixas de entrada, e uma
+      // conversa transferida para `u:milene@...` não apareceria para quem
+      // filtrasse por `milene`
+      if (p?.carteira) {
+        return Response.json({
+          error: `${email} atende pela carteira “${p.carteira}” — transfira para ela`,
+        }, { status: 400 });
+      }
+      if (!p || p.ativo === false) {
+        return Response.json({ error: `“${email}” não tem acesso ativo` }, { status: 400 });
+      }
+    } else {
+      const { data: c } = await sb
+        .from("carteira_config").select("slug,ativo").eq("slug", alvo).maybeSingle();
+      if (!c || !c.ativo) {
+        return Response.json({ error: `“${alvo}” não é uma carteira ativa` }, { status: 400 });
+      }
+    }
   }
 
   // dono efetivo hoje = transferência vigente ?? carteira do funil
@@ -59,7 +97,11 @@ export async function POST(req: Request) {
   // transferido). Está na fila: qualquer um pode puxar, e é assim que a fila de
   // não atribuídos funciona — "pegar" é uma transferência de ninguém para mim.
   // Fora esse caso, um vendedor não tira conversa da mão do outro.
-  if (!tudo && de !== null && de !== carteira) {
+  //
+  // Compara com o MEU endereço de atendimento, não com o slug do cookie: quem
+  // atende sem carteira é dono sob `u:<email>`, e com a comparação antiga a
+  // pessoa não conseguiria repassar nem devolver a conversa que ela mesma pegou.
+  if (!tudo && de !== null && de !== (await enderecoDeAtendimento(sb, sessao, usuario))) {
     return Response.json({ error: "essa conversa não está com você" }, { status: 403 });
   }
   if (de === para) {

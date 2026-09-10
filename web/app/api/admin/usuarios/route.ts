@@ -1,4 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo, texto } from "../../../../lib/adminApi";
+import { PAPEIS, ehPapel, type Papel } from "../../../../lib/papel";
 
 export const dynamic = "force-dynamic";
 
@@ -15,11 +16,12 @@ export const dynamic = "force-dynamic";
 // NÃO HÁ EXCLUSÃO, de propósito: desativar preserva o histórico e é reversível;
 // apagar a linha de quem já atendeu não desfaz nada e só perde a trilha.
 
-const PAPEIS = ["admin", "home", "vendedor"] as const;
-type Papel = (typeof PAPEIS)[number];
-const COLS = "email,papel,papeis,carteira,ativo,criado_em";
+// PAPEIS e `ehPapel` vêm de lib/papel — a MESMA lista que o cookie, o
+// /api/trocar-papel e as telas usam. Duplicá-la aqui foi o que fez o papel
+// `pos-venda` precisar ser acrescentado em quatro arquivos: uma lista que
+// existe em dois lugares esquece de crescer num deles.
+const COLS = "email,nome,papel,papeis,carteira,ativo,criado_em";
 
-const ehPapel = (v: unknown): v is Papel => PAPEIS.includes(v as Papel);
 const ehEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
 /** Quem, hoje, consegue entrar como admin. Base da trava anti-lockout. */
@@ -55,6 +57,12 @@ function validar(papel: Papel, papeis: string[], carteira: string | null): strin
   if (papeis.some((p) => !ehPapel(p))) return "papel inválido";
   if (!papeis.includes(papel)) return "o papel de entrada precisa estar entre os papéis disponíveis";
   if (papeis.includes("vendedor") && !carteira) return "vendedor precisa de uma carteira";
+  // admin, home e pos-venda NÃO precisam de carteira — e isso não é uma
+  // limitação: eles atendem sob o próprio e-mail (ver lib/chatEscopo), com
+  // conversas próprias, transferindo para si e para outros. Carteira aqui é o
+  // dono COMERCIAL, que exige RCA no WinThor; deixar em branco é o normal para
+  // quem não vende. Quem tem carteira mesmo sendo admin (o caso do Romulo)
+  // atende pela carteira, não pelo e-mail.
   return null;
 }
 
@@ -66,6 +74,10 @@ export async function POST(req: Request) {
   if (!b) return Response.json({ error: "body inválido" }, { status: 400 });
 
   const email = texto(b.email).toLowerCase();
+  // Nome de exibição (0128). Vazio cai no e-mail na tela — feio, nunca vazio.
+  // Importa para quem atende SEM carteira: o endereço dessa pessoa é o e-mail, e
+  // é este nome que aparece no chip do chat e na lista de "transferir para".
+  const nome = texto(b.nome) || null;
   const papel = texto(b.papel) as Papel;
   const papeis: string[] = Array.isArray(b.papeis) && b.papeis.length ? b.papeis.map(texto) : [papel];
   const carteira = texto(b.carteira) || null;
@@ -84,7 +96,7 @@ export async function POST(req: Request) {
   if (jaTem) return Response.json({ error: "esse e-mail já tem acesso — edite a linha existente" }, { status: 409 });
 
   const { data, error } = await db
-    .from("acesso").insert({ email, papel, papeis, carteira, ativo: true }).select(COLS).single();
+    .from("acesso").insert({ email, nome, papel, papeis, carteira, ativo: true }).select(COLS).single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true, usuario: data });
 }
@@ -108,6 +120,10 @@ export async function PATCH(req: Request) {
   const papeis: string[] = Array.isArray(b.papeis) ? b.papeis.map(texto) : (atual.papeis ?? [atual.papel]);
   const carteira = b.carteira !== undefined ? texto(b.carteira) || null : (atual.carteira ?? null);
   const ativo = typeof b.ativo === "boolean" ? b.ativo : atual.ativo;
+  // `"nome" in b` e não `b.nome ?? atual.nome`: apagar o nome é uma edição
+  // legítima, e com o `??` ela seria descartada em silêncio (a armadilha do
+  // §22.6.1, que este projeto já pagou três vezes).
+  const nome = "nome" in b ? (texto(b.nome) || null) : (atual.nome ?? null);
 
   if (!ehPapel(papel)) return Response.json({ error: "papel inválido" }, { status: 400 });
   const problema = validar(papel, papeis, carteira);
@@ -139,7 +155,7 @@ export async function PATCH(req: Request) {
   }
 
   const { data, error } = await db
-    .from("acesso").update({ papel, papeis, carteira, ativo }).eq("email", email).select(COLS).single();
+    .from("acesso").update({ nome, papel, papeis, carteira, ativo }).eq("email", email).select(COLS).single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true, usuario: data });
 }
