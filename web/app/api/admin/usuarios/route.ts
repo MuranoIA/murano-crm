@@ -20,9 +20,30 @@ export const dynamic = "force-dynamic";
 // /api/trocar-papel e as telas usam. Duplicá-la aqui foi o que fez o papel
 // `pos-venda` precisar ser acrescentado em quatro arquivos: uma lista que
 // existe em dois lugares esquece de crescer num deles.
-const COLS = "email,nome,papel,papeis,carteira,ativo,criado_em";
+const COLS = "email,nome,papel,papeis,carteira,ativo,atende_chat,criado_em";
 
 const ehEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+/** Endereço de atendimento de quem não tem carteira — o mesmo de lib/chatEscopo. */
+const enderecoDe = (email: string) => `u:${email.trim().toLowerCase()}`;
+
+/**
+ * Quantas conversas cada pessoa SEM carteira atende agora.
+ *
+ * Vem de `vw_chat_atribuicao` (a transferência vigente) e não de uma contagem
+ * própria: quem não tem carteira só vira dono por transferência, então a view é
+ * a resposta exata — e é a MESMA que o chat usa para decidir de quem é a
+ * conversa. Uma segunda régua aqui divergiria dela no primeiro ajuste.
+ */
+async function conversasPorPessoa(db: any): Promise<Map<string, number>> {
+  const { data } = await db.from("vw_chat_atribuicao").select("para_carteira");
+  const m = new Map<string, number>();
+  for (const r of (data ?? []) as any[]) {
+    const p = r.para_carteira;
+    if (typeof p === "string" && p.startsWith("u:")) m.set(p, (m.get(p) ?? 0) + 1);
+  }
+  return m;
+}
 
 /** Quem, hoje, consegue entrar como admin. Base da trava anti-lockout. */
 const admins = (linhas: any[]) =>
@@ -33,14 +54,20 @@ export async function GET() {
   if (g.erro) return g.erro;
 
   const db = sbAdmin();
-  const [{ data: usuarios, error }, { data: carteiras }] = await Promise.all([
+  const [{ data: usuarios, error }, { data: carteiras }, atendendo] = await Promise.all([
     db.from("acesso").select(COLS).order("ativo", { ascending: false }).order("email"),
     db.from("carteira_config").select("slug,ativo").order("slug"),
+    conversasPorPessoa(db),
   ]);
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   return Response.json({
-    usuarios: usuarios ?? [],
+    // `conversas` não é enfeite: é o que a tela precisa para avisar, ANTES do
+    // clique, que desligar alguém devolve N conversas para a fila. Sem esse
+    // número o admin descobre depois, e a descoberta é uma conversa sumida.
+    usuarios: (usuarios ?? []).map((u: any) => ({
+      ...u, conversas: atendendo.get(enderecoDe(u.email)) ?? 0,
+    })),
     carteiras: (carteiras ?? []).filter((c: any) => c.ativo).map((c: any) => c.slug),
     // o front destaca a própria linha e esconde os botões que se autodestruiriam
     eu: g.email,
@@ -95,8 +122,13 @@ export async function POST(req: Request) {
   const { data: jaTem } = await db.from("acesso").select("email").eq("email", email).maybeSingle();
   if (jaTem) return Response.json({ error: "esse e-mail já tem acesso — edite a linha existente" }, { status: 409 });
 
+  // atende no chat: nasce DESLIGADO quando não se diz nada (0130). Liberar
+  // acesso e passar a receber conversa de cliente são duas decisões, e juntá-las
+  // foi o que encheu a lista de "transferir para" com nove pessoas.
+  const atende_chat = b.atende_chat === true;
+
   const { data, error } = await db
-    .from("acesso").insert({ email, nome, papel, papeis, carteira, ativo: true }).select(COLS).single();
+    .from("acesso").insert({ email, nome, papel, papeis, carteira, ativo: true, atende_chat }).select(COLS).single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true, usuario: data });
 }
@@ -124,6 +156,10 @@ export async function PATCH(req: Request) {
   // legítima, e com o `??` ela seria descartada em silêncio (a armadilha do
   // §22.6.1, que este projeto já pagou três vezes).
   const nome = "nome" in b ? (texto(b.nome) || null) : (atual.nome ?? null);
+  // 0130 — quem atende no chat. Mesmo cuidado do `nome` acima: `"x" in b`, não
+  // `b.x ?? atual.x`, senão desligar (false) seria lido como "não mandou" e o
+  // valor antigo voltaria em silêncio.
+  const atendeChat = "atende_chat" in b ? b.atende_chat === true : (atual.atende_chat === true);
 
   if (!ehPapel(papel)) return Response.json({ error: "papel inválido" }, { status: 400 });
   const problema = validar(papel, papeis, carteira);
@@ -154,8 +190,49 @@ export async function PATCH(req: Request) {
     }
   }
 
+  // ---- deixar de atender NÃO PODE deixar conversa órfã --------------------
+  //
+  // Quem não tem carteira só é dono por transferência. Tirar o atendimento sem
+  // mais nada deixaria essas conversas endereçadas a alguém que o chat não
+  // reconhece mais: elas sairiam da caixa de todo mundo sem entrar na de
+  // ninguém — o mesmo estrago que a rota de transferência já evita ao recusar
+  // destino inativo.
+  //
+  // A saída é a que a 0112 já criou: uma linha nova com destino NULO devolve a
+  // conversa para a fila, onde qualquer um a pega com o ✋. É append-only, então
+  // o histórico de quem atendia continua legível — apagar a transferência
+  // original seria mais simples e apagaria a prova.
+  const deixaDeAtender = !carteira && atual.atende_chat === true && (!atendeChat || !ativo);
+  let devolvidas = 0;
+  if (deixaDeAtender) {
+    const meu = enderecoDe(email);
+    const { data: minhas } = await db
+      .from("vw_chat_atribuicao").select("cliente_id").eq("para_carteira", meu);
+    const linhas = (minhas ?? []).map((c: any) => ({
+      cliente_id: c.cliente_id, de_carteira: meu, para_carteira: null,
+      por: g.email ?? "admin",
+      observacao: `deixou de atender no chat — devolvida para a fila`,
+    }));
+    if (linhas.length) {
+      const { error: erroDev } = await db.from("chat_transferencia").insert(linhas);
+      // falhar aqui e seguir com o update deixaria exatamente as conversas
+      // órfãs que este bloco existe para impedir
+      if (erroDev) return Response.json({ error: `não consegui devolver as conversas para a fila: ${erroDev.message}` }, { status: 500 });
+      devolvidas = linhas.length;
+    }
+  }
+
   const { data, error } = await db
-    .from("acesso").update({ nome, papel, papeis, carteira, ativo }).eq("email", email).select(COLS).single();
+    .from("acesso").update({ nome, papel, papeis, carteira, ativo, atende_chat: atendeChat })
+    .eq("email", email).select(COLS).single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ ok: true, usuario: data });
+  // `aviso` é o campo que a tela concatena ao recado de sucesso: o admin precisa
+  // ver o efeito colateral no mesmo lugar em que vê o "salvo", não descobri-lo
+  // depois pela ausência das conversas.
+  return Response.json({
+    ok: true, usuario: data, devolvidas,
+    aviso: devolvidas
+      ? `${devolvidas} conversa${devolvidas > 1 ? "s" : ""} voltou para a fila de espera.`
+      : undefined,
+  });
 }
