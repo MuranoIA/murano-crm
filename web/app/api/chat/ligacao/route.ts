@@ -17,15 +17,27 @@ export const maxDuration = 30;
 //   POST                 -> inicia a chamada (exige o SDP do navegador)
 //   PATCH                -> encerra / registra o desfecho
 //
-// ESCOPO: só conversas que já correm na Cloud API — hoje, a linha piloto. Conversa
-// do RD/Tallos não tem ligação (decisão do usuário em 17/08/2026); o RD não tem
-// API de voz e não faria sentido oferecer meia funcionalidade ali.
+// ESCOPO: só conversas que já correm na Cloud API — o RD não tem API de voz, e
+// não faria sentido oferecer meia funcionalidade ali (decisão do usuário em
+// 17/08/2026). Quem responde a essa pergunta é `conversaNaCloud()`, que delega
+// ao MESMO `canalDeResposta()` que decide por onde a MENSAGEM sai: uma verdade,
+// não duas. Antes eram duas, e o resultado apareceu na mesma tela — o chip do
+// cabeçalho dizendo "Murano Professional" e a ligação respondendo "esta
+// conversa ainda corre pelo RD Conversas", sobre a mesma conversa.
 //
 // ⚠️ A linha usada aqui é `linhaCalling()` (0124), NÃO `linhaPadrao()`
 // (0123, mensagem) — são escolhas separadas de propósito: calling tem
 // pré-requisito próprio por número (pagamento, `calls` assinado, interruptor
 // ligado, §22.7) que não deve seguir uma troca pensada só para mensagem.
 // ---------------------------------------------------------------------------
+
+// Recado único das duas travas de canal. Não nomeia "RD Conversas" nem "piloto":
+// depois da migração do número oficial (09/09/2026) os dois são passado, e o
+// erro antigo mandava o vendedor procurar explicação num sistema que não existe
+// mais (§44). Diz o que É o caso e o que fazer.
+const naoEhCloud =
+  "A ligação só funciona em conversa que corre pelo nosso número no WhatsApp. " +
+  "Esta ainda não corre — confira em Administração → Mecanismos qual é o número de envio.";
 
 export async function GET(req: Request) {
   const s = sessaoDeLigacao();
@@ -93,7 +105,7 @@ export async function POST(req: Request) {
   // trava de "chamada em andamento": pedir autorização não é discar.
   if (String(b?.acao ?? "") === "pedir_permissao") {
     if (!(await conversaNaCloud(s.sb, cliente_id))) {
-      return Response.json({ error: "conversa fora do piloto", foraDoPiloto: true }, { status: 422 });
+      return Response.json({ error: naoEhCloud, foraDoPiloto: true }, { status: 422 });
     }
     const texto = String(b?.texto ?? "").trim() ||
       "Podemos te ligar aqui pelo WhatsApp para falar sobre o seu pedido?";
@@ -133,12 +145,13 @@ export async function POST(req: Request) {
   const viva = vivas?.[0];
   if (viva) return Response.json({ error: "já há uma ligação em andamento nesta conversa", ligacao: viva }, { status: 409 });
 
-  // A ligação é só do piloto: conversa que ainda vive no RD não tem número nosso
-  // na Meta para originar chamada. O front já esconde o botão nesse caso — esta
-  // é a trava do servidor, que é a que vale.
+  // A ligação só existe onde a conversa corre pelo NOSSO número na Meta — sem
+  // isso não há de onde originar a chamada. O front já esconde o botão nesse
+  // caso (`pode_ligar`, resolvido por esta mesma função) — esta é a trava do
+  // servidor, que é a que vale.
   if (!(await conversaNaCloud(s.sb, cliente_id))) {
     return Response.json({
-      error: "Esta conversa ainda corre pelo RD Conversas — a ligação existe só nas conversas da linha piloto.",
+      error: naoEhCloud,
       foraDoPiloto: true,
     }, { status: 422 });
   }

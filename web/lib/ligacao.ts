@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { carteiraDe, veTudo } from "./papel";
 import { usuarioDaSessao } from "./chatUsuario";
 import { carregarAtribuicoes, donoEfetivo } from "./chatEscopo";
+import { canalDeResposta } from "./whatsapp";
 
 // ---------------------------------------------------------------------------
 // Peças comuns às rotas de ligação (/api/chat/ligacao e /ligacao/acao).
@@ -79,33 +80,42 @@ export function telefoneE164(bruto: string | null | undefined, clienteId?: strin
 }
 
 /**
- * A ligação existe SÓ onde a conversa já corre na Cloud API — hoje, a linha
- * piloto. Conversa do RD/Tallos não tem ligação: `false` aqui, e o botão nem
- * aparece na tela.
- *
- * Decisão do usuário em 17/08/2026, e ela simplifica o desenho: não há canal
+ * A ligação existe SÓ onde a conversa já corre na Cloud API — não há canal
  * alternativo, não há discagem pelo celular, não há registro de ligação feita
- * fora daqui. O escopo da voz é o escopo do piloto.
+ * fora daqui (decisão do usuário em 17/08/2026, e ela simplifica o desenho).
  *
- * A cláusula do `WHATSAPP_ENVIO_PADRAO` é o caminho da Fase C: no dia em que o
- * número oficial migrar para a Cloud e o interruptor for ligado, a ligação passa
- * a valer para todo mundo pelo mesmo código, sem deploy.
+ * O QUE MUDOU: essa pergunta agora é respondida por `canalDeResposta()`, a
+ * mesma função que decide por onde a MENSAGEM sai. Antes havia uma régua
+ * própria aqui, e ela ficou para trás em dois pontos:
+ *
+ *  - não olhava `crm_config.numero_envio` (0102). Com o admin fixando "cloud",
+ *    toda conversa é respondida pela Cloud — menos a ligação, que continuava
+ *    procurando prova no histórico;
+ *  - a prova que ela procurava era uma mensagem RECEBIDA com id `wamid`. Quem
+ *    NUNCA escreveu para nós não tem nenhuma, então caía em `false`. Ou seja:
+ *    ausência de prova virava prova de RD — o mesmo erro de leitura que o `??`
+ *    já causou três vezes neste projeto (§62.5).
+ *
+ * O sintoma, depois da migração do número oficial (09/09/2026): cliente com o
+ * chip "Murano Professional", `canal_envio: whatsapp` e linha de envio Murano
+ * Professional — e mesmo assim "esta conversa ainda corre pelo RD Conversas" ao
+ * tentar ligar. Duas verdades sobre a mesma conversa, que é exatamente o que
+ * este projeto evita em toda parte (§29.3).
+ *
+ * A cláusula do `WHATSAPP_ENVIO_PADRAO` sai porque `canalDeResposta()` já a
+ * cobre por config, sem depender de env nem de deploy.
+ *
+ * ⚠️ Isto NÃO promete que a chamada vai completar: a Meta ainda exige permissão
+ * da cliente (138006, que a tela resolve com "Pedir autorização") e meio de
+ * pagamento na conta (131044). Ganha-se o erro CERTO no lugar de um "fora do
+ * piloto" que nomeia um sistema que não existe mais (§44).
  */
 export async function conversaNaCloud(
   sb: SupabaseClient,
   clienteId: string,
 ): Promise<boolean> {
   if (!process.env.WHATSAPP_PHONE_NUMBER_ID) return false;
-  if (clienteId.startsWith("wa:")) return true;
-  if (process.env.WHATSAPP_ENVIO_PADRAO === "true") return true;
-  const { data } = await sb
-    .from("mensagens")
-    .select("id")
-    .eq("cliente_id", clienteId)
-    .eq("enviada_por", "customer")
-    .order("criada_em", { ascending: false })
-    .limit(1);
-  return typeof data?.[0]?.id === "string" && data[0].id.startsWith("wamid");
+  return (await canalDeResposta(sb, clienteId)) === "whatsapp";
 }
 
 /** Colunas devolvidas ao front — `sdp_remoto` fica de fora aqui de propósito (é grande). */
