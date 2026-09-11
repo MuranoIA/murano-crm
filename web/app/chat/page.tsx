@@ -15,7 +15,7 @@ import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
-import { COLUNAS, ETAPAS_SEM_CONVERSA, type EtapaBoard } from "../../lib/etapasBoard";
+import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
@@ -1250,6 +1250,13 @@ export default function Chat() {
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [filtro, setFiltro] = useState<Selecao>("todas");
+  // A fila de onde a pessoa saiu quando escolheu uma etapa. Serve para o clique
+  // no chip ACESO devolver para onde ela estava, e não para um "Meus
+  // atendimentos" que ela não escolheu — um vendedor que estava em Esperando,
+  // espiou Negociação e desligou o chip perderia a própria fila de trabalho.
+  // Ref e não estado: só é lido dentro do clique, e guardá-lo em estado faria a
+  // sidebar re-renderizar a cada troca de fila sem nada mudar na tela.
+  const filaAntesDaEtapa = useRef<Fila>("todas");
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
@@ -3082,6 +3089,26 @@ export default function Chat() {
   // etapa escolhida no dropdown, quando a escolha é uma etapa (e não uma fila)
   const etapaSel = etapaDaSelecao(filtro);
 
+  // Escolher uma etapa é a MESMA escolha que escolher uma fila (um `filtro` só,
+  // §68) — então os dois controles que a oferecem, o dropdown e a faixa de
+  // chips, passam pelas duas funções abaixo em vez de chamarem `setFiltro`
+  // cada um do seu jeito. Se cada um lembrasse a fila anterior por conta
+  // própria, desligar um chip devolveria a uma fila diferente da que o
+  // dropdown devolveria, para a mesma sequência de cliques.
+  const escolherEtapa = (key: EtapaBoard) => {
+    if (!ehEtapa(filtro)) filaAntesDaEtapa.current = filtro;
+    setFiltro(`etapa:${key}` as Selecao);
+  };
+  // No chip, clicar no que já está aceso DESLIGA — é a regra que o board segue
+  // nos chips de período de cada coluna, e a única saída visível de um controle
+  // que não tem um botão "todas" (ele filtra a lista inteira, não um recorte
+  // dela). No dropdown não existe alternar: lá a lista mostra o que está
+  // escolhido, e clicar de novo no item aceso desligando seria surpresa.
+  const alternarEtapa = (key: EtapaBoard) => {
+    if (etapaSel === key) setFiltro(filaAntesDaEtapa.current);
+    else escolherEtapa(key);
+  };
+
   const filtradas = noEscopo.filter((c) => {
     const st = c.status ?? "aberta";
     // ---- ETAPA DO BOARD (§68) --------------------------------------------
@@ -3622,11 +3649,10 @@ export default function Chat() {
                         Etapas do CRM
                       </div>
                       {COLUNAS.map((col) => {
-                        const k = `etapa:${col.key}` as Selecao;
                         const n = contaEtapa.get(col.key) ?? 0;
-                        const on = filtro === k;
+                        const on = etapaSel === col.key;
                         return (
-                          <button key={col.key} onClick={() => { setFiltro(k); setMenuFila(false); }}
+                          <button key={col.key} onClick={() => { escolherEtapa(col.key); setMenuFila(false); }}
                             title={n > 0 ? col.subLong : `${col.subLong} — nenhuma conversa nesta etapa agora`}
                             style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "8px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit", opacity: n > 0 || on ? 1 : 0.5 }}>
                             <span style={{ width: 18, display: "flex", justifyContent: "center" }}>
@@ -3864,6 +3890,82 @@ export default function Chat() {
                   </div>
                 );
               })()}
+
+              {/* ---- ETAPAS DO CRM, em botões ----
+                  A mesma escolha que o dropdown já oferecia numa lista, agora
+                  a UM clique — e é por isso que os dois convivem sem se
+                  contradizer: escrevem o MESMO `filtro` (§68), então o título
+                  da sidebar, o item marcado no dropdown e o chip aceso dizem
+                  sempre a mesma coisa.
+
+                  Fica abaixo do vendedor e do número porque CRUZA com eles,
+                  como aquelas duas já cruzam entre si (§23.5): a contagem de
+                  cada etapa sai de `noEscopo`, ou seja, "Negociação" aqui
+                  significa "negociação DENTRO do que os seletores acima
+                  escolheram". Um chip que contasse o total geral prometeria 159
+                  e entregaria 12 ao filtrar por uma carteira.
+
+                  As sete, na ordem do board, inclusive as duas que hoje dão
+                  zero por definição (prospecção e sem cadastro descrevem quem
+                  NÃO tem conversa): apagadas, nunca escondidas — é a regra que
+                  esta sidebar segue em todos os contadores, e a lista vazia
+                  explica que o vazio é estrutural.
+
+                  Rótulo curto com o nome completo no `title`, pela mesma razão
+                  do chip de número logo acima: "Tentativa de contato" inteiro
+                  numa pílula de sidebar de 340px empurra a faixa para uma
+                  quarta linha, e altura é o que esta coluna tem de mais
+                  escasso. */}
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                <span title="Filtrar pela etapa do cliente no board" style={{ fontSize: 12, color: M.muted }}>🎯</span>
+                {COLUNAS.map((col) => {
+                  const n = contaEtapa.get(col.key) ?? 0;
+                  const on = etapaSel === col.key;
+                  const voltaPara = FILAS.find((f) => f.k === filaAntesDaEtapa.current)?.rotulo;
+                  return (
+                    <button
+                      key={col.key}
+                      onClick={() => alternarEtapa(col.key)}
+                      title={on
+                        ? `${col.titulo} — clique de novo para voltar para “${voltaPara ?? "a lista"}”`
+                        : `${col.titulo} — ${col.subLong}${n === 0 ? " · nenhuma conversa nesta etapa agora" : ""}`}
+                      style={{
+                        // aperta no desktop e folga no celular, e o motivo é o
+                        // oposto em cada um: na sidebar de 340px cada pixel de
+                        // largura é uma quarta linha de chips comendo a lista;
+                        // no celular a lista tem a tela inteira, e o que falta
+                        // é alvo para o polegar.
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                        // 6px, e não 7: medido, a faixa tem 288px úteis e com
+                        // 7 o chip de Ociosos sobra por TRÊS pixels, jogando a
+                        // faixa de três linhas para quatro. Ela continua sendo
+                        // wrap — muda de 3 para 4 linhas se um contador passar
+                        // de mil —, mas o caso de todo dia cabe em três.
+                        padding: isMobile ? "5px 9px" : "2px 6px",
+                        fontSize: isMobile ? 11.5 : 11, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
+                        borderRadius: 999, whiteSpace: "nowrap",
+                        // aceso = a COR DA ETAPA na borda e num filete embaixo, com
+                        // o fundo claro; não o fundo chapado dos chips de número.
+                        // Duas das sete cores do board (o cinza dos ociosos, o
+                        // roxo-claro da prospecção) reprovam em contraste com
+                        // texto branco por cima — e trocar a cor delas aqui faria
+                        // o chip discordar da coluna que ele representa.
+                        color: on ? M.ink : M.gray,
+                        background: on ? M.surface : M.bg,
+                        border: `1px solid ${on ? col.cor : M.border}`,
+                        boxShadow: on ? `inset 0 -2px 0 ${col.cor}` : "none",
+                        opacity: n > 0 || on ? 1 : 0.5,
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: 8, background: col.cor, flexShrink: 0 }} />
+                      {ROTULO_CURTO_ETAPA[col.key]}
+                      {n > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.8 : 0.6, fontVariantNumeric: "tabular-nums" }}>{n}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
 
               {/* Esta faixa fala da lista de CONVERSAS: o contador e a ordem por
                   data. Na agenda ela mentia duas vezes — dizia "0 conversas" ao

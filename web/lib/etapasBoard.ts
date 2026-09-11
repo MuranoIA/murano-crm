@@ -37,6 +37,24 @@ export const TITULO_ETAPA: Record<EtapaBoard, string> =
 export const COR_ETAPA: Record<EtapaBoard, string> =
   Object.fromEntries(COLUNAS.map((c) => [c.key, c.cor])) as Record<EtapaBoard, string>;
 
+// O nome da etapa quando ele precisa caber numa pílula de uma sidebar de 340px
+// (os chips do /chat). É ENCURTAMENTO do nome do board, nunca um nome novo: sai
+// a palavra de ligação, fica a palavra-chave — "Lista de prospecção" vira
+// "Prospecção", nunca "A prospectar". Inventar um segundo vocabulário para a
+// mesma coisa é o defeito que a §27.4 registrou (dois módulos com nomes quase
+// iguais), e aqui seria pior, porque as duas telas ficam a um clique uma da
+// outra. O nome completo continua no `title` do chip, como o seletor de número
+// já faz com o parêntese do cadastro.
+export const ROTULO_CURTO_ETAPA: Record<EtapaBoard, string> = {
+  prospeccao: "Prospecção",
+  sem_cadastro: "Sem cadastro",
+  ociosos: "Ociosos",
+  tentativa_contato: "Tentativa",
+  negociacao: "Negociação",
+  pedido_emitido: "Pedido",
+  vender_novamente: "Vender de novo",
+};
+
 // Duas etapas descrevem, por definição, quem NÃO tem conversa: prospecção é
 // "nunca foi contatado" e sem cadastro é "não há conversa nas linhas visíveis".
 // Elas existem no filtro do chat (some faria o olho procurar onde foram, que é
