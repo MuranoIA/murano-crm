@@ -90,14 +90,17 @@ update public.chat_linha
 
 -- Se `linhas_visiveis` ainda listar a linha 'rd', tira — sem isso o seletor do
 -- /admin mostraria uma opção marcada que não existe mais.
+-- ⚠️ `linhas_visiveis` e `text[]`, NAO `jsonb`. A primeira versao deste bloco
+-- usava `jsonb_array_elements_text` e o operador `?`, e a migration INTEIRA
+-- estourava em `operator does not exist: text[] ? unknown` — por isso ela
+-- nunca chegou a rodar, e `etl_disparar_workflow` continuou no banco por dias
+-- depois de a PR #180 ser mesclada. Conferido em 11/09/2026:
+--   information_schema.columns -> udt_name = '_text'.
 update public.crm_config
-   set linhas_visiveis = (
-         select coalesce(jsonb_agg(v), '[]'::jsonb)
-           from jsonb_array_elements_text(linhas_visiveis) t(v)
-          where v <> 'rd')
+   set linhas_visiveis = array_remove(linhas_visiveis, 'rd')
  where id = 1
    and linhas_visiveis is not null
-   and linhas_visiveis ? 'rd';
+   and 'rd' = any(linhas_visiveis);
 
 -- ---------------------------------------------------------------------------
 -- 4) O log do gatilho
