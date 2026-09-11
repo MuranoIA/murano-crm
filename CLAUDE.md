@@ -3691,8 +3691,8 @@ E, sobre as chaves de ligar/desligar que se acumularam:
    da cota (§37.6). Traduzir erro, sim; otimizar, não.
 3. **Pendências de carteira do RD e da Murano Shop foram descartadas** por ele
    em 27/08. Não voltar com elas.
-4. O ETL continua rodando e **não deve ser desligado** — é o que garante o
-   histórico caso a chave seja ligada um dia.
+4. ~~O ETL continua rodando e não deve ser desligado~~ — **revogado em
+   11/09/2026: o ETL foi REMOVIDO.** Ver §69.
 
 ## 45. Modo migração — a Fase C simulada, com volta (27/08/2026)
 
@@ -5256,3 +5256,98 @@ com texto, painel do ERP à direita, campo de 440px) e `ciclo9` verde.
 - A 360px a caixa de texto fica com 92px. Passa, e é 5,7× o que era, mas é o
   ponto a atacar se alguém quiser mais folga — o caminho seria o TEMPLATE sair
   da pílula, e ele já tem o botão próprio na faixa de janela fechada.
+
+
+## 69. Fim do RD Conversas (11/09/2026) — migration 0131
+
+**Isto revoga o item 4 da §44 e aposenta as §13, §14, §15.1 e §20 como
+descrição do presente.** Elas continuam valendo como história — e vale ler a
+§14.5 antes de dimensionar qualquer coisa —, mas nada ali descreve um sistema
+que ainda roda.
+
+### 69.1 O fato que decide tudo
+
+A conta na Tallos está **desativada**. O ETL falhava assim, a cada execução:
+
+```
+API Rest resources not available for disabled company.
+```
+
+Não era token, não era cota, não era o rate limit da §14.5. Não havia mais de
+onde puxar. A última mensagem que entrou pelo canal do RD é de **09/09/2026**.
+
+E o gatilho já estava morto antes disso, **em silêncio**: o `pg_cron`
+respondia `401 Bad credentials` desde **02/09 às 10:30** (o PAT do GitHub
+expirou), somando **2.193 disparos falhos em nove dias**. É exatamente a falha
+silenciosa que a §14.6 previu — *"o risco clássico desse tipo de job é falhar
+em silêncio"* — e ninguém percebeu porque o log só engorda.
+
+### 69.2 ⚠️ O RD NUNCA FOI A CAUSA DA LENTIDÃO
+
+Registrado com número para ninguém voltar a essa hipótese. Medido em 11/09:
+
+| | |
+|---|---|
+| `vw_funil_visivel` | **151 ms** |
+| `vw_funil` (sem filtro de linha) | **158 ms** |
+| contar as 170.139 linhas de `mensagens` | **201 ms** |
+| `wth_sync_tudo` (WinThor, a cada 10 min) | 3,6 s, `ok` |
+
+As **159.944** mensagens do RD são **94% da tabela** e não custam nada nas
+consultas — o índice resolve. E o ETL rodava no GitHub Actions, fora do app:
+não disputava CPU nem conexão com o CRM. Desligá-lo foi limpeza legítima, e
+**não acelerou a tela**. Quem for atrás de lentidão deve olhar o desenho das
+rotas (5 a 10 consultas paginadas por abertura de tela), não o volume do
+histórico.
+
+### 69.3 As mensagens FICAM — mecanismo ≠ dado
+
+Decisão explícita do usuário: *"confirmo que não é para apagar as mensagens do
+RD do nosso banco"*. São o histórico do que foi combinado com cada cliente —
+preço, prazo, pedido. A migration não apaga nada, e `clientes`/`atendimentos`,
+que nasceram daquele ETL, continuam alimentando board, chat e relatórios.
+
+O que saiu foi o caminho até elas: o botão **"ver histórico anterior"** também
+foi removido, a pedido (*"vou testar ficar sem isso, se depois eu mudar de
+ideia colocamos novamente"*). Voltar atrás é reverter o PR #180 — as linhas
+seguem no banco, rotuladas pela linha sintética `rd`, que continua cadastrada
+em `chat_linha` justamente para dar nome a elas.
+
+### 69.4 O que foi removido
+
+| | |
+|---|---|
+| `src/` inteiro | ETL, decriptação JWE, as sondas `probe_*`, os `_tmp_*` |
+| `.github/workflows/` | `etl.yml` e `etl-fast.yml` — eram os dois únicos do repo |
+| rotas | `/api/sync-etl`, `/api/sync-cliente`, `/api/carteira*` |
+| libs | `rdSync.ts`, `erroRd.ts`, `carteiraRd.ts` |
+| telas | `/carteira` (Gestão de carteira), o toggle Sinc/Pause, o ↻ do card |
+| chaves | modo migração, `historico_rd`, `carteira_rd_ativa`, `numero_envio` |
+
+E duas coisas que custavam consulta a cada uso: **`canalDeResposta()`**, que
+lia `crm_config` **por envio** (mensagem, mídia, localização, encaminhamento,
+template e ligação), e as **duas contagens de `mensagens`** que toda abertura
+de conversa fazia só para decidir se oferecia o botão de histórico. Mais o
+**polling de 15 s** que todo admin com o board aberto mantinha contra
+`/api/sync-etl`.
+
+### 69.5 Duas decisões que sustentam o resto
+
+**`filtroLinhas` exclui `linha_id IS NULL` SEMPRE**, em vez de depender da
+config. Antes, o estado "sem RD" era a leitura de quatro chaves em posição
+combinada (§45.1) — e a §32 já havia mostrado o que acontece quando dois
+controles decidem a mesma coisa. Agora é o comportamento único: o RD não volta
+à tela nem por engano de configuração.
+
+**A 0131 NÃO reescreve `vw_funil`/`vw_funil_visivel`, de propósito.** Elas leem
+`carteira_rd_ativa` direto da coluna, que já está em `false` — o valor certo.
+Mexer em três ramos com `UNION` para remover uma leitura correta seria trocar
+risco real por limpeza cosmética, e um erro ali derruba board e chat de uma
+vez. A coluna fica, com `DEFAULT false` para ninguém religar por inserção.
+
+### 69.6 Pendência
+
+**A migration 0131 precisa ser aplicada à mão** (SQL Editor). Sem ela o
+`pg_cron` continua disparando o 401 a cada 10/15 min contra um workflow que já
+não existe. Os workflows em si já estão `disabled_manually` no GitHub e fora
+do repositório.
