@@ -22,7 +22,6 @@ type Card = {
   telefone: string | null;
   ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
   /** mensagens que existem, mas na linha que a seleção esconde (ramo 1b, §31.3) */
-  msgs_ocultas?: number;
   venda_valor: number | null;      // valor faturado no período (R$), nota fiscal WinThor
   venda_data: string | null;       // data da última compra
   periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
@@ -479,7 +478,6 @@ export default function Page() {
 
   const [zoomPos, setZoomPos] = useState({ x: 80, y: 74 });
   const zoomDrag = useRef<{ dx: number; dy: number } | null>(null);
-  const [zoomSyncing, setZoomSyncing] = useState(false);
   // ↻ do card: muda de valor e a <Conversa> recarrega a thread sem remontar
   // (remontar apagaria o texto que a pessoa está escrevendo)
   const [zoomRefresh, setZoomRefresh] = useState(0);
@@ -564,9 +562,6 @@ export default function Page() {
   const [visiveisPorColuna, setVisiveisPorColuna] = useState<Record<string, number>>({});
   // filtro de período por coluna (col.key -> período). Ausente = "todos".
   const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>({});
-  const [syncRodando, setSyncRodando] = useState(false);
-  const [syncPausado, setSyncPausado] = useState(false);
-  const [pausandoSync, setPausandoSync] = useState(false);
   // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
   // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -623,22 +618,7 @@ export default function Page() {
   // Começa em `true` para a tela não piscar sem o selo antes da 1ª resposta —
   // o mesmo estado em que o interruptor nasce no banco.
   const [cicloAtivo, setCicloAtivo] = useState(true);
-  // Modo migracao (Fase C simulada): o RD nao existe para esta tela. Derivado
-  // no servidor a partir das quatro chaves -- ver modoMigracao() em crmConfig.
-  const [semRd, setSemRd] = useState(false);
-  // Saúde do canal (§28.3). Vem junto do board; não é uma requisição a mais.
   const [saude, setSaude] = useState<any>(null);
-  // Os textos de ajuda das colunas foram escritos quando o RD era o único canal
-  // e o nomeiam ("nunca teve conversa com operador no RD Conversas"). No modo
-  // migração isso é justamente a menção que não deve existir. Trocar a palavra
-  // no render, em vez de manter duas versões de cada texto: são strings longas,
-  // e duas cópias divergem no primeiro ajuste da régua das colunas.
-  const semMencaoRd = (t: string) =>
-    semRd
-      ? t.replace(/\bno RD Conversas\b/g, "no atendimento")
-         .replace(/\bRD Conversas\b/g, "atendimento")
-         .replace(/\bno RD\b/g, "no atendimento")
-      : t;
   const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
   // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
@@ -653,9 +633,6 @@ export default function Page() {
   const [lixeiraAberta, setLixeiraAberta] = useState(false);
   const [descartados, setDescartados] = useState<any[]>([]);
   const [baixando, setBaixando] = useState(false); // gerando relatório Excel
-  const [syncUltimo, setSyncUltimo] = useState<string | null>(null);
-  const [syncConclusao, setSyncConclusao] = useState<string | null>(null);
-  const [disparandoSync, setDisparandoSync] = useState(false);
   const [agora, setAgora] = useState(Date.now());
 
   // GUARDA DE IN-FLIGHT + COALESCÊNCIA.
@@ -679,7 +656,6 @@ export default function Page() {
       setCards(j.cards ?? []);
       // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
       setCicloAtivo(j.ciclo_ativo !== false);
-      setSemRd(j.modo_migracao === true);
       setSaude(j.saude ?? null);
       setDisparos(j.disparos ?? {});
       setVendasTotais(j.vendasTotais ?? {});
@@ -732,18 +708,10 @@ export default function Page() {
       } else if (!r.ok || j.error) alert("Falha ao enviar: " + (j.error ?? `HTTP ${r.status}`));
       else {
         await load(); // mostra o disparo/AGUARDANDO na hora
-        // Sync sob demanda SÓ faz sentido no RD: lá a mensagem enviada só existe
-        // depois de ser buscada de volta. Na Cloud a própria rota já gravou a
-        // linha em `mensagens` antes de responder, então chamar isto seria
-        // gastar cota do RD (~48 req/min, dividida com o ETL) para reimportar
-        // uma conversa que não é de lá — e o 429 daí voltava como "instabilidade"
-        // logo depois de um envio que tinha dado certo.
-        if (j.canal !== "whatsapp") {
-          fetch("/api/sync-cliente", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cliente_id: clienteId }),
-          }).then(() => load()).catch(() => {});
-        }
+        // O re-sync sob demanda que havia aqui só fazia sentido no RD, onde a
+        // mensagem enviada só passava a existir depois de ser buscada de volta.
+        // Na Cloud a própria rota grava a linha em `mensagens` antes de
+        // responder, então não há o que buscar.
       }
     } catch (e: any) {
       alert("Erro: " + (e?.message ?? e));
@@ -983,32 +951,6 @@ export default function Page() {
     setCardZoom(c);
     try { const w = window.innerWidth; setZoomPos({ x: Math.max(20, Math.round(w / 2 - 330)), y: 70 }); } catch {}
   }
-  // atualiza SÓ esta conversa: puxa do RD as mensagens que faltam (item 3) e recarrega o histórico.
-  // Mostra o resultado na tela (não precisa de DevTools pra diagnosticar).
-  async function atualizarZoom() {
-    if (!cardZoom || zoomSyncing) return;
-    setZoomSyncing(true);
-    try {
-      const r = await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: cardZoom.cliente_id }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) alert("Não consegui puxar do RD (item 3): " + (j?.error ?? `HTTP ${r.status}`) + "\n\nEle recarrega o que já está no banco mesmo assim.");
-      setZoomRefresh((n) => n + 1);
-    } catch (e: any) { alert("Erro ao atualizar: " + (e?.message ?? e)); }
-    finally { setZoomSyncing(false); }
-  }
-  // ↻ direto no card (mesma função do card ampliado): puxa do RD as mensagens que faltam
-  // desta conversa e recarrega o board. Manual (1 clique = 1 fetch) e desabilitado enquanto
-  // roda, para não repetir chamada e não pesar na cota do RD.
-  const [syncingCards, setSyncingCards] = useState<Record<string, boolean>>({});
-  async function atualizarCard(clienteId: string) {
-    if (!clienteId || clienteId.includes(":") || syncingCards[clienteId]) return;
-    setSyncingCards((p) => ({ ...p, [clienteId]: true }));
-    try {
-      await fetch("/api/sync-cliente", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cliente_id: clienteId }) });
-      await load();
-    } catch { /* silencioso: o load() abaixo já reflete o que houver no banco */ }
-    finally { setSyncingCards((p) => { const n = { ...p }; delete n[clienteId]; return n; }); }
-  }
   const zoomOnDown = (e: { clientX: number; clientY: number }) => {
     zoomDrag.current = { dx: e.clientX - zoomPos.x, dy: e.clientY - zoomPos.y };
     const move = (ev: MouseEvent) => {
@@ -1056,52 +998,6 @@ export default function Page() {
     }
   }
 
-  async function checarSync() {
-    try {
-      const r = await fetch("/api/sync-etl", { cache: "no-store" });
-      if (!r.ok) return; // 401/403 (não-admin) — ignora silenciosamente, botão nem aparece
-      const j = await r.json();
-      setSyncRodando(!!j.running);
-      setSyncPausado(!!j.paused);
-      setSyncUltimo(j.lastRun?.createdAt ?? null);
-      setSyncConclusao(j.lastRun?.conclusion ?? null);
-    } catch {}
-  }
-  async function togglePausaSync(pausar: boolean) {
-    setPausandoSync(true);
-    try {
-      const r = await fetch("/api/sync-etl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: pausar ? "pausar" : "retomar" }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.error) { alert("Falha: " + (j.error ?? `HTTP ${r.status}`)); return; }
-      setSyncPausado(pausar);
-      if (pausar) setSyncRodando(false);
-      checarSync();
-    } catch (e: any) { alert("Erro: " + (e?.message ?? e)); }
-    finally { setPausandoSync(false); }
-  }
-
-  // "1:05" enquanto roda; usa o tempoRelativo (definido acima) pra quando já terminou
-  function duracao(desdeIso: string): string {
-    const s = Math.max(0, Math.floor((agora - new Date(desdeIso).getTime()) / 1000));
-    const m = Math.floor(s / 60);
-    return `${m}:${String(s % 60).padStart(2, "0")}`;
-  }
-
-  async function dispararSync() {
-    setDisparandoSync(true);
-    try {
-      const r = await fetch("/api/sync-etl", { method: "POST" });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.error) { alert("Falha ao disparar sincronização: " + (j.error ?? `HTTP ${r.status}`)); return; }
-      setSyncRodando(true);
-      // o run leva ~2-3min pra aparecer como concluído; recarrega o board depois
-      setTimeout(load, 60_000);
-    } catch (e: any) {
-      alert("Erro: " + (e?.message ?? e));
-    } finally {
-      setDisparandoSync(false);
-    }
-  }
 
   const ACKS_KEY = "crm_acks";
   // Cliente da fila de prospecção (nunca conversou) não tem conversa no RD Conversas
@@ -1255,28 +1151,12 @@ export default function Page() {
       .catch(() => {});
   }, [sessao]);
 
-  // status do ETL (só admin) — dá polling pra saber se já tem um run em andamento
-  // (inclusive disparado por outra pessoa/via gh CLI), pra não deixar clicar à toa.
-  useEffect(() => {
-    if (sessao?.role !== "admin") return;
-    checarSync();
-    const t = setInterval(checarSync, 15000);
-    return () => clearInterval(t);
-  }, [sessao]);
-
   // carrega a meta do dia (só admin) p/ mostrar no botão de Meta
   useEffect(() => {
     if (sessao?.role !== "admin") return;
     fetch("/api/meta").then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setMetaAtual(Number(j.meta ?? 0) || 0); }).catch(() => {});
   }, [sessao]);
 
-
-  // relógio vivo só enquanto um run está rodando, pra mostrar "rodando há 0:47"
-  useEffect(() => {
-    if (!syncRodando) return;
-    const t = setInterval(() => setAgora(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [syncRodando]);
 
   const vendedores = useMemo(
     () => [...new Set(cards.map((c) => c.vendedor).filter((v): v is string => !!v))].sort(),
@@ -1938,61 +1818,6 @@ export default function Page() {
               </div>
             );
           })()}
-          {/* No modo migração o ETL não existe para quem olha a tela: este toggle
-              pausa e retoma a ingestão do RD, então mantê-lo seria a menção mais
-              gritante justamente onde não deve haver nenhuma. O ETL continua
-              rodando por baixo — o que sai é o controle, não o processo. */}
-          {!isMobile && sessao.role === "admin" && !semRd && (
-            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-              {/* Toggle Sinc | Pause: a "chave" desliza pro lado ativo. Junta as 3 ações antigas —
-                  Sinc = retoma (se pausado) e força um sync agora; Pause = pausa (libera cota do RD). */}
-              <div
-                role="switch"
-                aria-checked={!syncPausado}
-                title={syncPausado
-                  ? "Sincronização PAUSADA. Clique em Sinc pra retomar (o board volta a atualizar)."
-                  : "Sincronização ativa (RD → clientes/mensagens). Sinc = forçar agora · Pause = liberar a cota do RD pros envios de template."}
-                style={{
-                  position: "relative", display: "inline-flex", width: 132, height: 30, boxSizing: "border-box",
-                  border: `1px solid ${syncPausado ? "#f0c987" : (syncRodando ? "#bfe6f8" : RD.border)}`,
-                  borderRadius: 20, background: syncPausado ? "#fff7ed" : (syncRodando ? "#eaf6fd" : RD.surface),
-                  userSelect: "none", overflow: "hidden", opacity: pausandoSync ? 0.7 : 1,
-                }}
-              >
-                <span style={{
-                  position: "absolute", top: 2, bottom: 2, width: "calc(50% - 3px)",
-                  left: syncPausado ? "calc(50% + 1px)" : 2,
-                  borderRadius: 16, transition: "left .22s cubic-bezier(.4,0,.2,1)",
-                  background: syncPausado ? "#f59e0b" : "#0ea3dc", boxShadow: "0 1px 3px rgba(0,0,0,.18)",
-                }} />
-                <button
-                  onClick={async () => { if (pausandoSync) return; if (syncPausado) await togglePausaSync(false); if (!syncRodando) dispararSync(); }}
-                  disabled={pausandoSync}
-                  style={{ position: "relative", zIndex: 1, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, background: "transparent", border: "none", padding: 0, cursor: pausandoSync ? "wait" : "pointer", fontSize: 12, fontWeight: 700, color: !syncPausado ? "#fff" : RD.gray }}
-                >
-                  <span style={{ width: 6, height: 6, borderRadius: 6, background: !syncPausado ? "#fff" : RD.grayLight, animation: syncRodando ? "pulse-alert 1.1s ease-in-out infinite" : "none" }} />
-                  {disparandoSync ? "…" : "Sinc"}
-                </button>
-                <button
-                  onClick={() => { if (pausandoSync) return; if (!syncPausado) togglePausaSync(true); }}
-                  disabled={pausandoSync}
-                  style={{ position: "relative", zIndex: 1, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, background: "transparent", border: "none", padding: 0, cursor: pausandoSync ? "wait" : "pointer", fontSize: 12, fontWeight: 700, color: syncPausado ? "#fff" : RD.gray }}
-                >
-                  {pausandoSync ? "…" : "Pause"}
-                </button>
-              </div>
-              <span style={{ position: "absolute", top: "100%", left: 2, marginTop: 2, fontSize: 10, color: syncPausado ? "#b45309" : (syncConclusao === "failure" ? "#dc2626" : RD.grayLight), whiteSpace: "nowrap", fontWeight: syncPausado ? 700 : 400 }}>
-                {syncPausado ? "PAUSADA — dados não atualizam até retomar" : (
-                  <>
-                    RD Conversas → clientes e mensagens
-                    {syncRodando && syncUltimo ? ` · rodando há ${duracao(syncUltimo)}` : null}
-                    {!syncRodando && syncUltimo ? ` · última: ${tempoRelativo(syncUltimo)}` : null}
-                    {!syncRodando && syncConclusao === "failure" ? " · falhou" : null}
-                  </>
-                )}
-              </span>
-            </div>
-          )}
           {!isMobile && (
           <div style={{ position: "relative", display: "inline-flex" }}>
             <button
@@ -2933,14 +2758,14 @@ export default function Page() {
                         const r = e.currentTarget.getBoundingClientRect();
                         const W = 300;
                         const x = Math.min(r.left - 8, window.innerWidth - W - 12);
-                        setTip({ text: semMencaoRd(col.regras), x: Math.max(8, x), y: r.bottom + 6 });
+                        setTip({ text: col.regras, x: Math.max(8, x), y: r.bottom + 6 });
                       }}
                       onMouseLeave={() => setTip(null)}
                     >
                       <span title="Regras e automações desta etapa" style={{ width: 15, height: 15, borderRadius: 15, border: `1.3px solid ${RD.grayLight}`, color: RD.grayLight, fontSize: 11, fontWeight: 700, fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "help", userSelect: "none" }}>i</span>
                     </span>
                   </div>
-                  <div title={semMencaoRd(col.subLong)} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div title={col.subLong} style={{ marginTop: 3, fontSize: 10, lineHeight: 1.3, color: RD.grayLight, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {col.sub}
                   </div>
                   {/* chips de período por coluna — guardados por ora; trocar false->true p/ reativar */}
@@ -3034,15 +2859,13 @@ export default function Page() {
                       const msgsChrono = completa
                         ? [...completa, ...pend]
                         : [...[...msgsRaw].reverse(), ...pend]; // cronológico, mais recente por último
-                      // O selo COMPARA a carteira do RD com o RCA. Sem RD não há o que
-                      // comparar — mas o RCA em si continua sendo informação útil no
-                      // card, então em vez de sumir ele vira só "RCA n".
-                      const selo = semRd
-                        ? (c.rca_num != null
-                            ? { texto: `RCA ${c.rca_num}`, cor: "#64748b", bg: "#f1f5f9", borda: "#dbe3ec",
-                                title: `Vendedor oficial no WinThor: RCA ${c.rca_num}.` }
-                            : null)
-                        : seloAtribuicao(c, vendMeta);
+                      // O selo COMPARAVA a carteira do RD com o RCA. Sem RD não há o
+                      // que comparar — mas o RCA em si continua sendo informação útil
+                      // no card, então em vez de sumir ele virou só "RCA n".
+                      const selo = c.rca_num != null
+                        ? { texto: `RCA ${c.rca_num}`, cor: "#64748b", bg: "#f1f5f9", borda: "#dbe3ec",
+                            title: `Vendedor oficial no WinThor: RCA ${c.rca_num}.` }
+                        : null;
                       return (
                         <article
                           key={c.cliente_id}
@@ -3210,17 +3033,9 @@ export default function Page() {
                                 {/* Sem data isto virava "última msg · —", que promete uma
                                     informação e entrega um travessão. Quem não tem conversa
                                     tem telefone, e é o que serve para agir. */}
-                                {/* "sem conversa" era MENTIRA em parte destes cards: o
-                                    ramo 1b (§31.3) é gente contatada cuja conversa inteira
-                                    está no número escondido. Dizer "91 mensagens no outro
-                                    número" troca a linha que engana por uma que informa —
-                                    e explica por que o card está em Ociosos, não em
-                                    Prospecção. */}
                                 {c.ultima_atividade
                                   ? `última msg · ${dataHora(c.ultima_atividade)}`
-                                  : c.msgs_ocultas
-                                    ? `${c.msgs_ocultas} mensagens no outro número · ${c.telefone ?? "sem telefone"}`
-                                    : `sem conversa · ${c.telefone ?? "sem telefone"}`}
+                                  : `sem conversa · ${c.telefone ?? "sem telefone"}`}
                               </div>
                             )}
                           </div>
@@ -3393,7 +3208,6 @@ export default function Page() {
                 {zcodcli != null && (
                   <button onClick={(e) => { e.stopPropagation(); window.open(`${URL_CONSULTA}?codcli=${zcodcli}`, "consultaclientes"); }} onMouseDown={(e) => e.stopPropagation()} title={`Ver cadastro na Consulta Clientes (código ${zcodcli})`} style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid #e2c7d3`, background: "#fbeef4", color: RD.wine, fontSize: 11, fontWeight: 800, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>C</button>
                 )}
-                {!semRd && <button onClick={(e) => { e.stopPropagation(); atualizarZoom(); }} onMouseDown={(e) => e.stopPropagation()} disabled={zoomSyncing} title="Atualizar — busca no RD as mensagens que faltam nesta conversa" style={{ width: 20, height: 20, borderRadius: 5, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.gray, fontSize: 12, lineHeight: 1, cursor: zoomSyncing ? "wait" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 }}>{zoomSyncing ? "…" : "↻"}</button>}
                 {/* Ciclo e tempo entram AQUI, na mesma linha: sao a unica coisa
                     do card que a conversa embaixo nao mostra. */}
                 {zciclo && (

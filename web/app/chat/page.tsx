@@ -20,7 +20,7 @@ import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia"
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
 // ---------------------------------------------------------------------------
-// CHAT — ambiente de conversa estilo RD Conversas, layout inspirado no WhatsApp
+// CHAT — ambiente de atendimento, layout inspirado no WhatsApp
 // Web, identidade visual Murano (skill murano-brand). Paleta desta tela:
 //   púrpura #7b2d8b  -> botões e ações (preferência sobre o laranja)
 //   vinho   #621244  -> títulos, nomes, acentos de marca
@@ -354,7 +354,7 @@ type Conversa = {
   /** dono COMERCIAL cru (carteira/RCA), antes da transferência — governa o "devolver" */
   carteira_dona?: string | null;
   // por qual NÚMERO a conversa corre (migration 0089): phone_number_id da Cloud
-  // API, ou 'rd' para o número oficial, que é atendido pelo RD Conversas
+  // API. ('rd' era o id sintético do número antigo; ver lib/crmConfig, 0131)
   linha_id?: string;
   // `vendedor` já vem como o dono EFETIVO (depois da transferência); isto diz de
   // qual carteira ela veio, para o selo "recebida de fulano" (migration 0081)
@@ -390,7 +390,7 @@ type Msg = {
   reacao?: string | null;      // emoji com que a cliente reagiu A ESTA mensagem
   resposta_a?: string | null;  // wamid da mensagem citada
   erro?: string | null;        // motivo da falha, como a Meta explicou (0091)
-  linha_id?: string | null;    // null = RD Conversas (§23.4); decide a janela de 24h
+  linha_id?: string | null;    // null = histórico do número antigo; decide a janela de 24h
   // ponto no mapa (0115). Vale para o que a cliente compartilha E para o que
   // nós mandamos — a bolha desenha o mesmo cartão nos dois casos.
   localizacao?: { lat: number; lng: number; nome?: string | null; endereco?: string | null; url?: string | null } | null;
@@ -1150,8 +1150,8 @@ function CompositorTemplate({
         </div>
       ) : (
         <div style={{ marginTop: 10, fontSize: 11.5, color: M.gray, lineHeight: 1.5 }}>
-          O texto deste template mora no painel do RD Conversas — o que você escrever aqui
-          entra no campo dele, mas não temos como mostrar a frase inteira daqui.
+          Este template não tem o texto guardado aqui — o que você escrever entra
+          nos campos dele, mas não dá para mostrar a frase inteira.
         </div>
       )}
 
@@ -1438,13 +1438,10 @@ export default function Chat() {
     : fila.total > 1 ? `${fila.feito}/${fila.total}`
     : fila.pct != null ? `${fila.pct}%`
     : null;
-  const [canalEnvio, setCanalEnvio] = useState<"rd" | "whatsapp" | null>(null);
   // qual NÚMERO responde esta conversa — a janela de 24h é por número, não por canal
   const [linhaEnvio, setLinhaEnvio] = useState<string | null>(null);
   // histórico do outro número (0103): quantas mensagens a seleção de linhas
   // esconde nesta conversa, e se já foram trazidas
-  const [ocultas, setOcultas] = useState(0);
-  const [comHistorico, setComHistorico] = useState(false);
   // `/chat?cliente=<id>` — o board manda o vendedor para cá com a conversa já
   // selecionada. Guardado num ref porque só vale UMA vez: sem isso, qualquer
   // recarga da lista puxaria a seleção de volta para aquele cliente, tirando o
@@ -1511,7 +1508,7 @@ export default function Chat() {
   const [linhas, setLinhas] = useState<LinhaResumo[]>([]);
   const [linhaSel, setLinhaSel] = useState<string | null>(null);   // null = todos os números
   // catálogo de templates para o seletor do botão TEMPLATE (migration 0090):
-  // o vendedor escolhe vendo o TEXTO, como no RD Conversas, em vez de disparar
+  // o vendedor escolhe vendo o TEXTO, em vez de disparar
   // um "template padrão" que ele não sabe qual é
   const [templates, setTemplates] = useState<TemplateEscolha[]>([]);
   const [menuTemplate, setMenuTemplate] = useState(false);
@@ -1577,8 +1574,6 @@ export default function Chat() {
   const ultimaMsgRef = useRef<string | null>(null);
   const doServidor = (msgs ?? []).filter((m) => !String(m.id).startsWith("tmp:"));
   ultimaMsgRef.current = doServidor.length ? doServidor[doServidor.length - 1].criada_em : null;
-  const comHistoricoRef = useRef(false);
-  comHistoricoRef.current = comHistorico;
   // o callback do Realtime e montado uma vez; chamar a funcao por ref evita
   // que ele fique preso na versao do primeiro render
   const apanharNovasRef = useRef<((c: Conversa) => Promise<number>) | null>(null);
@@ -1659,9 +1654,9 @@ export default function Chat() {
       .catch(() => {});
   }, []);
 
-  const carregarThread = useCallback(async (c: Conversa, scroll = true, historico = false) => {
+  const carregarThread = useCallback(async (c: Conversa, scroll = true) => {
     const r = await fetch(
-      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}${historico ? "&historico=1" : ""}`,
+      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}`,
       { cache: "no-store" });
     const j = await r.json().catch(() => null);
     if (!r.ok) { setErro(j?.error ?? `erro ${r.status}`); return; }
@@ -1678,10 +1673,7 @@ export default function Chat() {
     // linha mais recente da foto chegou DEPOIS dela, entao sobrevive.
     setMsgs((atual) => juntar(atual, j?.mensagens ?? []));
     guardarCitadas(j?.citadas ?? []);
-    setCanalEnvio(j?.canal_envio ?? null);
     setLinhaEnvio(j?.linha_envio ?? null);
-    setOcultas(j?.historico_oculto ?? 0);
-    setComHistorico(!!j?.historico_carregado);
     setNotas(j?.notas ?? []);
     setTransferencias(j?.transferencias ?? []);
     setLigacoes(j?.ligacoes ?? []);
@@ -1716,8 +1708,7 @@ export default function Chat() {
     // na recarga completa -- que aqui e barata, porque a conversa esta vazia.
     if (!ultima) { await carregarThread(c, false); return 0; }
     const r = await fetch(
-      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}&desde=${encodeURIComponent(ultima)}` +
-      (comHistoricoRef.current ? "&historico=1" : ""),
+      `/api/chat/thread?cliente_id=${encodeURIComponent(c.cliente_id)}&desde=${encodeURIComponent(ultima)}`,
       { cache: "no-store" });
     if (!r.ok) return 0;                       // silencioso de proposito: a recarga coalescida cobre
     const j = await r.json().catch(() => null);
@@ -1778,7 +1769,7 @@ export default function Chat() {
     try {
       const r = await fetch(
         `/api/chat/thread?cliente_id=${encodeURIComponent(sel.cliente_id)}` +
-        `&antes=${encodeURIComponent(primeira.criada_em)}${comHistorico ? "&historico=1" : ""}`,
+        `&antes=${encodeURIComponent(primeira.criada_em)}`,
         { cache: "no-store" });
       const j = await r.json().catch(() => null);
       if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
@@ -3261,11 +3252,11 @@ export default function Chat() {
   // Com DUAS linhas Cloud, `!!m.linha_id` não basta: contaria a janela de uma
   // linha para decidir o envio da outra. Quando o servidor sabe o número, o
   // filtro é por ele; sem essa informação, cai no comportamento anterior.
+  // Com DUAS linhas Cloud, `!!m.linha_id` não basta: contaria a janela de uma
+  // linha para decidir o envio da outra. Quando o servidor sabe o número, o
+  // filtro é por ele; sem essa informação, vale qualquer mensagem com linha.
   const doCanalDeEnvio = (m: Msg) =>
-    canalEnvio === null ? true
-      : canalEnvio === "rd" ? !m.linha_id
-      : linhaEnvio ? m.linha_id === linhaEnvio
-      : !!m.linha_id;
+    linhaEnvio ? m.linha_id === linhaEnvio : !!m.linha_id;
   const ultimaRecebida = (msgs ?? [])
     .filter((m) => m.enviada_por === "customer" && m.tipo !== "evento_sistema" && doCanalDeEnvio(m))
     .slice(-1)[0];
@@ -3452,7 +3443,7 @@ export default function Chat() {
         </div>
       )}
       {embutido ? null : <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />}
-      {/* ---- barra de navegação do produto (posição do menu do RD Conversas) ----
+      {/* ---- barra de navegação do produto ----
           Logo à esquerda, abas horizontais do CRM no meio, identidade à direita.
           O Chat vira uma aba do produto, com a aba ativa sublinhada. */}
       {embutido ? null : (
@@ -4524,20 +4515,14 @@ export default function Chat() {
                 {/* mensagens */}
                 <div ref={rolagemRef} className={bc ? "bc-rolagem" : undefined} style={{ position: "relative", flex: 1, overflowY: "auto", padding: G.msgsPad, display: "flex", flexDirection: "column", gap: 4 }}>
                   {msgs === null && <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Carregando mensagens…</div>}
-                  {msgs?.length === 0 && !notas.length && ocultas === 0 && (bc
+                  {msgs?.length === 0 && !notas.length && (bc
                     ? <Estado glifo="✉️" titulo="Sem mensagens ainda"
                         texto="Este contato existe no cadastro, mas ainda não trocou nenhuma mensagem por este número." />
                     : <div style={{ color: M.muted, fontSize: 12.5, textAlign: "center", padding: 20 }}>Sem mensagens ainda.</div>)}
 
-                  {/* Histórico do outro número, a um clique — como o RD faz (0103).
-                      Fica no TOPO porque é o que vem antes na linha do tempo. Sem
-                      isto, uma conversa com 23 mensagens no RD dizia "Sem mensagens
-                      ainda", e o vendedor ligava achando que era o primeiro contato. */}
-                  {/* Carregar as anteriores. Fica ACIMA do botão de histórico do
-                      outro número porque é o que vem antes na linha do tempo
-                      desta conversa; o outro é de OUTRO número. Sem isto a
-                      thread terminava em silêncio na 200a mensagem, e para quem
-                      rolava a conversa mais antiga simplesmente não existia. */}
+                  {/* Carregar as anteriores. Sem isto a thread terminava em
+                      silêncio na 200a mensagem, e para quem rolava a conversa
+                      mais antiga simplesmente não existia. */}
                   {temMais && (
                     <div style={{ textAlign: "center", padding: "2px 0 10px" }}>
                       <button onClick={() => void carregarAntigas()} disabled={carregandoAntigas}
@@ -4547,29 +4532,6 @@ export default function Chat() {
                           borderRadius: 999, padding: "6px 16px" }}>
                         {carregandoAntigas ? "carregando…" : "↑ Carregar mensagens anteriores"}
                       </button>
-                    </div>
-                  )}
-
-                  {ocultas > 0 && !comHistorico && sel && (
-                    <div style={{ textAlign: "center", padding: "2px 0 10px" }}>
-                      <button
-                        onClick={() => void carregarThread(sel, false, true)}
-                        style={{ fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
-                          color: M.azul, background: M.surface, border: `1px solid ${M.border}`,
-                          borderRadius: 999, padding: "6px 16px" }}>
-                        ↑ Ver histórico anterior ({ocultas})
-                      </button>
-                      <div style={{ fontSize: 10.5, color: M.muted, marginTop: 4 }}>
-                        conversas deste cliente no Murano Pro (RD Conversas)
-                      </div>
-                    </div>
-                  )}
-                  {comHistorico && (
-                    <div style={{ textAlign: "center", padding: "2px 0 6px" }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface,
-                        border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px" }}>
-                        inclui o histórico do Murano Pro (RD Conversas)
-                      </span>
                     </div>
                   )}
 
@@ -5377,27 +5339,10 @@ export default function Chat() {
                     </>
                   )}
                   {!modoNota && (() => {
-                    // Só os templates do canal DESTA conversa: oferecer um da
-                    // Cloud numa conversa do RD (ou o contrário) manda um id que
-                    // o outro lado não conhece, e a falha só apareceria depois.
-                    //
-                    // A pergunta certa é "por onde a mensagem VAI SAIR", e quem
-                    // responde isso é `canal_envio` — o mesmo `canalDeResposta`
-                    // que o /api/send-template usa para escolher o ramo, já com
-                    // a escolha do admin (`numero_envio`, 0102) aplicada. Antes
-                    // olhávamos `linha.canal`, que é outra coisa: por onde a
-                    // conversa CORREU. Os dois divergem sempre que o admin fixa
-                    // o número de envio — e aí a lista vinha vazia (não existe
-                    // template de RD cadastrado, §26.3) enquanto o servidor
-                    // teria mandado pela Cloud sem problema nenhum. Dava para
-                    // ver a conversa e não dava para reabri-la. Isso volta a
-                    // acontecer sozinho quando alguém liga "mostrar histórico
-                    // do RD", que é justamente uma chave feita para ser ligada.
-                    //
-                    // `canalEnvio` nulo = a thread ainda não respondeu: cai em
-                    // "cloud", que é o padrão do sistema hoje (§44).
-                    const canalAqui = canalEnvio === "rd" ? "rd" : "cloud";
-                    const doCanal = templates.filter((t) => (t.canal === "cloud" ? "cloud" : "rd") === canalAqui);
+                    // Um canal só (0131): todo template aprovado na Meta vale
+                    // para qualquer conversa. O filtro por canal que havia aqui
+                    // separava os da Cloud dos ponteiros do painel do RD.
+                    const doCanal = templates.filter((t) => t.canal === "cloud");
                     const primeiroNome = String(sel?.cliente ?? "").trim().split(/\s+/)[0] || "cliente";
                     return (
                       <div style={{ position: "relative", flexShrink: 0 }}>
@@ -5465,7 +5410,7 @@ export default function Chat() {
                                         <div style={{ fontSize: 12, color: M.gray, marginTop: 3, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
                                           {t.corpo
                                             ? aplicarVariaveis(t.corpo, [primeiroNome]).replace(/\{\{\s*\d+\s*\}\}/g, "———")
-                                            : "O texto deste template mora no painel do RD Conversas — não temos como mostrar aqui."}
+                                            : "Este template não tem o texto guardado aqui."}
                                         </div>
                                       </button>
                                     );

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { sendText, sendMedia, canalDeResposta, linhaDaConversa, tipoDoMime } from "../../../../lib/whatsapp";
+import { sendText, sendMedia, linhaDaConversa, tipoDoMime } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -53,12 +53,8 @@ export async function POST(req: Request) {
   if (!tel) return Response.json({ error: "o contato de destino não tem telefone" }, { status: 400 });
 
   // Reenviar conteúdo livre exige janela aberta NO DESTINO. Fora dela, o
-  // caminho é template — e template não carrega o texto encaminhado.
-  if ((await canalDeResposta(db, para)) !== "whatsapp") {
-    return Response.json({
-      error: "essa conversa não corre pelo número próprio — só de lá dá para encaminhar",
-    }, { status: 422 });
-  }
+  // caminho é template — e template não carrega o texto encaminhado. (A guarda
+  // de CANAL que existia aqui saiu com o RD: só há um canal, 0131.)
 
   // A linha é a do DESTINO, não a da conversa de origem: encaminhar é começar
   // a falar com outra pessoa, e é o número em que ELA escreve que vale.

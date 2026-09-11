@@ -1,7 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
-import { canalDeResposta } from "../../../../lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +43,6 @@ export async function POST(req: Request) {
     return Response.json({ error: "o texto do aviso de pausa está vazio — defina em Administração → Mecanismos" }, { status: 422 });
   }
 
-  // Canal de envio efetivo, e a janela CONTADA NELE. Sem isso, um cliente que
-  // respondeu no RD faria a rota achar que a janela da Cloud está aberta.
-  const canal = await canalDeResposta(sb, cliente_id).catch(() => "rd" as const);
-
   let q = sb.from("mensagens")
     .select("id,enviada_por,conteudo,criada_em,linha_id")
     .eq("cliente_id", cliente_id)
@@ -58,8 +53,11 @@ export async function POST(req: Request) {
   const { data: ultimas, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const doCanal = (m: any) => (canal === "rd" ? !m.linha_id : !!m.linha_id);
-  const msgs = (ultimas ?? []).filter(doCanal);
+  // A janela de 24h é POR NÚMERO, então só conta mensagem que tem linha. O
+  // `filtroLinhas` acima já corta o histórico do RD (`linha_id` nulo), mas a
+  // checagem fica explícita: era ela que existia como `doCanal`, e perdê-la
+  // faria uma mensagem antiga do RD reabrir uma janela que não existe.
+  const msgs = (ultimas ?? []).filter((m: any) => !!m.linha_id);
 
   const ultimaRecebida = msgs.find((m: any) => m.enviada_por === "customer");
   const abertaAte = ultimaRecebida

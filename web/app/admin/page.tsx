@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
@@ -25,15 +25,6 @@ const M = {
 
 // MODO MIGRACAO visto por TODAS as abas.
 //
-// Cada aba busca so os proprios dados, entao sem um contexto o /admin ficaria
-// com metade das telas escondendo o RD e a outra metade exibindo -- e a aba de
-// Envios, que compara "saiu daqui" com "saiu pelo painel do RD", seria a mais
-// gritante: um quadro inteiro nomeando o sistema que a chave diz nao existir.
-//
-// Valor padrao `false`: enquanto a config nao chega, a tela mostra tudo. O
-// contrario faria o RD piscar e sumir a cada carregamento.
-const ModoMigracao = createContext(false);
-const useSemRd = () => useContext(ModoMigracao);
 
 type Aba = "usuarios" | "carteiras" | "horario" | "linhas" | "templates-whatsapp" | "paginas-legais" | "chat-layout" | "crm-config" | "pendencias" | "atualizacoes";
 const ABAS: { id: Aba; rotulo: string }[] = [
@@ -138,14 +129,6 @@ export default function Admin() {
   const [ok, setOk] = useState<string | null>(null);
   const [semPermissao, setSemPermissao] = useState(false);
   const [carregando, setCarregando] = useState(false);
-  // lido uma vez: e config global, nao muda enquanto a pessoa navega pelas abas
-  const [semRd, setSemRd] = useState(false);
-  useEffect(() => {
-    fetch("/api/admin/crm-config", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => setSemRd(j?.["crm-config"]?.migracao?.ligado === true))
-      .catch(() => {});
-  }, []);
 
   const [dados, setDados] = useState<any>(null);
   const [edicoes, setEdicoes] = useState<Record<string, any>>({});
@@ -225,7 +208,6 @@ export default function Admin() {
   }
 
   return (
-    <ModoMigracao.Provider value={semRd}>
     <Moldura aba={aba} setAba={(a) => { setAba(a); setOk(null); setErro(null); }}>
       {erro && <Recado tipo="erro">{erro}</Recado>}
       {ok && <Recado tipo="ok">{ok}</Recado>}
@@ -368,7 +350,7 @@ export default function Admin() {
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                 <thead><tr>
                   <th style={th}>Apelido</th><th style={th}>RCA</th><th style={th}>Time</th>
-                  {!semRd && <th style={th}>ID no RD</th>}<th style={th}>Cor</th><th style={th}>Clientes</th>
+                  <th style={th}>Cor</th><th style={th}>Clientes</th>
                   <th style={th}>Situação</th><th style={th} />
                 </tr></thead>
                 <tbody>
@@ -426,8 +408,6 @@ export default function Admin() {
               <select value={novo.time ?? ""} onChange={(e) => setNovo({ ...novo, time: e.target.value })} style={inputBase}>
                 {TIMES.map((t) => <option key={t.v} value={t.v}>{t.r}</option>)}
               </select>
-              {!semRd && <input placeholder="ID no RD (opcional)" value={novo.employee_id ?? ""}
-                onChange={(e) => setNovo({ ...novo, employee_id: e.target.value })} style={{ ...inputBase, width: 200 }} />}
               <Botao onClick={() => enviar("carteiras", "POST", novo, "Carteira criada.")}>Criar</Botao>
             </div>
           </Bloco>
@@ -634,7 +614,6 @@ export default function Admin() {
         />
       )}
     </Moldura>
-    </ModoMigracao.Provider>
   );
 }
 
@@ -791,7 +770,8 @@ function HorarioAba({ cfg, foraAgora, salvar }: {
 // --- templates do WhatsApp (migration 0090) --------------------------------
 // Cria o template NA META, com texto e imagem opcional. Não confundir com a
 // aba de templates do board (/api/templates): aquela cadastra um ponteiro para
-// um template que vive no RD Conversas, cujo texto nunca esteve conosco.
+// um template cujo texto nunca esteve conosco (o cadastro antigo guardava só
+// o nome e um identificador).
 //
 // Estado próprio (não usa o `enviar` genérico da página) porque a criação vai
 // em multipart — tem arquivo junto.
@@ -799,8 +779,6 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   templates: any[]; avisoMeta: string | null;
   recarregar: () => Promise<void>; avisar: (t: "erro" | "ok", m: string) => void;
 }) {
-  // ponteiros para o painel do RD nao existem no modo migracao
-  const semRd = useSemRd();
   // Cadastrar template e disparar em massa são o mesmo assunto visto de dois
   // lados — quem monta uma campanha está escolhendo entre os templates que
   // acabou de cadastrar. Por isso dividem uma aba só, com esta chavinha, em vez
@@ -832,7 +810,6 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   const corpoRef = useRef<HTMLTextAreaElement>(null);
 
   const daCloud = templates.filter((t) => t.canal === "cloud");
-  const doRd = templates.filter((t) => t.canal !== "cloud");
 
   const corDoStatus = (s: string | null) => {
     const v = String(s ?? "").toUpperCase();
@@ -1094,22 +1071,6 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
         ))}
       </Bloco>
 
-      {doRd.length > 0 && !semRd && (
-        <Bloco
-          titulo="Templates do RD Conversas"
-          ajuda="Cadastrados antes, apontando para o painel do RD. Não temos o texto deles — só o nome e o identificador — e por isso não dá para editar aqui."
-        >
-          {doRd.map((t) => (
-            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", fontSize: 13.5, borderBottom: `1px solid ${M.bg}` }}>
-              <b>{t.nome}</b>
-              <code style={{ fontSize: 11.5, color: M.muted }}>{t.rd_template_id ?? "sem id"}</code>
-              {t.padrao && <Selo ok sim="padrão" nao="" />}
-              <span style={{ flex: 1 }} />
-              <Selo ok={t.ativo} sim="ativo" nao="inativo" />
-            </div>
-          ))}
-        </Bloco>
-      )}
     </>
   );
 }
@@ -1267,10 +1228,9 @@ const OBRIGATORIOS_ROTULO: Record<string, boolean> = {
 // tela naquele momento: ação cara e irreversível amarrada ao estado de uma tela
 // de trabalho, sem extrato do que tinha sido feito.
 //
-// O laço de envio mora no NAVEGADOR de propósito: a cota do RD é de ~48
-// chamadas/min e é compartilhada com o ETL (§14.5), então centenas de envios
-// não cabem no tempo de uma rota da Vercel. O ETL é pausado antes e retomado no
-// fim, como o board já fazia.
+// O laço de envio mora no NAVEGADOR de propósito: centenas de envios não cabem
+// no tempo de uma rota da Vercel. Fica no navegador, com throttle entre um
+// envio e o seguinte, como o board já fazia.
 const CUSTO_TEMPLATE = 0.43; // R$ por template disparado
 const moedaBR = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -1295,8 +1255,7 @@ const CORTE_ROTULO: Record<string, string> = {
   conversa_aberta: "estão em conversa aberta agora",
 };
 
-// Com o modo migração ligado o CRM não nomeia o RD Conversas (§44). Só o corte
-// por canal precisa de outra redação -- os demais não citam o RD.
+// Os rótulos de corte não nomeiam mais o canal antigo (0131).
 const CORTE_ROTULO_SEM_RD: Record<string, string> = {
   canal: "ainda não conversam por este número",
 };
@@ -1636,7 +1595,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   // §45.3: a tela inteira deixa de nomear o RD quando o modo migração está
   // ligado. Esta aba tinha ficado de fora -- e era a mais gritante, porque
   // mandava "escolha um template do RD" para quem já não tem RD nenhum.
-  const semRd = useSemRd();
   const templates: any[] = cfg.templates ?? [];
   // Começa no "Padrão do sistema" quando ele existe: era o default do modal do
   // board e é o único que alcança a base do RD. O ★ padrão da tabela vale para o
@@ -1752,21 +1710,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   async function enviar() {
     setFase("enviando");
     setFalhas([]);
-    // PAUSA o sync de fundo para liberar a cota do RD durante o envio; retoma no
-    // finally, com retry — para nunca deixar pausado à toa.
-    let pausei = false;
-    try {
-      const rp = await fetch("/api/sync-etl", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "pausar" }),
-      });
-      pausei = rp.ok;
-      if (pausei) {
-        // o servidor já espera os runners pararem (~18s). Se a cota ainda não
-        // liberou, dá mais um respiro — enviar contra um run ativo é 429 na certa.
-        const jp = await rp.json().catch(() => null);
-        if (jp && jp.cotaLivre === false) await new Promise((res) => setTimeout(res, 12_000));
-      }
-    } catch {}
+    // Aqui o ETL do RD era PAUSADO antes do envio e retomado no finally, para
+    // liberar a cota de ~48 chamadas/min que os dois dividiam. Sem o ETL
+    // (0131) não há com quem dividir: a cota da Cloud API é outra, e o
+    // throttle de 1.800 ms entre envios, abaixo, continua sendo o que a
+    // respeita.
 
     let ok = 0, ruins = 0;
     const detalhe: { cliente: string; erro: string }[] = [];
@@ -1798,17 +1746,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
       }
     } finally {
-      if (pausei) {
-        for (let t = 0; t < 4; t++) {
-          try {
-            const rr = await fetch("/api/sync-etl", {
-              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "retomar" }),
-            });
-            if (rr.ok) break;
-          } catch {}
-          await new Promise((res) => setTimeout(res, 1500));
-        }
-      }
       setFalhas(detalhe);
       setFase("fim");
       await recarregar();
@@ -1863,7 +1800,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         </div>
         <div style={{ fontSize: 12.5, color: M.gray, marginTop: 8 }}>
           Template: <b>{tpl?.nome ?? "padrão do sistema"}</b>
-          {semRd ? "" : tpl?.canal === "cloud" ? " · WhatsApp Cloud" : " · RD Conversas"}
         </div>
         {tpl?.corpo && (
           <div style={{ marginTop: 10, padding: "10px 12px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 8, fontSize: 13, color: M.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
@@ -1889,7 +1825,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         titulo="1. Template"
         ajuda={<>
           O texto vem do cadastro ao lado, em <b>Templates cadastrados</b> — é o que a cliente vai
-          ler. {semRd ? "O template" : "Template da Cloud"} só entra nesta lista depois de{" "}
+          ler. O template só entra nesta lista depois de{" "}
           <b>aprovado pela Meta</b>.
         </>}
       >
@@ -1912,7 +1848,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                     {t.nome}
                     {t.padrao && <span style={{ fontSize: 11, color: M.roxo, marginLeft: 6 }}>★ padrão</span>}
                     <span style={{ fontSize: 11, fontWeight: 700, color: M.muted, marginLeft: 8 }}>
-                      {semRd ? "" : t.canal === "cloud" ? "WhatsApp Cloud" : "RD Conversas"}
                     </span>
                     {t.tem_imagem && <span style={{ fontSize: 11, color: M.muted, marginLeft: 6 }}>· com imagem</span>}
                   </div>
@@ -2129,22 +2064,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               </div>
             )}
 
-            {!semRd && tpl?.canal === "cloud" && !cfg.envioPadraoCloud && (
-              <div style={{ marginTop: 12 }}>
-                <Recado tipo="aviso">
-                  Este template é da <b>WhatsApp Cloud</b>, então só alcança conversas que já correm por lá —
-                  {" "}<b>{previa.cortes?.canal ?? 0}</b> contato(s) ficaram de fora por atenderem pelo RD
-                  Conversas. Para falar com a base do RD, escolha um template do RD.
-                </Recado>
-              </div>
-            )}
 
             {Object.entries(previa.cortes ?? {}).filter(([, n]) => Number(n) > 0).length > 0 && (
               <div style={{ fontSize: 12, color: M.muted, marginTop: 8, lineHeight: 1.6 }}>
                 Ficaram de fora:{" "}
                 {Object.entries(previa.cortes)
                   .filter(([, n]) => Number(n) > 0)
-                  .map(([k, n]) => `${n} ${(semRd ? CORTE_ROTULO_SEM_RD[k] : null) ?? CORTE_ROTULO[k] ?? k}`)
+                  .map(([k, n]) => `${n} ${CORTE_ROTULO_SEM_RD[k] ?? CORTE_ROTULO[k] ?? k}`)
                   .join(" · ")}
               </div>
             )}
@@ -2155,7 +2081,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                   <thead><tr>
                     <th style={th}>Cliente</th><th style={th}>Carteira</th>
                     <th style={th}>Etapa</th><th style={th}>Parado</th>
-                    {!semRd && <th style={th}>Canal</th>}
                   </tr></thead>
                   <tbody>
                     {selecionados.map((s: any) => (
@@ -2164,7 +2089,6 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                         <td style={td}>{s.vendedor ?? "—"}</td>
                         <td style={td}>{ETAPAS.find((e) => e.key === s.etapa)?.rotulo ?? s.etapa}</td>
                         <td style={td}>{s.dias == null ? "nunca falou" : `${s.dias} d`}</td>
-                        {!semRd && <td style={td}>{s.canal === "whatsapp" ? "Cloud" : "RD"}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -2215,8 +2139,8 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 // "Templates 2733" e "Automáticos 94" ficavam no cabeçalho do board sem nada
 // que dissesse o que eram — e os rótulos enganavam: nada ali é automático.
 // Aqui os dois números aparecem com nome próprio, lado a lado, e a diferença
-// entre eles (o que a equipe disparou pelo painel do RD, fora do CRM) deixa de
-// ser uma subtração que ninguém fazia.
+// entre eles media o que a equipe disparava fora do CRM — comparação que
+// deixou de existir com um número só (0131).
 const PERIODOS = [
   { k: "hoje", r: "Hoje" }, { k: "ontem", r: "Ontem" }, { k: "semana", r: "7 dias" },
   { k: "quinzena", r: "15 dias" }, { k: "mes", r: "Mês" },
@@ -2832,32 +2756,16 @@ function DesempenhoTemplates() {
 }
 
 function EnviosAba({ dados }: { dados: any }) {
-  // Com o modo migracao ligado nao existe "fora daqui": todo template sai por
-  // este CRM. O terceiro quadro e a coluna do RD deixam de ser informacao e
-  // viram o nome de um sistema que a chave diz nao existir mais.
-  //
-  // ⚠️ Esconder o terceiro quadro NAO bastava, e por um motivo que so aparece
-  // olhando de onde cada numero vem:
-  //
-  //   "chegaram"  <- mensagens, agora com o filtro de linha (rota)  -> limpo
-  //   "por este CRM" <- disparos_template, que NAO tem coluna de linha
-  //
-  // O segundo seguia carregando os disparos feitos pelo RD, dentro de uma tela
-  // que a chave manda ficar cega para ele. Como nao ha como recorta-lo, e como
-  // no nosso numero os dois contam o MESMO evento por duas fontes (a WABA e
-  // nossa, nao ha outro painel), o certo e mostrar UM numero — nao dois quase
-  // iguais convidando a pergunta "por que nao batem?".
-  const semRd = useSemRd();
+  // UM número, não dois. Havia aqui uma comparação — "chegaram à cliente" x
+  // "saíram por este CRM" — cuja diferença media o que a equipe disparava pelo
+  // painel do RD, fora do sistema. Com um número só e a WABA sendo nossa, não
+  // existe outro painel: todo template que sai por ele saiu daqui, e a
+  // subtração é estruturalmente zero. Dois números quase iguais só convidariam
+  // a pergunta "por que não batem?".
   const [per, setPer] = useState<(typeof PERIODOS)[number]["k"]>("mes");
   const linhas: any[] = dados.linhas ?? [];
   const tot = dados.total ?? { saiu: {}, crm: {} };
   const saiuTot = Number(tot.saiu?.[per] ?? 0);
-  const crmTot = Number(tot.crm?.[per] ?? 0);
-  // Pode dar negativo: as duas contagens vêm de fontes diferentes (o espelho de
-  // mensagens e o nosso log de disparos), e o ETL pode ainda não ter trazido a
-  // mensagem de um disparo recém-feito. Mostrar "-3 pelo painel do RD" seria
-  // pior que mostrar zero e dizer que os números se encontram com o tempo.
-  const fora = Math.max(0, saiuTot - crmTot);
 
   const num = (v: number, cor: string) => (
     <b style={{ fontSize: 27, fontWeight: 800, color: cor, lineHeight: 1.1 }}>{v.toLocaleString("pt-BR")}</b>
@@ -2870,8 +2778,7 @@ function EnviosAba({ dados }: { dados: any }) {
         ajuda={<>
           Template é a mensagem que <b>reabre uma conversa</b> passadas as 24 h — a única forma de
           falar com quem parou de responder, e a única que tem <b>custo por envio</b>.{" "}
-          {semRd ? <>Este número diz <i>quantos saíram</i> pelo nosso número, no período.</>
-                 : <>Estes números existem para responder duas perguntas: <i>quantos saíram</i> e <i>por onde</i>.</>}
+          Este número diz <i>quantos saíram</i> pelo nosso número, no período.
         </>}
       >
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
@@ -2889,29 +2796,12 @@ function EnviosAba({ dados }: { dados: any }) {
           <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
             {num(saiuTot, M.wine)}
             <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>
-              {semRd ? "templates enviados" : "chegaram à cliente"}
+              templates enviados
             </div>
             <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
-              {semRd ? "Pelo número em uso, no período. Todo template que sai por ele sai por este CRM — a conta do WhatsApp é nossa, não há outro painel."
-                     : "Todo template entregue na conversa, tenha saído daqui ou do painel do RD. Contado nas mensagens que o sistema tem espelhadas."}
+              Pelo número em uso, no período. Todo template que sai por ele sai por este CRM — a conta do WhatsApp é nossa, não há outro painel.
             </div>
           </div>
-          {!semRd && <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
-            {num(crmTot, M.roxo)}
-            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>saíram por este CRM</div>
-            <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
-              Botão do card, chat e disparo em massa. É a parte que este sistema registra por
-              cliente, e a única que aparece no extrato do disparo em massa.
-            </div>
-          </div>}
-          {!semRd && <div style={{ flex: "1 1 220px", padding: "14px 16px", background: M.bg, border: `1px solid ${M.border}`, borderRadius: 12 }}>
-            {num(fora, M.laranja)}
-            <div style={{ fontSize: 13, fontWeight: 700, color: M.ink, marginTop: 4 }}>pelo painel do RD</div>
-            <div style={{ fontSize: 12, color: M.gray, marginTop: 5, lineHeight: 1.5 }}>
-              A diferença entre os dois: o que a equipe disparou fora daqui. Quanto menor, mais a
-              operação já está acontecendo dentro do CRM.
-            </div>
-          </div>}
         </div>
       </Bloco>
 
@@ -2925,9 +2815,7 @@ function EnviosAba({ dados }: { dados: any }) {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 460 }}>
               <thead><tr>
                 <th style={th}>Carteira</th>
-                <th style={th}>{semRd ? "Enviados" : "Chegaram"}</th>
-                {!semRd && <th style={th}>Por este CRM</th>}
-                {!semRd && <th style={th}>Pelo painel do RD</th>}
+                <th style={th}>Enviados</th>
               </tr></thead>
               <tbody>
                 {[...linhas]
@@ -2938,8 +2826,6 @@ function EnviosAba({ dados }: { dados: any }) {
                       <tr key={l.vendedor}>
                         <td style={{ ...td, fontWeight: 600 }}>{l.vendedor}</td>
                         <td style={td}>{s}</td>
-                        {!semRd && <td style={td}>{c}</td>}
-                        {!semRd && <td style={{ ...td, color: s - c > 0 ? M.laranja : M.muted }}>{Math.max(0, s - c)}</td>}
                       </tr>
                     );
                   })}
@@ -3202,9 +3088,7 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   // gesto, como estabelecer um desenho (§29.4). Um clique acidental num
   // checkbox não deve trocar a tela de quinze pessoas.
   const linhasInfo = d.linhas ?? { opcoes: [], selecionadas: [] };
-  const envio = d.envio ?? null;
   const pausa = d.pausa ?? null;
-  const migracao = d.migracao ?? null;
   const cadastro = d.cadastro ?? null;
   const locais = d.locais ?? null;
   const sla = d.sla ?? null;
@@ -3251,81 +3135,9 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
           </>
         }
       >
-        {/* ---- CHAVE MESTRA: modo migração ---------------------------------
-            Vem antes de tudo porque governa os quatro controles abaixo. Não é
-            uma quinta chave no banco: é o estado deles lidos juntos (ver
-            `modoMigracao()` em lib/crmConfig.ts). Por isso, enquanto ligada, os
-            controles que ela governa aparecem TRAVADOS — dois controles sobre a
-            mesma coisa acabam se contradizendo, e ninguém sabe qual vence. */}
-        {migracao && (
-          <div style={{ border: `2px solid ${migracao.ligado ? M.roxo : M.border}`, borderRadius: 12,
-            padding: 16, marginBottom: 16, background: migracao.ligado ? M.roxoSoft : "transparent" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
-              <div style={{ fontSize: 17, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{migracao.rotulo}</div>
-              <Selo ok={migracao.ligado} sim="Ligado" nao="Desligado" />
-              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                {migracao.ligado ? (
-                  <Botao cor={M.laranja} disabled={ocupado}
-                    onClick={async () => { setOcupado(true); await salvar("modo_migracao", false); setOcupado(false); }}>
-                    {ocupado ? "Voltando…" : "Voltar a usar o RD"}
-                  </Botao>
-                ) : confirmando === "modo_migracao" ? (
-                  <>
-                    <Botao cor={M.laranja} disabled={ocupado}
-                      onClick={async () => {
-                        setOcupado(true);
-                        const deu = await salvar("modo_migracao", true);
-                        setOcupado(false);
-                        if (deu) setConfirmando(null);
-                      }}>
-                      {ocupado ? "Migrando…" : "Confirmar: migrar"}
-                    </Botao>
-                    <Botao cor={M.gray} onClick={() => setConfirmando(null)}>Cancelar</Botao>
-                  </>
-                ) : (
-                  <Botao onClick={() => setConfirmando("modo_migracao")}>Ligar modo migração</Botao>
-                )}
-              </div>
-            </div>
-
-            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{migracao.resumo}</p>
-
-            {confirmando === "modo_migracao" && (
-              <div style={{ margin: "0 0 12px" }}>
-                <Recado tipo="aviso">
-                  Isto tira o RD Conversas da tela de <b>toda a equipe</b> de uma vez. Nada é apagado
-                  e voltar é um clique — mas no primeiro dia o chat fica quase vazio, porque quase
-                  toda conversa de hoje ainda é do RD. Essa é a foto real do dia seguinte ao corte.
-                </Recado>
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
-              <Lista titulo={migracao.ligado ? "Está fora do ar" : "Ligar tira do ar"} itens={migracao.desliga} cor={M.laranja} />
-              <Lista titulo="Continua funcionando" itens={migracao.mantem} cor={M.verde} />
-            </div>
-            {migracao.nota && (
-              <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>{migracao.nota}</p>
-            )}
-          </div>
-        )}
-
         {mecanismos.map((m: any) => {
           const on = ligado(m.chave);
           const confirmandoEste = confirmando === m.chave;
-          // travado pelo modo migração: mostra o estado, não deixa mexer
-          const travado = !!migracao?.ligado && (migracao.controla ?? []).includes(m.chave);
-          if (travado) return (
-            <div key={m.chave} style={{ border: `1px dashed ${M.border}`, borderRadius: 10, padding: "12px 15px", marginBottom: 12, opacity: 0.7 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: M.gray }}>{m.rotulo}</div>
-                <Selo ok={on} sim="Ligado" nao="Desligado" />
-                <span style={{ marginLeft: "auto", fontSize: 11.5, color: M.muted }}>
-                  definido pelo modo migração
-                </span>
-              </div>
-            </div>
-          );
           return (
             <div key={m.chave} style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
@@ -3411,52 +3223,6 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
         {sla && <SlaBloco info={sla} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {locais && <LocaisBloco info={locais} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
         {cadastro && <CadastroCamposBloco info={cadastro} salvar={salvar} ocupado={ocupado} setOcupado={setOcupado} />}
-
-        {/* ---- número de ENVIO (0102) --------------------------------------
-            Vem ANTES do seletor de visibilidade de propósito: "por qual número
-            eu falo" é a pergunta que o vendedor sente; "o que eu vejo" é a que
-            o supervisor ajusta. E o texto precisa separar as duas, senão o
-            admin muda uma achando que mudou a outra. */}
-        {envio && !migracao?.ligado && (
-          <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 4 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2 }}>{envio.rotulo}</div>
-              <Selo ok={!!envio.atual} sim="Definido" nao="Automático" />
-            </div>
-            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 12px", lineHeight: 1.55 }}>{envio.resumo}</p>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {(envio.opcoes ?? []).map((o: any) => {
-                const on = (envio.atual ?? null) === (o.v ?? null);
-                return (
-                  <label key={String(o.v)}
-                    style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: ocupado ? "default" : "pointer",
-                      border: `1px solid ${on ? M.roxo : M.border}`, background: on ? M.roxoSoft : M.surface,
-                      borderRadius: 9, padding: "9px 11px" }}>
-                    <input type="radio" name="numero_envio" checked={on} disabled={ocupado}
-                      onChange={async () => {
-                        if (on) return;
-                        setOcupado(true);
-                        await salvar("numero_envio", o.v ?? null);
-                        setOcupado(false);
-                      }}
-                      style={{ marginTop: 2 }} />
-                    <span style={{ minWidth: 0 }}>
-                      <b style={{ fontSize: 13, color: M.ink, display: "block" }}>{o.rotulo}</b>
-                      <span style={{ fontSize: 12, color: M.gray, lineHeight: 1.5 }}>{o.desc}</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-
-            <p style={{ fontSize: 12, color: M.muted, margin: "12px 0 0", lineHeight: 1.55 }}>
-              Vale na hora, para o chat e para o board. Contato que só existe no nosso banco
-              (criado pelo botão + ou por quem escreveu primeiro) sai sempre pelo Murano
-              Professional, mesmo com o RD escolhido — o RD não conhece esse contato.
-            </p>
-          </div>
-        )}
 
         {/* ---- seletor de linhas -------------------------------------------
             Decisão de 09/09/2026: fica visível e editável SEMPRE, mesmo com o
@@ -3808,8 +3574,6 @@ const item = { fontSize: 12.5, color: M.gray, lineHeight: 1.5 };
 function Moldura({ aba, setAba, esconderAbas, children }: {
   aba: Aba; setAba: (a: Aba) => void; esconderAbas?: boolean; children: React.ReactNode;
 }) {
-  // a Gestao de carteira escreve no RD Conversas: sem RD, sem link
-  const semRd = useSemRd();
   return (
     <div style={{ minHeight: "100vh", background: M.bg, color: M.ink, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${M.laranja}, ${M.wine}, ${M.roxo})` }} />
@@ -3829,12 +3593,6 @@ function Moldura({ aba, setAba, esconderAbas, children }: {
             {/* Gestão de carteira saiu do menu do board e passou a morar aqui. É LINK, não
                 aba: /carteira é uma tela própria de 700 linhas que já funciona, e transformá-la
                 em aba seria desmontá-la sem nenhum ganho para quem usa. */}
-            {!semRd && <Link href="/carteira"
-              title="Transferir contatos entre carteiras no RD Conversas, em massa"
-              style={{ padding: "6px 13px", fontSize: 12.5, fontWeight: 700, borderRadius: 8, textDecoration: "none",
-                color: M.gray, background: M.bg, border: `1px solid ${M.border}` }}>
-              🗂️ Gestão de carteira
-            </Link>}
           </div>
         )}
       </div>

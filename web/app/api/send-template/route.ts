@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { canalDeResposta, sendTemplate, linhaDaConversa } from "../../../lib/whatsapp";
-import { traduzErroRd } from "../../../lib/erroRd";
+import { sendTemplate, linhaDaConversa } from "../../../lib/whatsapp";
 import { variaveisDe, limparVariavel, aplicarVariaveis, conferirVariaveis } from "../../../lib/templateVars";
 
 export const dynamic = "force-dynamic";
@@ -73,11 +72,12 @@ export async function POST(req: Request) {
       return Response.json({ error: "nenhum campo do template pode ficar vazio" }, { status: 400 });
     }
 
-    // ---- canal direto (WhatsApp Cloud API) — clientes wa:* ou interruptor ligado ----
-    // Template na Cloud API é outro cadastro (nome aprovado no Gerenciador da Meta,
-    // não o id do RD). Enquanto WHATSAPP_TEMPLATE_RECONTATO não existir na Vercel,
-    // este desvio responde 501 com instrução clara. O fluxo RD abaixo segue intocado.
-    if ((await canalDeResposta(sb, cliente_id)) === "whatsapp") {
+    // Um canal só: WhatsApp Cloud API. O template é cadastro NOSSO — nome
+    // aprovado no Gerenciador da Meta —, e o ramo do RD Conversas que vinha
+    // depois daqui saiu com a conta desativada (0131). Com ele foram embora a
+    // cobrança de `tplId` (o ponteiro para um template que morava no painel
+    // deles) e o retry de 429 sobre a cota compartilhada.
+    {
       // Qual template da Cloud usar. Desde a 0090 o cadastro é NOSSO, então a
       // fonte é a tabela — a env WHATSAPP_TEMPLATE_RECONTATO fica só como
       // fallback de quem já a configurou, e some quando ninguém depender dela.
@@ -199,76 +199,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // As envs do RD so importam no ramo do RD, logo abaixo. Exigi-las la em
-    // cima derrubava o envio 100% Cloud com 500 quando alguem apagasse as
-    // envs do RD na Vercel -- gesto natural da Fase C. Guarda fica aqui.
-    const faltandoRd = Object.entries({
-      RD_CONVERSAS_BASE_URL: rdUrl, RD_CONVERSAS_TOKEN: rdToken,
-    }).filter(([, v]) => !v).map(([k]) => k);
-    if (faltandoRd.length) {
-      return Response.json({ error: `Config ausente na Vercel: ${faltandoRd.join(", ")}` }, { status: 500 });
-    }
-
-    // ---- fluxo RD Conversas (intocado) ---------------------------------------
-    // A cobrança do template padrão mora AQUI, e não lá em cima, porque só este
-    // ramo precisa de um id do RD — a conversa da Cloud já foi atendida acima.
-    if (!tplId) {
-      return Response.json({ error: "Nenhum template padrão configurado — marque um em Automáticos → editar." }, { status: 500 });
-    }
-
-    const recipient = cli.telefone.startsWith("+") ? cli.telefone : `+${cli.telefone}`;
-
-    const payload: Record<string, unknown> = {
-      recipient_number: recipient,
-      template_message_id: tplId,
-      country_code: "55",
-      sent_by: operator_id ? "operator" : "bot",
-      // O texto do template do RD mora no painel deles, então não dá para saber
-      // daqui quantas variáveis ele tem — o envio sempre mandou uma, o primeiro
-      // nome, e isso segue sendo o default. Quando o chat manda valores, são
-      // eles que vão: quem está na conversa sabe o que escrever ali melhor que
-      // uma regra fixa.
-      variables: digitados ?? [primeiroNome],
-    };
-    if (operator_id) payload.operator_id = operator_id;
-
-    // remove qualquer caractere inválido para header (ex: "•" colado por engano);
-    // JWT só tem ASCII imprimível [0x21-0x7E], então isto é seguro.
-    const tokenLimpo = rdToken!.replace(/[^\x21-\x7E]/g, "");
-
-    // dispara na RD — com retry em 429/5xx (o rate limit do RD é apertado e o sync de
-    // fundo pode estar consumindo a cota; a ação do usuário não pode falhar por isso).
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let rd: Response, body: any = {};
-    for (let tent = 0; ; tent++) {
-      rd = await fetch(new URL("/v3/messages/template/send", rdUrl!), {
-        method: "POST",
-        headers: { Authorization: `Bearer ${tokenLimpo}`, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      body = await rd.json().catch(() => ({}));
-      if (rd.ok || ![429, 500, 502, 503].includes(rd.status) || tent >= 4) break;
-      await sleep(2000 * (tent + 1)); // 2s, 4s, 6s, 8s (cabe no maxDuration=30)
-    }
-    if (!rd.ok) {
-      // mesma razão do send-message: o código sozinho fez o usuário concluir
-      // que o envio era proibido, quando era cota (ver lib/erroRd.ts)
-      return Response.json({ ...traduzErroRd(rd.status, body), detail: body }, { status: 502 });
-    }
-
-    // loga o disparo (contagem por clique)
-    const msgId = body?.data?.id || `${cliente_id}-${Date.now()}`;
-    await sb.from("disparos_template").insert({
-      id: msgId,
-      cliente_id: cli.id,
-      telefone: cli.telefone,
-      vendedor: cli.carteira,
-      operator_id: operator_id ?? null,
-      template_id: tplId,
-      status: body?.data?.status ?? "sent",
-    });
-
-    return Response.json({ ok: true, id: msgId, cliente: cli.nome_completo });
   } catch (e: any) {
     return Response.json({ error: `Falha interna: ${e?.message ?? String(e)}` }, { status: 500 });
   }

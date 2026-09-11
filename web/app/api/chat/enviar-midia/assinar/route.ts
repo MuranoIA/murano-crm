@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { canalDeResposta } from "../../../../../lib/whatsapp";
 import { extensaoDoMime, limiteDe, recadoDeLimite } from "../../../../../lib/midia";
 
 export const dynamic = "force-dynamic";
@@ -44,15 +43,6 @@ export async function POST(req: Request) {
   const { data: cli } = await sb
     .from("clientes").select("id").eq("id", cliente_id).maybeSingle();
   if (!cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
-
-  // canal ANTES do upload: conversa que ainda vive no RD não recebe arquivo por
-  // aqui, e descobrir isso depois da subida seria gastar a paciência de quem
-  // esperou o arquivo inteiro para ouvir "não".
-  if ((await canalDeResposta(sb, cliente_id)) !== "whatsapp") {
-    return Response.json({
-      error: "Esta conversa ainda está no RD Conversas — envio de arquivo só pelo canal WhatsApp direto.",
-    }, { status: 501 });
-  }
 
   // caminho novo a cada envio: o wamid (que a mídia recebida usa como nome) só
   // existe DEPOIS do envio, e aqui o arquivo sobe antes. `upsert` fica ligado

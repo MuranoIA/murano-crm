@@ -1,4 +1,4 @@
-import { lerCrmConfig, linhasVisiveis, canalEscolhido, filtroLinhas, VIEW_FUNIL_TELA } from "./crmConfig";
+import { lerCrmConfig, linhasVisiveis, filtroLinhas, VIEW_FUNIL_TELA } from "./crmConfig";
 import { semEnsaio } from "./ensaio";
 import { codigoMeta, FALHA_DO_NUMERO } from "./erroMeta";
 
@@ -61,8 +61,6 @@ export type FiltrosPublico = {
   porVendedor: number;
   /** teto total do disparo */
   limite: number;
-  /** canal do template escolhido, para não oferecer quem ele não alcança */
-  canal: "cloud" | "rd" | null;
 
   // --- localização (§2 do documento) ---------------------------------------
   cidades: string[];
@@ -110,7 +108,7 @@ export type FiltrosPublico = {
 export const FILTROS_PADRAO: FiltrosPublico = {
   carteiras: [], times: [], etapas: ["ociosos", "tentativa_contato"],
   diasMin: 0, diasRecontato: 4, semCompraNo: null, semConversaAberta: false,
-  porVendedor: 0, limite: 20, canal: null,
+  porVendedor: 0, limite: 20,
   cidades: [], estados: [], bairros: [], cepPrefixos: [],
   comprou: null, naoComprou: null, semComprarItemHa: null,
   ticketMin: 0, ticketMax: 0, receitaMin: 0, ultimoPedidoMin: 0,
@@ -146,7 +144,6 @@ export function lerFiltros(f: any): FiltrosPublico {
     semConversaAberta: !!f?.semConversaAberta,
     porVendedor: Math.min(LIMITE_MAX, naoNeg(f?.porVendedor)),
     limite: Math.min(LIMITE_MAX, Math.max(1, num(f?.limite, 20))),
-    canal: f?.canal === "cloud" || f?.canal === "rd" ? f.canal : null,
 
     cidades: lista(f?.cidades),
     estados: lista(f?.estados).map((e) => e.toUpperCase()),
@@ -182,7 +179,7 @@ export function lerFiltros(f: any): FiltrosPublico {
 export type Alvo = {
   envio_id: string; cliente_id: string; cliente: string; primeiro_nome: string;
   vendedor: string | null; etapa: string | null; dias: number | null;
-  canal: "whatsapp" | "rd"; ciclo: string | null; score: number;
+  ciclo: string | null; score: number;
 };
 
 export type Publico = {
@@ -190,7 +187,6 @@ export type Publico = {
   total: number;
   selecionados: Alvo[];
   cortes: Record<string, number>;
-  porCanal: { whatsapp: number; rd: number };
   /** quantos de cada carteira entraram na seleção — o que a cota produziu */
   porVendedor: Record<string, number>;
   /** carteiras efetivamente consideradas depois de expandir os times */
@@ -337,7 +333,7 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     (!setCarteiras || setCarteiras.has(String(c.vendedor)))
     && (!setEtapas || setEtapas.has(String(c.etapa))));
 
-  // 2) contexto: último disparo, lixeira, ciclo de compra, canal, compras e
+  // 2) contexto: último disparo, lixeira, ciclo de compra, compras e
   //    conversa aberta. Nenhum depende do outro, então vão em paralelo.
   // ⚠️ A janela do anti-repetição é do FILTRO (pode ser 1 dia), mas o cache
   // guarda sempre os 60 dias — o máximo aceito — e a comparação por dia é feita
@@ -572,18 +568,15 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   const precisaErp = !!(setLocal || setComprou || setNaoComprou || setSemItem || setFinanceiro
     || setRecencia || setRamo || setPreditivo || setConjunto || todosQueCompraram);
 
-  // Canal do contato. ⚠️ `numero_envio` (§37.1) tem precedência sobre a regra
-  // por conversa: com o admin escolhendo Cloud, todo mundo sai pela Cloud.
-  const envioPadraoCloud = canalEscolhido(cfg) === "whatsapp"
-    || process.env.WHATSAPP_ENVIO_PADRAO === "true";
-  const naCloud = new Set((linhaRes.data ?? []).map((r: any) => String(r.cliente_id)));
-  const canalDe = (id: string): "whatsapp" | "rd" =>
-    envioPadraoCloud || id.startsWith("wa:") || naCloud.has(id) ? "whatsapp" : "rd";
+  // O recorte por CANAL saiu com o RD (0131): havia um corte que tirava do
+  // público quem atendia pelo RD quando o template era da Cloud, porque enviar
+  // um nome da Meta pelo painel deles era falha certa, uma por cliente. Com um
+  // canal só, esse corte nunca teria o que cortar.
 
   // 3) peneira, contando o motivo de CADA corte
   const cortes: Record<string, number> = {
     sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0,
-    ativo_demais: 0, canal: 0, numero_morto: 0, comprou_no_periodo: 0, conversa_aberta: 0,
+    ativo_demais: 0, numero_morto: 0, comprou_no_periodo: 0, conversa_aberta: 0,
     sem_dados_do_erp: 0, localizacao: 0, produto: 0, financeiro: 0, recencia: 0,
     ramo: 0, ciclo: 0, conjunto: 0,
   };
@@ -639,12 +632,6 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     const dias = diasDesde(c.ultima_atividade);
     if (dias < f.diasMin) { cortes.ativo_demais++; continue; }
 
-    const canal = canalDe(envio);
-    // Template da Cloud só chega em conversa que já corre na Cloud: numa do RD o
-    // envio cai no ramo do RD com um nome que o painel deles não conhece —
-    // falha certa, uma por cliente.
-    if (f.canal === "cloud" && canal !== "whatsapp") { cortes.canal++; continue; }
-
     // dedup: prospecção e conversa podem apontar para o mesmo contato do RD
     if (vistos.has(envio)) continue;
     vistos.add(envio);
@@ -667,7 +654,6 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
       vendedor: c.vendedor ?? null,
       etapa: c.etapa ?? null,
       dias: dias === Infinity ? null : Math.floor(dias),
-      canal,
       ciclo: ci?.tipo_oportunidade ?? null,
       score: Math.round(score * 10) / 10,
     });
@@ -700,10 +686,6 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     total: elegiveis.length,
     selecionados,
     cortes,
-    porCanal: {
-      whatsapp: selecionados.filter((c) => c.canal === "whatsapp").length,
-      rd: selecionados.filter((c) => c.canal === "rd").length,
-    },
     porVendedor: usados,
     carteirasUsadas: carteiras,
     avisos,

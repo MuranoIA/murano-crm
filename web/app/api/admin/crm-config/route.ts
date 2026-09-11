@@ -1,5 +1,5 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
-import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, modoMigracao, POSICAO_MIGRACAO, linhaPadraoCloud } from "../../../../lib/crmConfig";
+import { lerCrmConfig, CRM_CONFIG_PADRAO, linhasVisiveis, tudoVisivel, linhaPadraoCloud } from "../../../../lib/crmConfig";
 import { lerCampos, type CampoCadastro } from "../../../../lib/cadastroCampos";
 import { lerLocais, type Local } from "../../../../lib/locais";
 
@@ -37,49 +37,6 @@ const MECANISMOS = [
       "Nada é apagado. A tabela wth_ciclo continua sendo atualizada a cada 10 minutos " +
       "pelo sync do WinThor, então religar mostra o dado de agora, não um buraco.",
   },
-  {
-    chave: "historico_rd",
-    rotulo: "Histórico do outro número na conversa",
-    resumo:
-      "Quando um cliente tem conversa num número que a seleção acima esconde, oferece " +
-      "o botão “ver histórico anterior” dentro da thread — o mesmo gesto do RD Conversas.",
-    desliga: [
-      "O botão “ver histórico anterior” no chat e no card ampliado",
-      "O acesso, pela tela, às mensagens do número escondido",
-    ],
-    mantem: [
-      "As mensagens no banco — o ETL segue trazendo tudo",
-      "A conversa do número em uso, que é o que a thread mostra por padrão",
-      "A janela de 24h, que continua contando só o número de envio",
-    ],
-    nota:
-      "Desligada, simula o cenário depois do corte: nenhum histórico do RD em lugar nenhum. " +
-      "Medido em 25/08 com o RD escondido: 3.769 clientes da carteira têm histórico oculto, " +
-      "88.523 mensagens ao todo — 2.553 deles conversaram nos últimos 30 dias.",
-  },
-  {
-    chave: "carteira_rd_ativa",
-    rotulo: "Carteira do RD como dono do cliente",
-    resumo:
-      "Hoje o dono de um cliente é o RCA do WinThor e, quando não há RCA, a tag “carteira " +
-      "<nome>” do painel do RD. Desligar tira a segunda metade: só o RCA manda.",
-    desliga: [
-      "A tag de carteira do painel do RD como critério de dono, no board e no chat",
-      "A presença, na carteira de um vendedor, de cliente que o WinThor não atribui a ele",
-    ],
-    mantem: [
-      "O RCA do WinThor, que passa a ser o único critério — é o pedido",
-      "Todos os clientes na tela: quem fica sem RCA vai para a fila de não atribuídos, de onde qualquer um pega",
-      "A coluna `carteira_rd` no banco, intacta, para conferência",
-    ],
-    nota:
-      "Medido em 26/08. Na carteira inteira: 4.420 clientes onde RCA e tag concordam (nada muda), " +
-      "210 onde divergem (o RCA passa a mandar) e 335 que só têm a tag. Desses 335, 233 existem no " +
-      "WinThor sob RCA de outro time — Francisco (2) 76, Jorge (53) 38, Maiara (9) 37, Henry (30) 29, " +
-      "Administrativo Venus (11) 20 — ou seja, nunca foram do IS/ISR; para devolvê-los a um dono, " +
-      "basta cadastrar aquele RCA em carteira_config. No board de hoje o efeito é menor: 78 cards " +
-      "mudam de lugar, e NENHUM deles teve atividade nos últimos 30 dias.",
-  },
 ]  as const;
 
 // O seletor de linhas NÃO é um booleano, então não entra na lista acima: é uma
@@ -88,18 +45,16 @@ const MECANISMOS = [
 const LINHAS_INFO = {
   rotulo: "Conversas visíveis, por número",
   resumo:
-    "Quais números alimentam a classificação dos cards nas 5 colunas do board e a lista do " +
-    "chat. Desmarcar um número não apaga nada: as conversas dele continuam no banco e o ETL " +
-    "continua trazendo as novas.",
+    "Quais números alimentam a classificação dos cards nas colunas do board e a lista do " +
+    "chat. Desmarcar um número não apaga nada: as conversas dele continuam no banco.",
   desliga: [
     "Conversas do número desmarcado na lista do chat, na busca e na thread",
     "Última mensagem, prévia e tempo parado nos cards vindos dele",
     "Os gatilhos que levam esses cards para Negociação e Tentativa de contato",
   ],
   mantem: [
-    "A régua das 5 colunas, intacta — só deixa de receber sinal daquele número",
+    "A régua das colunas, intacta — só deixa de receber sinal daquele número",
     "A coluna Pedido emitido, que vem da nota fiscal e não da conversa",
-    "O ETL, que segue ingerindo o RD normalmente para o banco",
     "O disparo em massa, que continua enxergando o contato real",
   ],
   nota:
@@ -141,39 +96,6 @@ export async function GET() {
       // ela em cima e marca as outras como "definidas pelo modo migração"
       // enquanto estiver ligada — se as deixasse editáveis, dois controles
       // decidiriam a mesma coisa e ninguém saberia qual vence.
-      migracao: {
-        rotulo: "Modo migração — sem RD Conversas",
-        ligado: modoMigracao(cfg),
-        resumo:
-          "O sistema como será quando o RD Conversas não existir mais. Ligando, o RD some da " +
-          "tela inteira: conversas, histórico, carteira, a linha Murano Pro e as menções a ETL. " +
-          "Os clientes passam a vir do espelho do WinThor e o dono é só o RCA.",
-        desliga: [
-          "Conversas, prévias e threads vindas do RD, e o botão “ver histórico anterior”",
-          "A linha Murano Pro no filtro por número e na etiqueta do cabeçalho",
-          "A tag de carteira do RD como dono — vale só o RCA do WinThor",
-          "O selo “RCA n · RD x” dos cards e os avisos de divergência entre os dois",
-          "O botão Sinc/Pause do ETL e o ↻ que puxa mensagens do RD",
-        ],
-        mantem: [
-          "Todos os clientes: vêm da carteira do WinThor pelo RCA, contatados ou não",
-          "As conversas do número próprio, os templates, a ligação e o disparo em massa",
-          "TUDO no banco — as mensagens do RD continuam lá, e o ETL continua trazendo as novas",
-        ],
-        nota:
-          "É reversível e não apaga nada: desligar devolve o RD à tela no estado de fábrica " +
-          "(todas as linhas, histórico e carteira do RD de volta, envio no automático). Ligada, " +
-          "espere um chat quase vazio no primeiro dia — hoje 92.864 mensagens são do RD contra " +
-          "poucas dezenas do número próprio, e é exatamente essa a foto do dia seguinte ao corte.",
-        // as chaves que o modo TRAVA na tela (não deixa editar direto — a
-        // tela usa para isso). `linhas_visiveis` saiu daqui em 09/09/2026: ela
-        // é só a foto de quais linhas mostrar, não uma "posição" como as
-        // outras — pode ser editada com o Modo ligado sem contradição (ver o
-        // comentário do seletor de linhas em admin/page.tsx). O próprio
-        // `modoMigracao()` (lib/crmConfig.ts) continua exigindo o RD fora
-        // dela para o selo "Ligado" aparecer — isso não mudou, só a UI.
-        controla: ["historico_rd", "carteira_rd_ativa", "numero_envio"],
-      },
       // ENVIO ≠ VISIBILIDADE. São duas perguntas diferentes e a tela precisa
       // dizer isso, senão o admin muda uma achando que mudou a outra.
       // texto do aviso de pausa (0106): mora no banco porque quem sabe o tom
@@ -223,29 +145,6 @@ export async function GET() {
           "alguem depois digitar no WinThor. A mensagem que PEDE os dados e montada desta " +
           "mesma lista, entao corrigir aqui corrige os dois lugares.",
         campos: campos,
-      },
-      envio: {
-        rotulo: "Número de envio",
-        resumo:
-          "Por qual CANAL o CRM fala mensagem e template, em qualquer contato — RD ou Cloud. " +
-          "É diferente de quais conversas aparecem na tela — dá para acompanhar o histórico " +
-          "do RD e já estar respondendo pelo canal novo. QUAL linha Cloud (quando há mais de " +
-          "uma) é a aba Linhas, não aqui. Não afeta ligação, que é sempre Cloud.",
-        atual: cfg.numero_envio,
-        opcoes: [
-          { v: null, rotulo: "Automático (como hoje)",
-            desc: "Responde pelo canal em que o cliente falou por último. Contato novo sai pela Cloud." },
-          { v: "rd", rotulo: "Murano Pro (RD Conversas)",
-            desc: "Tudo pelo número oficial. Mensagem livre só alcança quem o RD já conhece; template alcança qualquer número." },
-          { v: "cloud", rotulo: "Cloud (WhatsApp direto)",
-            // o nome da linha que hoje resolve "cloud" para quem ainda não tem
-            // conversa própria — sem isso a tela mentiria assim que houvesse
-            // mais de uma linha Cloud e "Murano Professional" ficasse hardcoded
-            desc: `Tudo pela Cloud API. Quem ainda não tem linha própria sai por ` +
-              `"${linhaResolvidaRotulo ?? "a linha padrão (ver aba Linhas)"}". ` +
-              `Para quem tem histórico só no RD, a conversa chega como de um número desconhecido.`,
-          },
-        ],
       },
       linhas: {
         ...LINHAS_INFO,
@@ -346,48 +245,6 @@ export async function PUT(req: Request) {
     return Response.json({ ok: true, aviso: `Ficha com ${limpos.length} campos. A mensagem que pede os dados ja acompanha.` });
   }
 
-  // ---- MODO MIGRAÇÃO: escreve as quatro chaves de uma vez -------------------
-  // Não há coluna `modo_migracao` no banco de propósito (ver `modoMigracao()`
-  // em lib/crmConfig.ts): o modo É a leitura das quatro. Aqui só se escreve o
-  // conjunto — ligar põe as quatro na posição de migração, desligar devolve as
-  // quatro ao CRM de sempre. Sem snapshot para guardar, e sem um quinto estado
-  // que possa contradizer os outros.
-  if (chave === "modo_migracao") {
-    if (typeof valor !== "boolean") {
-      return Response.json({ error: "informe o valor como true ou false" }, { status: 400 });
-    }
-    const ativas = antes.linhas.filter((l) => l.ativo).map((l) => l.phone_number_id);
-    const semRd = ativas.filter((id) => id !== "rd");
-
-    // Sem nenhuma linha própria não há para onde migrar: ligar o modo deixaria
-    // o board inteiro em prospecção e o chat vazio, sem nada na tela dizendo por
-    // quê. Melhor recusar com o motivo do que entregar uma tela morta.
-    if (valor && !semRd.length) {
-      return Response.json({
-        error: "Não há nenhuma linha própria ativa além do RD — cadastre a linha da Cloud em chat_linha antes de migrar.",
-      }, { status: 400 });
-    }
-
-    const novo = valor
-      ? { linhas_visiveis: semRd, ...POSICAO_MIGRACAO }
-      // Desligar devolve ao estado de fábrica: todas as linhas (NULO, para que
-      // uma linha nova apareça sozinha — §32.1), histórico e carteira do RD de
-      // volta, e envio no automático.
-      : { linhas_visiveis: null, historico_rd: true, carteira_rd_ativa: true, numero_envio: null };
-
-    const { data, error } = await sb.from("crm_config").upsert({
-      id: 1, ...novo, atualizado_por: g.email, atualizado_em: new Date().toISOString(),
-    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-
-    return Response.json({
-      ok: true, config: data,
-      aviso: valor
-        ? "Modo migração LIGADO. O RD Conversas sumiu da tela inteira: conversas, histórico, carteira, linha e menções a ETL. Os clientes vêm do WinThor e o dono é o RCA. Nada foi apagado — desligar devolve tudo."
-        : "Modo migração desligado. O RD Conversas voltou: conversas, histórico, carteira e envio no automático.",
-    });
-  }
-
   // ---- seletor de linhas: escolha de CONJUNTO, não booleano -----------------
   if (chave === "linhas_visiveis") {
     if (!Array.isArray(valor) || valor.some((v) => typeof v !== "string")) {
@@ -409,7 +266,7 @@ export async function PUT(req: Request) {
     const { data, error } = await sb.from("crm_config").upsert({
       id: 1, linhas_visiveis: novo,
       atualizado_por: g.email, atualizado_em: new Date().toISOString(),
-    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
+    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
     const nomes = antes.linhas.filter((l) => escolhidas.includes(l.phone_number_id)).map((l) => l.rotulo);
@@ -434,27 +291,6 @@ export async function PUT(req: Request) {
     return Response.json({ ok: true, aviso: "Aviso de pausa atualizado." });
   }
 
-  // ---- número de envio: três estados, e um deles é NULO ---------------------
-  if (chave === "numero_envio") {
-    const v = valor === null || valor === "" ? null : String(valor);
-    if (v !== null && v !== "rd" && v !== "cloud") {
-      return Response.json({ error: "número de envio inválido" }, { status: 400 });
-    }
-    const { data, error } = await sb.from("crm_config").upsert({
-      id: 1, numero_envio: v,
-      atualizado_por: g.email, atualizado_em: new Date().toISOString(),
-    }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,atualizado_por,atualizado_em").single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-    return Response.json({
-      ok: true, config: data,
-      aviso: v === null
-        ? "Voltou ao automático: cada conversa responde pelo canal em que o cliente falou por último."
-        : v === "rd"
-          ? "Tudo passa a sair pelo Murano Pro (RD Conversas). Contatos que só existem no nosso banco continuam saindo pela Cloud — o RD não os conhece."
-          : "Tudo passa a sair pela Cloud API, inclusive para quem tem histórico no número antigo. Qual linha Cloud, quando houver mais de uma, é a aba Linhas.",
-    });
-  }
-
   if (!CHAVES.includes(chave)) {
     return Response.json({ error: "mecanismo desconhecido" }, { status: 400 });
   }
@@ -473,7 +309,7 @@ export async function PUT(req: Request) {
     [chave]: valor,
     atualizado_por: g.email,
     atualizado_em: new Date().toISOString(),
-  }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,numero_envio,historico_rd,carteira_rd_ativa,atualizado_por,atualizado_em").single();
+  }, { onConflict: "id" }).select("ciclo_ativo,linhas_visiveis,atualizado_por,atualizado_em").single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
@@ -482,18 +318,10 @@ export async function PUT(req: Request) {
       on: "O ciclo volta a aparecer no board, no chat, no disparo em massa e no relatório.",
       off: "O ciclo saiu do board, do chat, do disparo em massa e do relatório.",
     },
-    historico_rd: {
-      on: "O botão “ver histórico anterior” volta a aparecer nas conversas que têm passado no outro número.",
-      off: "O histórico do outro número deixou de ser alcançável pela tela. As mensagens continuam no banco.",
-    },
-    carteira_rd_ativa: {
-      on: "A tag de carteira do RD volta a valer como dono para quem não tem RCA — os clientes voltam às carteiras de antes.",
-      off: "O dono passou a ser só o RCA do WinThor. Quem não tem RCA ativo foi para a fila de não atribuídos, de onde qualquer um pega.",
-    },
   };
   // Sem o fallback, um mecanismo novo em MECANISMOS sem linha aqui grava no
   // banco e SÓ DEPOIS estoura em `a.on` — a chave vira, a tela mostra erro, e
-  // ninguém confia mais no botão. Já aconteceu com `historico_rd`.
+  // ninguém confia mais no botão. Já aconteceu uma vez.
   const a = avisos[chave] ?? {
     on: `"${chave}" ligado.`,
     off: `"${chave}" desligado.`,
