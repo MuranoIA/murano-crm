@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { aplicarVariaveis, variaveisDe } from "../../lib/templateVars";
+import {
+  aplicarVariaveis, variaveisDe, validarBotoes, MAX_BOTOES, MAX_URL, MAX_TELEFONE, MAX_TEXTO_BOTAO,
+  type BotaoTemplate,
+} from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
 import { lerCoordenadas, problemaCoordenada } from "../../lib/locais";
 import { PAPEIS as PAPEIS_DO_SISTEMA, rotuloDePapel } from "../../lib/papel";
@@ -803,11 +806,36 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   const [carregandoDisparo, setCarregandoDisparo] = useState(false);
   const [cfgEnvios, setCfgEnvios] = useState<any>(null);
 
-  const [f, setF] = useState<any>({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
+  const [f, setF] = useState<any>({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "", botoes: [] as BotaoTemplate[] });
   const [imagem, setImagem] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const corpoRef = useRef<HTMLTextAreaElement>(null);
+
+  // Preview da imagem de cabeçalho — só existe no NAVEGADOR (URL local do
+  // arquivo escolhido, nunca sobe nada). Revoga a anterior ao trocar, senão
+  // cada escolha de arquivo vaza uma URL de objeto.
+  const [imagemPreview, setImagemPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!imagem) { setImagemPreview(null); return; }
+    const url = URL.createObjectURL(imagem);
+    setImagemPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imagem]);
+
+  // --- botões (0122) ---------------------------------------------------------
+  // Mesmo raciocínio do RD Conversas que originou o pedido: um botão de cada
+  // vez, com o tipo escolhido primeiro porque ele decide que campo aparece.
+  const botaoErro = validarBotoes(f.botoes).erro;
+  const qtdUrl = f.botoes.filter((b: BotaoTemplate) => b.tipo === "URL").length;
+  const qtdTel = f.botoes.filter((b: BotaoTemplate) => b.tipo === "PHONE_NUMBER").length;
+  const podeAdicionarBotao = f.botoes.length < MAX_BOTOES;
+  const adicionarBotao = (tipo: BotaoTemplate["tipo"]) =>
+    setF((x: any) => ({ ...x, botoes: [...x.botoes, { tipo, texto: "", valor: "" }] }));
+  const mudarBotao = (i: number, patch: Partial<BotaoTemplate>) =>
+    setF((x: any) => ({ ...x, botoes: x.botoes.map((b: BotaoTemplate, j: number) => (j === i ? { ...b, ...patch } : b)) }));
+  const removerBotao = (i: number) =>
+    setF((x: any) => ({ ...x, botoes: x.botoes.filter((_: BotaoTemplate, j: number) => j !== i) }));
 
   const daCloud = templates.filter((t) => t.canal === "cloud");
 
@@ -821,16 +849,19 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
 
   async function criar() {
     if (!f.nome.trim() || !f.corpo.trim()) { avisar("erro", "Nome e texto são obrigatórios."); return; }
+    const erroBotoes = validarBotoes(f.botoes).erro;
+    if (erroBotoes) { avisar("erro", erroBotoes); return; }
     setEnviando(true);
     try {
       const fd = new FormData();
       for (const k of ["nome", "categoria", "corpo", "rodape", "cabecalho_texto"]) fd.append(k, f[k] ?? "");
+      if (f.botoes.length) fd.append("botoes", JSON.stringify(f.botoes));
       if (imagem) fd.append("imagem", imagem);
       const r = await fetch("/api/admin/templates-whatsapp", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
       avisar("ok", j?.aviso ?? "Template criado.");
-      setF({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "" });
+      setF({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "", botoes: [] });
       setImagem(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
       await recarregar();
@@ -921,7 +952,7 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
           // dia for apagado.
           publicar={(x: any) => {
             setF({ nome: x.nome, categoria: "MARKETING", corpo: x.corpo,
-                   rodape: x.rodape ?? "", cabecalho_texto: x.cabecalho_texto ?? "" });
+                   rodape: x.rodape ?? "", cabecalho_texto: x.cabecalho_texto ?? "", botoes: [] });
             setVista("cadastro");
             avisar("ok", `Formulário preenchido com a sugestão de ${x.carteira ?? "a equipe"}. Confira a categoria e o identificador antes de criar.`);
           }}
@@ -955,78 +986,114 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
   return (
     <>
       {chave}
-      <Bloco
-        titulo="Criar template"
-        ajuda={<>
-          Template é a única forma de <b>começar uma conversa</b> ou de responder depois de 24 h sem
-          mensagem do cliente — regra do WhatsApp, não nossa. Ele vai para <b>análise da Meta</b>, que
-          costuma levar de minutos a algumas horas. Enquanto não for aprovado, não dá para enviar.
-        </>}
-      >
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 16 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={rotuloCampo}>Nome</label>
-            <input value={f.nome} placeholder="ex.: Recontato de clientes" onChange={(e) => setF({ ...f, nome: e.target.value })}
-              style={{ ...inputBase, width: 300 }} />
-            <span style={{ fontSize: 11.5, color: M.muted }}>vira o identificador na Meta, sem acento nem espaço</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={rotuloCampo}>Tipo</label>
-            <select value={f.categoria} onChange={(e) => setF({ ...f, categoria: e.target.value })} style={{ ...inputBase, width: 250 }}>
-              <option value="MARKETING">Marketing — oferta, novidade, reativação</option>
-              <option value="UTILITY">Utilidade — aviso sobre pedido em andamento</option>
-            </select>
-            <span style={{ fontSize: 11.5, color: M.muted }}>a Meta cobra preços diferentes por tipo</span>
-          </div>
+      <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 480px", minWidth: 380 }}>
+          <Bloco
+            titulo="Criar template"
+            ajuda={<>
+              Template é a única forma de <b>começar uma conversa</b> ou de responder depois de 24 h sem
+              mensagem do cliente — regra do WhatsApp, não nossa. Ele vai para <b>análise da Meta</b>, que
+              costuma levar de minutos a algumas horas. Enquanto não for aprovado, não dá para enviar.
+            </>}
+          >
+            <SecaoForm titulo="Informações gerais" primeira>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>Nome</label>
+                  <input value={f.nome} placeholder="ex.: Recontato de clientes" onChange={(e) => setF({ ...f, nome: e.target.value })}
+                    style={{ ...inputBase, width: 300 }} />
+                  <span style={{ fontSize: 11.5, color: M.muted }}>vira o identificador na Meta, sem acento nem espaço</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>Tipo</label>
+                  <select value={f.categoria} onChange={(e) => setF({ ...f, categoria: e.target.value })} style={{ ...inputBase, width: 250 }}>
+                    <option value="MARKETING">Marketing — oferta, novidade, reativação</option>
+                    <option value="UTILITY">Utilidade — aviso sobre pedido em andamento</option>
+                  </select>
+                  <span style={{ fontSize: 11.5, color: M.muted }}>a Meta cobra preços diferentes por tipo</span>
+                </div>
+              </div>
+            </SecaoForm>
+
+            <SecaoForm titulo="Conteúdo">
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <label style={rotuloCampo}>Texto da mensagem</label>
+                <button onClick={inserirCampo} title="Insere um campo que o consultor preenche na hora de enviar"
+                  style={{ padding: "3px 9px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                    borderRadius: 999, color: M.roxo, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
+                  + campo a preencher
+                </button>
+                <span style={{ fontSize: 11.5, color: M.muted }}>
+                  o consultor digita cada campo no chat; o primeiro já vem com o nome da cliente
+                </span>
+              </div>
+              <textarea ref={corpoRef} value={f.corpo} rows={5} onChange={(e) => setF({ ...f, corpo: e.target.value })}
+                placeholder="Oi {{1}}, tudo bem? Chegaram novidades na Murano e separei algumas que combinam com o seu salão."
+                style={{ ...inputBase, width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 }} />
+              <div style={{ fontSize: 11.5, color: M.muted, margin: "5px 0 16px" }}>
+                {f.corpo.length}/1024 caracteres · sem link encurtado e sem promessa que a marca não cumpre — é o que mais causa recusa
+              </div>
+
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>Imagem (opcional)</label>
+                  <input ref={arquivoRef} type="file" accept="image/jpeg,image/png"
+                    onChange={(e) => setImagem(e.target.files?.[0] ?? null)}
+                    style={{ ...inputBase, width: 300, padding: "5px 7px" }} />
+                  <span style={{ fontSize: 11.5, color: M.muted }}>JPEG ou PNG, até 5 MB — aparece acima do texto</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>Ou título de texto</label>
+                  <input value={f.cabecalho_texto} disabled={!!imagem} maxLength={60}
+                    onChange={(e) => setF({ ...f, cabecalho_texto: e.target.value })}
+                    style={{ ...inputBase, width: 260, opacity: imagem ? 0.5 : 1 }} />
+                  <span style={{ fontSize: 11.5, color: M.muted }}>a Meta aceita um cabeçalho só</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={rotuloCampo}>Rodapé (opcional)</label>
+                  <input value={f.rodape} maxLength={60} onChange={(e) => setF({ ...f, rodape: e.target.value })}
+                    placeholder="Murano Professional" style={{ ...inputBase, width: 240 }} />
+                  <span style={{ fontSize: 11.5, color: M.muted }}>linha pequena no fim, até 60 caracteres</span>
+                </div>
+              </div>
+            </SecaoForm>
+
+            <SecaoForm titulo="Botões (opcional)">
+              <p style={{ fontSize: 12.5, color: M.gray, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Cria botões que a cliente toca direto na mensagem — resposta rápida, abrir um link ou ligar.
+                Até {MAX_BOTOES} no total, no máximo {MAX_URL} de link e {MAX_TELEFONE} de telefone.
+              </p>
+
+              {f.botoes.map((b: BotaoTemplate, i: number) => (
+                <LinhaBotao key={i} b={b} i={i} mudar={mudarBotao} remover={removerBotao} />
+              ))}
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: f.botoes.length ? 6 : 0 }}>
+                <BotaoAdicionar disabled={!podeAdicionarBotao} onClick={() => adicionarBotao("QUICK_REPLY")}>
+                  ↩️ Resposta rápida
+                </BotaoAdicionar>
+                <BotaoAdicionar disabled={!podeAdicionarBotao || qtdUrl >= MAX_URL} onClick={() => adicionarBotao("URL")}>
+                  🔗 Visitar site
+                </BotaoAdicionar>
+                <BotaoAdicionar disabled={!podeAdicionarBotao || qtdTel >= MAX_TELEFONE} onClick={() => adicionarBotao("PHONE_NUMBER")}>
+                  📞 Ligar
+                </BotaoAdicionar>
+              </div>
+              {botaoErro && <div style={{ fontSize: 12, color: M.laranja, marginTop: 8 }}>{botaoErro}</div>}
+            </SecaoForm>
+
+            <div style={{ marginTop: 20 }}>
+              <Botao cor={M.wine} onClick={criar} disabled={enviando}>
+                {enviando ? "Enviando para a Meta…" : "Criar e enviar para análise"}
+              </Botao>
+            </div>
+          </Bloco>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <label style={rotuloCampo}>Texto da mensagem</label>
-          <button onClick={inserirCampo} title="Insere um campo que o consultor preenche na hora de enviar"
-            style={{ padding: "3px 9px", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
-              borderRadius: 999, color: M.roxo, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
-            + campo a preencher
-          </button>
-          <span style={{ fontSize: 11.5, color: M.muted }}>
-            o consultor digita cada campo no chat; o primeiro já vem com o nome da cliente
-          </span>
+        <div style={{ flex: "0 0 300px", minWidth: 260, position: "sticky", top: 18 }}>
+          <VisualizarTemplate f={f} imagemPreview={imagemPreview} />
         </div>
-        <textarea ref={corpoRef} value={f.corpo} rows={5} onChange={(e) => setF({ ...f, corpo: e.target.value })}
-          placeholder="Oi {{1}}, tudo bem? Chegaram novidades na Murano e separei algumas que combinam com o seu salão."
-          style={{ ...inputBase, width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 }} />
-        <div style={{ fontSize: 11.5, color: M.muted, margin: "5px 0 16px" }}>
-          {f.corpo.length}/1024 caracteres · sem link encurtado e sem promessa que a marca não cumpre — é o que mais causa recusa
-        </div>
-
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={rotuloCampo}>Imagem (opcional)</label>
-            <input ref={arquivoRef} type="file" accept="image/jpeg,image/png"
-              onChange={(e) => setImagem(e.target.files?.[0] ?? null)}
-              style={{ ...inputBase, width: 300, padding: "5px 7px" }} />
-            <span style={{ fontSize: 11.5, color: M.muted }}>JPEG ou PNG, até 5 MB — aparece acima do texto</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={rotuloCampo}>Ou título de texto</label>
-            <input value={f.cabecalho_texto} disabled={!!imagem} maxLength={60}
-              onChange={(e) => setF({ ...f, cabecalho_texto: e.target.value })}
-              style={{ ...inputBase, width: 260, opacity: imagem ? 0.5 : 1 }} />
-            <span style={{ fontSize: 11.5, color: M.muted }}>a Meta aceita um cabeçalho só</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <label style={rotuloCampo}>Rodapé (opcional)</label>
-            <input value={f.rodape} maxLength={60} onChange={(e) => setF({ ...f, rodape: e.target.value })}
-              placeholder="Murano Professional" style={{ ...inputBase, width: 240 }} />
-            <span style={{ fontSize: 11.5, color: M.muted }}>linha pequena no fim, até 60 caracteres</span>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 20 }}>
-          <Botao cor={M.wine} onClick={criar} disabled={enviando}>
-            {enviando ? "Enviando para a Meta…" : "Criar e enviar para análise"}
-          </Botao>
-        </div>
-      </Bloco>
+      </div>
 
       <Bloco
         titulo="Templates desta linha"
@@ -1045,6 +1112,11 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
               {t.padrao && <Selo ok sim="padrão" nao="" />}
               {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11.5, color: M.gray }}>🖼️ com imagem</span>}
               {t.usa_nome && <span style={{ fontSize: 11.5, color: M.gray }}>usa o nome do cliente</span>}
+              {t.botoes?.length > 0 && (
+                <span style={{ fontSize: 11.5, color: M.gray }}>
+                  🔘 {t.botoes.length} botão{t.botoes.length === 1 ? "" : "ões"}
+                </span>
+              )}
               <span style={{ flex: 1 }} />
               {!t.padrao && String(t.status).toUpperCase() === "APPROVED" && (
                 <BotaoLeve onClick={() => mexer("PATCH", { id: t.id, padrao: true }, "Padrão atualizado.")}
@@ -1079,6 +1151,108 @@ const rotuloCampo = {
   fontSize: 11, fontWeight: 800, color: M.muted,
   textTransform: "uppercase" as const, letterSpacing: 0.6,
 };
+
+// --- criação de template: seções do formulário e pré-visualização ----------
+// Layout em duas colunas — formulário agrupado por seção à esquerda,
+// pré-visualização fixa à direita — pedido para ficar parecido com o do RD
+// Conversas (print de referência, 08/09/2026). A paleta continua a da Murano
+// (skill murano-brand): reaproveita a estrutura ergonômica do RD, não a cor.
+function SecaoForm({ titulo, primeira, children }: { titulo: string; primeira?: boolean; children: React.ReactNode }) {
+  return (
+    <div style={{ marginTop: primeira ? 0 : 18, paddingTop: primeira ? 0 : 18, borderTop: primeira ? "none" : `1px solid ${M.bg}` }}>
+      <h3 style={{ fontSize: 12.5, fontWeight: 800, color: M.wine, margin: "0 0 12px" }}>{titulo}</h3>
+      {children}
+    </div>
+  );
+}
+
+function BotaoAdicionar({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{ padding: "5px 11px", fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.4 : 1, borderRadius: 999,
+        color: M.roxo, background: M.roxoSoft, border: `1px solid ${M.border}` }}>
+      {children}
+    </button>
+  );
+}
+
+const ROTULO_TIPO_BOTAO: Record<BotaoTemplate["tipo"], string> = {
+  QUICK_REPLY: "Resposta rápida", URL: "Botão de link", PHONE_NUMBER: "Botão de telefone",
+};
+
+function LinhaBotao({ b, i, mudar, remover }: {
+  b: BotaoTemplate; i: number;
+  mudar: (i: number, patch: Partial<BotaoTemplate>) => void;
+  remover: (i: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap",
+      padding: 10, marginBottom: 8, background: M.bg, borderRadius: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <label style={rotuloCampo}>{ROTULO_TIPO_BOTAO[b.tipo]}</label>
+        <input value={b.texto} maxLength={MAX_TEXTO_BOTAO} placeholder="texto do botão"
+          onChange={(e) => mudar(i, { texto: e.target.value })} style={{ ...inputBase, width: 190 }} />
+      </div>
+      {b.tipo === "URL" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={rotuloCampo}>Link</label>
+          <input value={b.valor ?? ""} placeholder="https://…" onChange={(e) => mudar(i, { valor: e.target.value })}
+            style={{ ...inputBase, width: 240 }} />
+        </div>
+      )}
+      {b.tipo === "PHONE_NUMBER" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={rotuloCampo}>Telefone</label>
+          <input value={b.valor ?? ""} placeholder="+5591999999999" onChange={(e) => mudar(i, { valor: e.target.value })}
+            style={{ ...inputBase, width: 170 }} />
+        </div>
+      )}
+      <button onClick={() => remover(i)} title="Remover botão"
+        style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+          borderRadius: 8, color: M.laranja, background: "transparent", border: `1px solid ${M.border}` }}>
+        remover
+      </button>
+    </div>
+  );
+}
+
+// Mesmos exemplos que `criarTemplate` manda para a Meta aprovar (whatsappTemplates.ts) —
+// a pré-visualização mostra o que a cliente vai ler de verdade, não outro texto.
+const EXEMPLOS_PREVIEW = ["Maria", "chegou a reposição do reparador", "a tabela nova", "esta semana"];
+
+function VisualizarTemplate({ f, imagemPreview }: { f: any; imagemPreview: string | null }) {
+  const corpoPreview = f.corpo ? aplicarVariaveis(f.corpo, EXEMPLOS_PREVIEW) : "";
+  const iconeBotao = (tipo: BotaoTemplate["tipo"]) => (tipo === "URL" ? "🔗" : tipo === "PHONE_NUMBER" ? "📞" : "↩️");
+
+  return (
+    <Bloco titulo="Pré-visualização" ajuda="Veja como fica a mensagem, com exemplos no lugar de cada campo.">
+      <div style={{ background: M.bg, borderRadius: 12, padding: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", maxWidth: 260, margin: "0 auto",
+          boxShadow: "0 1px 3px rgba(36,19,39,.12)" }}>
+          {imagemPreview && (
+            <img src={imagemPreview} alt="" style={{ width: "100%", display: "block", maxHeight: 150, objectFit: "cover" }} />
+          )}
+          {!imagemPreview && f.cabecalho_texto && (
+            <div style={{ padding: "10px 12px 0", fontWeight: 800, fontSize: 13, color: M.ink }}>{f.cabecalho_texto}</div>
+          )}
+          <div style={{ padding: 12 }}>
+            {corpoPreview
+              ? <div style={{ fontSize: 12.5, color: M.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{corpoPreview}</div>
+              : <div style={{ fontSize: 12.5, color: M.muted }}>Preencha o texto para ver a mensagem…</div>}
+            {f.rodape && <div style={{ fontSize: 11, color: M.muted, marginTop: 8 }}>{f.rodape}</div>}
+          </div>
+          {f.botoes.length > 0 && f.botoes.map((b: BotaoTemplate, i: number) => (
+            <div key={i} style={{ padding: "9px 12px", fontSize: 12.5, fontWeight: 700, color: M.azul,
+              textAlign: "center", borderTop: `1px solid ${M.bg}` }}>
+              {iconeBotao(b.tipo)} {b.texto || ROTULO_TIPO_BOTAO[b.tipo]}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Bloco>
+  );
+}
 
 // --- páginas legais (migration 0088) ---------------------------------------
 // Preenche as variáveis de /privacidade e /termos. O TEXTO das páginas mora no

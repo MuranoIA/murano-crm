@@ -1,6 +1,7 @@
 import { sbAdmin, guardaAdmin, texto } from "../../../../lib/adminApi";
 import {
-  subirImagemDeCabecalho, criarTemplate, statusNaMeta, apagarNaMeta, metaNomeDe,
+  subirImagemDeCabecalho, criarTemplate, statusNaMeta, apagarNaMeta, metaNomeDe, validarBotoes,
+  type BotaoTemplate,
 } from "../../../../lib/whatsappTemplates";
 import { variaveisDe, erroDeNumeracao } from "../../../../lib/templateVars";
 
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 const COLS =
   "id,nome,ativo,padrao,criado_em,canal,meta_nome,meta_id,idioma,categoria," +
-  "corpo,rodape,cabecalho_tipo,cabecalho_texto,imagem_path,usa_nome,status,motivo_recusa,criado_por,atualizado_em";
+  "corpo,rodape,cabecalho_tipo,cabecalho_texto,imagem_path,usa_nome,botoes,status,motivo_recusa,criado_por,atualizado_em";
 
 const IMAGENS_ACEITAS = ["image/jpeg", "image/png"];
 const TAMANHO_MAX = 5 * 1024 * 1024;   // teto da Meta para imagem de cabeçalho
@@ -108,6 +109,24 @@ export async function POST(req: Request) {
     return Response.json({ error: "escolha imagem OU cabeçalho de texto — a Meta aceita só um" }, { status: 400 });
   }
 
+  // Botões (0122) — mandados como JSON dentro do multipart, um array de
+  // {tipo, texto, valor}. A validação é a MESMA função da tela (`templateVars`
+  // é o padrão: puro, sem env, roda dos dois lados) — aqui não confiamos no
+  // que o navegador já filtrou.
+  let botoes: BotaoTemplate[] = [];
+  const botoesBruto = texto(form.get("botoes"));
+  if (botoesBruto) {
+    try {
+      const parsed = JSON.parse(botoesBruto);
+      if (!Array.isArray(parsed)) throw new Error("formato inválido");
+      botoes = parsed;
+    } catch {
+      return Response.json({ error: "botões em formato inválido" }, { status: 400 });
+    }
+  }
+  const { erro: erroBotoes, ordenados: botoesOrdenados } = validarBotoes(botoes);
+  if (erroBotoes) return Response.json({ error: erroBotoes }, { status: 400 });
+
   // Cada {{n}} é um campo que o CONSULTOR preenche na hora de enviar, no
   // compositor do chat — o de {{1}} chega pré-preenchido com o primeiro nome da
   // cliente, que era o único valor possível antes desta tela aceitar mais de um.
@@ -160,6 +179,7 @@ export async function POST(req: Request) {
       rodape: rodape || null,
       cabecalhoTexto: cabecalhoTexto || null,
       imagemHandle: handle,
+      botoes: botoesOrdenados,
     });
   } catch (e: any) {
     return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
@@ -179,6 +199,7 @@ export async function POST(req: Request) {
     cabecalho_tipo: handle ? "imagem" : cabecalhoTexto ? "texto" : "nenhum",
     cabecalho_texto: cabecalhoTexto || null,
     imagem_path: imagemPath,
+    botoes: botoesOrdenados.length ? botoesOrdenados : null,
     // `usa_nome` nasceu significando "o corpo tem {{1}}, preenchido com o nome".
     // Desde que o consultor digita cada campo, o que ela guarda é "tem campo a
     // preencher" — quantos e quais saem do próprio corpo, sem coluna nova.
