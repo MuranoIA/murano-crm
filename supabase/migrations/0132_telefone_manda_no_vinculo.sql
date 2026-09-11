@@ -123,9 +123,18 @@ declare
 begin
   -- Passada 1 — CPF.
   --
-  -- ⚠️ Mudou UMA coisa: o `not exists` no fim. Sem ele, esta passada desfaz a
-  -- correção da passada 4 a cada 10 minutos, e o bug volta sozinho — foi
-  -- exatamente assim que ele sobreviveu até aqui.
+  -- ⚠️ Mudou UMA coisa: o `left join` da régua do telefone, e a condição que
+  -- ele traz. Sem isso, esta passada desfaz a correção da passada 4 a cada 10
+  -- minutos, e o bug volta sozinho — foi exatamente assim que ele sobreviveu
+  -- até aqui.
+  --
+  -- `left join` em vez de `not exists` correlacionado: a régua tem `group by`
+  -- e `having`, e num `not exists` por linha o planner pode acabar reavaliando
+  -- o agregado a cada candidato. Assim ela é montada uma vez e entra por hash.
+  --
+  -- A condição preserva TUDO que já funcionava: sem linha na régua (o telefone
+  -- não casa com ninguém no ERP — os 199) o candidato passa; com linha que
+  -- CONCORDA (os 4.797) também. Só o desacordo é barrado.
   with candidatos as (
     select
       c.id  as cliente_id,
@@ -135,12 +144,11 @@ begin
     from clientes c
     join wth_carteira w
       on w.cpf = regexp_replace(coalesce(c.cpf, ''), '[^0-9]', '', 'g')
+    left join vw_erp_por_telefone t
+      on t.cliente_id = c.id
     where coalesce(c.cpf, '') <> ''
       and w.cpf is not null
-      and not exists (
-        select 1 from vw_erp_por_telefone t
-         where t.cliente_id = c.id and t.codcli <> w.codcli
-      )
+      and (t.cliente_id is null or t.codcli = w.codcli)
   )
   insert into wth_vinculo (cliente_id, codcli, cpf, origem, conferido_em)
   select cliente_id, codcli, cpf, 'cpf', now()
@@ -213,9 +221,12 @@ begin
   -- origem = 'telefone' deixa a correção auditável: quem for investigar uma
   -- divergência de carteira vê qual sinal decidiu. `manual` continua acima de
   -- tudo — decisão de gente não é desfeita por job.
+  -- `cpf` grava no MESMO formato das outras passadas (a view já faz
+  -- `min(coalesce(w.cpf,''))`): hoje a tabela não tem um único cpf nulo nem
+  -- vazio em 5.002 linhas, e não é esta migration que vai estrear o primeiro.
   update wth_vinculo v
      set codcli       = t.codcli,
-         cpf          = nullif(t.cpf, ''),
+         cpf          = t.cpf,
          origem       = 'telefone',
          conferido_em = now()
     from vw_erp_por_telefone t
