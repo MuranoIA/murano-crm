@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { sbAdmin, guardaAdmin, corpo } from "../../../../../lib/adminApi";
-import { lerCrmConfig, linhasVisiveis, modoMigracao } from "../../../../../lib/crmConfig";
+import { lerCrmConfig } from "../../../../../lib/crmConfig";
 import {
   montarPublico, lerFiltros,
   FILTROS_PADRAO, LIMITE_MAX, PERIODOS_COMPRA, DIMENSOES_ITEM,
@@ -196,7 +196,7 @@ const FERRAMENTAS = [
 
 function sistema(ctx: {
   carteiras: { slug: string; time: string | null }[];
-  hoje: string; canalTpl: string | null; semRd: boolean; cicloAtivo: boolean;
+  hoje: string; cicloAtivo: boolean;
   objetos: { objeto: string; nota: string | null }[];
 }) {
   const carteiras = ctx.carteiras.map((c) => `${c.slug} (${c.time ?? "sem time"})`).join(", ") || "nenhuma cadastrada";
@@ -247,11 +247,7 @@ function sistema(ctx: {
     ctx.cicloAtivo
       ? "- O motor de ciclo de compra está ligado: oportunidade, tendência e score valem."
       : "- O motor de ciclo de compra está DESLIGADO: filtros de oportunidade, tendência e score são ignorados, e o ranqueamento é por tempo parado e ticket.",
-    ctx.semRd
-      ? "- Existe um número só. Não mencione RD Conversas, Tallos, nem canal de atendimento antigo: para quem lê esta tela, isso não existe."
-      : ctx.canalTpl === "cloud"
-        ? "- O template escolhido é da WhatsApp Cloud, então só alcança quem já conversa por lá; o resto aparece no corte 'canal'."
-        : "- O template escolhido é do RD Conversas.",
+    "- Existe um número só. Não mencione RD Conversas, Tallos, nem canal de atendimento antigo: para quem lê esta tela, isso não existe.",
     "",
     "COISAS QUE JÁ SÃO AUTOMÁTICAS — não prometa como mérito seu, mas mencione se perguntarem:",
     "- quem está na lixeira sai; quem não tem telefone sai;",
@@ -297,7 +293,6 @@ function resumoParaModelo(p: any, f: FiltrosPublico) {
     elegiveis: p.total,
     selecionados: p.selecionados.length,
     por_carteira: p.porVendedor,
-    por_canal: p.porCanal,
     ficaram_de_fora: cortes,
     carteiras_consideradas: p.carteirasUsadas,
     custo_reais: Math.round(p.selecionados.length * 0.43 * 100) / 100,
@@ -394,12 +389,9 @@ export async function POST(req: Request) {
     db.from("crm_consulta_objetos").select("objeto,nota").order("objeto"),
   ]);
 
-  const canalTpl = b.canal === "cloud" || b.canal === "rd" ? b.canal : null;
   const sys = sistema({
     carteiras: (cartRes.data ?? []).map((c: any) => ({ slug: String(c.slug), time: c.time ?? null })),
     hoje: new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10).split("-").reverse().join("/"),
-    canalTpl,
-    semRd: modoMigracao(cfg) || !linhasVisiveis(cfg).includes("rd"),
     cicloAtivo: cfg.ciclo_ativo,
     objetos: (objRes.data ?? []) as any[],
   });
@@ -454,12 +446,12 @@ export async function POST(req: Request) {
             // `lerFiltros` como qualquer coisa que vem da rede. E `canal` NÃO vem
             // do modelo — vem do template marcado na tela; sem isso o número que
             // o assistente promete e o da prévia divergem.
-            const f = lerFiltros({ ...(ch.input as any), canal: canalTpl });
+            const f = lerFiltros(ch.input as any);
             const p = await montarPublico(db, f, cache);
             proposta = f;
             resultado = {
               total: p.total, selecionados: p.selecionados.length, cortes: p.cortes,
-              porVendedor: p.porVendedor, porCanal: p.porCanal,
+              porVendedor: p.porVendedor,
               carteirasUsadas: p.carteirasUsadas, avisos: p.avisos,
             };
             devolucoes.push({ type: "tool_result", tool_use_id: ch.id, content: resumoParaModelo(p, f) });

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { canalDeResposta, sendMedia, linhaDaConversa } from "../../../../lib/whatsapp";
+import { sendMedia, linhaDaConversa } from "../../../../lib/whatsapp";
 import { tipoDoMime, extensaoDoMime, limiteDe, recadoDeLimite, emMB } from "../../../../lib/midia";
 import { ehWebm, webmParaOgg, mp4ComOpus } from "../../../../lib/opusOgg";
 
@@ -40,12 +40,6 @@ export async function POST(req: Request) {
   const { data: cli } = await sb
     .from("clientes").select("id,nome_completo,telefone,carteira").eq("id", cliente_id).maybeSingle();
   if (!cli) return Response.json({ error: "cliente não encontrado" }, { status: 404 });
-
-  if ((await canalDeResposta(sb, cliente_id)) !== "whatsapp") {
-    return Response.json({
-      error: "Esta conversa ainda está no RD Conversas — envio de arquivo só pelo canal WhatsApp direto.",
-    }, { status: 501 });
-  }
 
   const to = String(cli.telefone ?? cliente_id.replace(/^wa:/, "")).replace(/\D/g, "");
   if (!to) return Response.json({ error: "cliente sem telefone" }, { status: 400 });

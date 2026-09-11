@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
-import { canalDeResposta, linhaDaConversa } from "../../../../lib/whatsapp";
+import { linhaDaConversa } from "../../../../lib/whatsapp";
 import { conversaNaCloud } from "../../../../lib/ligacao";
 
 export const dynamic = "force-dynamic";
@@ -26,14 +26,11 @@ export async function GET(req: Request) {
   // thread é onde o conteúdo apareceria por inteiro.
   const cfgThread = await lerCrmConfig(sb);
 
-  // ---- histórico do RD, a um clique (0103) ---------------------------------
-  // `?historico=1` traz TAMBÉM as mensagens das linhas que `linhas_visiveis`
-  // esconde. Sem o parâmetro, a thread mostra só o número em uso e devolve
-  // quantas ficaram de fora, para a tela oferecer o botão. É o mesmo gesto que
-  // o RD Conversas faz — e evita carregar 23 mensagens por conversa que quase
-  // nunca serão lidas.
-  const querHistorico = new URL(req.url).searchParams.get("historico") === "1"
-    && cfgThread.historico_rd;
+  // O `?historico=1` (0103) foi embora com o RD (0131): ele trazia, sob
+  // demanda, as mensagens do número antigo, e o botão que o chamava era o
+  // último ponto da tela que alcançava aquele histórico. Decisão do usuário em
+  // 11/09/2026 — "o botão sai, vou testar ficar sem isso". As 159.944
+  // mensagens continuam no banco; o que saiu foi o caminho até elas.
 
   // ---- PAGINAÇÃO PARA TRÁS (item 4 da fila) -------------------------------
   // A thread trazia 200 mensagens e **parava sem avisar**: numa cliente de anos,
@@ -69,14 +66,14 @@ export async function GET(req: Request) {
   if (desde) {
     let q = sb.from("mensagens").select(COLS_MSG)
       .eq("cliente_id", cliente_id).gt("criada_em", desde);
-    if (!querHistorico) q = filtroLinhas(q, cfgThread);
+    q = filtroLinhas(q, cfgThread);
     // teto generoso: se a pessoa ficou com a aba em segundo plano por muito
     // tempo, o poll de 60 s (que recarrega tudo) conserta o que passar daqui.
     let { data, error } = await q.order("criada_em", { ascending: true }).limit(100);
     if (error && /localizacao/i.test(error.message ?? "")) {
       let q2 = sb.from("mensagens").select(COLS_MSG.replace(",localizacao", ""))
         .eq("cliente_id", cliente_id).gt("criada_em", desde);
-      if (!querHistorico) q2 = filtroLinhas(q2, cfgThread);
+      q2 = filtroLinhas(q2, cfgThread);
       const r2 = await q2.order("criada_em", { ascending: true }).limit(100);
       data = r2.data as any; error = r2.error as any;
     }
@@ -107,14 +104,14 @@ export async function GET(req: Request) {
       // a mensagem que acabou de chegar pode citar uma foto antiga — sem isto a
       // bolha nova nasceria sem o trecho e só ganharia a miniatura na próxima
       // recarga completa da thread
-      citadas: await citadasDoLote(sb, novas, cfgThread, querHistorico),
+      citadas: await citadasDoLote(sb, novas, cfgThread),
       atualizado_em: new Date().toISOString(),
     });
   }
 
   let msgsQ = sb.from("mensagens").select(COLS_MSG).eq("cliente_id", cliente_id);
   if (antes) msgsQ = msgsQ.lt("criada_em", antes);
-  if (!querHistorico) msgsQ = filtroLinhas(msgsQ, cfgThread);
+  msgsQ = filtroLinhas(msgsQ, cfgThread);
 
   const [{ data: cli }, { data, error }, { data: notas }, { data: transferencias }, { data: linhas }, { data: ligacoes }] =
     await Promise.all([
@@ -165,7 +162,7 @@ export async function GET(req: Request) {
       .select(COLS_MSG.replace(",localizacao", ""))
       .eq("cliente_id", cliente_id);
     if (antes) q2 = q2.lt("criada_em", antes);
-    if (!querHistorico) q2 = filtroLinhas(q2, cfgThread);
+    q2 = filtroLinhas(q2, cfgThread);
     const r2 = await q2.order("criada_em", { ascending: false }).limit(LOTE + 1);
     linhasMsg = r2.data as any;
     erroMsg = r2.error as any;
@@ -189,20 +186,15 @@ export async function GET(req: Request) {
 
   const rotulos = new Map((linhas ?? []).map((l: any) => [l.phone_number_id, l.rotulo]));
 
-  // Por qual canal ESTA conversa vai sair — já com a escolha do admin aplicada
-  // (0102). A tela precisa disto para calcular a janela de 24h da linha CERTA:
-  // a janela é por número, então um cliente que respondeu há 10 min no RD NÃO
-  // tem janela aberta na Cloud. Sem isso a tela liberaria o campo de texto e o
+  // Por qual NÚMERO esta conversa vai sair. Com duas linhas Cloud vivas ao
+  // mesmo tempo, saber que é "Cloud" não basta: a janela de 24h é por par
+  // (número, cliente), então contar sobre todas as linhas juntas mente — de um
+  // jeito difícil de perceber, porque as duas são Cloud. A tela usa isto para
+  // calcular a janela da linha CERTA; sem ela liberaria o campo de texto e o
   // envio falharia com 131047, perdendo o que a pessoa escreveu.
-  const canalEnvio = await canalDeResposta(sb, cliente_id).catch(() => "rd" as const);
-
-  // ...e por qual NÚMERO. Com duas linhas Cloud vivas ao mesmo tempo, "cloud"
-  // não é resposta suficiente: a janela é por par (número, cliente), então
-  // contar sobre todas as linhas Cloud juntas volta a mentir — só que de um
-  // jeito mais difícil de perceber, porque as duas são "cloud".
-  const linhaEnvio = canalEnvio === "whatsapp"
-    ? await linhaDaConversa(sb, cliente_id).catch(() => null)
-    : null;
+  //
+  // A pergunta "por qual CANAL" morreu com o RD (0131): só existe um.
+  const linhaEnvio = await linhaDaConversa(sb, cliente_id).catch(() => null);
 
   // ---- POR QUAL LINHA ESTA CONVERSA CORRE ---------------------------------
   //
@@ -261,29 +253,20 @@ export async function GET(req: Request) {
   // MESMA função que a rota usa para decidir — uma verdade, não duas (§29.3).
   const podeLigar = await conversaNaCloud(sb as any, cliente_id).catch(() => false);
 
-  // Quantas mensagens a seleção de linhas está escondendo. Duas contagens de
-  // cabeçalho (o total menos o visível) em vez de negar o filtro: a negação de
-  // `filtroLinhas` teria de ser escrita à mão e divergiria dele no primeiro
-  // ajuste — e o sintoma seria um botão prometendo histórico que não existe.
-  let historicoOculto = 0;
-  if (cfgThread.historico_rd && !querHistorico) {
-    const base = () => sb.from("mensagens").select("*", { count: "exact", head: true })
-      .eq("cliente_id", cliente_id).neq("tipo", "evento_sistema");
-    const [tudo, visivel] = await Promise.all([base(), filtroLinhas(base(), cfgThread)]);
-    historicoOculto = Math.max(0, (tudo.count ?? 0) - (visivel.count ?? 0));
-  }
+  // Aqui ficavam DUAS contagens de cabeçalho por abertura de conversa, só para
+  // saber se valia oferecer o botão de histórico. Sem o botão, elas saíram
+  // junto — duas consultas a menos em `mensagens` a cada conversa aberta.
 
   return Response.json({
     cliente: cli ? { id: cli.id, nome: cli.nome_completo, telefone: cli.telefone, carteira: cli.carteira } : null,
-    canal_envio: canalEnvio,
+    // mantido no formato antigo por uma versão: a tela em cache de um celular
+    // que ainda não recarregou lê este campo para decidir se mostra o
+    // compositor. Sempre "whatsapp" agora.
+    canal_envio: "whatsapp" as const,
     // por qual número esta conversa será respondida (null = RD, ou desconhecido)
     linha_envio: linhaEnvio,
     // pode ligar? mesma regua da rota de ligacao, resolvida no servidor
     pode_ligar: podeLigar,
-    // quantas mensagens existem em linhas escondidas (0 = nada a oferecer)
-    historico_oculto: historicoOculto,
-    // veio COM o histórico? a tela usa para rotular as antigas e não reoferecer
-    historico_carregado: querHistorico,
     // ainda há mensagens mais antigas que este lote? a tela usa para oferecer
     // "carregar anteriores" em vez de terminar em silêncio
     tem_mais: temMais,
@@ -293,7 +276,7 @@ export async function GET(req: Request) {
     linha,
     mensagens,
     // trechos citados que não estão neste lote (foto respondida lá atrás)
-    citadas: await citadasDoLote(sb, mensagens, cfgThread, querHistorico),
+    citadas: await citadasDoLote(sb, mensagens, cfgThread),
     notas: notas ?? [],
     transferencias: transferencias ?? [],
     ligacoes: ligacoes ?? [],
@@ -319,9 +302,7 @@ export async function GET(req: Request) {
  * "fora do histórico", que é a verdade. Trazer o trecho por uma porta lateral
  * contrariaria a §44, que é o ponto inteiro daquela chave.
  */
-async function citadasDoLote(
-  sb: any, lote: any[], cfg: any, querHistorico: boolean,
-): Promise<any[]> {
+async function citadasDoLote(sb: any, lote: any[], cfg: any): Promise<any[]> {
   const noLote = new Set(lote.map((m: any) => m.id));
   const faltam = Array.from(new Set(
     lote.map((m: any) => m.resposta_a).filter((id: any) => id && !noLote.has(id)),
@@ -332,7 +313,7 @@ async function citadasDoLote(
   let q = sb.from("mensagens")
     .select("id,conteudo,enviada_por,criada_em,midia_tipo,midia_mime,midia_nome,midia_path")
     .in("id", faltam.slice(0, 60));
-  if (!querHistorico) q = filtroLinhas(q, cfg);
+  q = filtroLinhas(q, cfg);
   const { data, error } = await q;
   // falhar aqui não pode derrubar a conversa: sem as citadas a thread continua
   // legível, com o mesmo aviso de antes no lugar do trecho

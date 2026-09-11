@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { carteiraDe } from "../../../lib/papel";
-import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, modoMigracao, linhaPadraoCloud } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA, tudoVisivel, linhaPadraoCloud } from "../../../lib/crmConfig";
 import { semEnsaio } from "../../../lib/ensaio";
 import { diagnosticar } from "../../../lib/saudeCanal";
 import { linhaDeEnvio } from "../../../lib/whatsapp";
@@ -383,35 +383,9 @@ export async function GET() {
     }
   }
 
-  // ⚠️ A contagem só existe enquanto a chave "Histórico do outro número" estiver
-  // LIGADA — que é a única coisa que ainda liga este sistema ao RD Conversas.
-  // Desligada, a conversa que só existe lá **é o mesmo que não existir**: é essa
-  // a simulação, e anunciar "91 mensagens no outro número" reintroduziria na
-  // tela o que a chave acabou de tirar. Com ela ligada, o número é útil porque
-  // o botão que abre esse histórico existe na conversa.
-  const semVisivel = (await cfgP).historico_rd   // `cfg` só é resolvido mais abaixo
-    ? cardsOutros
-        .filter((c: any) => !c.ultima_atividade && typeof c.cliente_id === "string"
-          && !/^(winthor|venda):/.test(c.cliente_id))
-        .map((c: any) => c.cliente_id)
-    : [];
-  if (semVisivel.length) {
-    const TETO = 4000;   // 6 clientes x ~90 mensagens hoje; o teto é rede, não regra
-    const { data: ocultas } = await sb
-      .from("mensagens").select("cliente_id")
-      .in("cliente_id", semVisivel.slice(0, 300))
-      .neq("tipo", "evento_sistema")
-      .limit(TETO);
-    const conta = new Map<string, number>();
-    for (const m of ocultas ?? []) {
-      const k = (m as any).cliente_id;
-      conta.set(k, (conta.get(k) ?? 0) + 1);
-    }
-    for (const c of cardsOutros) {
-      const n = conta.get(c.cliente_id);
-      if (n) c.msgs_ocultas = n;
-    }
-  }
+  // Aqui ficava a contagem de "N mensagens no outro número", que alimentava o
+  // botão de histórico do RD. Saiu com ele (0131), e com ela uma varredura de
+  // até 4.000 linhas de `mensagens` por carregamento do board.
 
   // As duas colunas de venda (0105). A `etapa` vem do banco; o card guarda
   // `dias` para a tela dizer "há 4 dias" sem recalcular. Enriquece com a
@@ -465,7 +439,6 @@ export async function GET() {
     ciclo_ativo: cfg.ciclo_ativo,   // o front esconde selo e filtro quando false
     // Fase C simulada: o board tira o selo RCA-RD, o toggle Sinc/Pause do ETL e
     // o ↻ que puxa do RD. Derivado das quatro chaves, nao e coluna (crmConfig).
-    modo_migracao: modoMigracao(cfg),
     // Saúde do canal (2 consultas baratas). Vai JUNTO do board porque o board
     // já é chamado a cada 60s -- uma rota própria seria mais uma requisição por
     // aba aberta, que é o vício que a §15.1 corrigiu. O diagnóstico profundo

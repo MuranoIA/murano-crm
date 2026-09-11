@@ -1,6 +1,6 @@
 import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
-import { lerCrmConfig, linhasVisiveis, modoMigracao } from "../../../../lib/crmConfig";
+import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
 
 export const dynamic = "force-dynamic";
@@ -93,23 +93,12 @@ export async function GET() {
     .slice(0, 40)
     .map((l) => ({ dia: l.dia, template_id: l.template_id, enviados: l.enviados, vendedores: [...l.vendedores].sort() }));
 
-  // A opção que o modal do board oferecia como "template padrão do sistema": não
-  // manda `template_id` nenhum e deixa o /api/send-template resolver. É a ÚNICA
-  // que alcança a base do RD, já que nenhum template do RD está cadastrado em
-  // crm_templates. Sem ela, esta tela nasceria incapaz de fazer o que o board fazia.
-  // ⚠️ Com o modo migração ligado ela NÃO aparece: seria oferecer o template do
-  // painel do RD numa tela que não nomeia mais o RD (§44) -- e, com o envio já
-  // roteado para a Cloud, ela nem alcança a base que promete alcançar.
-  const padraoRd = !modoMigracao(cfgG)
-    && (!!process.env.TEMPLATE_RECONTATO_ID
-      || templates.some((t: any) => t.canal !== "cloud" && t.envio_id));
-  const lista = padraoRd
-    ? [{
-        id: 0, nome: "Padrão do sistema", canal: "rd", padrao: false,
-        envio_id: null, corpo: null, campos: [], tem_imagem: false, status: null,
-        nota: "o template de recontato configurado no painel do RD Conversas — é o que alcança a base que ainda atende por lá",
-      }, ...templates]
-    : templates;
+  // Aqui existia a entrada sintética "Padrão do sistema", que não mandava
+  // `template_id` nenhum e deixava o /api/send-template resolver com o
+  // ponteiro do painel do RD. Era a única opção capaz de alcançar a base que
+  // ainda atendia por lá. Com o RD encerrado (0131) ela não alcança ninguém:
+  // a lista é só o que está cadastrado e aprovado na Meta.
+  const lista = templates;
 
   return Response.json({
     "disparo-massa": {

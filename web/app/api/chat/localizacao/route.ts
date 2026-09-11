@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { sendLocation, sendLocationRequest, canalDeResposta, linhaDaConversa } from "../../../../lib/whatsapp";
+import { sendLocation, sendLocationRequest, linhaDaConversa } from "../../../../lib/whatsapp";
 import { lerLocais, type Local } from "../../../../lib/locais";
 
 export const dynamic = "force-dynamic";
@@ -66,11 +66,6 @@ export async function POST(req: Request) {
     const { data: c } = await db.from("clientes").select("telefone").eq("id", cliente_id).maybeSingle();
     const t = String((c as any)?.telefone ?? "").replace(/[^0-9]/g, "");
     if (!t) return Response.json({ error: "cliente sem telefone" }, { status: 400 });
-    if ((await canalDeResposta(db, cliente_id)) !== "whatsapp") {
-      return Response.json({
-        error: "esta conversa não corre pelo número próprio — o pedido de localização só existe lá",
-      }, { status: 422 });
-    }
     const texto = String(b?.texto ?? "").trim()
       || "Pode compartilhar sua localização? Assim consigo confirmar o endereço.";
     try {
@@ -101,12 +96,6 @@ export async function POST(req: Request) {
   // Localização é mensagem LIVRE: fora da janela de 24h a Meta recusa, e nenhum
   // template carrega um mapa. Recusar aqui, com o nome do problema, evita a
   // falha chegar minutos depois pelo webhook, sem contexto.
-  if ((await canalDeResposta(db, cliente_id)) !== "whatsapp") {
-    return Response.json({
-      error: "esta conversa não corre pelo número próprio — só de lá dá para enviar localização",
-    }, { status: 422 });
-  }
-
   try {
     const linha = await linhaDaConversa(sb, cliente_id);
     const { wamid } = await sendLocation(tel, local, linha);

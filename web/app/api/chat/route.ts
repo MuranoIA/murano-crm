@@ -7,7 +7,7 @@ import {
   enderecoDeAtendimento, enderecoDePessoa,
 } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
-import { lerCrmConfig, VIEW_FUNIL_TELA, modoMigracao } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../lib/crmConfig";
 import { semEnsaio } from "../../../lib/ensaio";
 import { classificadorDeEtapa } from "../../../lib/etapasBoard";
 
@@ -346,9 +346,6 @@ export async function GET() {
     // vem 'original' — está aqui para a tela nova poder ler no dia em que
     // existir, sem mexer nesta rota outra vez.
     layout: layoutEfetivo(cfgLayout.data?.layout, meuAcesso.data?.chat_layout),
-    // Fase C simulada: some o filtro por numero e a etiqueta da linha no
-    // cabecalho -- com uma linha so, os dois viram enfeite que nomeia o RD.
-    modo_migracao: modoMigracao(cfg),
     // limite 0 = alerta desligado; a view ausente (0114 não aplicada) degrada
     // para lista vazia, e a tela simplesmente não mostra a faixa
     sla: {

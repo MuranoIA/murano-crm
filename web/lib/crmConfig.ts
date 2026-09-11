@@ -1,5 +1,18 @@
 // Interruptores globais do CRM (`crm_config`, linha única id=1, migrations 0097/0099).
 //
+// ⚠️ O RD CONVERSAS NÃO EXISTE MAIS (0131). A conta na Tallos foi desativada — a
+// API responde `API Rest resources not available for disabled company.` — e o
+// ETL que a lia foi removido junto com os dois workflows. Por isso saíram daqui
+// as chaves que só existiam para conviver com ele: `historico_rd`,
+// `carteira_rd_ativa`, `numero_envio` e o modo migração, que era a leitura das
+// três em conjunto. O que elas simulavam passou a ser o comportamento único:
+// não há canal para escolher, não há carteira de lá para preferir, e não há
+// histórico em outro número para oferecer.
+//
+// As MENSAGENS do RD continuam no banco (159.944 delas) — é o histórico do que
+// foi combinado com cada cliente, e medimos que não custa desempenho: contar as
+// 170 mil leva 201 ms. O que saiu foram os mecanismos, não o dado.
+//
 // UMA implementação, lida por board, chat, disparo em massa e relatório. Se cada
 // rota resolvesse o estado por conta própria, uma delas divergiria no primeiro
 // ajuste — e o sintoma seria o pior possível: o selo de ciclo sumindo do card
@@ -7,7 +20,7 @@
 // motivo de `layoutEfetivo()` em lib/chatLayout.ts (§29.3).
 
 export type Linha = {
-  phone_number_id: string;   // 'rd' é o id sintético da linha do RD Conversas
+  phone_number_id: string;
   rotulo: string;
   numero: string | null;
   ativo: boolean;
@@ -19,20 +32,6 @@ export type CrmConfig = {
   linhas_visiveis: string[] | null;
   /** Cadastro de `chat_linha` (só as ativas), para a tela montar o seletor. */
   linhas: Linha[];
-  /**
-   * Número pelo qual o CRM ENVIA (0102). Decisão do admin, valendo para
-   * mensagem, template e ligação em qualquer contato.
-   *   'rd'    -> Murano Pro (RD Conversas)
-   *   'cloud' -> a Cloud API — QUAL linha, quando houver mais de uma ativa, é
-   *              `linha_padrao_cloud` logo abaixo (0123), senão a env
-   *              WHATSAPP_PHONE_NUMBER_ID
-   *   null    -> automático: responde pelo canal em que o cliente falou por último
-   *
-   * NÃO confundir com `linhas_visiveis`, que é o que a TELA mostra. Ver e falar
-   * são decisões diferentes: dá para acompanhar as conversas do RD e mesmo
-   * assim já estar respondendo pelo número novo.
-   */
-  numero_envio: "rd" | "cloud" | null;
   /**
    * QUAL linha Cloud é a padrão de saída, quando a conversa ainda não tem uma
    * própria (0123). NULO = a env WHATSAPP_PHONE_NUMBER_ID (estado de fábrica).
@@ -52,28 +51,8 @@ export type CrmConfig = {
    * Ler resolvido por `linhaPadraoCalling()` logo abaixo — nunca o campo cru.
    */
   linha_padrao_calling: string | null;
-  /**
-   * Oferecer o botão "ver histórico" na conversa quando existirem mensagens em
-   * linhas que `linhas_visiveis` esconde (na prática, o RD). NÃO mistura nada na
-   * thread sozinho — o vendedor clica e as antigas aparecem, rotuladas (0103).
-   */
-  historico_rd: boolean;
   /** Aviso enviado ao cliente pelo botão de pausa do chat (0106). */
   texto_pausa: string;
-  /**
-   * A tag `carteira <nome>` do painel do RD ainda vale como dono do cliente?
-   * (0107)
-   *
-   *   true  -> dono = COALESCE(RCA do WinThor, carteira do RD)  ← como sempre foi
-   *   false -> dono = só o RCA. Quem não tem RCA ativo cai na fila de não
-   *            atribuídos, que é de todos — não some da tela, muda de lugar.
-   *
-   * Quem aplica a regra é a VIEW, não o TypeScript: `vw_funil`/`vw_funil_visivel`
-   * leem esta coluna direto. Aqui o valor serve só para a tela do admin dizer em
-   * que estado está. Se o cálculo fosse feito nos dois lugares, board e ETL
-   * discordariam sobre de quem é o cliente no primeiro ajuste.
-   */
-  carteira_rd_ativa: boolean;
   /**
    * Minutos de espera que acendem o alerta de SLA no chat (0114). **0 =
    * desligado**, e é o estado de origem: escolher o limite é decisão de quem
@@ -91,12 +70,9 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   ciclo_ativo: true,
   linhas_visiveis: null,
   linhas: [],
-  numero_envio: null,
   linha_padrao_cloud: null,
   linha_padrao_calling: null,
-  historico_rd: true,
   texto_pausa: "",
-  carteira_rd_ativa: true,
   sla_minutos: 0,
   atualizado_por: null,
   atualizado_em: null,
@@ -145,47 +121,34 @@ export const tudoVisivel = (cfg: CrmConfig): boolean => {
  * sem passar pela view — e sem este filtro devolveriam o conteúdo de uma
  * conversa que a tela ao lado está escondendo.
  *
- * A linha do RD é `linha_id IS NULL` (o conceito nasceu no webhook da Meta,
- * §23.4), então ela não cabe num `.in(...)` e precisa do `.or(...)`.
+ * ⚠️ `linha_id IS NULL` é a MENSAGEM DO RD CONVERSAS — o conceito de linha
+ * nasceu no webhook da Meta, então o que veio do ETL não tem nenhuma. Com o RD
+ * encerrado (0131) essas 159.944 linhas continuam no banco como histórico e
+ * **nunca** entram numa consulta de tela: por isso o filtro agora é sempre um
+ * `.in(...)` sobre as linhas escolhidas, e não há mais ramo que as inclua.
  *
  * ⚠️ NÃO TEM ATALHO, e o atalho que existia era o bug. O código antigo abria
  * com `if (tudoVisivel(cfg)) return q;` — "está tudo marcado, não há nada a
- * excluir". As duas metades da frase não são a mesma coisa: `tudoVisivel`
- * olha as linhas ATIVAS do catálogo, e `mensagens` guarda linha desativada
- * também. No dia em que a linha 'rd' foi marcada `ativo=false` no
- * `chat_linha`, ela saiu do catálogo, `tudoVisivel` virou `true` — e este
- * filtro parou de filtrar. Resultado medido em 09/09/2026: com o seletor
- * dizendo "só Murano Professional", a thread, a lupa do card e a busca no
- * conteúdo voltaram a mostrar conversa do RD Conversas, e o cabeçalho passou
- * a etiquetá-la "MURANO PRO (RD CONVERSAS)" — o sistema que a §44 diz não
- * existir mais. De quebra, o seletor de template do chat segue esse rótulo, e
- * como não há template de RD cadastrado (§26.3) a lista vinha vazia: dava para
- * ver a conversa e não dava para reabri-la.
- *
- * A `vw_funil_visivel` nunca teve o atalho — ela filtra sempre, com a mesma
- * régua (`coalesce(m.linha_id,'rd') = any(sel)`). Era só o lado TypeScript que
- * divergia, e por isso o board escondia a conversa que a thread mostrava.
- * Agora os dois fazem a mesma coisa.
+ * excluir". As duas metades da frase não são a mesma coisa: `tudoVisivel` olha
+ * as linhas ATIVAS do catálogo, e `mensagens` guarda linha desativada também.
+ * No dia em que a linha 'rd' foi marcada `ativo=false` no `chat_linha`, ela
+ * saiu do catálogo, `tudoVisivel` virou `true` — e este filtro parou de
+ * filtrar. Resultado medido em 09/09/2026: com o seletor dizendo "só Murano
+ * Professional", a thread, a lupa do card e a busca no conteúdo voltaram a
+ * mostrar conversa do RD, etiquetada "MURANO PRO (RD CONVERSAS)". Sem o ramo
+ * do RD esse retorno deixa de ser possível, mas a lição fica: filtro de tela
+ * não se decide pelo catálogo de linhas, e sim pela coluna da mensagem.
  */
 export function filtroLinhas<T>(q: T, cfg: CrmConfig): T {
-  const sel = linhasVisiveis(cfg);
-  // Seleção vazia = não sabemos nada (leitura da config falhou e caiu no
-  // padrão, ou o catálogo veio vazio). Aqui a rede de proteção é NÃO filtrar,
-  // pelo mesmo princípio de `lerCrmConfig`: instabilidade do banco não pode
-  // esvaziar a tela da equipe. O admin nunca grava lista vazia — a rota recusa
-  // com "marque ao menos um número" —, então isto não engole escolha de
-  // ninguém.
-  if (!sel.length) return q;
-  const cloud = sel.filter((l) => l !== "rd");
-  const comRd = sel.includes("rd");
+  const sel = linhasVisiveis(cfg).filter((l) => l !== "rd");
   const anyQ = q as any;
-
-  if (!comRd) {
-    // sem o RD: só as linhas da Cloud escolhidas
-    return (cloud.length ? anyQ.in("linha_id", cloud) : anyQ.eq("linha_id", "__nenhuma__")) as T;
-  }
-  if (!cloud.length) return anyQ.is("linha_id", null) as T;   // só o RD
-  return anyQ.or(`linha_id.is.null,linha_id.in.(${cloud.join(",")})`) as T;
+  // Seleção vazia = não sabemos nada (leitura da config falhou e caiu no
+  // padrão, ou o catálogo veio vazio). A rede de proteção é mostrar as linhas
+  // que TÊM id — nunca o histórico do RD, que é o que este filtro existe para
+  // manter fora. Antes daqui a rede era "não filtrar", e com o RD vivo isso
+  // significava devolver tudo; hoje devolveria justamente o que foi encerrado.
+  if (!sel.length) return anyQ.not("linha_id", "is", null) as T;
+  return anyQ.in("linha_id", sel) as T;
 }
 
 type Sb = { from: (t: string) => any };
@@ -218,12 +181,9 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
     return {
       ciclo_ativo: data.ciclo_ativo !== false,
       linhas_visiveis: Array.isArray(data.linhas_visiveis) ? data.linhas_visiveis : null,
-      numero_envio: data.numero_envio === "rd" || data.numero_envio === "cloud" ? data.numero_envio : null,
       linha_padrao_cloud: typeof data.linha_padrao_cloud === "string" ? data.linha_padrao_cloud : null,
       linha_padrao_calling: typeof data.linha_padrao_calling === "string" ? data.linha_padrao_calling : null,
-      historico_rd: data.historico_rd !== false,
       texto_pausa: String(data.texto_pausa ?? ""),
-      carteira_rd_ativa: data.carteira_rd_ativa !== false,
       sla_minutos: Math.max(0, Number(data.sla_minutos ?? 0) || 0),
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
@@ -234,49 +194,7 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
   }
 }
 
-/**
- * MODO MIGRAÇÃO — a Fase C (§16.5) simulada, com volta.
- *
- * O sistema como será quando o RD Conversas não existir mais: nenhuma conversa,
- * linha, histórico ou carteira vindos de lá, nenhuma menção a ETL na tela. Os
- * clientes vêm do espelho do WinThor (`wth_carteira`) e o dono é só o RCA.
- *
- * ⚠️ NÃO é uma quinta coluna no banco, e isso é a decisão central. É a leitura
- * das quatro que já existem, todas na posição de migração ao mesmo tempo:
- *
- *   linhas_visiveis   sem a linha 'rd'   → nenhuma conversa do RD na tela
- *   historico_rd      false              → nem sob demanda, pelo botão
- *   carteira_rd_ativa false              → dono é só o RCA do WinThor
- *   numero_envio      'cloud'            → tudo sai pelo número próprio
- *
- * Uma quinta coluna independente entraria em contradição com elas no primeiro
- * ajuste — "modo migração ligado" convivendo com "RD marcado nas linhas
- * visíveis" — e ninguém saberia qual vence. É a mesma armadilha que a 0099
- * resolveu ao substituir `conversas_rd_visiveis` pelo seletor (§32), e a razão
- * de `layoutEfetivo()` existir (§29.3): uma verdade, não duas.
- *
- * Consequência prática boa: ligar e desligar é escrever as quatro, e o estado
- * "desligado" é o CRM de sempre — não há snapshot para guardar nem restaurar.
- */
-export const modoMigracao = (cfg: CrmConfig): boolean =>
-  !cfg.carteira_rd_ativa
-  && !cfg.historico_rd
-  && cfg.numero_envio === "cloud"
-  && !linhasVisiveis(cfg).includes("rd");
 
-/** As quatro chaves na posição de migração, para o PUT escrever de uma vez. */
-export const POSICAO_MIGRACAO = {
-  historico_rd: false,
-  carteira_rd_ativa: false,
-  numero_envio: "cloud" as const,
-};
-
-/**
- * O canal que o admin escolheu, já traduzido para o vocabulário do envio.
- * `null` = nenhuma escolha feita, então quem decide segue sendo a conversa.
- */
-export const canalEscolhido = (cfg: CrmConfig): "rd" | "whatsapp" | null =>
-  cfg.numero_envio === "rd" ? "rd" : cfg.numero_envio === "cloud" ? "whatsapp" : null;
 
 /**
  * A linha Cloud escolhida em /admin como padrão de saída (0123), já validada
