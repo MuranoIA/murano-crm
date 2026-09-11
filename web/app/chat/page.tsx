@@ -1712,6 +1712,13 @@ export default function Chat() {
   // ainda interessa?" -- ver `aindaAberta` logo abaixo.
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
+  // Espelho das mensagens, no mesmo padrão do `selRef` acima. Existe para quem
+  // precisa do estado ATUAL de dentro de um laço — `msgs` fechado numa closure
+  // fica congelado no render em que a função nasceu, e `carregarAntigas`
+  // chamada duas vezes seguidas pediria a MESMA página de novo, porque o
+  // cursor é a data da mensagem mais antiga carregada.
+  const msgsRef = useRef<Msg[] | null>(null);
+  msgsRef.current = msgs;
   /**
    * ⚠️ Toda resposta de rede que escreve na conversa aberta precisa dizer
    * PARA QUEM ela e.
@@ -1912,7 +1919,8 @@ export default function Chat() {
    */
   async function carregarAntigas() {
     const cx = rolagemRef.current;
-    const primeira = msgs?.[0];
+    // pelo espelho, não pela closure: ver a nota no `msgsRef`
+    const primeira = (msgsRef.current ?? msgs)?.[0];
     if (!sel || !primeira || carregandoAntigas) return;
     setCarregandoAntigas(true);
     const alturaAntes = cx?.scrollHeight ?? 0;
@@ -1936,6 +1944,70 @@ export default function Chat() {
         if (el) el.scrollTop = topoAntes + (el.scrollHeight - alturaAntes);
       }, 0);
     } finally { setCarregandoAntigas(false); }
+  }
+
+  // ---- IR PARA A MENSAGEM CITADA -------------------------------------------
+  //
+  // A citação já mostrava a miniatura, mas era inerte. Quando a cliente manda
+  // cinco fotos e responde "esse" citando a terceira, saber QUAL é a terceira
+  // exige voltar na conversa — e o gesto que todo mundo tenta, porque é o do
+  // WhatsApp, é clicar na própria miniatura.
+  //
+  // MEDIDO EM 11/09/2026, sobre as 601 citações do banco (amostra de 200 com a
+  // distância calculada): a mensagem citada está a **mediana de 2** mensagens
+  // de distância, p90 14, p95 19, e a mais longe já vista a 68. A thread abre
+  // com as últimas 200 — ou seja, na prática o alvo JÁ ESTÁ desenhado, e o
+  // clique é só rolar. O laço abaixo existe para o resto, não para o comum.
+  //
+  // 8% das citações apontam para mensagem que não está no nosso banco (citação
+  // a algo anterior à nossa entrada no número). Nessas o bloco não vira botão:
+  // um clique que não leva a lugar nenhum é pior que um bloco parado.
+  const [destacada, setDestacada] = useState<string | null>(null);
+  const [indoParaCitada, setIndoParaCitada] = useState(false);
+  const destaqueTimer = useRef<any>(null);
+
+  /** Rola até a bolha, se ela estiver desenhada. Devolve se conseguiu. */
+  function rolarAteMensagem(id: string): boolean {
+    const cx = rolagemRef.current;
+    // `CSS.escape` porque o id é um wamid da Meta e não temos contrato sobre
+    // que caracteres ele pode ter — um ponto ou dois-pontos solto no seletor
+    // viraria outra consulta, em silêncio.
+    const el = cx?.querySelector(`[data-msg="${CSS.escape(id)}"]`) as HTMLElement | null;
+    if (!cx || !el) return false;
+    // Posição pelo retângulo, não por `offsetTop`: a bolha tem ancestrais
+    // posicionados no meio do caminho (o agrupamento, a coluna do D1), e
+    // `offsetTop` mede até o primeiro deles, não até a área de rolagem.
+    const r = el.getBoundingClientRect();
+    const rc = cx.getBoundingClientRect();
+    cx.scrollTo({
+      top: cx.scrollTop + (r.top - rc.top) - Math.max(0, (cx.clientHeight - r.height) / 2),
+      behavior: "smooth",
+    });
+    setDestacada(id);
+    if (destaqueTimer.current) clearTimeout(destaqueTimer.current);
+    destaqueTimer.current = setTimeout(() => setDestacada(null), 2000);
+    return true;
+  }
+
+  async function irParaCitada(id: string) {
+    if (rolarAteMensagem(id)) return;
+    // Não está desenhada: é mais antiga que o lote carregado. Puxa lotes até
+    // achar — parando quando nada novo chega, que é o fim do histórico.
+    setIndoParaCitada(true);
+    try {
+      const conta = () => rolagemRef.current?.querySelectorAll("[data-msg]").length ?? 0;
+      let antes = conta();
+      for (let i = 0; i < 6; i++) {
+        await carregarAntigas();
+        // um tique para o React desenhar o lote antes de procurar no DOM
+        await new Promise((r) => setTimeout(r, 80));
+        if (rolarAteMensagem(id)) return;
+        const agora = conta();
+        if (agora === antes) break;   // não veio nada: acabou o histórico
+        antes = agora;
+      }
+      setAviso("Não achei essa mensagem no histórico desta conversa.");
+    } finally { setIndoParaCitada(false); }
   }
 
   // catálogo de respostas rápidas: carrega uma vez por sessão (muda raramente).
@@ -4964,7 +5036,9 @@ export default function Chat() {
                         return (
                           // empilha em coluna quando há um recado abaixo da bolha
                           // (a falha do D1): em `row` ele iria PARA O LADO dela
-                          <div key={m.id} style={{ display: "flex", position: "relative",
+                          // `data-msg` é a âncora de "ir para a mensagem citada":
+                          // é por ele que `rolarAteMensagem` acha a bolha no DOM.
+                          <div key={m.id} data-msg={m.id} style={{ display: "flex", position: "relative",
                             // 8 px somados ao `gap` de 2 dão os 10 entre grupos.
                             // No primeiro item do dia não, porque a pastilha da
                             // data já traz a própria margem.
@@ -4985,7 +5059,17 @@ export default function Chat() {
                               borderRadius: bc && !fechaGrupo
                                 ? G.raioBolha
                                 : fora ? `${G.raioBolha}px ${G.raioBolha}px 3px ${G.raioBolha}px` : `${G.raioBolha}px ${G.raioBolha}px ${G.raioBolha}px 3px`,
-                              padding: G.bolhaPad, boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0 }}>
+                              padding: G.bolhaPad, boxShadow: "0 1px 1px rgba(28,14,27,0.06)", marginBottom: m.reacao ? 10 : 0,
+                              // Destaque de chegada: some sozinho em 2s. É
+                              // `outline`, não `boxShadow`, para não brigar com
+                              // a sombra da bolha — e porque `outline` não
+                              // empurra layout, então a bolha não pula quando
+                              // acende. Sem alfa concatenado no hex: a cor vem
+                              // do tema e nem toda paleta usa hex de 6 dígitos.
+                              ...(destacada === m.id
+                                ? { outline: `2px solid ${M.roxo}`, outlineOffset: 2 }
+                                : null),
+                              transition: "outline-color .2s" }}>
                               {m.tipo === "template" && (
                                 <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.roxo, marginBottom: 3 }}>template</div>
                               )}
@@ -5022,8 +5106,28 @@ export default function Chat() {
                                   && !/^(📷|🎬|🎤|📎|🙂)/.test(alvo.conteudo)
                                   && !(alvo.midia_tipo && nomeDeArquivo(alvo.conteudo))
                                   ? alvo.conteudo : "";
+                                // capturado num const porque o `onClick` é outra
+                                // função: a restrição de tipo do `m.resposta_a &&`
+                                // lá em cima não atravessa esse limite.
+                                const alvoId = m.resposta_a;
+                                // Só vira botão quando há para onde ir. Nas 8% de
+                                // citações cujo alvo não está no banco, um clique
+                                // que não leva a lugar nenhum é pior que um bloco
+                                // parado — e o texto ao lado já diz o porquê.
+                                const podeIr = !!alvo && !!alvoId;
+                                const ir = () => { if (alvoId) void irParaCitada(alvoId); };
                                 return (
-                                  <div style={{ display: "flex", gap: 7, alignItems: "stretch", borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: ehImagem ? 4 : "4px 8px", marginBottom: 4, overflow: "hidden" }}>
+                                  <div
+                                    onClick={podeIr ? (e) => { e.stopPropagation(); ir(); } : undefined}
+                                    role={podeIr ? "button" : undefined}
+                                    tabIndex={podeIr ? 0 : undefined}
+                                    onKeyDown={podeIr ? (e) => {
+                                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); ir(); }
+                                    } : undefined}
+                                    title={podeIr
+                                      ? (indoParaCitada ? "Procurando a mensagem…" : "Ir para a mensagem citada")
+                                      : "Essa mensagem não está no histórico desta conversa"}
+                                    style={{ display: "flex", gap: 7, alignItems: "stretch", borderLeft: `3px solid ${M.roxo}`, background: "rgba(123,45,139,.06)", borderRadius: "0 6px 6px 0", padding: ehImagem ? 4 : "4px 8px", marginBottom: 4, overflow: "hidden", cursor: podeIr ? "pointer" : "default" }}>
                                     <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: M.gray, maxHeight: 46, overflow: "hidden", padding: ehImagem ? "2px 0 2px 5px" : 0 }}>
                                       {alvo ? (
                                         <>
