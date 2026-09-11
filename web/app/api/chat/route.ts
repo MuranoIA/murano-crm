@@ -7,7 +7,7 @@ import {
   enderecoDeAtendimento, enderecoDePessoa,
 } from "../../../lib/chatEscopo";
 import { layoutEfetivo } from "../../../lib/chatLayout";
-import { lerCrmConfig, VIEW_FUNIL_TELA } from "../../../lib/crmConfig";
+import { lerCrmConfig, VIEW_CHAT_LISTA } from "../../../lib/crmConfig";
 import { semEnsaio } from "../../../lib/ensaio";
 import { classificadorDeEtapa } from "../../../lib/etapasBoard";
 
@@ -33,7 +33,17 @@ export async function GET() {
   // veio da Cloud: os ramos sem conversa da view irmã têm `ultima_atividade`
   // nula, e o `.not(..., "is", null)` abaixo já os corta — nenhum filtro extra.
   const cfg = await lerCrmConfig(sb);
-  const fonte = VIEW_FUNIL_TELA;
+  // A FONTE DEIXOU DE SER A VIEW DO BOARD (0126 / PR #170).
+  //
+  // `vw_funil_visivel` responde outra pergunta — "todo cliente da carteira,
+  // tenha conversa ou nao" — e por isso carrega a prospeccao inteira do ERP
+  // mais as colunas do card. Medido em 11/09/2026: 4.304 linhas contra 1.535
+  // de `vw_chat_conversa`, e o caro nem e o volume, e a coluna
+  // `ultimas_mensagens` (join lateral em `mensagens`, ~2,8 s por carregamento
+  // segundo o laudo de performance) que o chat descartava inteira.
+  //
+  // A `/api/funil` continua na `vw_funil_visivel`, intocada.
+  const fonte = VIEW_CHAT_LISTA;
 
   // Cards SINTÉTICOS (`venda:<codcli>`, `winthor:<codcli>`) não são conversa: não
   // têm thread, e clicar num deles não leva a lugar nenhum. A lista sempre teve

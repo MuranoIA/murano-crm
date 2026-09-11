@@ -5515,3 +5515,128 @@ sessões existem e não se enxergam).
   o BUILD_ID velho — a tela então nem carrega, e parece defeito do código.
 - Vale a §60.5 outra vez: a rodada só provou alguma coisa quando o servidor foi
   derrubado de fato e o build refeito entre as duas medições.
+## 71. O chat estava lento porque a lista dele recalculava o board (09/09/2026) — migration 0126
+
+Queixa dos consultores: *"o chat está lento de modo geral"*, com o exemplo
+concreto *"clicar em Minha carteira demora"*. Medido contra produção, não
+deduzido do código.
+
+### 71.1 A causa: uma view respondendo duas perguntas diferentes
+
+`/api/chat` é **a rota mais chamada do sistema** — a cada 60 s em toda aba
+aberta, mais uma recarga coalescida a cada mensagem que chega (§65). Ela lia a
+`vw_funil_visivel`, que é a view do **board**:
+
+| | pergunta que responde |
+|---|---|
+| board | "todo cliente da carteira, tenha conversa ou não" |
+| chat | "quem tem conversa" |
+
+Por isso a view carrega três ramos (conversas, ociosos sem cadastro e a
+**prospecção inteira do ERP**, ~3.800 linhas com vários `NOT EXISTS`) mais as
+colunas que só o card usa: `ultimas_mensagens` (um `jsonb_agg` das 3 últimas
+mensagens por cliente), `venda_valor`/`venda_data` e `sem_cadastro` (subconsultas
+correlacionadas que varrem `wth_carteira` por `nome_norm`). O chat descartava
+tudo isso a cada chamada.
+
+Havia ainda um `WHERE EXISTS (select 1 from mensagens ...)` **redundante** com o
+`JOIN LATERAL ... LIMIT 1` logo acima — o join interno já exclui quem não tem
+mensagem visível. Sozinho, esse EXISTS varria 144.683 linhas.
+
+`vw_chat_conversa` (0126) é só o ramo de conversas, com as 9 colunas que o chat
+usa, e **inverte o motor**: em vez de percorrer os 5.048 clientes procurando a
+última mensagem visível de cada um (e descartar ~4.740), parte das mensagens
+visíveis — que são poucas — e sobe para o cliente com `DISTINCT ON`.
+
+    EXPLAIN ANALYZE, mesmas 309 linhas de resultado:
+      vw_funil_visivel   647 ms   206.498 buffers
+      vw_chat_conversa   234 ms     7.214 buffers
+
+⚠️ **As duas repetem a régua de etapa.** Se ela mudar numa, muda na outra —
+duplicação consciente, a mesma que a 0098 assumiu. **A `vw_funil_visivel` não
+foi tocada**: o board continua nela e `/api/funil` não mudou.
+
+⚠️ As outras rotas do chat (`buscar`, `contato`, `cadastro`, `vincular`)
+**continuam na `vw_funil_visivel` de propósito**: elas consultam uma linha por
+`cliente_id` e precisam enxergar cliente **sem** conversa. Apontá-las para a view
+enxuta seria bug de correção, não otimização.
+
+### 71.2 Round-trips em série eram a outra metade
+
+A rota fazia, **em série**: `lerCrmConfig` → `carregarAtribuicoes` → passada da
+lista → passada da fila → dois `Promise.all`. Seis idas, cada uma pagando a
+latência de rede inteira.
+
+A **passada da fila** era o pior caso: para admin/home era **100% redundante** (a
+passada principal não filtra vendedor, então já trazia as conversas sem dono) e
+custava outra computação completa da view. Para vendedor virou
+`or(vendedor.eq.X, vendedor.is.null)` na mesma consulta — a mesma união.
+
+    /api/chat  3.269 ms -> 800 ms   (mediana de 5 amostras)
+
+Verificado no navegador: admin vê 301 conversas com 8 na fila; o vendedor vê
+19 = suas 11 + **as mesmas 8** da fila. Zero duplicados, zero ids sintéticos.
+
+### 71.3 A carteira varria 5.040 linhas para resolver 5
+
+`/api/chat/carteira` lia a tabela `clientes` INTEIRA, em 6 páginas sequenciais,
+para montar um mapa por `tel8` — e usava esse mapa para resolver, na prática,
+entre 5 e 30 contatos (romulo 5 · luana 30 · kamilly 22 · milene 14 · anne 8 ·
+thiago 6 · thamires 13).
+
+O comentário antigo dizia que "300 consultas `like` seriam mais caras que ler a
+tabela toda". A premissa estava certa e a conclusão não: **não são 300 consultas,
+é uma** com os poucos telefones que faltam. A varredura fica como caminho
+alternativo se um dia a maioria ficar sem vínculo. Os lotes de `wth_vinculo`
+também iam em série e passaram a ir em paralelo.
+
+    vendedor (685 clientes)   1.957 ms -> 584 ms
+    admin  (4.416 clientes)   4.657 ms -> 2.023 ms
+
+### 71.4 Pré-carregar a agenda — a ordem importa
+
+Ideia do usuário: deixar "Minha carteira" pronta em segundo plano. Está no ar,
+com duas condições que a impedem de virar o vício da §15.1:
+
+1. **só depois que a lista de conversas chegou** — disputar banco com o
+   carregamento inicial atrasaria o que a pessoa ESTÁ olhando para adiantar o
+   que ela TALVEZ olhe;
+2. **uma vez por sessão**.
+
+Isso só vale a pena **depois** da 68.3. Aplicado antes, custaria ~2,3 s de banco
+por sessão, inclusive de quem nunca abre a aba. Verificado no navegador: a lista
+respondeu em 4,8 s e o pré-carregamento disparou em 7,3 s — exatamente 2,5 s
+depois, como projetado.
+
+### 71.5 ⚠️ A chave anon lê as views — achado PRÉ-EXISTENTE, não corrigido
+
+Ao conferir as permissões da view nova, verificado ao vivo com a anon key deste
+projeto (que vai no bundle do navegador, para o `signInWithOAuth` e o Realtime):
+
+| | resposta |
+|---|---|
+| `vw_funil_visivel` | **200**, com nome, telefone e conteúdo da última mensagem |
+| `clientes` | `[]` (RLS pegando) |
+| `mensagens` | `[]` (RLS pegando) |
+
+A §12.5 fechou as **tabelas** com RLS e registrou que as views seguiram
+funcionando *"porque rodam como dono"*. É verdade — e é exatamente por isso que
+elas **atravessam** o RLS que as tabelas ganharam. Com o `SELECT` que o schema
+`public` concede por padrão, a anon lê a view inteira. Vale para as 37 views.
+
+**Não corrigido aqui**: revogar em massa pode calar um consumidor sem erro
+visível (o PostgREST devolve `[]`, não falha) — o mesmo risco de rollback que a
+§12.5 nomeia. A 0126 só garante **não abrir mais uma porta**: a view nova nasce
+com `revoke all ... from anon, authenticated`. Decisão pendente do usuário.
+
+### 71.6 O que ficou de fora
+
+- **Travas intermitentes.** Peguei uma consulta de 200 ms levando **123 s**. Uma
+  sonda de 36 amostras depois não reproduziu (pior caso 1,9 s), então a causa
+  **não é conhecida** — candidatos: o `wth-sync-tudo` (a cada 10 min), o tamanho
+  da instância do Supabase, ou contenção da própria medição. Adiado pelo usuário.
+- **O token do GitHub do ETL está morto** (401 "Bad credentials" em todo disparo
+  registrado em `etl_trigger_log`). Não será consertado: o ETL puxa só do RD
+  Conversas e a migração já aconteceu (§44). **Não confundir com o
+  `wth-sync-tudo`**, que traz carteira e faturamento do WinThor, roda dentro do
+  Postgres e continua saudável (2-4 s a cada 10 min).
