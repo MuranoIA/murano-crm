@@ -6,6 +6,9 @@ import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
 import { nomeComCodigo } from "../lib/nomeCliente";
 import { rotuloDePapel } from "../lib/papel";
+// As colunas do board moram em lib/etapasBoard: o /chat filtra pelas MESMAS
+// etapas, e duas cópias do nome/cor/ordem divergiriam no primeiro ajuste.
+import { COLUNAS } from "../lib/etapasBoard";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -164,22 +167,6 @@ function Logo({ size = 28 }: { size?: number }) {
   );
 }
 
-const COLUNAS = [
-  { key: "prospeccao", titulo: "Lista de prospecção", status: "A prospectar", cor: "#8b5cf6", sub: "carteira nunca contatada", subLong: "cliente cadastrado no WinThor, sem conversa nas linhas visíveis",
-    regras: "Um card cai aqui quando é cliente da sua carteira (WinThor, pelo RCA atual) que:\n• NUNCA teve conversa com operador no RD Conversas — nunca foi contatado, ou entrou na sua carteira por troca de RCA e ainda não foi abordado por você;\n• E não comprou no mês corrente.\n\nAqui está o resto da carteira que ainda não virou conversa. O selo de ciclo de compra (Na hora / Atrasado…) ajuda a priorizar quem ligar primeiro.\n\nAutomação: ao disparar o 1º template ele vira conversa e migra pra Tentativa de contato; se o cliente responder → Negociação; se comprar no mês → Pedido emitido." },
-  { key: "sem_cadastro", titulo: "Sem cadastro", status: "A definir", cor: "#b45309", sub: "não encontrado no WinThor", subLong: "contato que o ERP não reconhece — ainda não foi decidido se vira cliente",
-    regras: "Um card cai aqui quando as DUAS coisas valem:\n• não há conversa nas linhas que você está vendo;\n• o contato não foi encontrado no WinThor (nem por CPF, nem por telefone, nem por nome).\n\nSão os clientes novos, os finais e os que ainda não foram decididos — o lugar de olhar antes de cadastrar ou descartar.\n\n\u26a0 \u201cNão encontrado\u201d é o que o sistema conseguiu apurar, não uma certeza: se o cadastro existir com outro nome e outro telefone, ele não é achado.\n\nAutomação: assim que o CPF for preenchido e o cadastro existir no WinThor, o vínculo aparece em até 10 minutos e o card migra sozinho para a Lista de prospecção — não há botão de mover." },
-  { key: "ociosos", titulo: "Ociosos", status: "Parado", cor: "#94a3b8", sub: "parado +24h", subLong: "cliente falou por último há +24h — só um template reabre a conversa",
-    regras: "Um card cai aqui quando:\n• o cliente já conversou e falou por último há +24h sem novo template (a janela de 24h do WhatsApp fechou — só um template reabre a conversa);\n• uma venda de mês anterior expirou e não houve nada depois.\n\n(Quem nunca foi contatado agora fica na Lista de prospecção, não aqui.)\n\nAutomação: sai daqui sozinho quando você dispara um template (→ Tentativa de contato) ou o cliente responde (→ Negociação)." },
-  { key: "tentativa_contato", titulo: "Tentativa de contato", status: "Nova", cor: "#1a7fee", sub: "template enviado, sem resposta", subLong: "você mandou template, aguardando a 1ª resposta do cliente",
-    regras: "Um card cai aqui quando:\n• a última mensagem real é do operador E é um template (você disparou e aguarda a 1ª resposta).\n\nAutomações:\n• cliente responde → Negociação;\n• passou +24h sem resposta → Ociosos;\n• parado +4 dias → o botão TEMPLATE reaparece pra reenviar." },
-  { key: "negociacao", titulo: "Negociação", status: "Em andamento", cor: "#0e9fd6", sub: "conversa ativa (últimas 24h)", subLong: "troca ativa dentro da janela de 24h",
-    regras: "Um card cai aqui quando:\n• há troca ativa nas últimas 24h (o cliente falou por último há menos de 24h, ou você falou fora de template).\n\nAutomações:\n• alerta vermelho 'AGUARDA RESPOSTA' se o cliente falou por último e você está +10 min sem responder (some ao clicar no card, volta se ele mandar msg nova);\n• passou 24h sem novo template → Ociosos;\n• fechou venda no mês → Pedido Emitido." },
-  { key: "pedido_emitido", titulo: "Pedido emitido", status: "Vendida", cor: "#16a34a", sub: "comprou nos últimos 3 dias", subLong: "venda nos últimos 3 dias; depois vai para Vender novamente",
-    regras: "Um card cai aqui quando há nota fiscal faturada no WinThor nos ÚLTIMOS 3 DIAS (fuso de Brasília).\n\nAutomações:\n• 3 dias após a compra o card vai para VENDER NOVAMENTE;\n• se comprar de novo, volta para cá na hora;\n• o selo R$ mostra o que ele comprou na janela de 18 dias — não o total do mês, que zeraria no dia 1º e mostraria R$ 0 num card que está aqui por causa de uma compra.\n\nO total R$ do cabeçalho é do MÊS (o número comercial que o time acompanha), então ele não coincide com esta coluna de propósito.\n\nConversa aberta tem precedência: se a cliente respondeu nas últimas 24h, o card fica em Negociação." },
-  { key: "vender_novamente", titulo: "Vender novamente", status: "Recomprar", cor: "#0e7490", sub: "comprou de 3 a 18 dias atrás", subLong: "saiu de Pedido emitido e ainda não voltou a comprar",
-    regras: "O cliente cai aqui 3 DIAS depois da compra, vindo de Pedido emitido.\n\nAutomações:\n• se comprar de novo, volta na hora para Pedido emitido;\n• se passarem 15 dias aqui sem nova compra (18 desde a compra), vai para Lista de prospecção;\n• o selo R$ mostra o que ele comprou na janela — não o total do mês, que zeraria no dia 1º.\n\nConversa aberta tem precedência: se a cliente respondeu nas últimas 24h, o card fica em Negociação." },
-] as const;
 
 // categorias do motor de ciclo de compra (análise preditiva, tipo_oportunidade)
 const CICLO_CATS: { key: string; label: string; cor: string; bg: string; desc: string }[] = [

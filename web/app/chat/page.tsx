@@ -14,6 +14,8 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
+// as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
+import { COLUNAS, ETAPAS_SEM_CONVERSA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 
@@ -266,6 +268,15 @@ const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
 // SERVIDOR (`/api/chat`), então "de todo o time" seria a mesma lista com um
 // nome que promete mais.
 type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "semresposta" | "carteira" | "notas";
+// O dropdown escolhe UMA coisa: ou uma fila, ou uma etapa do board. As etapas
+// entraram nele (e não num segundo seletor ao lado) porque a pergunta é a
+// mesma — "que recorte da lista eu quero ver agora?" — e dois controles para a
+// mesma escolha acabam se contradizendo, como o booleano do RD e o seletor de
+// linhas se contradiziam antes da 0099 (§32).
+type Selecao = Fila | `etapa:${EtapaBoard}`;
+const ehEtapa = (f: Selecao): f is `etapa:${EtapaBoard}` => f.startsWith("etapa:");
+const etapaDaSelecao = (f: Selecao): EtapaBoard | null =>
+  ehEtapa(f) ? (f.slice("etapa:".length) as EtapaBoard) : null;
 const FILAS: { k: Fila; icone: string; rotulo: string; dica: string; soGestor?: boolean }[] = [
   { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
   { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
@@ -324,6 +335,12 @@ const ABAS: { k: AbaContato; rotulo: string; soD1?: boolean }[] = [
 
 type Conversa = {
   cliente_id: string; cliente: string; vendedor: string | null; etapa: string | null;
+  // a coluna do BOARD — classificada no servidor pela régua de lib/etapasBoard.
+  // NÃO é `etapa` acima: aquela é a da view, que não conhece a nota fiscal e
+  // colocaria em Ociosos/Tentativa quem o board mostra em Pedido emitido.
+  // Nulo = cliente sem coluna nenhuma lá (descartado) — fica fora de todo
+  // filtro de etapa, e continua na lista.
+  etapa_board?: EtapaBoard | null;
   // codigo do cliente no WinThor: vem no mesmo SELECT do nome, sem consulta nova
   codcli?: number | string | null;
   telefone: string | null; ultima_atividade: string | null;
@@ -1232,7 +1249,7 @@ export default function Chat() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [filtro, setFiltro] = useState<Fila>("todas");
+  const [filtro, setFiltro] = useState<Selecao>("todas");
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
@@ -3071,8 +3088,23 @@ export default function Chat() {
       total: baseLinha.filter((c) => !c.na_fila && c.vendedor === slug).length,
     }));
 
+  // etapa escolhida no dropdown, quando a escolha é uma etapa (e não uma fila)
+  const etapaSel = etapaDaSelecao(filtro);
+
   const filtradas = noEscopo.filter((c) => {
     const st = c.status ?? "aberta";
+    // ---- ETAPA DO BOARD (§68) --------------------------------------------
+    // Recorte do CLIENTE, não do atendimento: por isso atravessa o dono (traz
+    // quem está sem dono, como "Todas sem resposta" e "Recados" fazem) e não
+    // olha `status`. O board não conhece `chat_conversa` — esconder as
+    // encerradas daria um terceiro número, diferente do da coluna lá.
+    if (etapaSel) {
+      if (c.etapa_board !== etapaSel) return false;
+      if (!busca.trim()) return true;
+      const bb = busca.toLowerCase();
+      return (c.cliente ?? "").toLowerCase().includes(bb)
+        || String(c.telefone ?? "").includes(bb.replace(/\D/g, "") || " ");
+    }
     // a fila é uma aba própria: sem dono, não polui as listas de quem tem dono.
     // "Todas sem resposta" é a exceção: ela atravessa o recorte de dono porque
     // é a visão do supervisor sobre o time inteiro, e conversa sem dono é
@@ -3119,6 +3151,11 @@ export default function Chat() {
   const contaSemResposta = noEscopo.filter(
     (c) => c.ultima_enviada_por === "customer" && (c.status ?? "aberta") !== "resolvida",
   ).length;
+  // uma passada só pelas ~1.100 conversas, não sete filtros
+  const contaEtapa = new Map<string, number>();
+  for (const c of noEscopo) {
+    if (c.etapa_board) contaEtapa.set(c.etapa_board, (contaEtapa.get(c.etapa_board) ?? 0) + 1);
+  }
 
   // A dica de "Mensagens não lidas" muda de sentido conforme quem olha, porque a
   // régua mudou: quem não atende a conversa não marca leitura ao abrir (ver
@@ -3136,6 +3173,12 @@ export default function Chat() {
   // item 1 todo mundo tem endereço (a Lais atende sob `u:lais@…`), então
   // `!meuEndereco` nunca seria verdade e a dica nova jamais apareceria — medido
   // no navegador, mostrando a dica antiga para ela.
+  // O título da sidebar diz o que está escolhido — e agora a escolha pode ser
+  // uma etapa. Uma função só para os dois casos: o botão e o estado vazio
+  // precisam dizer o MESMO nome.
+  const colunaSel = etapaSel ? COLUNAS.find((c) => c.key === etapaSel) : null;
+  const rotuloDaSelecao = colunaSel?.titulo ?? FILAS.find((f) => f.k === filtro)?.rotulo ?? "";
+
   const dicaDaFila = (k: Fila) =>
     k === "pendentes" && sessao?.role !== "vendedor"
       ? "a cliente falou e ninguém respondeu — abrir para conferir não tira daqui. Sem dono, veja “Todas sem resposta”"
@@ -3483,7 +3526,7 @@ export default function Chat() {
                 <button onClick={() => setMenuFila((v) => !v)} title="Trocar de fila"
                   style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "2px 0", minWidth: 0 }}>
                   <b style={{ fontSize: 17, fontWeight: 800, letterSpacing: -0.3, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {FILAS.find((f) => f.k === filtro)?.rotulo}
+                    {rotuloDaSelecao}
                   </b>
                   <span style={{ fontSize: 11, color: M.gray, opacity: 0.8 }}>▾</span>
                 </button>
@@ -3564,6 +3607,43 @@ export default function Chat() {
                             <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{f.rotulo}</span>
                             {n > 0 && (
                               <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" || f.k === "notas" ? M.laranja : M.roxoSoft, color: f.k === "pendentes" || f.k === "fila" || f.k === "semresposta" || f.k === "notas" ? "#fff" : M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
+                                {n}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      {/* ---- ETAPAS DO CRM (§68) --------------------------
+                          Abaixo da carteira, sob um título que não é botão:
+                          as sete colunas do board, na ORDEM do board, vindas
+                          de lib/etapasBoard — a mesma lista que a outra tela
+                          desenha.
+
+                          Prospecção e Sem cadastro aparecem sabendo que hoje
+                          dão zero: as duas descrevem quem NÃO tem conversa, e
+                          a lista do chat é de conversas. Ficam apagadas, e a
+                          lista vazia explica que o vazio é estrutural em vez
+                          de parecer um filtro que deu errado. É a regra que
+                          esta sidebar já segue nos contadores: zero é
+                          desenhado apagado, nunca escondido — controle que
+                          some faz o olho procurar onde ele foi. */}
+                      <div style={{ padding: "7px 12px 4px", background: M.bg, borderBottom: `1px solid ${M.border}`, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.muted }}>
+                        Etapas do CRM
+                      </div>
+                      {COLUNAS.map((col) => {
+                        const k = `etapa:${col.key}` as Selecao;
+                        const n = contaEtapa.get(col.key) ?? 0;
+                        const on = filtro === k;
+                        return (
+                          <button key={col.key} onClick={() => { setFiltro(k); setMenuFila(false); }}
+                            title={n > 0 ? col.subLong : `${col.subLong} — nenhuma conversa nesta etapa agora`}
+                            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "8px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit", opacity: n > 0 || on ? 1 : 0.5 }}>
+                            <span style={{ width: 18, display: "flex", justifyContent: "center" }}>
+                              <span style={{ width: 9, height: 9, borderRadius: 9, background: col.cor, display: "block" }} />
+                            </span>
+                            <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{col.titulo}</span>
+                            {n > 0 && (
+                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: M.roxoSoft, color: M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
                                 {n}
                               </span>
                             )}
@@ -3918,6 +3998,25 @@ export default function Chat() {
               {!erro && !conversas.length && (bc
                 ? <Estado glifo="⏳" titulo="Carregando conversas…" />
                 : <div style={{ padding: 14, fontSize: 12.5, color: M.muted }}>Carregando conversas…</div>)}
+              {/* Vazio de etapa: diz a CAUSA. Prospecção e Sem cadastro são
+                  vazias por construção — descrevem quem não tem conversa —, e
+                  sem esta explicação pareceriam um filtro quebrado. */}
+              {!erro && !!conversas.length && !!etapaSel && !ordenadas.length && !busca.trim() && (() => {
+                const estrutural = ETAPAS_SEM_CONVERSA.includes(etapaSel);
+                const titulo = `Nenhuma conversa em ${colunaSel?.titulo ?? "nesta etapa"}`;
+                const texto = estrutural
+                  ? "Esta etapa é de quem ainda NÃO tem conversa — ela vive no board e na Minha carteira, não na lista de conversas do chat."
+                  : `${colunaSel?.subLong ?? ""}. Nenhum cliente seu está aqui agora.`;
+                return bc
+                  ? <Estado glifo={estrutural ? "🗂️" : "✅"} titulo={titulo} texto={texto} />
+                  : (
+                    <div style={{ padding: "22px 16px", textAlign: "center", color: M.muted }}>
+                      <div style={{ fontSize: 24, opacity: 0.5, lineHeight: 1 }}>{estrutural ? "🗂️" : "✅"}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: M.gray, marginTop: 6 }}>{titulo}</div>
+                      <div style={{ fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>{texto}</div>
+                    </div>
+                  );
+              })()}
               {ordenadas.map((c) => {
                 const ativa = sel?.cliente_id === c.cliente_id;
                 const doCliente = c.ultima_enviada_por === "customer";
