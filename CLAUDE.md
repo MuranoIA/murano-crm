@@ -5258,6 +5258,88 @@ com texto, painel do ERP à direita, campo de 440px) e `ciclo9` verde.
   da pílula, e ele já tem o botão próprio na faixa de janela fechada.
 
 
+## 68. As etapas do board dentro do chat — lista e botões (11/09/2026)
+
+O código já citava "§68" em `lib/etapasBoard.ts` e em `app/chat/page.tsx`, e a
+seção não existia. Isto é ela, cobrindo as duas entregas: o filtro por etapa no
+dropdown da sidebar (PR #178) e a faixa de botões que ele ganhou depois.
+
+### 68.1 A régua saiu do board e virou lib — e por quê
+
+`COLUNAS` e o classificador moram em **`web/lib/etapasBoard.ts`**, lidos pelo
+board e pelo chat. Duas cópias divergiriam no primeiro ajuste, e a divergência
+apareceria como *"o board diz Vender novamente, o chat diz Ociosos"* — defeito
+que ninguém reporta porque parece implausível.
+
+⚠️ **A etapa NÃO é a coluna `etapa` da view.** A view resolve quatro
+(ociosos / tentativa / negociação / prospecção); as duas de VENDA vêm de
+`vw_venda_card` (nota fiscal, §42) e `sem_cadastro` é decidido na rota do funil
+(§50.3). Quem só lê `etapa` classifica errado **344 das 1.113** conversas —
+medido em 11/09/2026.
+
+### 68.2 Uma escolha só, dois controles
+
+O dropdown do alto da lista escolhe **ou** uma fila **ou** uma etapa: é um
+`filtro` único (`type Selecao = Fila | \`etapa:${EtapaBoard}\``). A faixa de
+botões, pedida depois, escreve **o mesmo estado** — por isso o título da
+sidebar, o item marcado no dropdown e o chip aceso nunca se contradizem.
+
+Dois controles para a mesma escolha só são seguros assim. Quando cada um guarda
+o seu pedaço, dá no que a 0099 teve de desfazer: o booleano do RD e o seletor de
+linhas discordando, sem ninguém saber qual vencia (§32).
+
+Por isso os dois passam por `escolherEtapa` / `alternarEtapa`, e não por
+`setFiltro` cada um do seu jeito. **Só o chip alterna**: clicar no aceso devolve
+para a fila de onde a pessoa saiu (guardada num ref) — não para "Meus
+atendimentos", que ela não escolheu. No dropdown, clicar no item já marcado
+desligando seria surpresa.
+
+### 68.3 O que a faixa custa, medido
+
+A sidebar tem **288px úteis**. Com rótulo completo ("Tentativa de contato") a
+faixa vai a quatro linhas; com rótulo curto e padding de 6px, **três (71px)**.
+`ROTULO_CURTO_ETAPA` é encurtamento do nome do board, nunca um nome novo — sai a
+palavra de ligação, fica a palavra-chave, e o nome completo está no `title`, como
+o chip de número ao lado já faz com o parêntese do cadastro.
+
+⚠️ `padding: 6` e não 7 porque com 7 o chip de Ociosos **sobra por três pixels**
+e leva a faixa para a quarta linha. Continua sendo wrap: um contador passando de
+mil volta a quebrar. O caso de todo dia cabe em três linhas.
+
+No celular o padding é maior, não menor — ali a lista tem a tela inteira e o que
+falta é alvo para o polegar (27px de altura contra 21 no desktop).
+
+### 68.4 Decisões que evitam número mentiroso
+
+- **A contagem sai de `noEscopo`**, então cruza com os seletores de vendedor e
+  de número, como eles já cruzam entre si (§23.5). Um chip contando o total
+  geral prometeria 159 e entregaria 12 ao filtrar por uma carteira.
+- **O filtro de etapa atravessa o dono e ignora `status`**: é recorte do
+  CLIENTE, e o board não conhece `chat_conversa`. Esconder as encerradas daria
+  um terceiro número, diferente do da coluna lá.
+- **Prospecção e Sem cadastro aparecem sabendo que dão zero.** As duas descrevem
+  quem NÃO tem conversa, e a lista do chat é de conversas. Ficam apagadas e a
+  lista vazia diz que o vazio é **estrutural** — é a regra que esta sidebar já
+  segue em todos os contadores: zero é desenhado apagado, nunca escondido.
+- **O aceso usa a COR DA ETAPA na borda e num filete**, não fundo chapado: duas
+  das sete cores (o cinza dos ociosos, o roxo da prospecção) reprovam em
+  contraste com texto branco, e trocar a cor faria o chip discordar da coluna
+  que ele representa.
+
+### 68.5 Verificado no navegador
+
+Chip e dropdown levam ao **mesmo estado** (medido: 0 linhas e o vazio estrutural
+em Prospecção pelos dois caminhos; 164 conversas em Negociação, título trocado,
+toggle devolvendo à fila anterior). Como admin e como vendedor, no desktop e a
+390px, zero exceção; `ciclo9` 13/13.
+
+⚠️ A regressão de responsividade falha em **dois passos a 360px** (caixa de
+mensagem espremida e lista de templates transbordando). **É anterior a isto** —
+provado rodando a mesma suíte contra o `master` com as mudanças guardadas no
+stash: mesmo placar, e a 390px o master falha até um passo a mais. Os passos da
+LISTA, onde a faixa vive, passam nos dois.
+
+
 ## 69. Fim do RD Conversas (11/09/2026) — migration 0131
 
 **Isto revoga o item 4 da §44 e aposenta as §13, §14, §15.1 e §20 como
