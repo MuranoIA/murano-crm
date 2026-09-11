@@ -40,10 +40,35 @@ export function acharChrome() {
 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * ⚠️ A porta de depuração é COMPARTILHADA com as outras sessões desta máquina.
+ *
+ * Se 9222 já está ocupada, o Chrome novo não consegue abri-la e sai em
+ * silêncio -- e o `/json/version` responde assim mesmo, porque quem responde é
+ * o navegador de OUTRA sessão. O driver então dirige o navegador alheio: a aba
+ * abre em outro perfil, o cookie vai para outro jarro, e o teste trava ou mede
+ * a tela errada sem nenhum erro. Custou uma rodada em 09/09/2026 (§0: as outras
+ * frentes existem e não se enxergam).
+ *
+ * Por isso a porta pedida é só o ponto de partida: a primeira LIVRE a partir
+ * dela é que vale.
+ */
+async function portaLivre(inicio) {
+  for (let p = inicio; p < inicio + 40; p++) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${p}/json/version`, { signal: AbortSignal.timeout(400) });
+      if (r.ok) continue;              // tem navegador aí: não é nossa
+    } catch { /* ninguém atende: livre */ }
+    return p;
+  }
+  throw new Error("nenhuma porta de depuração livre entre " + inicio + " e " + (inicio + 40));
+}
+
 /** Sobe um Chrome headless isolado e devolve o endereço do WebSocket. */
-export async function subirChrome({ porta = 9222, headless = true } = {}) {
+export async function subirChrome({ porta: pedida = 9222, headless = true } = {}) {
   const bin = acharChrome();
   if (!bin) throw new Error("Chrome não encontrado — driver de navegador indisponível");
+  const porta = await portaLivre(pedida);
   const perfil = mkdtempSync(join(tmpdir(), "crm-qa-"));
   const args = [
     `--remote-debugging-port=${porta}`,
