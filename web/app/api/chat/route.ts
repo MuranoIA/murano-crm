@@ -9,6 +9,7 @@ import {
 import { layoutEfetivo } from "../../../lib/chatLayout";
 import { lerCrmConfig, VIEW_FUNIL_TELA, modoMigracao } from "../../../lib/crmConfig";
 import { semEnsaio } from "../../../lib/ensaio";
+import { classificadorDeEtapa } from "../../../lib/etapasBoard";
 
 export const dynamic = "force-dynamic";
 
@@ -231,7 +232,7 @@ export async function GET() {
   //
   // A view só conhece quem tem `linha_id` — conversa do RD não tem, porque o
   // conceito nasceu no webhook da Meta. Ausente da view = linha 'rd'.
-  const [{ data: linhasCad }, daLinha] = await Promise.all([
+  const [{ data: linhasCad }, daLinha, vendasCard, descartados] = await Promise.all([
     sb.from("chat_linha").select("phone_number_id,rotulo,numero").eq("ativo", true).order("rotulo"),
     (async () => {
       const m = new Map<string, string>();
@@ -245,7 +246,47 @@ export async function GET() {
       }
       return m;
     })(),
+    // ---- em que ETAPA DO BOARD cada conversa está (§68) ------------------
+    //
+    // A `etapa` que a view já devolve NÃO é a coluna do board: as duas etapas
+    // de VENDA vêm da nota fiscal (`vw_venda_card`, 0105) e ganham das etapas
+    // de conversa. Medido em 11/09/2026: das 1.113 conversas da lista, 344
+    // estão numa coluna de venda — classificá-las pela view colocaria todas
+    // elas em Ociosos/Tentativa/Negociação, e o filtro do chat discordaria do
+    // board em quase um terço da lista.
+    //
+    // Entram NESTE Promise.all pelo motivo de sempre (§15.1): em série
+    // custariam round-trip a cada abertura do chat; aqui não custam nada.
+    (async () => {
+      const out: any[] = [];
+      // 644 linhas hoje — uma página. Pagina mesmo assim porque o PostgREST
+      // corta em 1000 em silêncio, e o dia em que as vendas passarem disso não
+      // vem com aviso (a mesma nota está no /api/funil).
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await sb.from("vw_venda_card")
+          .select("cliente_id,codcli,telefone,etapa,vendedor_slug,conversa_aberta")
+          .order("codcli", { ascending: true })
+          .range(from, from + PAGE - 1);
+        out.push(...(data ?? []));
+        if (!data || data.length < PAGE) break;
+      }
+      return out;
+    })(),
+    // lixeira: quem foi descartado não tem coluna no board. Hoje a tabela está
+    // VAZIA (medido em 11/09/2026), mas a tela de Desativados existe (§11.5) —
+    // sem isto, o primeiro descarte apareceria numa etapa aqui e em nenhuma lá.
+    sb.from("wth_descartados").select("cliente_id,codcli,tel8"),
   ]);
+
+  // A régua é a do board, importada de `lib/etapasBoard` — não uma segunda
+  // cópia. `etapa_board` nulo = cliente sem coluna no board (descartado); ele
+  // continua na lista e simplesmente não entra em filtro de etapa nenhum.
+  const etapaDe = classificadorDeEtapa({
+    vendas: (vendasCard ?? []) as any[],
+    descartados: (descartados?.data ?? []) as any[],
+    slugsAtivos: (vendedores ?? []).map((v: any) => v.slug),
+  });
+  for (const c of conversas) c.etapa_board = etapaDe(c);
 
   const porLinha = new Map<string, number>();
   for (const c of conversas) {
