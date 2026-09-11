@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { carteiraDe, veTudo } from "./papel";
 import { usuarioDaSessao } from "./chatUsuario";
 import { carregarAtribuicoes, donoEfetivo } from "./chatEscopo";
-import { canalDeResposta } from "./whatsapp";
+import { linhaPadrao, linhaDeEnvio } from "./whatsapp";
 
 // ---------------------------------------------------------------------------
 // Peças comuns às rotas de ligação (/api/chat/ligacao e /ligacao/acao).
@@ -114,8 +114,11 @@ export async function conversaNaCloud(
   sb: SupabaseClient,
   clienteId: string,
 ): Promise<boolean> {
-  if (!process.env.WHATSAPP_PHONE_NUMBER_ID) return false;
-  return (await canalDeResposta(sb, clienteId)) === "whatsapp";
+  // Depois do fim do RD (0131 / PR #180) existe UM canal: a Cloud API —
+  // `send-message` nem pergunta mais. Entao a pergunta aqui deixou de ser
+  // "por onde esta conversa responde?" e virou "ha linha para discar?",
+  // resolvida pela MESMA funcao que a mensagem usa, que era o ponto do #166.
+  return !!((await linhaPadrao(sb)) ?? linhaDeEnvio());
 }
 
 /** Colunas devolvidas ao front — `sdp_remoto` fica de fora aqui de propósito (é grande). */
