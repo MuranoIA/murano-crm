@@ -668,8 +668,124 @@ export default function Page() {
     } finally {
       setCarregando(false);
       loadEmVoo.current = false;
+      // O board acabou de ser lido da MATVIEW, que anda ~2 min atrás do banco
+      // (medido em 11/09). Recuar o cursor cobre essa defasagem: o primeiro
+      // delta traz o que a matview ainda não enxergava, em vez de o board
+      // nascer dois minutos no passado e só alcançar na próxima mensagem.
+      cursor.current = new Date(Date.now() - 3 * 60_000).toISOString();
+      ultimoCheio.current = Date.now();
       if (loadPendente.current) { loadPendente.current = false; void load(); }
     }
+  }
+
+  // ---- DELTA: mover UM card em vez de reconstruir o board -----------------
+  //
+  // O laudo de performance (prototipos/laudo-performance.md) mediu o custo de
+  // cada carregamento do board: 19 idas ao banco, 2,7 MB, e ~2,8 s de trabalho
+  // do Postgres só na coluna `ultimas_mensagens`. E registrou o multiplicador:
+  // "cada mensagem dispara um evento de Realtime, e cada aba aberta reage com
+  // um recarregamento do board". É esse multiplicador que morre aqui — o aviso
+  // deixa de reconstruir tudo e passa a recalcular só quem mudou.
+  //
+  // O aviso do Postgres diz que a carteira mexeu, não QUEM mexeu — o canal é
+  // público e `cliente_id` pode ser `wa:<telefone>`, ou seja, PII (§15.4/§22.2).
+  // Quem descobre quem mudou é o servidor, em /api/funil/delta, com o cookie na
+  // mão. Aqui só se aplica o resultado.
+  const cursor = useRef<string | null>(null);
+  const ultimoCheio = useRef(0);
+  const deltaEmVoo = useRef(false);
+  const deltaPendente = useRef(false);
+  const deltaAgendado = useRef<any>(null);
+
+  // Mesma ordem que o servidor usa em /api/funil. Precisa ser a MESMA: as
+  // colunas do board só reordenam na busca e em tentativa/ociosos — nas demais
+  // elas confiam na ordem da lista, então um card remendado fora de ordem
+  // apareceria no lugar errado da pilha.
+  const porAtividade = (a: Card, b: Card) => {
+    const ta = a.ultima_atividade ? new Date(a.ultima_atividade).getTime() : null;
+    const tb = b.ultima_atividade ? new Date(b.ultima_atividade).getTime() : null;
+    if (ta !== tb) {
+      if (ta === null) return 1;   // sem atividade (prospecção) afunda
+      if (tb === null) return -1;
+      return tb - ta;
+    }
+    return a.cliente_id < b.cliente_id ? -1 : a.cliente_id > b.cliente_id ? 1 : 0;
+  };
+
+  // GUARDA DE IN-FLIGHT + COALESCÊNCIA — a mesma do `load()`, e pelo mesmo
+  // motivo. A primeira versão daqui fazia `if (emVoo) return`, e isso DESCARTA
+  // o aviso que chega no meio de um delta em andamento. Medido em 11/09, board
+  // movimentado: o card levava 9,7 s e 17,7 s para aparecer, em vez de ~4 s —
+  // o aviso da mensagem caía exatamente enquanto o delta anterior voltava, e
+  // só o aviso SEGUINTE, de outra cliente, trazia o card junto. Num board
+  // parado ele não apareceria até a recarga de 5 minutos.
+  async function aplicarDelta() {
+    if (!cursor.current) return;
+    if (deltaEmVoo.current) { deltaPendente.current = true; return; }
+    deltaEmVoo.current = true;
+    try {
+      const r = await fetch("/api/funil/delta?desde=" + encodeURIComponent(cursor.current), { cache: "no-store" });
+      const j = await r.json();
+      if (j.error) return;                 // silencioso: a rede de proteção cobre
+      if (j.ate) cursor.current = j.ate;   // avança SEMPRE, inclusive truncado
+
+      if (j.truncado) {
+        // Mudou mais gente do que vale remendar card a card (campanha em massa).
+        // Cai para o board inteiro — no máximo uma vez por minuto, senão um dia
+        // de disparo viraria um laço de reconstruções. Com a trava, o pior caso
+        // é exatamente a cadência que existia antes desta mudança.
+        if (Date.now() - ultimoCheio.current > 60_000) void load();
+        return;
+      }
+
+      const novos: Card[] = j.cards ?? [];
+      const remover = new Set<string>(j.remover ?? []);
+      const disp = j.disparos ?? {};
+      if (!novos.length && !remover.size && !Object.keys(disp).length) return;
+
+      setCards((prev) => {
+        const porId = new Map(prev.map((c) => [c.cliente_id, c]));
+        for (const id of remover) porId.delete(id);
+        for (const novo of novos) {
+          const antigo = porId.get(novo.cliente_id);
+          // Mescla, não substitui: o delta não manda `ciclo` nem `msgs_ocultas`
+          // (ver o comentário na rota), e sobrescrever apagaria o selo de ciclo
+          // do card a cada mensagem que chega.
+          porId.set(novo.cliente_id, antigo ? { ...antigo, ...novo } : novo);
+        }
+        return [...porId.values()].sort(porAtividade);
+      });
+
+      // Quem voltou a conversar sai da coluna de venda — senão ficaria nas duas,
+      // que é o oposto de "um card por cliente" (§32.6).
+      if (novos.length) {
+        const voltou = new Set<string>();
+        for (const c of novos) {
+          voltou.add(c.cliente_id);
+          if (c.codcli != null) voltou.add("venda:" + Number(c.codcli));
+        }
+        setPedidoCards((prev) => (prev.some((p) => voltou.has(p.cliente_id))
+          ? prev.filter((p) => !voltou.has(p.cliente_id))
+          : prev));
+      }
+      if (Object.keys(disp).length) setDisparos((prev) => ({ ...prev, ...disp }));
+      setAtualizado(new Date().toLocaleTimeString("pt-BR"));
+    } catch { /* rede caiu: a rede de proteção cobre */ }
+    finally {
+      deltaEmVoo.current = false;
+      // roda UMA vez pelo que chegou enquanto este estava em voo — nunca
+      // empilha, nunca perde. O cursor já avançou, então a rodada seguinte
+      // pede só o que falta.
+      if (deltaPendente.current) { deltaPendente.current = false; void aplicarDelta(); }
+    }
+  }
+
+  // Debounce: o trigger do board dispara POR STATEMENT e o webhook grava mensagem
+  // a mensagem — cinco mensagens seguidas da mesma cliente viram cinco avisos em
+  // dois segundos. Uma chamada só, com a janela inteira, resolve as cinco.
+  function agendarDelta() {
+    if (deltaAgendado.current) clearTimeout(deltaAgendado.current);
+    deltaAgendado.current = setTimeout(() => { deltaAgendado.current = null; void aplicarDelta(); }, 400);
   }
 
   // `card` existe para o caso em que o template não cabe num clique: em vez de
@@ -1057,20 +1173,28 @@ export default function Page() {
   // carrega só o slug da carteira; os dados continuam vindo de /api/funil, que
   // aplica a autorização por carteira no servidor.
   //
-  // REDE DE PROTEÇÃO: o poll lento de 60s continua. Se o WebSocket cair, o Realtime
-  // for desligado no projeto ou o trigger falhar, o board fica no máximo 1 min
-  // defasado em vez de congelar.
+  // O QUE MUDOU EM 11/09: o aviso já era barato, a REAÇÃO é que era cara. Cada
+  // broadcast chamava /api/funil inteiro — 19 idas ao banco e ~2,8 s de trabalho
+  // do Postgres só na coluna `ultimas_mensagens` (laudo de performance) — para,
+  // quase sempre, mover UM card. Agora chama /api/funil/delta, que recalcula ao
+  // vivo só os clientes que mudaram.
+  //
+  // REDE DE PROTEÇÃO: o load completo passou de 60s para 5 min. Ele deixou de ser
+  // o que mantém o board em dia (isso é o delta) e voltou a ser o que sempre
+  // deveria ter sido: a garantia de consistência se o WebSocket cair e reconectar
+  // sem repropagar o que se perdeu. Também é por onde chega o que o delta não
+  // cobre — venda nova, ciclo de compra —, porque faturamento não emite aviso.
   useEffect(() => {
     if (!sessao) return;
     load();
-    const lento = setInterval(load, 60_000);
+    const lento = setInterval(load, 5 * 60_000);
 
     let canal: any = null;
     let cancelado = false;
     (async () => {
       const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
       const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if (!url || !anon) return; // sem env -> fica só o poll de 60s
+      if (!url || !anon) return; // sem env -> fica só a rede de proteção
       try {
         const { createBrowserClient } = await import("@supabase/ssr");
         if (cancelado) return;
@@ -1078,20 +1202,42 @@ export default function Page() {
         canal = supa
           .channel("board")
           .on("broadcast", { event: "mudou" }, (msg: any) => {
-            // vendedor só recarrega quando a PRÓPRIA carteira mexe; admin/home veem tudo.
-            // Fail-open de propósito: se o payload vier num formato inesperado, recarrega
+            // vendedor só reage quando a PRÓPRIA carteira mexe; admin/home veem tudo.
+            // Fail-open de propósito: se o payload vier num formato inesperado, reage
             // — errar para o lado de atualizar demais é melhor que congelar o board.
+            //
+            // ⚠️ `carteira: null` (conversa sem dono, migration 0121) passa para
+            // TODOS, e isso é deliberado: medido em 11/09, de 30 clientes com
+            // mensagem de carteira nula em 24h, CINCO tinham dono na view da
+            // tela. Filtrar aqui faria o board dessas cinco consultoras perder
+            // mensagem de cliente delas até a recarga de 5 minutos.
             const cart = msg?.payload?.carteira ?? msg?.payload?.payload?.carteira ?? null;
             if (cart && sessao.carteira && cart !== sessao.carteira) return;
-            load(); // a guarda de in-flight coalesce rajadas do ETL
+            agendarDelta();
           })
           .subscribe();
-      } catch { /* sem realtime: o poll de 60s cobre */ }
+      } catch { /* sem realtime: a rede de proteção cobre */ }
     })();
+
+    // ABA QUE VOLTA DEPOIS DE MUITO TEMPO: o navegador suspende o WebSocket em
+    // aba escondida, e ao reconectar o Supabase NÃO reenvia o que passou — um
+    // broadcast perdido é perdido. Voltar de um período longo sem foco é, para
+    // efeito prático, abrir o board de novo: recarrega inteiro, em vez de confiar
+    // num cursor que pode estar do outro lado de um buraco.
+    let escondidoEm = 0;
+    const aoTrocarVisibilidade = () => {
+      if (document.visibilityState === "hidden") { escondidoEm = Date.now(); return; }
+      if (escondidoEm && Date.now() - escondidoEm > 2 * 60_000) load();
+      else agendarDelta();   // ausência curta: o cursor ainda alcança
+      escondidoEm = 0;
+    };
+    document.addEventListener("visibilitychange", aoTrocarVisibilidade);
 
     return () => {
       cancelado = true;
       clearInterval(lento);
+      document.removeEventListener("visibilitychange", aoTrocarVisibilidade);
+      if (deltaAgendado.current) clearTimeout(deltaAgendado.current);
       try { canal?.unsubscribe(); } catch {}
     };
   }, [sessao]);
