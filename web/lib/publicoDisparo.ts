@@ -31,7 +31,13 @@ const PAGE = 1000;
 const COLS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,telefone,venda_valor,rd_cliente_id,codcli";
 
 /** Teto de um disparo. 1000 × 1,8s de espaço entre envios ≈ 30 min de aba aberta. */
-export const LIMITE_MAX = 1000;
+// Teto de UMA campanha. Subiu de 1.000 para 2.000 porque o pedido real ("2 mil
+// clientes das sete carteiras") era cortado pela metade SEM AVISO — a tela
+// mostrava o publico aparado como se fosse o pedido. O preco e honesto e
+// aparece na previa: 2.000 envios sao ~60 minutos com a aba aberta, porque o
+// laco de envio roda no navegador (a cota do envio nao cabe no tempo de uma
+// rota da Vercel, §26.2).
+export const LIMITE_MAX = 2000;
 
 /** Buckets de compra que a `vw_pedido_bi_card` já calcula — não invente outros. */
 export const PERIODOS_COMPRA = ["hoje", "ontem", "semana", "quinzena", "mes"] as const;
@@ -350,6 +356,27 @@ async function noTeto(nome: string, q: any) {
     console.error(`[publicoDisparo] ${nome} bateu no teto de ${TETO_POSTGREST} linhas — o público está sendo montado com dado incompleto.`);
   }
   return r;
+}
+
+/**
+ * O que o modelo pediu e o sistema aparou. Sem isto a tela mostrava o publico
+ * cortado como se fosse o pedido — o usuario pedia 2.000 e recebia 1.000 sem
+ * nenhum sinal de que faltava metade.
+ */
+export function avisoDeTeto(pedido: any, f: FiltrosPublico): string[] {
+  const avisos: string[] = [];
+  const pedLim = Number(pedido?.limite);
+  if (Number.isFinite(pedLim) && pedLim > f.limite) {
+    avisos.push(
+      `Você pediu ${pedLim} clientes, e o teto de uma campanha é ${LIMITE_MAX} — esta lista ficou `
+      + `com ${f.limite}. Para alcançar o resto, rode uma segunda campanha depois desta.`,
+    );
+  }
+  const pedCota = Number(pedido?.porVendedor);
+  if (Number.isFinite(pedCota) && pedCota > f.porVendedor) {
+    avisos.push(`A cota por carteira foi limitada a ${f.porVendedor} (você pediu ${pedCota}).`);
+  }
+  return avisos;
 }
 
 export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
