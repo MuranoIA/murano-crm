@@ -33,10 +33,24 @@ export async function POST(req: Request) {
   if (!token) return NextResponse.json({ error: "papel de vendedor sem carteira definida" }, { status: 400 });
 
   const res = NextResponse.json({ ok: true, role: papel });
+  // Trocar de papel zera a simulacao: assumir "vendedor" enquanto se ve como
+  // outra carteira seriam dois escopos disputando a mesma tela.
+  res.cookies.set("crm_ver_como", "", { httpOnly: true, path: "/", maxAge: 0 });
+  // ⚠️ `SameSite=None` em https, e não `Lax`.
+  //
+  // O CRM roda dentro de um <iframe> do hub (§17), cujo documento de topo é
+  // outro site. Com `Lax` o navegador DESCARTA este Set-Cookie ali — ou seja, a
+  // troca de papel não funcionava justamente onde a equipe usa o sistema: a
+  // pessoa clicava, a rota respondia 200, e a sessão continuava a mesma. É o
+  // mesmo motivo pelo qual `/auth/hub-sso` e `/api/ver-como` já gravam assim.
+  //
+  // `None` exige `Secure`, então fora de https fica `Lax` — em http o par
+  // None/Secure é recusado pelo navegador e o cookie sumiria no dev local.
+  const https = new URL(req.url).protocol === "https:";
   res.cookies.set("crm_sessao", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: https,
+    sameSite: https ? "none" : "lax",
     path: "/",
     maxAge: 60 * 60 * 8,
   });

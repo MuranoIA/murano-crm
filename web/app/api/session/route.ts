@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { papelDe, carteiraDe } from "../../../lib/papel";
 import { ensaioVisivel } from "../../../lib/ensaio";
+import { verComo } from "../../../lib/verComo";
 
 export const dynamic = "force-dynamic";
 
@@ -36,5 +37,9 @@ export async function GET() {
   // para avisar, ANTES de rodar, que o servidor vai esconder os clientes
   // ficticios — senao o ensaio falha cinco minutos adiante dizendo que a
   // conversa nao apareceu, que e um sintoma que nao aponta para a causa.
-  return Response.json({ role, carteira, papeis, email, ensaio_visivel: ensaioVisivel() });
+  // `ver_como`: a carteira que admin/home escolheu simular (null = todas). O
+  // board e o chat leem daqui para nascer ja com a selecao certa depois de um
+  // recarregamento -- sem isso a tela viria estreitada pelo servidor com o
+  // seletor dizendo "Todos", que e o pior dos dois mundos.
+  return Response.json({ role, carteira, papeis, email, ensaio_visivel: ensaioVisivel(), ver_como: verComo() });
 }
