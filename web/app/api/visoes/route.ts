@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { carteiraDe, veTudo } from "../../../lib/papel";
+import { escopoCarteira } from "../../../lib/verComo";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +45,7 @@ const SEQ_FREQUENTE = 3;  // 3 meses de compra = frequente / fidelizado
 export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  const carteira = carteiraDe(sessao);
+  const carteira = escopoCarteira();
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
@@ -58,7 +58,7 @@ export async function GET(req: Request) {
     let q = sb.from("wth_descartados")
       .select("id,cliente_id,codcli,tel8,cliente,vendedor,motivo,observacao,descartado_por,criado_em")
       .order("criado_em", { ascending: false });
-    if (!veTudo(sessao)) q = q.eq("vendedor", sessao);
+    if (carteira) q = q.eq("vendedor", carteira);
     const { data, error } = await q;
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({

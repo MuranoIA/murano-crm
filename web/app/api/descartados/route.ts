@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { veTudo } from "../../../lib/papel";
+import { escopoCarteira } from "../../../lib/verComo";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,9 @@ export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
   let q = sb().from("wth_descartados").select("id,cliente_id,codcli,tel8,cliente,vendedor,motivo,observacao,descartado_por,criado_em").order("criado_em", { ascending: false });
-  if (!veTudo(sessao)) q = q.eq("vendedor", sessao);
+  // a listagem segue o "ver como" de admin/home; para vendedor e a propria carteira
+  const escopo = escopoCarteira();
+  if (escopo) q = q.eq("vendedor", escopo);
   const { data, error } = await q;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ descartados: data ?? [] });
