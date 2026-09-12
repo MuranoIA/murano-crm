@@ -1707,11 +1707,50 @@ export default function Chat() {
   const recargaLenta = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
+  // Tudo o que fica ABAIXO das mensagens: rodapé da conversa, faixa da janela
+  // de 24h, prévia de anexo/áudio e o compositor. Os botões flutuantes de
+  // rolagem precisam ficar acima disso, e a altura é VARIÁVEL — a faixa quebra
+  // em duas linhas num aparelho estreito, a prévia aparece e some, e o
+  // compositor cresce conforme se digita.
+  //
+  // Era um número fixo (96), remendado duas vezes com somas à mão. Em 12/09 ele
+  // errou de novo: o compositor de duas linhas passou a 95 px e o ⌃ foi parar em
+  // cima do "Enviar template" — o botão que reabre a conversa. Medir mata a
+  // classe inteira do defeito.
+  const rodapeRef = useRef<HTMLDivElement>(null);
+  const [alturaRodape, setAlturaRodape] = useState(96);
+
   // Qual conversa a tela esta mostrando. Alem de servir ao Realtime e a
   // presenca, e a resposta autoritativa da pergunta "esta resposta de rede
   // ainda interessa?" -- ver `aindaAberta` logo abaixo.
   const selRef = useRef<Conversa | null>(null);
   selRef.current = sel;
+
+  // Mede a distância do topo do rodapé até a base do container posicionado —
+  // que é o mesmo a que os botões flutuantes se ancoram.
+  //
+  // ⚠️ OBSERVA OS IRMÃOS, não só o rodapé. `ResizeObserver` dispara por
+  // TAMANHO, e o rodapé tem 23 px o tempo todo: medir só ele congelava o valor
+  // do primeiro render — quando a faixa da janela ainda não existia — e o
+  // resultado ficava 46 px curto para sempre. Quem muda de tamanho é a ÁREA DE
+  // MENSAGENS (encolhe quando a faixa aparece) e o compositor (cresce com o
+  // texto), então o observador olha todos os irmãos.
+  useEffect(() => {
+    const el = rodapeRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const pai = el.offsetParent as HTMLElement | null;
+    const medir = () => {
+      const p = el.offsetParent as HTMLElement | null;
+      if (!p) return;
+      const h = Math.round(p.getBoundingClientRect().bottom - el.getBoundingClientRect().top);
+      if (h > 0) setAlturaRodape((atual) => (Math.abs(atual - h) > 1 ? h : atual));
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    for (const irmao of Array.from(el.parentElement?.children ?? [])) ro.observe(irmao);
+    if (pai) ro.observe(pai);
+    return () => ro.disconnect();
+  }, [sel]);
   // Espelho das mensagens, no mesmo padrão do `selRef` acima. Existe para quem
   // precisa do estado ATUAL de dentro de um laço — `msgs` fechado numa closure
   // fica congelado no render em que a função nasceu, e `carregarAntigas`
@@ -5338,7 +5377,7 @@ export default function Chat() {
                   // menor só porque é de uma linha. Duas faixas nunca aparecem juntas
                   // hoje, mas somar as duas é o que continua certo se um dia
                   // aparecerem — e é mais honesto que escolher uma.
-                  <div style={{ position: "absolute", right: 16, bottom: 96 + (pendentes ? 108 : 0) + (previa ? 52 : 0), display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
+                  <div style={{ position: "absolute", right: 16, bottom: alturaRodape + 12, display: "flex", flexDirection: "column", gap: 7, zIndex: 5 }}>
                     {([["⌃", "Ir para o começo", () => rolagemRef.current?.scrollTo({ top: 0, behavior: "smooth" })],
                        ["⌄", "Ir para a última mensagem", () => fimRef.current?.scrollIntoView({ behavior: "smooth" })]] as const).map(([ic, t, fn]) => (
                       <button key={ic} onClick={fn} title={t}
@@ -5355,7 +5394,7 @@ export default function Chat() {
                      Aqui diz de quem é a carteira e por qual linha a conversa corre —
                      a janela de 24h é por par número+cliente, então errar a linha é
                      errar o envio. ---- */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 8, rowGap: 2, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0, textAlign: "center" }}>
+                <div ref={rodapeRef} style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 8, rowGap: 2, padding: "4px 14px", background: M.bgThread, borderTop: `1px solid ${M.border}`, fontSize: 10.5, color: M.muted, flexShrink: 0, textAlign: "center" }}>
                   <span>{descreveDono(sel.vendedor)}</span>
                   <span style={{ opacity: 0.5 }}>|</span>
                   <span>{linha ? linha.rotulo : "linha não identificada"}</span>
@@ -5597,7 +5636,11 @@ export default function Chat() {
                 )}
 
                 {/* caixa de envio — muda de cara quando está escrevendo NOTA INTERNA */}
-                <div style={{ display: "flex", gap: isMobile && !compacto ? 6 : 8, padding: compacto ? "8px 10px" : isMobile ? "8px 8px" : G.compPad, background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`, alignItems: "flex-end", transition: "background .15s" }}>
+                <div style={{ display: "flex", gap: duasLinhas ? 6 : 8, padding: compacto ? "8px 10px" : isMobile ? "8px 8px" : G.compPad, background: modoNota ? NOTA.bg : M.surface, borderTop: `1px solid ${modoNota ? NOTA.borda : M.border}`,
+                  // Com a pilula em DUAS linhas ela fica 80px e o enviar 52: preso
+                  // na base (`flex-end`), o botao afunda 14px abaixo do centro dela
+                  // e deixa um vao morto de 28px em cima. Medido em 412px.
+                  alignItems: duasLinhas ? "center" : "flex-end", transition: "background .15s" }}>
                   {/* anexo: foto, áudio, documento — o texto digitado vira legenda
                       da PRIMEIRA. `multiple`: dá para escolher várias fotos de uma vez */}
                   <input
@@ -5621,6 +5664,11 @@ export default function Chat() {
                     flexWrap: duasLinhas ? "wrap" : "nowrap",
                     alignItems: duasLinhas ? "center" : "flex-end",
                     rowGap: duasLinhas ? 2 : 0, gap: 2,
+                    // `space-between` vale POR LINHA: a primeira tem um item so
+                    // (o campo, em 100%) e nao muda; a segunda espalha os icones,
+                    // que amontoados a esquerda deixavam 146px de vazio antes do
+                    // enviar -- a assimetria que se ve no aparelho.
+                    justifyContent: duasLinhas ? "space-between" : "flex-start",
                     padding: duasLinhas ? "4px 5px 3px" : barraEnxuta ? "3px 4px" : G.pilPad,
                     background: modoNota ? M.surface : M.bg,
                     // A borda da pílula é de CONTROLE, não divisória: é ela que
@@ -5874,18 +5922,33 @@ export default function Chat() {
                         {menuTemplate && doCanal.length > 0 && (
                           <>
                             <div onClick={fecharTemplate} style={{ position: "fixed", inset: 0, zIndex: 200 }} />
-                            {/* `left: 0` ancorava a lista na borda ESQUERDA do
-                                botão, e o botão vive no meio da pílula: num
-                                aparelho de 360px ela ia de 151 a 485 — 125px
-                                fora da tela, medido em 01/09/2026. Largura
-                                cravada de 360 também não cabia. No celular ela
-                                passa a nascer centrada no botão, que fica
-                                sempre por volta do meio da barra (📎 🎤 ⋯ T),
-                                e a largura cede à viewport. */}
-                            <div style={{ position: "absolute", bottom: "calc(100% + 8px)", zIndex: 201,
+                            {/* ⚠️ ANCORADA PELA DIREITA no celular.
+                                `left: 0` levava a lista de 151 a 485 num
+                                aparelho de 360 (125px fora, medido em
+                                01/09/2026), e a correção de então foi centrá-la
+                                no botão — que naquele desenho ficava no meio da
+                                barra. Em 12/09 a pílula passou a espalhar os
+                                ícones (`space-between`) e o "T" foi para a
+                                PONTA DIREITA: centrar nele jogou a lista 82px
+                                para fora de novo. Presa à direita do botão ela
+                                cresce para dentro da tela, que é a única borda
+                                que não se move. A largura continua cedendo à
+                                viewport. */}
+                            <div style={{ zIndex: 201,
                               ...(acoesEmFaixa
-                                ? { left: "50%", transform: "translateX(-50%)", width: "min(340px, calc(100vw - 24px))" }
-                                : { left: 0, width: "min(360px, calc(100vw - 28px))" }),
+                                // No celular a lista NAO se ancora no botao — se ancora na
+                                // TELA. Presa ao botao ela sempre sobra para algum lado:
+                                // `left:0` jogava 125px para fora da direita (01/09),
+                                // centrada saiu 82px pela direita quando o "T" foi para a
+                                // ponta (12/09), e `right:0` saiu 24px pela ESQUERDA,
+                                // porque 340px de lista nao cabem a esquerda de um botao
+                                // que termina em 318. Fixa nas duas bordas, com a mesma
+                                // goteira dos dois lados, nao ha lado por onde sobrar — e
+                                // ela deixa de depender de onde o botao esta.
+                                // O pano de fundo ja e `fixed inset:0`, entao isto so
+                                // completa o que ja era um modal.
+                                ? { position: "fixed" as const, left: 12, right: 12, bottom: 12 }
+                                : { position: "absolute" as const, bottom: "calc(100% + 8px)", left: 0, width: "min(360px, calc(100vw - 28px))" }),
                               maxHeight: 440, overflowY: "auto", background: M.surface, border: `1px solid ${M.border}`, borderRadius: 12, boxShadow: "0 14px 40px rgba(28,14,27,.22)" }}>
                               {compondo ? (
                                 <CompositorTemplate
@@ -5977,7 +6040,11 @@ export default function Chat() {
                       // depois deles no JSX, e `flexBasis: 100%` obriga a linha
                       // a ser so dele -- os icones sobram para a de baixo.
                       ...(duasLinhas ? { order: -1, flexBasis: "100%", minWidth: "100%" } : null),
-                      padding: compacto ? "6px 6px" : duasLinhas ? "7px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
+                      // 9px a esquerda, e nao 6: o icone e um botao de 36px com o
+                      // glifo centrado, entao o desenho dele comeca ~9px dentro da
+                      // caixa. Alinhar as CAIXAS deixava o texto 3px a esquerda do
+                      // glifo -- perceptivel porque sao duas linhas coladas.
+                      padding: compacto ? "6px 6px" : duasLinhas ? "7px 9px 5px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
                   />
                   </div>
                   <button
