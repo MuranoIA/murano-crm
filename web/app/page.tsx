@@ -391,6 +391,124 @@ function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
   return Date.now() - new Date(iso).getTime() <= dias * 86400000;
 }
 
+// ---------------------------------------------------------------------------
+// MEMÓRIA DA TELA ENTRE NAVEGAÇÕES
+//
+// O problema, relatado em 12/09/2026: filtrar o board por produto, clicar num
+// card para ir ao chat e voltar por "Negociações" devolvia o board limpo, sem o
+// filtro e recarregando tudo.
+//
+// A causa é estrutural: board e chat são PÁGINAS diferentes do App Router.
+// `router.push("/chat")` e `<Link href="/">` desmontam a árvore inteira da
+// página que se deixa. Todo filtro daqui é `useState`, e `useState` morre na
+// desmontagem — na volta tudo nasce no padrão e o `/api/funil` é buscado de
+// novo. Não é desenho: nesta mesma tela o TEMA e os alertas silenciados
+// sobrevivem, porque escrevem em `localStorage`. Os filtros nunca entraram
+// nesse mecanismo.
+//
+// A memória mora em MÓDULO, não em React: um módulo carregado não é
+// desmontado quando a rota muda (o app é uma SPA), então a volta ao board
+// encontra tudo onde estava, sem serializar nada.
+//
+// ⚠️ `sessionStorage`, NÃO `localStorage`, e a diferença é de negócio: filtro é
+// contexto de uma sessão de trabalho, não preferência. Em `localStorage` ele
+// sobreviveria ao fechamento do navegador, e uma semana depois alguém abriria o
+// board filtrado por um produto que esqueceu, concluiria que "sumiram clientes"
+// e iria atrás de um bug que não existe. Em `sessionStorage` ele vale enquanto a
+// aba viver — que é exatamente "ir ao chat e voltar", e sobrevive também ao F5.
+//
+// O espelho em disco existe só para o F5; quem responde no caso comum é a
+// variável de módulo, que nem passa por JSON.
+const MEM_FILTROS = "crm_board_filtros";
+
+/** Só o que é ESCOLHA da pessoa. Painel aberto, modal e menu ficam de fora de
+ *  propósito: reabrir um dropdown sozinho na volta é assombração, não memória. */
+type FiltrosBoard = {
+  filtro: string;
+  busca: string;
+  periodoPorColuna: Record<string, Periodo>;
+  prodFiltro: any;
+  ncFiltro: any;
+  cidFiltro: any;
+  melhoresFiltro: any;
+  cicloSel: string[];
+  semCadFiltro: boolean;
+  paradoSel: string[];
+};
+
+let memFiltros: FiltrosBoard | null = null;
+
+// ⚠️ QUATRO DESTES FILTROS GUARDAM `Set`, E `JSON.stringify` APAGA `Set`.
+//
+// `prodFiltro`, `ncFiltro`, `cidFiltro` e `melhoresFiltro` carregam
+// `{clienteIds, codclis, tel8}` como `Set`, que é como o board decide, por
+// cliente, se o card entra. `JSON.stringify(new Set([1,2]))` devolve `{}` — sem
+// erro, sem aviso. Salvar assim faria o board voltar com o chip "Produto: 1 ·
+// 563 clientes" aceso e NENHUM card na tela, que é pior que perder o filtro:
+// perder é visível, mentir não.
+//
+// Por isso o disco leva listas e a leitura remonta os `Set`. O caminho comum —
+// ir ao chat e voltar na mesma aba — nem passa por aqui: responde `memFiltros`,
+// que é o objeto vivo, com os `Set` de verdade.
+const CHAVES_SET = ["clienteIds", "codclis", "tel8"] as const;
+
+function paraDisco(f: FiltrosBoard): any {
+  const conv = (v: any) => {
+    if (!v) return v;
+    const saida: any = { ...v };
+    for (const k of CHAVES_SET) if (v[k] instanceof Set) saida[k] = [...v[k]];
+    return saida;
+  };
+  return { ...f, prodFiltro: conv(f.prodFiltro), ncFiltro: conv(f.ncFiltro),
+    cidFiltro: conv(f.cidFiltro), melhoresFiltro: conv(f.melhoresFiltro) };
+}
+
+function doDisco(o: any): FiltrosBoard {
+  const conv = (v: any) => {
+    if (!v) return v;
+    const saida: any = { ...v };
+    for (const k of CHAVES_SET) if (Array.isArray(v[k])) saida[k] = new Set(v[k]);
+    return saida;
+  };
+  return { ...o, prodFiltro: conv(o.prodFiltro), ncFiltro: conv(o.ncFiltro),
+    cidFiltro: conv(o.cidFiltro), melhoresFiltro: conv(o.melhoresFiltro) };
+}
+
+function lerFiltrosSalvos(): FiltrosBoard | null {
+  if (memFiltros) return memFiltros;
+  if (typeof window === "undefined") return null;   // SSR
+  try {
+    const cru = window.sessionStorage.getItem(MEM_FILTROS);
+    if (cru) memFiltros = doDisco(JSON.parse(cru));
+  } catch { /* aba anônima, cota cheia, JSON corrompido: sem memória, board normal */ }
+  return memFiltros;
+}
+
+function gravarFiltros(f: FiltrosBoard) {
+  memFiltros = f;
+  try { window.sessionStorage.setItem(MEM_FILTROS, JSON.stringify(paraDisco(f))); } catch {}
+}
+
+/**
+ * O ÚLTIMO PAYLOAD DO BOARD, para a volta pintar na hora.
+ *
+ * Isto responde a outra metade da mesma queixa — "ao alternar entre chat e
+ * board, eles recarregam em vez de manter o último estado". Com o filtro de
+ * volta mas a tela em branco por 2 s, metade do incômodo continuaria.
+ *
+ * Na montagem o board pinta o que tem guardado e busca a versão nova por baixo;
+ * quando ela chega, substitui. É o padrão que o próprio board já pratica no
+ * Realtime — mostrar o que se sabe e corrigir quando o servidor responde.
+ *
+ * ⚠️ NÃO fica em `sessionStorage`: são ~2 MB por carregamento, e serializar isso
+ * a cada load custaria mais do que a pintura economiza. Mora só em memória, e
+ * portanto morre no F5 — que é o certo, porque F5 é justamente o gesto de quem
+ * quer dado novo.
+ */
+let memPayload: { em: number; j: any } | null = null;
+/** Acima disso a foto guardada é velha demais para valer a pena mostrar. */
+const PAYLOAD_VALIDO_MS = 10 * 60_000;
+
 export default function Page() {
   // tema visual (padrao / murano "Tema 1" / escuro "Dark"). Carrega do
   // localStorage após montar (SSR não tem window) e aplica mutando RD antes do
@@ -423,7 +541,11 @@ export default function Page() {
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
   const [isMobile, setIsMobile] = useState(false); // < 768px -> layout empilhado (colunas viram faixas)
-  const [filtro, setFiltro] = useState<string>("todos");
+  // ⚠️ Os dez filtros abaixo nascem da MEMÓRIA DA TELA (topo do arquivo), não
+  // do padrão. É o que faz o board voltar do chat como você o deixou.
+  // `useState(() => ...)` é inicializador preguiçoso: lê o armazenamento uma
+  // vez, na primeira montagem, e não a cada render.
+  const [filtro, setFiltro] = useState<string>(() => lerFiltrosSalvos()?.filtro ?? "todos");
   // "Ver como <vendedor>": a MESMA escolha dos chips, so que gravada num cookie
   // (lib/verComo.ts) e valendo no servidor. Sem isso ela morria aqui: nao valia
   // no /chat, nao valia nos indicadores nem nos relatorios, e sumia a cada
@@ -434,7 +556,7 @@ export default function Page() {
   // UMA carteira so, e uma lista tirada deles perderia as outras opcoes -- nao
   // haveria como trocar de vendedor nem voltar para "Todos".
   const [vendTodos, setVendTodos] = useState<string[]>([]);
-  const [busca, setBusca] = useState("");
+  const [busca, setBusca] = useState(() => lerFiltrosSalvos()?.busca ?? "");
   const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
@@ -671,7 +793,8 @@ export default function Page() {
   // scroll infinito: quantos cards renderizar por coluna (col.key -> quantidade)
   const [visiveisPorColuna, setVisiveisPorColuna] = useState<Record<string, number>>({});
   // filtro de período por coluna (col.key -> período). Ausente = "todos".
-  const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>({});
+  const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>(
+    () => lerFiltrosSalvos()?.periodoPorColuna ?? {});
   // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
   // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -686,7 +809,7 @@ export default function Page() {
   const [prodFiltro, setProdFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     produtos: number[]; periodo: string; total: number;
-  } | null>(null);
+  } | null>(() => lerFiltrosSalvos()?.prodFiltro ?? null);
   // filtro "AINDA NÃO COMPROU" (cross-sell): quem já compra a LINHA do produto
   // mas nunca levou o produto em si. Ex.: já compra outra selagem, nunca comprou
   // A-LIZZ. A linha sai do agrupamento do WinThor (departamento/seção/marca) e é
@@ -702,7 +825,7 @@ export default function Page() {
   const [ncFiltro, setNcFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     alvo: number; linha: number[]; escopo: EscopoLinha; periodo: string; total: number;
-  } | null>(null);
+  } | null>(() => lerFiltrosSalvos()?.ncFiltro ?? null);
   // filtro por cidade: mesma mecânica do de produto, porém SEM período (cidade é fixa).
   // A seleção guarda a chave normalizada (cidade_norm); o rótulo bonito vem de `cidades`.
   const [cidades, setCidades] = useState<{ cidade_norm: string; cidade: string; clientes: number }[]>([]);
@@ -713,24 +836,36 @@ export default function Page() {
   const [cidFiltro, setCidFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     cidades: string[]; total: number;
-  } | null>(null);
+  } | null>(() => lerFiltrosSalvos()?.cidFiltro ?? null);
   // filtro MELHORES CLIENTES: top N por ticket médio dos últimos 3 meses (90d),
   // entre quem comprou no período. Mesma mecânica de identificadores do produto.
   const [melhoresPainel, setMelhoresPainel] = useState(false);
   const [melhoresCarregando, setMelhoresCarregando] = useState(false);
   const [melhoresFiltro, setMelhoresFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>; qtd: number; total: number;
-  } | null>(null);
+  } | null>(() => lerFiltrosSalvos()?.melhoresFiltro ?? null);
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
-  const [cicloSel, setCicloSel] = useState<string[]>([]);
+  const [cicloSel, setCicloSel] = useState<string[]>(() => lerFiltrosSalvos()?.cicloSel ?? []);
   const [cicloPainel, setCicloPainel] = useState(false);
   // Motor de ciclo ligado? Vem do /api/funil (crm_config, migration 0097).
   // Começa em `true` para a tela não piscar sem o selo antes da 1ª resposta —
   // o mesmo estado em que o interruptor nasce no banco.
   const [cicloAtivo, setCicloAtivo] = useState(true);
   const [saude, setSaude] = useState<any>(null);
-  const [semCadFiltro, setSemCadFiltro] = useState(false); // mostrar só leads sem cadastro no WinThor
-  const [paradoSel, setParadoSel] = useState<string[]>([]); // filtro por tempo parado (buckets de dias)
+  const [semCadFiltro, setSemCadFiltro] = useState(() => lerFiltrosSalvos()?.semCadFiltro ?? false); // só leads sem cadastro no WinThor
+  const [paradoSel, setParadoSel] = useState<string[]>(() => lerFiltrosSalvos()?.paradoSel ?? []); // tempo parado (buckets de dias)
+
+  // Grava a escolha a cada mudança. UM efeito para os dez, e não um `gravar()`
+  // em cada `onClick`: os filtros são mexidos de dezenas de lugares (chips,
+  // painéis, "Limpar tudo", o × de cada chip, o dropdown global de período), e
+  // um deles esquecido gravaria estado parcial — a tela voltaria com metade do
+  // que você deixou, que é o pior resultado possível aqui.
+  useEffect(() => {
+    gravarFiltros({ filtro, busca, periodoPorColuna, prodFiltro, ncFiltro,
+      cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel });
+  }, [filtro, busca, periodoPorColuna, prodFiltro, ncFiltro, cidFiltro,
+      melhoresFiltro, cicloSel, semCadFiltro, paradoSel]);
+
   // Os 8 filtros passaram a morar dentro de um único dropdown. Fora dele ficam só as
   // AÇÕES (baixar o Excel), que não filtram nada — misturar as duas coisas numa
   // barra só era o que deixava o cabeçalho ilegível. O disparo em massa saiu do
@@ -755,6 +890,31 @@ export default function Page() {
   const loadEmVoo = useRef(false);
   const loadPendente = useRef(false);
 
+  /**
+   * Põe um payload do `/api/funil` na tela. Extraído de `load()` para a
+   * montagem poder REPETIR a última foto sem ir ao servidor — se os dois
+   * caminhos escrevessem os estados cada um do seu jeito, divergiriam no
+   * primeiro campo novo que a rota passasse a mandar.
+   */
+  function aplicarPayload(j: any, deCache = false) {
+    setErro("");
+    setCards(j.cards ?? []);
+    // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
+    setCicloAtivo(j.ciclo_ativo !== false);
+    setSaude(j.saude ?? null);
+    setDisparos(j.disparos ?? {});
+    setVendasTotais(j.vendasTotais ?? {});
+    setPedidoCards(j.pedidoCards ?? []);
+    setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
+    setVendTodos((j.vendedores ?? []).map((v: any) => v?.slug).filter(Boolean));
+    setCarregando(false);
+    // O relógio do rodapé conta desde a leitura REAL. Ao repetir a foto ele não
+    // é tocado, senão o board anunciaria "atualizado agora" mostrando dado de
+    // três minutos atrás — o tipo de mentira que faz alguém confiar na tela na
+    // hora errada.
+    if (!deCache) setAtualizado(new Date().toLocaleTimeString("pt-BR"));
+  }
+
   async function load() {
     if (loadEmVoo.current) { loadPendente.current = true; return; }
     loadEmVoo.current = true;
@@ -762,17 +922,8 @@ export default function Page() {
       const r = await fetch("/api/funil", { cache: "no-store" });
       const j = await r.json();
       if (j.error) { setErro(j.error); return; }
-      setErro("");
-      setCards(j.cards ?? []);
-      // rota antiga (deploy em andamento) não manda o campo: mantém ligado.
-      setCicloAtivo(j.ciclo_ativo !== false);
-      setSaude(j.saude ?? null);
-      setDisparos(j.disparos ?? {});
-      setVendasTotais(j.vendasTotais ?? {});
-      setPedidoCards(j.pedidoCards ?? []);
-      setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
-      setVendTodos((j.vendedores ?? []).map((v: any) => v?.slug).filter(Boolean));
-      setAtualizado(new Date().toLocaleTimeString("pt-BR"));
+      aplicarPayload(j);
+      memPayload = { em: Date.now(), j };
     } catch (e: any) {
       setErro(String(e?.message ?? e));
     } finally {
@@ -1278,6 +1429,17 @@ export default function Page() {
     // Deslogado, `/api/funil` responde 401 e o erro não chega à tela: sem sessão
     // quem renderiza é a tela de login. É uma requisição perdida no caso em que
     // não há nada para mostrar mesmo.
+    //
+    // ---- e, ANTES dele, a última foto ----------------------------------
+    // Voltando do chat, o board tinha de esperar ~2 s olhando para a tela de
+    // carregamento antes de ver o primeiro card — o "recarrega tudo de novo" do
+    // relato. Aqui ele pinta o que já sabe e busca a versão nova por baixo;
+    // quando ela chega, `load()` substitui. É a mesma regra que o board já
+    // pratica no Realtime: mostrar o que se sabe e corrigir quando o servidor
+    // responde. Primeira visita da aba não tem foto e nada muda para ela.
+    if (memPayload && Date.now() - memPayload.em < PAYLOAD_VALIDO_MS) {
+      aplicarPayload(memPayload.j, true);
+    }
     void load();
     fetch("/api/session")
       .then((r) => (r.ok ? r.json() : null))
