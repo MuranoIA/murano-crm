@@ -109,16 +109,27 @@ export default async function (t) {
         // quando os botões da pílula somam mais que a largura disponível — foi
         // exatamente o que aconteceu (16px). 90 é o piso em que ainda se lê o
         // que se está escrevendo num aparelho de 360px.
+        //
+        // DESDE 11/09/2026 a pílula QUEBRA no celular: o campo fica sozinho na
+        // primeira linha e os ícones descem para a segunda. Por isso o piso
+        // subiu de 90 para 240 — com a linha inteira para ele, um campo estreito
+        // não é mais "apertado", é sinal de que a quebra parou de acontecer.
         const campo = await aba.js(`
           const ta=document.querySelector('textarea');
           if(!ta) return null;
           const p=ta.parentElement;
-          return { larg: Math.round(ta.getBoundingClientRect().width),
-                   pilulaCabe: p.scrollWidth <= p.clientWidth + 1 };
+          const r=ta.getBoundingClientRect();
+          return { larg: Math.round(r.width),
+                   pilulaCabe: p.scrollWidth <= p.clientWidth + 1,
+                   // todo botão da pílula tem de estar ABAIXO do campo
+                   iconesAbaixo: [...p.querySelectorAll('button')]
+                     .every(b => b.getBoundingClientRect().top >= r.bottom - 2) };
         `);
         if (campo) {
-          api.ok(campo.larg >= 90,
-            `a caixa de mensagem ficou com ${campo.larg}px — os botões da pílula comeram o campo. foto ${foto}`);
+          api.ok(campo.iconesAbaixo,
+            `os ícones voltaram para a linha do campo — a pílula parou de quebrar. foto ${foto}`);
+          api.ok(campo.larg >= 240,
+            `a caixa de mensagem ficou com ${campo.larg}px, e com a linha inteira para ela deveria passar de 240. foto ${foto}`);
           api.ok(campo.pilulaCabe, `o conteúdo da pílula não cabe nela — foto ${foto}`);
         }
 

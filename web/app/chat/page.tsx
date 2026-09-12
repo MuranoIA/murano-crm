@@ -3694,7 +3694,27 @@ export default function Chat() {
   // eles passam a sair da grade — uma altura por contexto, e nada fora dela:
   // 42/30 no desenho de hoje, 32/28 em `bancada`. No celular o piso de toque é
   // 44 px, que é a régua de acessibilidade e não uma preferência.
-  const pilBtn = isMobile && !compacto ? 44 : compacto ? G.pilBtnC : G.pilBtn;
+  //
+  // ---- DUAS LINHAS NO CELULAR (11/09/2026) ----------------------------
+  //
+  // Espremer campo e botoes na MESMA linha ja tinha sido levado ao limite:
+  // os tres secundarios foram para tras do "..." e o TEMPLATE virou "T"
+  // (§51/§67), e ainda assim sobravam 122 px de campo a 390 e 92 a 360 --
+  // num aparelho, para o campo principal da tela. Nao ha o que apertar mais.
+  //
+  // Entao a pilula passa a QUEBRAR: o campo ocupa a primeira linha inteira
+  // e os icones descem para a segunda. Custa ~36 px de altura e devolve o
+  // campo inteiro.
+  //
+  // NAO vale no `compacto` (a lupa do board): la o que falta e ALTURA, nao
+  // largura -- e o motivo pelo qual aquela visao existe (§41.5). Mesma
+  // distincao que `acoesEmFaixa` ja faz no cabecalho.
+  const duasLinhas = isMobile && !compacto;
+  // Na linha propria os icones nao competem mais por espaco, entao encolhem
+  // de 44 para 36: e o que o pedido chama de "bem pequenos". Fica acima dos
+  // 32 px em que o alvo de toque comeca a falhar de verdade -- o piso de 44
+  // da regua vale para o botao isolado, nao para uma fila deles com folga.
+  const pilBtn = duasLinhas ? 36 : compacto ? G.pilBtnC : G.pilBtn;
   // Medido em 01/09/2026 num aparelho de 390px: a pílula tinha 298px de largura
   // para 348px de conteúdo (📎 🎤 ⏸ ⚡ 🗒️ + TEMPLATE), e a caixa de texto
   // sobrava com DEZESSEIS pixels — o campo principal da tela, invisível. É a
@@ -5596,8 +5616,12 @@ export default function Chat() {
                       por isso parecia estreito mesmo tendo espaco. Aqui a borda
                       passa para o container, os botoes ficam transparentes, e o
                       campo ocupa o que sobra. O enviar fica de FORA, como la. */}
-                  <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "flex-end", gap: 2,
-                    padding: barraEnxuta ? "3px 4px" : G.pilPad,
+                  <div style={{ flex: 1, minWidth: 0, display: "flex",
+                    // quebra so no celular: ver `duasLinhas`
+                    flexWrap: duasLinhas ? "wrap" : "nowrap",
+                    alignItems: duasLinhas ? "center" : "flex-end",
+                    rowGap: duasLinhas ? 2 : 0, gap: 2,
+                    padding: duasLinhas ? "4px 5px 3px" : barraEnxuta ? "3px 4px" : G.pilPad,
                     background: modoNota ? M.surface : M.bg,
                     // A borda da pílula é de CONTROLE, não divisória: é ela que
                     // diz onde se digita. Por isso `lineStrong` (3,53:1) e não
@@ -5948,7 +5972,12 @@ export default function Chat() {
                       receberArquivos(fs, true);
                     }}
                     onInput={crescer}
-                    style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none", padding: compacto ? "6px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
+                    style={{ flex: 1, minWidth: 0, boxSizing: "border-box", resize: "none",
+                      // `order: -1` poe o campo ANTES dos icones mesmo estando
+                      // depois deles no JSX, e `flexBasis: 100%` obriga a linha
+                      // a ser so dele -- os icones sobram para a de baixo.
+                      ...(duasLinhas ? { order: -1, flexBasis: "100%", minWidth: "100%" } : null),
+                      padding: compacto ? "6px 6px" : duasLinhas ? "7px 6px" : "9px 8px", fontSize: 13.5, fontFamily: "inherit", color: modoNota ? NOTA.ink : M.ink, background: "transparent", border: "none", outline: "none", lineHeight: 1.4, overflowY: "hidden" }}
                   />
                   </div>
                   <button
