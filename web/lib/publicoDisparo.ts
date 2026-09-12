@@ -303,6 +303,55 @@ function consultaItem(db: any, r: RecorteItem, modo: "comprou" | "sem_comprar_ha
   };
 }
 
+/** Teto de linhas por resposta do PostgREST nesta instância. */
+const TETO_POSTGREST = 1000;
+
+/**
+ * Lê a consulta INTEIRA, em páginas.
+ *
+ * ⚠️ O PostgREST corta em 1.000 linhas e NÃO avisa — e `.limit(5000)` não
+ * levanta esse teto. Medido em 11/09/2026, contra produção:
+ *
+ *     disparos_template (60d), sem limite   3.281 linhas -> devolvia 1.000
+ *     mensagens 24h, com .limit(2000)       4.046 linhas -> devolvia 1.000
+ *     mensagens 24h, com .limit(5000)       4.046 linhas -> devolvia 1.000
+ *
+ * O estrago era no PÚBLICO DA CAMPANHA: o anti-repetição enxergava 30% dos
+ * disparos (quem acabou de receber template podia receber de novo, a R$ 0,43
+ * cada) e "conversa aberta" enxergava 25% (quem estava falando conosco naquele
+ * momento entrava no disparo em massa).
+ *
+ * `monta` PRECISA ordenar por chave única: cada página é uma consulta separada,
+ * e sem ordem total o Postgres pode devolver a mesma linha em duas páginas e
+ * nenhuma vez uma terceira — a mesma doença que o /api/funil já pagou.
+ */
+async function todasAsLinhas(monta: (de: number, ate: number) => any): Promise<any[]> {
+  const out: any[] = [];
+  for (let de = 0; ; de += TETO_POSTGREST) {
+    const { data, error } = await monta(de, de + TETO_POSTGREST - 1);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < TETO_POSTGREST) break;
+  }
+  return out;
+}
+
+/** Mesma forma `{data}` das outras consultas, para o consumidor não mudar. */
+const paginado = async (monta: (de: number, ate: number) => any) => ({ data: await todasAsLinhas(monta) });
+
+/**
+ * Para a consulta que NÃO dá para paginar com segurança (sem chave única).
+ * Não conserta o corte — faz ele gritar. Silêncio é o que tornou este bug
+ * invisível por semanas.
+ */
+async function noTeto(nome: string, q: any) {
+  const r = await q;
+  if ((r.data?.length ?? 0) >= TETO_POSTGREST) {
+    console.error(`[publicoDisparo] ${nome} bateu no teto de ${TETO_POSTGREST} linhas — o público está sendo montado com dado incompleto.`);
+  }
+  return r;
+}
+
 export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
   const carteiras = await carteirasDosTimes(db, f);
   const avisos: string[] = [];
@@ -354,37 +403,54 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
 
   if (!cache.ctx) cache.ctx = await (async () => {
   const [dispRes, descRes, cicloRes, linhaRes, desfRes, abertaRes, statusRes] = await Promise.all([
-    (() => {
-      // anti-repetição: só conta template que saiu pelo número em uso
-      const q = db.from("disparos_template").select("cliente_id,criada_em").gte("criada_em", desdeDisparo);
+    // anti-repetição: só conta template que saiu pelo número em uso
+    paginado((de, ate) => {
+      const q = db.from("disparos_template").select("cliente_id,criada_em")
+        .gte("criada_em", desdeDisparo)
+        .order("id", { ascending: true })   // `id` é único: 3.281 de 3.281 (11/09)
+        .range(de, ate);
       return soCloudP ? q.like("id", "wamid.%") : q;
-    })(),
-    db.from("wth_descartados").select("cliente_id,codcli,tel8"),
+    }),
+    noTeto("wth_descartados", db.from("wth_descartados").select("cliente_id,codcli,tel8")),
     // motor desligado (crm_config, 0097): a consulta nem sai e o ranqueamento
     // passa a ser só tempo parado + ticket — ver o cálculo de `score` abaixo
     // sempre buscado (o cache é do turno inteiro); quem decide se vale é o
     // `cfg.ciclo_ativo` no cálculo do score, mais abaixo
-    db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade"),
-    db.from("vw_chat_linha_cliente").select("cliente_id"),
-    // Só as FALHAS. Medido em 27/08: 32 linhas em 90 dias.
-    db.from("mensagens")
+    //
+    // ⚠️ NÃO paginada, e de propósito: `codcli` NÃO é único nesta view (937
+    // distintos em 985 linhas, medido em 11/09), então paginar por ele perderia
+    // linha em vez de trazer mais. Está a 985 do teto de 1.000 — por isso passa
+    // pelo `noTeto`, que avisa alto no dia em que cruzar, em vez de cortar calado.
+    noTeto("vw_ciclo_card",
+      db.from("vw_ciclo_card").select("cliente_id,codcli,telefone,score_urgencia,tipo_oportunidade")),
+    // 1.559 linhas em 11/09 — já passava do teto. `cliente_id` é único aqui.
+    paginado((de, ate) => db.from("vw_chat_linha_cliente").select("cliente_id")
+      .order("cliente_id", { ascending: true }).range(de, ate)),
+    // Só as FALHAS. Eram 32 linhas em 27/08 — mas o `.limit(2000)` que estava
+    // aqui nunca protegeu nada (ver a nota do `paginado`), e a ordem crescente
+    // é REGRA de negócio: o laço abaixo depende dela para o último desfecho
+    // vencer. `id` entra como desempate para a ordem ser total entre páginas.
+    paginado((de, ate) => db.from("mensagens")
       .select("cliente_id,erro,criada_em")
       .eq("enviada_por", "operator").eq("status", "failed")
       .gte("criada_em", desdeFalha)
-      .order("criada_em", { ascending: true }).limit(2000),
+      .order("criada_em", { ascending: true }).order("id", { ascending: true })
+      .range(de, ate)),
     // conversa aberta = a cliente falou nas últimas 24h. ⚠️ Passa por
     // `filtroLinhas`: com o RD escondido, conversa que só existe lá não conta
     // (§44) — senão o corte esconderia gente que, para o resto do sistema, não
-    // está falando com ninguém. Sempre buscado: são poucas dezenas de linhas, e
-    // condicionar ao filtro tornaria o cache dependente dele.
-    filtroLinhas(
+    // está falando com ninguém.
+    //
+    // 4.046 linhas em 11/09, contra o `.limit(5000)` que devolvia 1.000. Era o
+    // corte mais caro dos dois: quem está conversando AGORA entrava no disparo.
+    paginado((de, ate) => filtroLinhas(
       db.from("mensagens").select("cliente_id")
         .eq("enviada_por", "customer")
         .gte("criada_em", new Date(Date.now() - 24 * 3600_000).toISOString())
-        .limit(5000),
+        .order("id", { ascending: true }).range(de, ate),
       cfg,
-    ),
-    db.from("chat_conversa").select("cliente_id").eq("status", "aberta"),
+    )),
+    noTeto("chat_conversa", db.from("chat_conversa").select("cliente_id").eq("status", "aberta")),
   ]);
 
   // ---- NÚMERO QUE NÃO RECEBE (item 5) ------------------------------------
