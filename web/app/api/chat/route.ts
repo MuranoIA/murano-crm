@@ -32,7 +32,18 @@ export async function GET() {
   // Interruptor das conversas do RD (0098). Escondidas, a sidebar lista só o que
   // veio da Cloud: os ramos sem conversa da view irmã têm `ultima_atividade`
   // nula, e o `.not(..., "is", null)` abaixo já os corta — nenhum filtro extra.
-  const cfg = await lerCrmConfig(sb);
+  //
+  // ⚠️ DISPARADO JÁ, SEM `await` — o `await` mora lá embaixo, no `Promise.all`
+  // que já existe. Com `await` aqui ele era a PRIMEIRA coisa da rota e nada
+  // começava antes de ele terminar: um round-trip inteiro no caminho crítico da
+  // rota mais chamada do sistema (a cada 60 s em toda aba, mais uma recarga
+  // coalescida por mensagem que chega). O laudo de performance §4 registrou isso
+  // como a ida mais cara do log. É uma leitura de linha única — não há razão
+  // para ela segurar a paginação da lista. Mesmo padrão do `/api/funil`.
+  //
+  // Só é lido no fim, para o SLA. Se um dia alguém precisar de `cfg` ANTES da
+  // paginação, o `await` volta para cá — e o custo volta junto.
+  const cfgP = lerCrmConfig(sb);
   // A FONTE DEIXOU DE SER A VIEW DO BOARD (0126 / PR #170).
   //
   // `vw_funil_visivel` responde outra pergunta — "todo cliente da carteira,
@@ -144,7 +155,7 @@ export async function GET() {
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
   const [{ data: leituras }, { data: estados }, { data: vendedores }, { data: pessoasQueAtendem },
-    cfgLayout, meuAcesso, esperaRes, notasRes, notasVistasRes] = await Promise.all([
+    cfgLayout, meuAcesso, esperaRes, notasRes, notasVistasRes, cfg] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
@@ -203,6 +214,9 @@ export async function GET() {
       .neq("autor", usuario ?? "").order("criada_em", { ascending: false }).limit(1000),
     // o coringa '*' marca as notas anteriores ao recurso — ver a migration
     sb.from("chat_nota_vista").select("nota_id").in("usuario", [usuario ?? "", "*"]),
+    // os interruptores do CRM, disparados lá no alto da rota. Colhidos aqui, e
+    // não esperados lá, é o que tira um round-trip do caminho crítico.
+    cfgP,
   ]);
   const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e]));
