@@ -12,7 +12,7 @@ import {
 // cedo, o servidor confere de novo (lib/templateVars.ts)
 import { Icone, type NomeIcone } from "./icones";
 import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
-import { traduzErroMeta, codigoMeta } from "../../lib/erroMeta";
+import { traduzErroMeta, codigoMeta, SEM_REENVIO } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
@@ -3978,24 +3978,15 @@ export default function Chat() {
                 {push === false && (
                   <button onClick={alternarPush} disabled={pushOcupado}
                     title="Receber aviso de mensagem nova mesmo com o app fechado"
-                    style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                    style={{ marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 5,
                       fontSize: 11, fontWeight: 800, color: "#fff", background: M.roxo, border: "none",
                       borderRadius: 999, padding: "4px 10px", cursor: pushOcupado ? "default" : "pointer",
                       opacity: pushOcupado ? 0.6 : 1, fontFamily: "inherit", whiteSpace: "nowrap" }}>
                     🔔 {pushOcupado ? "…" : "Ativar avisos"}
                   </button>
                 )}
-                {push === true && (
-                  <button onClick={alternarPush} disabled={pushOcupado}
-                    title="Avisos ligados neste aparelho — clique para desligar"
-                    style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: M.gray,
-                      background: "transparent", border: "none", padding: "4px 6px",
-                      cursor: pushOcupado ? "default" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                    🔔 <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>avisos ligados</span>
-                  </button>
-                )}
                 <button onClick={() => setFiltro("fila")} title="Fila de espera — conversas sem dono"
-                  style={{ marginLeft: push === null ? "auto" : 4, position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
+                  style={{ marginLeft: "auto", position: "relative", background: "transparent", border: "none", cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "fila" ? 1 : 0.75 }}>
                   🚶
                   {contaFila > 0 && (
                     <span style={{ position: "absolute", top: -3, right: -4, minWidth: 15, height: 15, padding: "0 3px", boxSizing: "border-box", borderRadius: 15, background: M.laranja, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -4038,6 +4029,23 @@ export default function Chat() {
                   style={{ marginLeft: 2, flexShrink: 0, background: "transparent", border: "none", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px", fontFamily: "inherit", opacity: filtro === "carteira" ? 1 : 0.75 }}>
                   📇
                 </button>
+                {/* ---- avisos LIGADOS: só o sino, no fim da fila ----
+                    Tinha o texto "avisos ligados" e `marginLeft: auto`, o que o
+                    punha no meio do cabeçalho, brigando por espaço com o título
+                    "Meus atendimentos" — e num aparelho estreito ele passava por
+                    cima. Estado que já está certo não precisa se anunciar: vira
+                    ícone discreto no canto, e o `title` conta o resto.
+                    O "Ativar avisos" continua com texto de propósito — aquele é
+                    um convite, e convite que ninguém vê não é convite. */}
+                {push === true && (
+                  <button onClick={alternarPush} disabled={pushOcupado}
+                    title="Avisos ligados neste aparelho — clique para desligar"
+                    style={{ marginLeft: 2, background: "transparent", border: "none", padding: "2px 4px",
+                      fontSize: 13, lineHeight: 1, opacity: pushOcupado ? 0.4 : 0.5,
+                      cursor: pushOcupado ? "default" : "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                    🔔
+                  </button>
+                )}
                 {menuFila && (
                   <>
                     <div onClick={() => setMenuFila(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
@@ -5355,6 +5363,10 @@ export default function Chat() {
                               // Fora da janela de 24h, reenviar o mesmo texto falha de
                               // novo — o caminho é o template. O botão diz isso.
                               const janelaFechada = codigoMeta(m.erro) === "131047";
+                              // Em alguns códigos reenviar AGORA falha de novo pelo mesmo
+                              // motivo (hoje: o experimento da Meta, 130472). O botão some
+                              // — o recado ao lado já diz o que fazer.
+                              const semSaida = SEM_REENVIO.has(codigoMeta(m.erro) ?? "");
                               return (
                               <div title={e.tecnico || undefined}
                                 style={{ maxWidth: "76%", marginTop: 3, padding: "6px 10px", fontSize: 11,
@@ -5365,6 +5377,7 @@ export default function Chat() {
                                   <b>Não entregue.</b> {e.texto}
                                   {e.acao && <><br /><span style={{ opacity: 0.85 }}>{e.acao}</span></>}
                                 </span>
+                                {!semSaida && (
                                 <button
                                   onClick={() => {
                                     if (janelaFechada) { setMenuTemplate(true); return; }
@@ -5378,6 +5391,7 @@ export default function Chat() {
                                     background: M.roxo, cursor: "pointer", whiteSpace: "nowrap" }}>
                                   {janelaFechada ? "Template" : "Reenviar"}
                                 </button>
+                                )}
                               </div>
                               );
                             })()}

@@ -31,6 +31,20 @@ const TABELA: Record<string, Traducao> = {
   },
   "131051": { texto: "Tipo de mensagem não suportado pelo WhatsApp." },
 
+  // --- experimento da Meta (não é o número, e não é nosso) ---
+  // Medido em 12/09/2026: 26 recusas em 19 clientes entre 09/09 e 12/09, TODAS
+  // em template e NENHUMA em mensagem livre — 1,4% dos 1.860 templates do
+  // período. A Meta sorteia uma fatia dos usuários para um grupo de controle e
+  // não entrega template de marketing a eles enquanto o teste dura.
+  //
+  // ⚠️ NÃO entra em `FALHA_DO_NUMERO`: é temporário e não diz nada sobre o
+  // telefone. Marcar como número morto tiraria essas pessoas das campanhas para
+  // sempre por causa de um experimento de terceiro.
+  "130472": {
+    texto: "A Meta colocou este número num teste dela e não entrega template para ele agora.",
+    acao: "Não é o número da cliente nem erro nosso, e reenviar não resolve. Mensagem normal continua chegando se ela responder.",
+  },
+
   // --- número do destinatário ---
   "131026": {
     texto: "Este número não recebe no WhatsApp.",
@@ -98,6 +112,16 @@ const TABELA: Record<string, Traducao> = {
  * quando se sabe que reenviar não muda o resultado.
  */
 export const FALHA_DO_NUMERO = new Set(["131026", "131051"]);
+
+/**
+ * Códigos em que reenviar AGORA não tem como funcionar — a causa não está na
+ * mão de quem clicou. Oferecer "Reenviar" neles é convidar para um beco: a
+ * tentativa falha na hora, com o mesmo erro.
+ *
+ * Não confundir com `FALHA_DO_NUMERO`: lá é o telefone que não recebe, e o
+ * cliente sai das campanhas. Aqui é passageiro — só o botão some.
+ */
+export const SEM_REENVIO = new Set(["130472"]);
 
 /** O código da Meta que a string guardada carrega, se carregar. */
 export function codigoMeta(erro: string | null | undefined): string | null {
