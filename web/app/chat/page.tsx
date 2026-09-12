@@ -1554,11 +1554,33 @@ export default function Chat() {
   const [conectado, setConectado] = useState(false);
   const [puxando, setPuxando] = useState(false);
   const [resolvendo, setResolvendo] = useState(false);      // painel de motivo aberto
-  const [enviandoArquivo, setEnviandoArquivo] = useState(false);
-  // progresso do envio em lote (várias fotos de uma vez)
+  // ---- PROGRESSO DE ENVIO, POR CONVERSA -----------------------------------
+  //
+  // Era um booleano e um objeto GLOBAIS. Relatado em 12/09 com dois prints: o
+  // consultor manda 19 fotos para a cliente A, abre a cliente B para mandar
+  // outras, e em B aparece "enviando 9 de 19" — o contador de A — com o clipe
+  // DESABILITADO. Duas conversas, uma trava só: não dava para trabalhar na
+  // segunda enquanto a primeira subia.
+  //
+  // `enviarArquivos` já guardava a conversa de origem (`alvo`) e já protegia as
+  // MENSAGENS com `sePermanece`; o que faltou foi o progresso, que continuou
+  // sendo do componente e não da conversa. Agora é um mapa por `cliente_id`.
+  //
   // `pct` = quanto do arquivo ATUAL já subiu para o Storage. Só é preenchido
   // acima de 2 MB — num anexo pequeno o número piscaria e sumiria.
-  const [fila, setFila] = useState<{ feito: number; total: number; pct: number | null } | null>(null);
+  type ProgressoEnvio = { feito: number; total: number; pct: number | null };
+  const [envios, setEnvios] = useState<Record<string, ProgressoEnvio>>({});
+  /** Escreve (ou apaga, com `null`) o progresso de UMA conversa. */
+  const porEnvio = (id: string, v: ProgressoEnvio | null) =>
+    setEnvios((p) => {
+      if (!v) { const { [id]: _fora, ...resto } = p; return resto; }
+      return { ...p, [id]: v };
+    });
+  // Os nomes antigos continuam, agora como leitura DA CONVERSA ABERTA — assim
+  // cada botão da barra pergunta "esta conversa está enviando?" em vez de
+  // "alguém está enviando?", e nenhum ponto de leitura precisou mudar.
+  const fila = sel ? envios[sel.cliente_id] ?? null : null;
+  const enviandoArquivo = !!fila;
   // O que o clipe mostra enquanto envia. Lote ganha de porcentagem: saber que
   // faltam 3 de 5 fotos vale mais que os 40% da terceira.
   const rotuloFila = !fila ? null
@@ -2966,7 +2988,8 @@ export default function Chat() {
   // ordem no celular da cliente, que é justamente o que se espera preservado ao
   // mandar cinco fotos do mesmo produto. Também mantém o consumo de cota previsível.
   async function enviarArquivos(files: File[]) {
-    if (!sel || enviandoArquivo || !files.length) return;
+    // a trava é DESTA conversa: outra pode estar enviando ao mesmo tempo
+    if (!sel || envios[sel.cliente_id] || !files.length) return;
     const LIMITE_FILA = 30;
     if (files.length > LIMITE_FILA) {
       setAviso(`Máximo de ${LIMITE_FILA} arquivos por vez — selecione menos.`);
@@ -2979,8 +3002,8 @@ export default function Chat() {
     // a legenda digitada acompanha só o PRIMEIRO arquivo — repetir o mesmo texto
     // em cada foto faria a cliente ler cinco vezes a mesma coisa.
     const legenda = texto.trim();
-    setEnviandoArquivo(true); setAviso(null);
-    setFila({ feito: 0, total: files.length, pct: null });
+    setAviso(null);
+    porEnvio(alvo.cliente_id, { feito: 0, total: files.length, pct: null });
 
     // ---- as bolhas aparecem AGORA, com a própria foto, e sobem esmaecidas ---
     // O lote inteiro entra de uma vez, e não um por vez: mandar cinco fotos e
@@ -3018,7 +3041,7 @@ export default function Chat() {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setFila({ feito: i, total: files.length, pct: null });
+        porEnvio(alvo.cliente_id, { feito: i, total: files.length, pct: null });
         try {
           // corte de tamanho aqui também, com a MESMA função da rota: recusar
           // um arquivo grande demais não precisa de ida ao servidor, e o
@@ -3027,7 +3050,7 @@ export default function Chat() {
             const m = file.type || "application/octet-stream";
             falhas.push({ nome: file.name, razao: recadoDeLimite(m, file.size), grupo: recadoDeLimiteDoTipo(m) });
             some(otimistas[i].id);
-            setFila({ feito: i + 1, total: files.length, pct: null });
+            porEnvio(alvo.cliente_id, { feito: i + 1, total: files.length, pct: null });
             continue;
           }
 
@@ -3051,7 +3074,7 @@ export default function Chat() {
             }
             falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
             some(otimistas[i].id);
-            setFila({ feito: i + 1, total: files.length, pct: null });
+            porEnvio(alvo.cliente_id, { feito: i + 1, total: files.length, pct: null });
             continue;
           }
 
@@ -3059,9 +3082,9 @@ export default function Chat() {
           // e some antes de alguém conseguir ler.
           const mostraPct = file.size > 2 * 1024 * 1024;
           await subirParaStorage(file, a.path, a.token, (pct) => {
-            if (mostraPct) { setFila({ feito: i, total: files.length, pct }); anda(otimistas[i].id, pct); }
+            if (mostraPct) { porEnvio(alvo.cliente_id, { feito: i, total: files.length, pct }); anda(otimistas[i].id, pct); }
           });
-          setFila({ feito: i, total: files.length, pct: mostraPct ? 100 : null });
+          porEnvio(alvo.cliente_id, { feito: i, total: files.length, pct: mostraPct ? 100 : null });
           // o arquivo subiu; falta a nossa rota repassar para a Meta. O número
           // some e volta a "enviando…" porque 100% ali seria mentira: a cliente
           // ainda não recebeu nada.
@@ -3102,7 +3125,7 @@ export default function Chat() {
           falhas.push({ nome: file.name, razao: e?.message ?? String(e) });
           some(otimistas[i].id);
         }
-        setFila({ feito: i + 1, total: files.length, pct: null });
+        porEnvio(alvo.cliente_id, { feito: i + 1, total: files.length, pct: null });
       }
       // falha de um arquivo não cala os outros: o aviso diz quantos ficaram para
       // trás. Com um arquivo só (inclusive o áudio gravado) vale o erro cru — o
@@ -3111,8 +3134,7 @@ export default function Chat() {
         setAviso((atual) => atual ?? resumoDasFalhas(falhas, files.length));
       }
     } finally {
-      setEnviandoArquivo(false);
-      setFila(null);
+      porEnvio(alvo.cliente_id, null);
       if (arquivoRef.current) arquivoRef.current.value = "";
       // O `break` do 501/422 sai do laço sem passar pelos `some()`, então as
       // bolhas dos arquivos que nem chegaram a ser tentados ficariam subindo
