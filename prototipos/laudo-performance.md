@@ -195,3 +195,117 @@ Não urgente. Deixar registrado para quando a tabela crescer.
 | o volume de `vw_funil` / `vw_funil_visivel` em si | 151 ms e 158 ms — as views são rápidas; o que pesa é uma coluna específica |
 | o ETL do RD disputando recursos | rodava no GitHub Actions, fora do app — e está removido |
 | banda / tamanho da resposta | vem gzipada; a página de 1000 linhas são 48 KB na rede |
+
+---
+
+## 7. O que foi feito — e o que a medição de 12/09 CORRIGE deste laudo
+
+> Executado em 12/09/2026, com o método da §0 e, além dele, um A/B de dois
+> servidores de produção locais falando com o MESMO banco: um com o código de
+> antes, outro com o de depois, medidos em rodadas intercaladas.
+
+### 7.1 ⚠️ A coluna não custa mais os 677 ms da §2
+
+Mesma consulta da §2 — página de 1000 linhas, com e sem `ultimas_mensagens`,
+mediana de 7 rodadas intercaladas — refeita em 12/09:
+
+| | 11/09 (§2) | **12/09** |
+|---|---|---|
+| sem a coluna | 625 ms | **214 ms** |
+| com a coluna | 1.302 ms | **298 ms** |
+| **custo da coluna** | **+677 ms** | **+84 ms** |
+
+O lado "sem" bate (625 → a §2 também registrou 261 ms na tabela por número de
+linhas, e 214 ms está nessa faixa). **O que mudou foi o lado "com": 8× mais
+barato.** A causa não foi investigada — candidatos são o cache do Postgres, um
+`ANALYZE` depois da limpeza do RD (§69) ou contenção no momento da primeira
+medição. Fica registrado como fato, não como explicação.
+
+**Consequência:** o "~2,8 s de trabalho do Postgres por carregamento do board"
+da §2 e §3 **não descreve o sistema de hoje**. O número de hoje é ~420 ms
+(5 páginas × 84 ms). Quem citar aquele número — inclusive os comentários de
+`app/page.tsx` e da rota de delta, que o citam — está citando uma medição
+vencida.
+
+**Regra que fica:** medida de performance tem validade. Antes de justificar
+trabalho com um número deste arquivo, refazer a medição.
+
+### 7.2 O que foi feito mesmo assim, e por quê
+
+`ultimas_mensagens` saiu do payload do board (caminho **b** da §5) e virou
+`/api/funil/previas`, pedida pelo `IntersectionObserver` só para os cards que
+entram na tela. Não pelos 2,8 s, que não existem mais, mas por:
+
+| | antes | depois |
+|---|---|---|
+| payload do `/api/funil` | **2,81 MB** | **1,96 MB** (−30%) |
+| `/api/funil` (mediana de 7 intercaladas) | 2.103 ms | 1.954 ms (−7%) |
+| cards devolvidos | 4.007 + 557 | **idênticos** |
+
+850 KB a menos por carregamento, por aba, e o custo da coluna é **por linha**:
+ele volta a crescer com a base sem avisar. `/api/funil/previas` com 100 ids
+responde em **197 ms**.
+
+### 7.3 O ganho de verdade estava em outro lugar: duas chamadas em série
+
+Instrumentando a ABERTURA do board no navegador (fetch envolvido antes de a
+página subir), o retrato foi este:
+
+```
+   inicio    fim    dur      KB  chamada
+      930   1746    816       0  /api/session
+     1791   4673   2882    2008  /api/funil      <- só começa quando a sessão volta
+     1801   3465   1664      65  /api/produtos
+     ...
+   cards na tela em 7391 ms
+```
+
+`load()` estava atrás de `if (!sessao) return` — **e não usa `sessao` para
+nada**: quem aplica o escopo por carteira é o `/api/funil`, no servidor, lendo o
+mesmo cookie. Era serialização pura de duas chamadas independentes. Agora as
+duas partem juntas.
+
+**Medido no navegador, tempo até o board mostrar card, mediana de 5 rodadas
+intercaladas, duas execuções separadas:**
+
+| | 1ª execução | 2ª execução |
+|---|---|---|
+| antes | 6.574 ms | 6.408 ms |
+| depois | **5.712 ms** | **5.536 ms** |
+| ganho | **862 ms (13%)** | **872 ms (14%)** |
+
+### 7.4 O maior custo restante do board é o NAVEGADOR, não o banco
+
+No retrato acima, a última resposta chega em **4.673 ms** e os cards aparecem em
+**7.391 ms**: **~2,7 segundos de trabalho do navegador**, renderizando **582
+cards** de uma vez. Nenhuma otimização de consulta alcança isso.
+
+O caminho conhecido é **virtualizar as colunas** (desenhar só as linhas
+visíveis), e o pré-requisito barato dele já está anotado na §60.7 do CLAUDE.md:
+a linha da conversa precisa de **altura fixa**, não `minHeight`. É trabalho de
+outra ordem e não foi feito aqui.
+
+### 7.5 Itens 2 e 3 da §5
+
+- **`lerCrmConfig`** saiu do caminho crítico do `/api/chat`: disparado sem
+  `await` no topo e colhido no `Promise.all` que já existia. Um round-trip a
+  menos na rota mais chamada do sistema.
+- **`carteira_rd`** saiu do `select` do board, e com ela a função
+  `seloAtribuicao` (40 linhas que ninguém chamava desde o §69) e o estado
+  `vendMeta`, que existia só para alimentá-la.
+- ⚠️ **`rd_cliente_id` FICOU.** A §4 deste laudo agrupou os dois como "resíduo
+  do RD" e **estava errada sobre um deles**: `rd_cliente_id` é o contato real do
+  card de prospecção, e é por ele que o clique abre a conversa (§40.1 do
+  CLAUDE.md). Tirá-lo quebraria o gesto mais frequente da tela.
+
+### 7.6 Efeito colateral achado no caminho
+
+O `onScroll` da caixa de mensagens do card chamava `carregarThread` quando
+`scrollTop <= 4` — e o `ref` daquela caixa faz `scrollTop = scrollHeight` a cada
+render. Numa caixa que mal transborda o navegador crava o valor em 0..4 e emite
+um evento de rolagem indistinguível de um gesto humano: o card buscava a
+conversa inteira **sem ninguém pedir**. Passou a exigir que a caixa role de
+verdade e que o gesto tenha partido de uma pessoa (`pointerdown`/`wheel`/toque).
+
+Piora com a prévia de uma linha, que é o estado do card antes de
+`/api/funil/previas` responder — caixa curta é caixa que não rola.

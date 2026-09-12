@@ -10,8 +10,7 @@
 //   3. board parado não gera tráfego além do heartbeat do WebSocket.
 //
 // POR QUE ISTO IMPORTA: o laudo de performance mediu o custo de UM carregamento
-// do board — 19 idas ao banco, 2,7 MB, ~2,8 s de trabalho do Postgres só na
-// coluna `ultimas_mensagens` — e registrou o multiplicador: cada mensagem gera
+// do board — 19 idas ao banco e ~2 s — e registrou o multiplicador: cada mensagem gera
 // um evento de Realtime, e cada aba reagia recarregando tudo. É o multiplicador
 // que este caso vigia.
 //

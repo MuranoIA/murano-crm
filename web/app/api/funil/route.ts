@@ -41,9 +41,23 @@ export async function GET() {
   const PAGE = 1000;
   // Degraus de colunas: tenta o mais completo; se uma coluna nova ainda não existe
   // (migration pendente), cai pro degrau anterior sem quebrar o board (o front tem
-  // fallback). FULL = com nota fiscal (0006); MSGS = com 3 mensagens (0005); BASE = mínimo.
-  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens,venda_valor,venda_data,sem_cadastro,rd_cliente_id,codcli,rca_num,carteira_rd";
-  const COLS_MSGS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,ultimas_mensagens";
+  // fallback). FULL = com nota fiscal (0006); BASE = mínimo.
+  //
+  // ⚠️ `ultimas_mensagens` NÃO está aqui, e essa ausência é a correção mais cara
+  // deste arquivo. Ela é um lateral join em `mensagens` que custa ~0,7 ms POR
+  // LINHA — medido em +677 ms por página de 1000, ~2,8 s por carregamento do
+  // board (laudo de performance §2), a cada aba aberta e a cada load. As 3
+  // bolhas que ela desenha vêm agora de `/api/funil/previas`, só para os cards
+  // que entram na tela. `ultima_mensagem` (uma linha, sem lateral join)
+  // continua vindo daqui e é o que o card mostra enquanto a prévia não chega —
+  // então nenhum card nasce vazio.
+  //
+  // `carteira_rd` também saiu: o selo do card deixou de comparar a carteira do
+  // RD com o RCA quando o RD foi removido (§69), e a coluna continuava sendo
+  // pedida por resíduo (~44 KB por página). `rd_cliente_id` FICA: é o contato
+  // real do card de prospecção, e é por ele que o clique abre a conversa
+  // (§40.1) — o laudo agrupou os dois, e só um era resíduo.
+  const COLS_FULL = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone,venda_valor,venda_data,sem_cadastro,rd_cliente_id,codcli,rca_num";
   const COLS_BASE = "cliente_id,cliente,vendedor,etapa,ultima_atividade,ultima_mensagem,ultima_enviada_por,telefone";
 
   const diaBRT = (offset = 0) => new Date(Date.now() - 3 * 3600 * 1000 - offset * 86400000).toISOString().slice(0, 10);
@@ -107,8 +121,7 @@ export async function GET() {
       if (carteira) q = q.eq("vendedor", carteira);
       const { data, error } = await q;
       if (error) {
-        if (cols === COLS_FULL && /venda_valor|venda_data|sem_cadastro|rd_cliente_id|codcli|rca_num|carteira_rd/.test(error.message)) { cols = COLS_MSGS; from -= PAGE; continue; }
-        if (cols !== COLS_BASE && /ultimas_mensagens/.test(error.message)) { cols = COLS_BASE; from -= PAGE; continue; }
+        if (cols === COLS_FULL && /venda_valor|venda_data|sem_cadastro|rd_cliente_id|codcli|rca_num/.test(error.message)) { cols = COLS_BASE; from -= PAGE; continue; }
         throw new Error(error.message);
       }
       out.push(...(data ?? []));
@@ -415,7 +428,9 @@ export async function GET() {
       ultima_atividade: f?.ultima_atividade ?? null,
       ultima_mensagem: f?.ultima_mensagem ?? null,
       ultima_enviada_por: f?.ultima_enviada_por ?? null,
-      ultimas_mensagens: f?.ultimas_mensagens ?? null,
+      // `ultimas_mensagens` não vem mais daqui: o card busca a prévia em
+      // `/api/funil/previas` quando entra na tela. Este card de venda entra na
+      // lista pelo mesmo caminho dos outros, então não precisa de caso especial.
       ciclo: cicloDe({ cliente_id: key, telefone: r.telefone ?? f?.telefone ?? null }),
     };
   }).filter((pc: any) => !ehDescartado(pc));

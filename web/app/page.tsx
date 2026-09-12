@@ -20,8 +20,6 @@ type Card = {
   ultima_mensagem: string | null;
   ultima_enviada_por: string | null;
   telefone: string | null;
-  ultimas_mensagens: Msg[] | null; // até 3, mais recente primeiro
-  /** mensagens que existem, mas na linha que a seleção esconde (ramo 1b, §31.3) */
   venda_valor: number | null;      // valor faturado no período (R$), nota fiscal WinThor
   venda_data: string | null;       // data da última compra
   periodo?: string;                // (pedido_emitido) período da linha: hoje/ontem/semana/quinzena/mes/todos
@@ -31,7 +29,6 @@ type Card = {
   rd_cliente_id?: string | null;   // (prospecção) id do contato no RD, se já existir lá — abre o RD em vez do WhatsApp
   codcli?: number | null;          // código do cliente no WinThor — abre a Consulta Clientes (botão "C")
   rca_num?: number | null;         // quem FATURA: RCA oficial no WinThor (migration 0093)
-  carteira_rd?: string | null;     // quem ATENDE: carteira no RD Conversas (migration 0093)
   ciclo?: {                            // motor preditivo (análise de ciclo de compra)
     tipo: string | null;               // RECOMPRA/ATRASO/EXPANSAO/RECUPERACAO/REATIVACAO
     pct_ciclo: number | null;          // % do ciclo decorrido (100 = na hora, >110 = atrasado)
@@ -48,49 +45,12 @@ function moedaBR(v: number | null): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 });
 }
 
-// --- Selo de atribuição: quem ATENDE x quem FATURA -------------------------------
-// São conceitos distintos (§25.3) e podem divergir de forma legítima: o IS/ISR atende
-// cliente cujo RCA pertence ao GC ou a um vendedor de fora. Medido em 22/08/2026: das
-// 445 divergências, só 116 são entre pessoas do MESMO time — essas sim quase sempre
-// são transferência feita de um lado só. Alarmar nas 445 treinaria a equipe a ignorar
-// o selo, então o vermelho é reservado ao caso acionável.
-// O card já é posicionado pelo RCA (a vw_funil é RCA-first); o selo não move nada,
-// só torna visível a discordância que antes só existia numa view que ninguém abria.
-type SeloAtrib = { texto: string; title: string; cor: string; bg: string; borda: string };
-type VendMeta = Record<string, { rca: number | null; time: string | null }>;
-
-function seloAtribuicao(c: Card, vendMeta: VendMeta): SeloAtrib | null {
-  const rca = c.rca_num ?? null;
-  const rd = c.carteira_rd ?? null;
-  if (rca == null && !rd) return null; // nada a comparar (ex.: card de venda pura)
-
-  const NEUTRO = { cor: "#64748b", bg: "#f1f5f9", borda: "#dbe3ec" };
-  const AVISO = { cor: "#b45309", bg: "#fff7ed", borda: "#f0c987" };
-  const ALERTA = { cor: "#b91c1c", bg: "#fef2f2", borda: "#f3b4b4" };
-  const texto = `RCA ${rca ?? "—"} · RD ${rd ?? "—"}`;
-
-  // sem vínculo com o WinThor: a compra deste cliente não credita RCA nenhum
-  if (rca == null) {
-    return { texto, ...AVISO, title: `Atendido por ${rd} no RD Conversas, mas sem vínculo com o WinThor (sem CPF ou sem cadastro). A compra dele não credita RCA nenhum — pedir o CPF na conversa resolve.` };
-  }
-  // sem carteira no RD: contato de prospecção, nunca atendido
-  if (!rd) {
-    return { texto, ...NEUTRO, title: `RCA ${rca} no WinThor. Ainda sem carteira no RD Conversas — este contato nunca teve atendimento.` };
-  }
-
-  const donoDoRca = Object.entries(vendMeta).find(([, m]) => m.rca === rca);
-  const slugRca = donoDoRca?.[0] ?? null;
-  if (slugRca === rd) {
-    return { texto, ...NEUTRO, title: `Quem atende no RD (${rd}) e quem fatura no WinThor (RCA ${rca}) são a mesma pessoa.` };
-  }
-
-  const timeRd = vendMeta[rd]?.time ?? null;
-  const timeRca = donoDoRca?.[1].time ?? null;
-  if (timeRd && timeRca && timeRd === timeRca) {
-    return { texto, ...ALERTA, title: `DIVERGÊNCIA A CORRIGIR — ${rd} atende no RD Conversas, mas o RCA oficial é ${slugRca} (${rca}). Os dois são do mesmo time (${timeRd}), então quase sempre é transferência feita de um lado só. Avisar a supervisão.` };
-  }
-  return { texto, ...NEUTRO, title: `${rd} atende no RD Conversas; quem fatura é o RCA ${rca}${slugRca ? ` (${slugRca})` : " — de outro time ou de fora do CRM"}. Comum quando o cliente pertence a outra equipe; não exige correção.` };
-}
+// O selo de atribuição (quem ATENDE no RD x quem FATURA no WinThor) foi
+// REMOVIDO em 12/09/2026. Ele comparava `carteira_rd` com `rca_num`, e a
+// carteira do RD deixou de existir com o §69 — restava uma função de 40 linhas
+// que ninguém chamava desde então, mais o estado `vendMeta`, que era preenchido a
+// cada load e lido por ela só. O card mostra hoje só "RCA n", montado no próprio
+// render. Código morto que ninguém percebe estar quebrado é pior que ausência.
 
 // cards sintéticos da fila de prospecção (WinThor) — nunca tiveram conversa no RD
 // Conversas, não têm cliente_id real de lá, só telefone pra abrir WhatsApp direto.
@@ -454,7 +414,6 @@ export default function Page() {
   const [vendCores, setVendCores] = useState<Record<string, string>>({});
   // rca_num + time por carteira: o selo de atribuição precisa saber de quem é cada RCA
   // e se as duas pontas são do mesmo time (migration 0093)
-  const [vendMeta, setVendMeta] = useState<VendMeta>({});
   // totais do cabeçalho de Pedido Emitido: por carteira -> por período -> {total, vendas}
   const [vendasTotais, setVendasTotais] = useState<Record<string, Record<string, { total: number; vendas: number }>>>({});
   // cards de Pedido Emitido (vêm das views de faturamento, 1 linha por cliente por período)
@@ -506,11 +465,152 @@ export default function Page() {
   const [contatos, setContatos] = useState<Record<string, any>>({});
 
   // ---- thread completa no card ---------------------------------------------
-  // O card já nasce com as 3 últimas mensagens, que vêm de graça no payload do
-  // board. A conversa inteira é buscada só quando a pessoa pede — rolando até o
-  // topo da caixa ou clicando no aviso. Uma conversa por vez.
+  // O card nasce com UMA linha de prévia (`ultima_mensagem`, que vem de graça no
+  // payload). As 3 bolhas chegam quando o card entra na tela (ver `previas`
+  // abaixo) e a conversa inteira só quando a pessoa pede — rolando até o topo da
+  // caixa ou clicando no aviso. Uma conversa por vez.
   const [threads, setThreads] = useState<Record<string, Msg[]>>({});
   const [threadCarregando, setThreadCarregando] = useState<string | null>(null);
+  /**
+   * Cards em que a PESSOA rolou a caixa de mensagens (roda, dedo ou arrasto).
+   * A caixa também rola sozinha — o `ref` dela crava `scrollTop = scrollHeight`
+   * a cada render —, e sem distinguir uma coisa da outra o board abria buscando
+   * a conversa inteira de vários cards sem ninguém pedir. Ver o `onScroll`.
+   */
+  const rolouAMao = useRef<Set<string>>(new Set());
+
+  // ---- PRÉVIAS: as 3 bolhas, só dos cards que entram na tela ---------------
+  //
+  // Elas vinham dentro do payload do board, na coluna `ultimas_mensagens` — um
+  // lateral join em `mensagens` que o laudo mediu em +677 ms por página de 1000
+  // linhas (`prototipos/laudo-performance.md` §2). O board desenha ~400 cards e
+  // a pessoa enxerga algumas dezenas: pedir a prévia de todos era pagar mil
+  // buscas para mostrar poucas.
+  //
+  // ⚠️ Aquele +677 ms NÃO reproduz mais: refeito em 12/09, o custo da coluna é
+  // de +84 ms por página (laudo §7.1), e a causa da queda não foi investigada.
+  // O que sustenta esta mudança hoje é outra coisa, também medida: o payload do
+  // board caiu de 2,81 MB para 1,96 MB, e o custo da coluna é POR LINHA — volta
+  // a crescer com a base, sem avisar.
+  //
+  // Agora quem pede é o `IntersectionObserver`: entrou na tela, entra no lote.
+  //
+  // ⚠️ A prévia é CACHE, e cache de conversa azeda em minutos. A chave é
+  // `cliente_id` + `ultima_atividade`: quando chega mensagem nova, o card muda
+  // de `ultima_atividade` (pelo load ou pelo delta), a prévia guardada deixa de
+  // casar e é buscada de novo. Sem isso o card mostraria três bolhas velhas
+  // justamente no cliente que acabou de falar — pior que não mostrar nenhuma.
+  type Previa = { ate: string | null; msgs: Msg[] };
+  const [previas, setPrevias] = useState<Record<string, Previa>>({});
+  const previasRef = useRef<Record<string, Previa>>({});
+  previasRef.current = previas;
+  /** ids desenhados na tela agora, alimentado pelo observer */
+  const cardsVisiveis = useRef<Set<string>>(new Set());
+  /** `ultima_atividade` de cada card, para saber se a prévia guardada envelheceu */
+  const cardAte = useRef<Map<string, string | null>>(new Map());
+  const previasEmVoo = useRef(false);
+  /** alguém entrou na tela enquanto um lote voava — ver a coalescência abaixo */
+  const previasPendente = useRef(false);
+  const previasAgendado = useRef<any>(null);
+  /** Teto por chamada. O servidor tem o dele (150); este é o do lote. */
+  const PREVIAS_LOTE = 100;
+
+  const buscarPrevias = useCallback(async () => {
+    // ⚠️ COALESCE, NÃO DESCARTA — e a diferença foi medida.
+    //
+    // A primeira versão fazia `if (emVoo) return` e pronto. Resultado no
+    // navegador, a 1600x1000: 24 cards de conversa real dentro da tela, **15
+    // pedidos**. Os 9 que entraram na tela enquanto o primeiro lote voava eram
+    // simplesmente jogados fora, e como o observer só reavisa quando um card
+    // MUDA de estado, eles nunca mais eram pedidos — ficavam com a prévia de uma
+    // linha até alguém rolar a tela para longe e voltar.
+    //
+    // É exatamente a armadilha que o delta do board já tinha pago: descartar o
+    // aviso que chega durante o voo parece inofensivo e vira dado que não chega.
+    // Aqui, marcar e reprocessar no fim custa uma linha.
+    if (previasEmVoo.current) { previasPendente.current = true; return; }
+    previasPendente.current = false;
+    const faltando: string[] = [];
+    for (const id of cardsVisiveis.current) {
+      // Card sintético do ERP não tem conversa — `winthor:` é fila de
+      // prospecção, `venda:` é nota fiscal. Pedir seria ida garantidamente
+      // vazia, e a lista de visíveis é cheia deles.
+      if (/^(winthor|venda):/.test(id)) continue;
+      const p = previasRef.current[id];
+      if (p && p.ate === (cardAte.current.get(id) ?? null)) continue;
+      faltando.push(id);
+      if (faltando.length >= PREVIAS_LOTE) break;
+    }
+    if (!faltando.length) return;
+    previasEmVoo.current = true;
+    try {
+      const r = await fetch(`/api/funil/previas?ids=${encodeURIComponent(faltando.join(","))}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      const vindas = j?.previas ?? {};
+      setPrevias((p) => {
+        const novo = { ...p };
+        // Grava TODOS os pedidos, não só os que voltaram com mensagem: id sem
+        // conversa (ou fora do escopo) volta como lista vazia, e guardar essa
+        // resposta é o que impede o card de repetir a pergunta a cada rolagem.
+        for (const id of faltando) {
+          novo[id] = { ate: cardAte.current.get(id) ?? null, msgs: (vindas[id] ?? []) as Msg[] };
+        }
+        return novo;
+      });
+    } catch { /* silêncio: o card segue com a prévia de uma linha */ }
+    finally {
+      previasEmVoo.current = false;
+      // Volta se sobrou gente do lote (rolagem rápida, ou o board recarregou e
+      // invalidou tudo o que está na tela) OU se alguém entrou na tela enquanto
+      // este lote voava.
+      if (faltando.length >= PREVIAS_LOTE || previasPendente.current) agendarPrevias();
+    }
+  }, []);
+
+  const agendarPrevias = useCallback(() => {
+    clearTimeout(previasAgendado.current);
+    // Rolar o board dispara dezenas de entradas seguidas. Sem a espera, cada
+    // card viraria uma requisição — que é exatamente o vício que esta mudança
+    // existe para matar (§15.1).
+    previasAgendado.current = setTimeout(() => { void buscarPrevias(); }, 180);
+  }, [buscarPrevias]);
+
+  const observador = useRef<IntersectionObserver | null>(null);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;   // SSR e navegador antigo
+    observador.current = new IntersectionObserver((entradas) => {
+      let mudou = false;
+      for (const e of entradas) {
+        const id = (e.target as HTMLElement).dataset.card;
+        if (!id) continue;
+        if (e.isIntersecting) { if (!cardsVisiveis.current.has(id)) { cardsVisiveis.current.add(id); mudou = true; } }
+        else cardsVisiveis.current.delete(id);
+      }
+      if (mudou) agendarPrevias();
+    }, {
+      // Margem generosa de propósito: pedir a prévia do card que está logo
+      // abaixo da dobra faz a bolha já estar lá quando ele aparece. Rolagem
+      // normal nunca mostra o card sem prévia.
+      rootMargin: "300px",
+    });
+    return () => { observador.current?.disconnect(); observador.current = null; clearTimeout(previasAgendado.current); };
+  }, [agendarPrevias]);
+
+  const observarCard = useCallback((el: HTMLElement | null) => {
+    if (el) observador.current?.observe(el);
+  }, []);
+
+  // Cada load e cada delta podem trazer `ultima_atividade` nova. Este efeito é
+  // quem conta isso às prévias: reescreve o mapa de frescor e manda buscar de
+  // novo o que azedou. Sem ele, o card que acabou de receber mensagem
+  // continuaria mostrando as três bolhas de antes até alguém rolar a tela.
+  useEffect(() => {
+    const m = new Map<string, string | null>();
+    for (const c of cards) m.set(c.cliente_id, c.ultima_atividade ?? null);
+    for (const c of pedidoCards) m.set(c.cliente_id, c.ultima_atividade ?? null);
+    cardAte.current = m;
+    agendarPrevias();
+  }, [cards, pedidoCards, agendarPrevias]);
 
   async function abrirContato(clienteId: string) {
     if (menuContato === clienteId) { setMenuContato(null); return; }
@@ -671,7 +771,6 @@ export default function Page() {
       setVendasTotais(j.vendasTotais ?? {});
       setPedidoCards(j.pedidoCards ?? []);
       setVendCores(Object.fromEntries((j.vendedores ?? []).map((v: any) => [v.slug, v.cor]).filter((e: any[]) => e[0] && e[1])));
-      setVendMeta(Object.fromEntries((j.vendedores ?? []).filter((v: any) => v?.slug).map((v: any) => [v.slug, { rca: v.rca_num ?? null, time: v.time ?? null }])));
       setVendTodos((j.vendedores ?? []).map((v: any) => v?.slug).filter(Boolean));
       setAtualizado(new Date().toLocaleTimeString("pt-BR"));
     } catch (e: any) {
@@ -692,8 +791,8 @@ export default function Page() {
   // ---- DELTA: mover UM card em vez de reconstruir o board -----------------
   //
   // O laudo de performance (prototipos/laudo-performance.md) mediu o custo de
-  // cada carregamento do board: 19 idas ao banco, 2,7 MB, e ~2,8 s de trabalho
-  // do Postgres só na coluna `ultimas_mensagens`. E registrou o multiplicador:
+  // cada carregamento do board: 19 idas ao banco e 2,7 MB. E registrou o
+  // multiplicador:
   // "cada mensagem dispara um evento de Realtime, e cada aba aberta reage com
   // um recarregamento do board". É esse multiplicador que morre aqui — o aviso
   // deixa de reconstruir tudo e passa a recalcular só quem mudou.
@@ -1165,6 +1264,21 @@ export default function Page() {
       setAcks(limpos);
       localStorage.setItem(ACKS_KEY, JSON.stringify(limpos));
     } catch {}
+    // ⚠️ O BOARD COMEÇA A CARREGAR AQUI, SEM ESPERAR A SESSÃO.
+    //
+    // `load()` ficava no efeito do Realtime, atrás de `if (!sessao) return`.
+    // Só que ele não usa `sessao` para nada: quem decide o escopo por carteira é
+    // o `/api/funil`, no SERVIDOR, lendo o mesmo cookie. A espera era
+    // serialização pura de duas chamadas independentes.
+    //
+    // Medido na abertura do board (Chrome, build de produção): `/api/session`
+    // ocupava 930→1746 ms e o `/api/funil` só partia em 1791 ms. Agora as duas
+    // saem juntas.
+    //
+    // Deslogado, `/api/funil` responde 401 e o erro não chega à tela: sem sessão
+    // quem renderiza é a tela de login. É uma requisição perdida no caso em que
+    // não há nada para mostrar mesmo.
+    void load();
     fetch("/api/session")
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
@@ -1196,10 +1310,9 @@ export default function Page() {
   // aplica a autorização por carteira no servidor.
   //
   // O QUE MUDOU EM 11/09: o aviso já era barato, a REAÇÃO é que era cara. Cada
-  // broadcast chamava /api/funil inteiro — 19 idas ao banco e ~2,8 s de trabalho
-  // do Postgres só na coluna `ultimas_mensagens` (laudo de performance) — para,
-  // quase sempre, mover UM card. Agora chama /api/funil/delta, que recalcula ao
-  // vivo só os clientes que mudaram.
+  // broadcast chamava /api/funil inteiro — 19 idas ao banco e ~2 s (laudo de
+  // performance) — para, quase sempre, mover UM card. Agora chama
+  // /api/funil/delta, que recalcula ao vivo só os clientes que mudaram.
   //
   // REDE DE PROTEÇÃO: o load completo passou de 60s para 5 min. Ele deixou de ser
   // o que mantém o board em dia (isso é o delta) e voltou a ser o que sempre
@@ -1208,7 +1321,11 @@ export default function Page() {
   // cobre — venda nova, ciclo de compra —, porque faturamento não emite aviso.
   useEffect(() => {
     if (!sessao) return;
-    load();
+    // O primeiro `load()` mora no efeito de montagem, junto do `/api/session` —
+    // aqui ficam só a rede de proteção e o Realtime. Chamá-lo de novo neste
+    // ponto seria uma segunda reconstrução completa do board a cada abertura
+    // (a guarda de in-flight coalesceria as duas, mas a segunda rodaria logo em
+    // seguida, de graça).
     const lento = setInterval(load, 5 * 60_000);
 
     let canal: any = null;
@@ -3047,8 +3164,15 @@ export default function Page() {
                       const alerta = ehAlerta(c, acks[c.cliente_id]);
                       // até 3 últimas mensagens (mais antiga em cima, recente embaixo). Fallback:
                       // se a coluna nova (migration 0005) ainda não veio, usa só a última.
-                      const msgsRaw: Msg[] = (c.ultimas_mensagens && c.ultimas_mensagens.length)
-                        ? c.ultimas_mensagens
+                      // A prévia de 3 bolhas vem de `/api/funil/previas`, buscada
+                      // quando o card entra na tela. Enquanto não chega — e para
+                      // sempre, se ela azedou porque entrou mensagem nova — vale
+                      // a de UMA linha, que veio no payload do board. O card
+                      // nunca fica vazio, e nunca mostra bolha velha: a prévia só
+                      // é aceita se foi buscada para ESTA `ultima_atividade`.
+                      const pv = previas[c.cliente_id];
+                      const msgsRaw: Msg[] = (pv && pv.ate === (c.ultima_atividade ?? null) && pv.msgs.length)
+                        ? pv.msgs
                         : (c.ultima_mensagem ? [{ c: c.ultima_mensagem, e: c.ultima_enviada_por, t: c.ultima_atividade }] : []);
                       // pendentes (enviadas agora, aguardando o ETL confirmar) somem sozinhas
                       // quando o mesmo texto já chegou pela sincronização real (evita duplicar)
@@ -3071,6 +3195,12 @@ export default function Page() {
                       return (
                         <article
                           key={c.cliente_id}
+                          // O observer avisa quando este card entra na tela, e é
+                          // isso que dispara a busca da prévia de 3 bolhas. O id
+                          // vai no `dataset` porque o callback do observer recebe
+                          // o elemento, não o card.
+                          ref={observarCard}
+                          data-card={c.cliente_id}
                           draggable
                           onDragStart={() => setArrastando(c)}
                           onDragEnd={() => { setArrastando(null); setSobreLixeira(false); }}
@@ -3174,13 +3304,37 @@ export default function Page() {
                               if (el && !threads[c.cliente_id]) el.scrollTop = el.scrollHeight;
                             }}
                             onClick={(e) => e.stopPropagation()}
-                            onWheel={(e) => e.stopPropagation()}
+                            // A roda do mouse é o gesto mais comum aqui, e não
+                            // emite `pointerdown` — sem esta linha o "▲ conversa
+                            // inteira" por rolagem simplesmente não funcionaria.
+                            onWheel={(e) => { e.stopPropagation(); rolouAMao.current.add(c.cliente_id); }}
                             onScroll={(e) => {
                               // Chegou ao topo? Traz o resto. UMA requisição por card, e
                               // só do card que a pessoa está lendo — nunca dos ~380 que
                               // estão desenhados na tela.
-                              if (e.currentTarget.scrollTop <= 4 && temConversaReal) void carregarThread(c.cliente_id);
+                              //
+                              // ⚠️ AS DUAS GUARDAS ABAIXO NÃO SÃO ZELO — sem elas o board
+                              // abria disparando ~9 chamadas a /api/chat/thread sozinho.
+                              //
+                              // A causa é o `ref` logo acima: ele faz `scrollTop =
+                              // scrollHeight` a CADA render. Numa caixa que mal transborda,
+                              // o navegador crava esse valor em 0..4 e emite um evento de
+                              // rolagem — que é indistinguível, aqui dentro, de alguém ter
+                              // arrastado até o topo. O resultado é o card buscar a conversa
+                              // inteira sem ninguém ter pedido, em todo card cuja prévia
+                              // quase não rola. E isso piora com a prévia de UMA linha, que
+                              // é o estado normal do card antes de `/api/funil/previas`
+                              // responder: caixa curta é caixa que não rola.
+                              const el = e.currentTarget;
+                              if (!temConversaReal) return;
+                              // 1. caixa que não rola não tem topo para alguém alcançar
+                              if (el.scrollHeight - el.clientHeight <= 8) return;
+                              // 2. e o gesto tem que ter partido de uma pessoa
+                              if (!rolouAMao.current.has(c.cliente_id)) return;
+                              if (el.scrollTop <= 4) void carregarThread(c.cliente_id);
                             }}
+                            onPointerDown={() => rolouAMao.current.add(c.cliente_id)}
+                            onTouchStart={() => rolouAMao.current.add(c.cliente_id)}
                             style={{ flex: 1, minHeight: 0, marginTop: 6, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}
                           >
                             {temConversaReal && !threads[c.cliente_id] && msgsChrono.length > 0 && (
