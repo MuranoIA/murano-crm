@@ -23,6 +23,14 @@ import { espera } from "../ajuda.mjs";
 export const ciclo = "ciclo11 — chat embutido no iframe do hub";
 
 const PORTA_HOST = 3199;
+/**
+ * O impostor: mesma pagina, OUTRA porta — e porta diferente ja e outra origem.
+ * Existe para provar que a trava de `event.origin` da ponte morde. Sem ele o
+ * teste da ponte so provaria que o recado CHEGA, e "chega de qualquer um" seria
+ * um vazamento de conversa de cliente para qualquer pagina que embutisse o
+ * Pulse.
+ */
+const PORTA_IMPOSTOR = 3198;
 /** O `allow` real do hub (murano-app/src/app/crm-externo/page.tsx). */
 const ALLOW_DO_HUB = "clipboard-write; microphone; autoplay";
 
@@ -30,7 +38,18 @@ function paginaHost(allow, cliente) {
   const src = `http://localhost:3100/chat?embed=1${cliente ? `&cliente=${encodeURIComponent(cliente)}` : ""}`;
   return `<!doctype html><meta charset="utf-8"><title>hub de ensaio</title>
 <style>html,body{margin:0;height:100%}iframe{width:100%;height:100%;border:0}</style>
-<iframe id="q" src="${src}"${allow ? ` allow="${allow}"` : ""}></iframe>`;
+<iframe id="q" src="${src}"${allow ? ` allow="${allow}"` : ""}></iframe>
+<script>
+// O que o service worker do hub faz ao clicar em "Responder" (0134/0135): posta
+// no quadro pedindo a conversa. Aqui e a pagina que posta, porque o efeito
+// medido e o mesmo — o Pulse nao sabe (nem pode saber) se o recado nasceu no
+// worker ou na pagina; ele so ve a ORIGEM.
+window.mandarRecado = function (id) {
+  document.getElementById('q').contentWindow.postMessage(
+    { tipo: 'hub:abrir-conversa', cliente_id: id, acao: 'responder' },
+    'http://localhost:3100');
+};
+</script>`;
 }
 
 /**
@@ -46,6 +65,17 @@ function subirHost() {
       r.end(paginaHost(u.pathname.startsWith("/sem-allow") ? null : ALLOW_DO_HUB, u.searchParams.get("cliente")));
     });
     s.listen(PORTA_HOST, "127.0.0.1", () => res(s));
+  });
+}
+
+/** O mesmo host, noutra porta: outra origem, mesmo recado. */
+function subirImpostor() {
+  return new Promise((res) => {
+    const s = createServer((_req, r) => {
+      r.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      r.end(paginaHost(ALLOW_DO_HUB, null));
+    });
+    s.listen(PORTA_IMPOSTOR, "127.0.0.1", () => res(s));
   });
 }
 
@@ -69,7 +99,7 @@ async function jsNoQuadro(aba, expr) {
 }
 
 /** Abre uma aba isolada, guarda os contextos e carrega o hub falso. */
-async function abrirHub(t, sessao, caminho = "/") {
+async function abrirHub(t, sessao, caminho = "/", porta = PORTA_HOST) {
   const aba = await t.abaIsolada();
   aba.contextosDoQuadro = [];
   aba.ouvir((m) => {
@@ -83,7 +113,7 @@ async function abrirHub(t, sessao, caminho = "/") {
       sameSite: "None", secure: true,
     });
   }
-  await aba.ir(`http://127.0.0.1:${PORTA_HOST}${caminho}`, { esperar: 6000 });
+  await aba.ir(`http://127.0.0.1:${porta}${caminho}`, { esperar: 6000 });
   return aba;
 }
 
@@ -91,12 +121,14 @@ export default async function (t) {
   if (!t.servidorNoAr) return t.pular("ciclo 11 inteiro", "✅", "servidor fora do ar");
 
   let host = null;
+  let impostor = null;
   const abas = [];
   const cliente = { i: 700, id: sim.idFicticio(700) };
 
   try {
     await t.passo("preparação: hub falso no ar e uma conversa para olhar", "✅", async () => {
       try { host = await subirHost(); } catch (e) { throw new Error(`PULAR:não subi o host: ${e.message}`); }
+      try { impostor = await subirImpostor(); } catch (e) { throw new Error(`PULAR:não subi o impostor: ${e.message}`); }
       const r = await sim.clienteEscreve(cliente.i, "Oi! Vim pelo Instagram, queria saber sobre a progressiva.");
       if (r.status !== 200) throw new Error(`webhook devolveu ${r.status}`);
       return `host em 127.0.0.1:${PORTA_HOST}, conversa ${cliente.id} criada`;
@@ -203,6 +235,74 @@ export default async function (t) {
         : `apareceu em ${seg}s — veio pelo POLL de 60s, não pelo Realtime (a assinatura do canal não está entregando no quadro)`;
     });
 
+    // ---- a ponte do push (0134/0135) ------------------------------------
+    //
+    // Em iframe cross-origin o navegador responde `Notification.permission =
+    // "denied"` ANTES de qualquer pergunta (medido em 14/09/2026), então o push
+    // do time teve de nascer no hub. O caminho de volta — "abra esta conversa"
+    // — é `postMessage`, e é isto que estes dois passos medem.
+    //
+    // ⚠️ Os dois só rodam se o build tiver sido feito com a origem de ensaio.
+    // `ORIGEM_HUB` é constante de build (lib/hub.ts): num build de produção o
+    // Pulse recusa o recado do host de ensaio E ESTÁ CERTO — reprovar aqui
+    // acusaria o produto de um defeito que é do ambiente do teste.
+    const origemDeEnsaio = `http://127.0.0.1:${PORTA_HOST}`;
+    const buildComEnsaio = (t.db.ENV.NEXT_PUBLIC_HUB_ORIGIN ?? "").trim() === origemDeEnsaio;
+    const motivoPular = `o build precisa de NEXT_PUBLIC_HUB_ORIGIN=${origemDeEnsaio} (hoje: ${t.db.ENV.NEXT_PUBLIC_HUB_ORIGIN ?? "ausente"})`;
+
+    await t.passo('o hub manda "abra esta conversa" e o quadro abre, com o cursor na caixa', "⚠️", async () => {
+      if (!buildComEnsaio) throw new Error(`PULAR:${motivoPular}`);
+      const aba = await abrirHub(t, { crm_sessao: "admin", crm_email: "romuloalbuquerque@muranoprofessional.com.br" });
+      abas.push(aba);
+
+      const antes = await jsNoQuadro(aba, "return !!document.querySelector('textarea');");
+      if (antes) throw new Error("o quadro já tinha conversa aberta antes do recado — o passo não mediria nada");
+
+      await aba.js(`window.mandarRecado(${JSON.stringify(cliente.id)}); return true;`);
+
+      // ⚠️ A identidade se confere pelo CABEÇALHO, não pelo texto das
+      // mensagens. A primeira versão deste passo procurava a palavra da
+      // primeira mensagem e reprovou com a conversa CERTA na tela: o cabeçalho
+      // pinta na hora e a thread ainda dizia "Carregando mensagens…". Era
+      // asserção prematura, não defeito — e teria sido lida como defeito.
+      const telefone = cliente.id.replace(/\D/g, "");
+      let r = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 20_000) {
+        r = await jsNoQuadro(aba, `
+          const ta = document.querySelector('textarea');
+          return { compositor: !!ta, foco: !!ta && document.activeElement === ta,
+                   certa: (document.body.textContent||'').includes(${JSON.stringify(telefone)}) };`);
+        if (r?.compositor && r?.foco && r?.certa) break;
+        await espera(500);
+      }
+      await aba.foto("ciclo11-ponte-push");
+      if (!r?.compositor) throw new Error("o recado do hub não abriu conversa nenhuma no quadro");
+      if (!r?.certa) throw new Error("abriu uma conversa, mas NÃO a que o recado pediu");
+      // O botão promete "Responder": sem o foco, quem clicou ainda precisa
+      // procurar a caixa — que é justamente o passo que a notificação existe
+      // para poupar.
+      if (!r?.foco) throw new Error("a conversa abriu mas o cursor NÃO ficou na caixa de mensagem");
+      return "conversa certa aberta e cursor na caixa";
+    });
+
+    await t.passo("uma página de OUTRA origem manda o mesmo recado e não acontece nada", "⚠️", async () => {
+      if (!buildComEnsaio) throw new Error(`PULAR:${motivoPular}`);
+      const aba = await abrirHub(t, { crm_sessao: "admin", crm_email: "romuloalbuquerque@muranoprofessional.com.br" },
+        "/", PORTA_IMPOSTOR);
+      abas.push(aba);
+
+      await aba.js(`window.mandarRecado(${JSON.stringify(cliente.id)}); return true;`);
+      await espera(4000);
+
+      const r = await jsNoQuadro(aba, "return { compositor: !!document.querySelector('textarea') };");
+      await aba.foto("ciclo11-ponte-impostor");
+      if (r?.compositor) {
+        throw new Error("uma página de outra origem abriu a conversa de uma cliente — a trava de event.origin não está mordendo");
+      }
+      return `recado de 127.0.0.1:${PORTA_IMPOSTOR} ignorado, como tem de ser`;
+    });
+
     await t.passo("nenhuma exceção de JavaScript em nenhum dos quadros", "✅", async () => {
       const ruins = abas.flatMap((a, i) => a.excecoes.map((e) => `quadro ${i + 1}: ${e.slice(0, 200)}`));
       if (ruins.length) throw new Error(ruins.slice(0, 4).join("\n"));
@@ -219,5 +319,6 @@ export default async function (t) {
       await c.from("clientes").delete().eq("id", cliente.id);
     });
     if (host) try { host.close(); } catch { /* já foi */ }
+    if (impostor) try { impostor.close(); } catch { /* já foi */ }
   }
 }

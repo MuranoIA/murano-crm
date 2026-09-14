@@ -19,7 +19,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
 import { FalhaAoGravar, ehFalhaAoGravar, aplicarRecibo } from "../../../../lib/reciboStatus";
-import { avisar, destinatarios } from "../../../../lib/chatPush";
+import { avisar, destinatarios, resumoDaRajada } from "../../../../lib/chatPush";
 import { avisarForaDeHorario } from "../../../../lib/foraDeHorario";
 
 import { acharCpfNoTexto } from "../../../../lib/cpf";
@@ -256,7 +256,15 @@ async function gravarMensagemRecebida(
         titulo: nomePerfil || waId,
         // recorta: a notificação do sistema trunca sozinha, mas num aparelho
         // de tela bloqueada é melhor nós decidirmos onde corta
-        corpo: texto.length > 120 ? `${texto.slice(0, 117)}…` : (texto || "enviou uma mensagem"),
+        // Rajada vira UMA frase. A `tag` da notificação já funde as bolhas no
+        // aparelho, mas o texto continuaria sendo só a última — e quem olha a
+        // tela bloqueada não saberia que havia mais. Três mensagens em 90s
+        // viram "3 novas mensagens", que é o critério da spec.
+        corpo: await resumoDaRajada(
+          sb,
+          cliente.id,
+          texto.length > 120 ? `${texto.slice(0, 117)}…` : (texto || "enviou uma mensagem"),
+        ),
         cliente_id: cliente.id,
         url: "/chat",
       });
