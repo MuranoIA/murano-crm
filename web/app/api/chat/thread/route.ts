@@ -2,6 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { lerCrmConfig, filtroLinhas } from "../../../../lib/crmConfig";
 import { linhaDaConversa } from "../../../../lib/whatsapp";
+// A tradução de "[template] nome_tecnico" mora em `lib/` porque agora tem DOIS
+// donos: esta thread e o PDF da conversa. Se cada um traduzisse por conta
+// própria, o documento baixado mostraria o identificador técnico enquanto a tela
+// ao lado mostra a frase — e ninguém associaria a diferença a essa função.
+import { textoDoTemplate } from "../../../../lib/templateTexto";
 import { conversaNaCloud } from "../../../../lib/ligacao";
 
 export const dynamic = "force-dynamic";
@@ -319,31 +324,4 @@ async function citadasDoLote(sb: any, lote: any[], cfg: any): Promise<any[]> {
   // legível, com o mesmo aviso de antes no lugar do trecho
   if (error) { console.warn("[chat/thread] citadas:", error.message); return []; }
   return data ?? [];
-}
-
-/**
- * Troca "[template] nome_tecnico" pelo TEXTO que a cliente leu.
- *
- * Mora aqui, e nao em linha, porque os dois caminhos da rota precisam dela: a
- * thread inteira e o lote incremental. Um disparo pode chegar pelo `?desde=`
- * como qualquer outra mensagem, e se so o caminho de cima soubesse traduzir,
- * a bolha nasceria com o identificador tecnico e so viraria texto no proximo
- * recarregamento -- diferenca que ninguem associaria a esta funcao.
- */
-async function textoDoTemplate(sb: any, mensagens: any[], nomeCompleto?: string | null) {
-  const pendentes = mensagens
-    .map((m: any) => /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1])
-    .filter(Boolean) as string[];
-  if (!pendentes.length) return;
-  const { data: tpls } = await sb
-    .from("crm_templates")
-    .select("meta_nome,corpo")
-    .in("meta_nome", [...new Set(pendentes)]);
-  const corpoDe = new Map((tpls ?? []).map((t: any) => [t.meta_nome, t.corpo]));
-  const primeiroNome = String(nomeCompleto ?? "").trim().split(/\s+/)[0] || "cliente";
-  for (const m of mensagens) {
-    const nome = /^\[template\]\s+(\S+)/.exec(String(m.conteudo ?? ""))?.[1];
-    const corpo = nome ? corpoDe.get(nome) : null;
-    if (corpo) m.conteudo = String(corpo).replace(/\{\{\s*1\s*\}\}/g, primeiroNome);
-  }
 }
