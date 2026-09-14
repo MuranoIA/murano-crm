@@ -3234,7 +3234,11 @@ function PendenciasAba({ d, recarregar }: { d: any; recarregar: (grupo: string |
     >
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         {[{ k: null as string | null, r: `Todas (${d.total ?? 0})` },
-          ...chaves.map((g) => ({ k: g.slice(0, 1), r: `${g} (${totais[g]})` }))].map((c) => {
+          // ⚠️ O código é tudo ANTES do "·", não a primeira letra. Desde a 0133
+          // existem "A1" e "A2" — com `slice(0, 1)` os dois chips virariam "A" e
+          // mostrariam a mesma lista, apagando na tela a separação que a
+          // migration criou no banco.
+          ...chaves.map((g) => ({ k: g.split("·")[0].trim(), r: `${g} (${totais[g]})` }))].map((c) => {
           const on = grupoAtivo === c.k;
           return (
             <button key={c.r} onClick={() => recarregar(c.k)}
