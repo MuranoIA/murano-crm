@@ -154,9 +154,14 @@ export async function GET() {
   // "não lida" = tem mensagem DO CLIENTE mais recente que a marca de leitura
   // deste usuário. Sem marca, a conversa inteira conta como não lida.
   const usuario = usuarioDaSessao();
-  const [{ data: leituras }, { data: estados }, { data: vendedores }, { data: pessoasQueAtendem },
+  const [{ data: leituras }, { data: favoritos }, { data: estados }, { data: vendedores }, { data: pessoasQueAtendem },
     cfgLayout, meuAcesso, esperaRes, notasRes, notasVistasRes, cfg] = await Promise.all([
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", usuario ?? ""),
+    // Favoritos (0137). Vem junto do resto, na mesma ida ao banco: é a lista
+    // mais chamada do sistema, e uma consulta a mais por abertura de tela
+    // custaria mais que o recurso inteiro. `eq(usuario)` porque a marca é DE
+    // QUEM MARCOU — duas pessoas podem favoritar a mesma cliente.
+    sb.from("chat_favorito").select("cliente_id").eq("usuario", usuario ?? ""),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
@@ -237,12 +242,14 @@ export async function GET() {
     else notaPorCliente.set(n.cliente_id, { n: 1, em: n.criada_em, autor: n.autor });
   }
 
+  const favoritados = new Set((favoritos ?? []).map((f: any) => f.cliente_id));
   for (const c of conversas) {
     const nota = notaPorCliente.get(c.cliente_id);
     if (nota) { c.nota_nova = nota.n; c.nota_autor = nota.autor; c.nota_em = nota.em; }
     const marca = lidaAte.get(c.cliente_id);
     c.nao_lida = c.ultima_enviada_por === "customer" &&
       (!marca || new Date(c.ultima_atividade) > new Date(marca));
+    c.favorita = favoritados.has(c.cliente_id);
     const e = estado.get(c.cliente_id);
     c.status = e?.status ?? "aberta";
     c.motivo = e?.motivo ?? null;
