@@ -37,9 +37,16 @@ export async function GET(req: Request) {
       .order("grupo")
       .order("nome")
       .range(from, from + PAGE - 1);
-    // filtra pelo prefixo da letra ("A", "B", …): o rótulo completo muda quando
-    // o texto for ajustado, a letra não
-    if (grupo) q = q.like("grupo", `${grupo}%`);
+    // Filtra pelo CÓDIGO do grupo ("A1", "A2", "B", …): o rótulo completo muda
+    // quando o texto for ajustado, o código não.
+    //
+    // ⚠️ O espaço no fim do padrão não é enfeite. Desde a 0133 existem "A1" e
+    // "A2", que pedem ações OPOSTAS — copiar um telefone que já temos, ou ir
+    // buscar um que não existe. Sem o espaço, `A1%` ainda seria um prefixo
+    // frouxo: no dia em que aparecer um "A10" ele entraria no filtro de "A1"
+    // sem ninguém notar. Os rótulos são "<código> · <texto>", então o espaço
+    // fecha o código.
+    if (grupo) q = q.like("grupo", `${grupo} %`);
     const { data, error } = await q;
     if (error) return Response.json({ error: error.message }, { status: 500 });
     linhas.push(...(data ?? []));
