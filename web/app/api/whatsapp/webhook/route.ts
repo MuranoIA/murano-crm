@@ -18,6 +18,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { baixarMidia, extensaoDoMime } from "../../../../lib/whatsapp";
+import { FalhaAoGravar, ehFalhaAoGravar, aplicarRecibo } from "../../../../lib/reciboStatus";
 import { avisar, destinatarios } from "../../../../lib/chatPush";
 import { avisarForaDeHorario } from "../../../../lib/foraDeHorario";
 
@@ -46,10 +47,9 @@ export const maxDuration = 30;
 // Reenviar e seguro porque todo upsert e por wamid (idempotente): a mensagem
 // que ja entrou entra de novo como a mesma linha.
 // ---------------------------------------------------------------------------
-class FalhaAoGravar extends Error {
-  readonly gravacao = true;
-}
-const ehFalhaAoGravar = (e: unknown): boolean => Boolean((e as any)?.gravacao);
+// Moram em `lib/reciboStatus.ts`, junto de quem mais os lanca — a mesma classe
+// em dois arquivos seriam duas verdades, e `ehFalhaAoGravar` deixaria de
+// reconhecer metade das falhas (e ela que decide entre 200 e 503).
 
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ async function processar(body: any): Promise<string[]> {
       }
       for (const st of value.statuses ?? []) {
         try {
-          await atualizarStatus(sb, st);
+          await aplicarRecibo(sb, st);
         } catch (e: any) {
           console.error("[wa-webhook] recibo nao aplicado:", st?.id, e?.message ?? e);
           if (ehFalhaAoGravar(e)) falhas.push(String(st?.id ?? "?"));
@@ -684,49 +684,3 @@ async function acharLigacao(
   return recente ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Status de mensagem ENVIADA por nós (sent → delivered → read; ou failed)
-// ---------------------------------------------------------------------------
-async function atualizarStatus(sb: any, st: any): Promise<void> {
-  const wamid = String(st.id ?? "");
-  const status = String(st.status ?? "");
-  if (!wamid || !status) return;
-  // Mapeia para o vocabulário que o banco já usa (herdado do RD):
-  // wait = só enviada · success = entregue · read = lida
-  const mapa: Record<string, string> = {
-    sent: "wait",
-    delivered: "success",
-    read: "read",
-    failed: "failed",
-  };
-  // O motivo da falha vai para o BANCO, não só para o log (migration 0091).
-  // Ficava em console.error: a explicação da Meta vivia na Vercel, some com o
-  // tempo, e na tela sobrava "falhou" sem causa. Em erro fora da documentação
-  // pública — a maioria destes — o texto da Meta é a única pista que existe.
-  //
-  // Junta todos os campos que a Meta manda, filtrando vazios: `title` costuma
-  // ser genérico, `details` é onde mora a causa, e às vezes um deles vem como
-  // string VAZIA (§22.6.1) — por isso concatenar, nunca `??`.
-  const e0 = (st.errors ?? [])[0] ?? null;
-  const explicacao = e0
-    ? [e0.code ? `Meta ${e0.code}` : "", e0.title, e0.message, e0.error_data?.details]
-        .map((p: unknown) => String(p ?? "").trim())
-        .filter(Boolean)
-        .join(" — ")
-        .slice(0, 500)
-    : null;
-
-  const { error } = await sb
-    .from("mensagens")
-    .update({
-      status: mapa[status] ?? status,
-      // limpa o erro anterior quando a mensagem volta a andar (reenvio bem
-      // sucedido não pode continuar exibindo a falha de antes)
-      ...(status === "failed" ? { erro: explicacao ?? "falha sem detalhe da Meta" } : { erro: null }),
-    })
-    .eq("id", wamid);
-  if (error) throw new FalhaAoGravar(`update status: ${error.message}`);
-  if (status === "failed") {
-    console.error("[wa-webhook] envio falhou:", JSON.stringify(st.errors ?? st));
-  }
-}
