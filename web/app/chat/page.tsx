@@ -3761,6 +3761,17 @@ export default function Chat() {
     ? 24 * 3600 * 1000 - (Date.now() - new Date(ultimaRecebida.criada_em).getTime())
     : null;
   const janelaAberta = msRestantes != null && msRestantes > 0;
+  // ⚠️ SEM NENHUMA MENSAGEM RECEBIDA POR ESTE NÚMERO a janela nunca chegou a
+  // abrir — e, para quem vai digitar, isso é tão fechado quanto a que expirou.
+  //
+  // Era o caso que ficava MUDO: a faixa só aparecia quando havia o que contar
+  // (`msRestantes != null`), então a conversa que nunca teve resposta não dizia
+  // nada, e o vendedor só descobria depois de escrever e o envio falhar —
+  // justamente o erro de R$ 0,43 que a faixa existe para evitar.
+  //
+  // O motivo muda o RECADO (nunca respondeu ≠ passou das 24h); a ação é a mesma,
+  // e é o mesmo botão.
+  const nuncaRespondeu = msRestantes == null;
   const janelaRotulo = !janelaAberta
     ? ""
     : msRestantes! > 2 * 3600 * 1000
@@ -5509,7 +5520,13 @@ export default function Chat() {
                     digitar. Fechada, ela deixa de ser aviso e vira ação: o
                     botão que reabre está na própria faixa, não numa instrução
                     mandando o vendedor procurar outro botão. */}
-                {d1 && msRestantes != null && (
+                {/* `msgs !== null` = a thread já chegou. A condição era
+                    `msRestantes != null`, que só é verdade quando existe uma
+                    mensagem recebida para contar — ou seja, a faixa sumia
+                    exatamente na conversa em que ela mais importa: a que nunca
+                    teve resposta. Esperar a thread evita o outro extremo, que é
+                    a faixa piscar "fechada" antes de o servidor responder. */}
+                {d1 && msgs !== null && (
                   <div style={{
                     display: "flex", alignItems: "center", gap: 9, margin: "0 14px",
                     padding: "6px 12px", fontSize: 12, borderRadius: 8,
@@ -5532,7 +5549,11 @@ export default function Chat() {
                           width: `${Math.max(2, Math.round((msRestantes! / (24 * 3600 * 1000)) * 100))}%` }} />
                       </span>
                     ) : (
-                      <span style={{ flex: 1, color: M.gray }}>só um template reabre a conversa</span>
+                      <span style={{ flex: 1, color: M.gray }}>
+                        {nuncaRespondeu
+                          ? "a cliente ainda não respondeu por este número — só template chega"
+                          : "só um template reabre a conversa"}
+                      </span>
                     )}
                     {!janelaAberta && (
                       <button onClick={() => setMenuTemplate(true)} disabled={enviando}
