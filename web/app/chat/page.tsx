@@ -2021,8 +2021,15 @@ export default function Chat() {
   useEffect(() => {
     if (linhas.length && linhaSel && !linhas.some((l) => l.id === linhaSel)) setLinhaSel(null);
   }, [linhas, linhaSel]);
+  // ⚠️ `atendentes` conta junto de `vendedores`. Antes esta linha olhava só as
+  // carteiras, então escolher a Lais (que atende pelo e-mail, sem carteira) era
+  // desfeito no render seguinte — o sintoma relatado foi "clico no nome dela e
+  // volta para todos os vendedores". Não era o clique que falhava: era esta
+  // limpeza, achando que a escolha era inválida.
   useEffect(() => {
-    if (vendedores.length && vendFiltro && !vendedores.some((v) => v.slug === vendFiltro)) setVendFiltro(null);
+    const conhecido = (e: string) =>
+      vendedores.some((v) => v.slug === e) || atendentes.some((a) => a.endereco === e);
+    if ((vendedores.length || atendentes.length) && vendFiltro && !conhecido(vendFiltro)) setVendFiltro(null);
   }, [vendedores, vendFiltro]);
 
   const carregarLista = useCallback(async () => {
@@ -2055,10 +2062,21 @@ export default function Chat() {
     setMenuVend(false);
     setCarteira(null);   // a agenda vem do servidor: refaz quando a aba abrir
     try {
+      // ⚠️ `ver_como` é escopo de CARTEIRA, e só. Ele é lido por treze rotas
+      // (board, relatórios, visões, indicadores…) que filtram por carteira —
+      // nenhuma sabe o que fazer com um endereço `u:<email>`. A rota recusa o
+      // que não está em `carteira_config`, e é o certo: se aceitasse, o board
+      // e os relatórios ficariam VAZIOS sem motivo aparente.
+      //
+      // Quem atende sem carteira não tem o que simular lá: a operação dessas
+      // pessoas é o chat. Então o filtro delas vale AQUI, na lista já
+      // carregada, e o que vai para o cookie é `null` — que além de não falhar,
+      // desfaz uma simulação de carteira que estivesse ligada antes.
+      const paraOCookie = slug && slug.startsWith("u:") ? null : slug;
       await fetch("/api/ver-como", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ carteira: slug }),
+        body: JSON.stringify({ carteira: paraOCookie }),
       });
     } catch {
       // cookie bloqueado ou rota fora: o filtro local segue valendo nesta tela,
@@ -3650,7 +3668,19 @@ export default function Chat() {
   // carteira so -- a lista tem de vir do cadastro (`vendedores`), senao o
   // seletor perde as outras opcoes e nao ha como trocar nem voltar para "Todos".
   const comConversa = [...new Set(baseLinha.filter((c) => !c.na_fila && c.vendedor).map((c) => c.vendedor as string))];
-  const vendedoresComConversa = [...new Set(vendFiltro ? [...vendedores.map((v) => v.slug), ...comConversa] : comConversa)]
+  // ⚠️ QUEM ATENDE SEM CARTEIRA ENTRA SEMPRE, tenha conversa ou não — e essa é
+  // a exceção à regra da linha de cima, não um descuido.
+  //
+  // Carteira sem conversa é uma opção que filtra para o vazio: some, e bem.
+  // Uma PESSOA é outra coisa: o supervisor procura a Lais ou a Tati no seletor
+  // justamente para saber se elas estão com alguma coisa — e "não aparece na
+  // lista" responde isso do jeito errado, dizendo que elas não existem. Foi o
+  // que aconteceu em 14/09/2026: a Tati, sem nenhuma conversa ainda, não
+  // aparecia em lugar nenhum, e a Lais aparecia e sumia conforme o filtro.
+  const enderecosQueAtendem = atendentes.map((a) => a.endereco);
+  const vendedoresComConversa = [...new Set(vendFiltro
+    ? [...vendedores.map((v) => v.slug), ...enderecosQueAtendem, ...comConversa]
+    : [...enderecosQueAtendem, ...comConversa])]
     .sort()
     .map((slug) => ({
       slug,
