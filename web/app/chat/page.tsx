@@ -15,6 +15,8 @@ import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/temp
 import { traduzErroMeta, codigoMeta, SEM_REENVIO } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
 import { nomeComCodigo } from "../../lib/nomeCliente";
+// o estado que sobrevive à troca de rota — o MESMO mecanismo que o board usa
+import { memoriaDeTela, fotoDeRota, memoriaDaSessao } from "../../lib/memoriaTela";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
 import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
@@ -1304,10 +1306,35 @@ const EMOJIS = [
   "🎂", "🥳", "❤️", "💜", "😇", "🤷", "😬", "😮", "🫶", "📦",
 ] as const;
 
+// ---- o que sobrevive a ir ao board e voltar (lib/memoriaTela) --------------
+// Só ESCOLHA da pessoa. A conversa aberta não entra aqui: ela já viaja na URL
+// (`?cliente=<id>`, escrito por `abrir`), que é o lugar certo — assim o link
+// serve para mandar a alguém, o "voltar" do navegador funciona, e a volta do
+// SSO cai na conversa em que a pessoa estava.
+type EscolhasChat = {
+  filtro: Selecao;
+  busca: string;
+  ordem: "recente" | "antiga";
+  vendFiltro: string | null;
+  linhaSel: string | null;
+};
+const memChat = memoriaDeTela<EscolhasChat>("crm_chat_escolhas");
+/** A última resposta do `/api/chat`, para a volta pintar a lista na hora. */
+const fotoLista = fotoDeRota<any>();
+
+// A sessão vem da MESMA memória que o board usa (lib/memoriaTela). Aqui
+// `undefined` significava "ainda não sei" e travava a tela inteira em
+// "Verificando sessão…" a cada navegação entre as duas telas.
+type SessaoChat = { role: string; carteira: string | null };
+
 export default function Chat() {
-  const [sessao, setSessao] = useState<{ role: string; carteira: string | null } | null | undefined>(undefined);
+  // ⚠️ `undefined` = ainda não sei, e é o que faz a tela mostrar "Verificando
+  // sessão…". Com a sessão já conhecida pela aba ela nasce preenchida, e o
+  // portão simplesmente não aparece. A revalidação corre por baixo.
+  const [sessao, setSessao] = useState<SessaoChat | null | undefined>(
+    () => memoriaDaSessao.conhecida() ?? undefined);
   const [conversas, setConversas] = useState<Conversa[]>([]);
-  const [busca, setBusca] = useState("");
+  const [busca, setBusca] = useState(() => memChat.ler()?.busca ?? "");
   const [sel, setSel] = useState<Conversa | null>(null);
   const [msgs, setMsgs] = useState<Msg[] | null>(null);
   // Mensagens CITADAS que não estão no lote carregado — a foto respondida lá
@@ -1332,7 +1359,7 @@ export default function Chat() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [filtro, setFiltro] = useState<Selecao>("todas");
+  const [filtro, setFiltro] = useState<Selecao>(() => memChat.ler()?.filtro ?? "todas");
   // A fila de onde a pessoa saiu quando escolheu uma etapa. Serve para o clique
   // no chip ACESO devolver para onde ela estava, e não para um "Meus
   // atendimentos" que ela não escolheu — um vendedor que estava em Esperando,
@@ -1535,7 +1562,7 @@ export default function Chat() {
       .then((r) => r.json()).then((j) => setLocais(j?.locais ?? []))
       .catch(() => {});   // sem enderecos cadastrados a opcao simplesmente nao aparece
   }, []);
-  const [ordem, setOrdem] = useState<"recente" | "antiga">("recente");
+  const [ordem, setOrdem] = useState<"recente" | "antiga">(() => memChat.ler()?.ordem ?? "recente");
   const [menuOrdem, setMenuOrdem] = useState(false);
   const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
   const [menuMobile, setMenuMobile] = useState(false);  // ☰ da barra de navegação
@@ -1646,7 +1673,8 @@ export default function Chat() {
   // --- filtro por NÚMERO (migration 0089): operamos Murano Pro e Murano Shop
   // ao mesmo tempo, e a sidebar precisa saber separar um do outro
   const [linhas, setLinhas] = useState<LinhaResumo[]>([]);
-  const [linhaSel, setLinhaSel] = useState<string | null>(null);   // null = todos os números
+  const [linhaSel, setLinhaSel] = useState<string | null>(() => memChat.ler()?.linhaSel ?? null);   // null = todos os números
+
   // catálogo de templates para o seletor do botão TEMPLATE (migration 0090):
   // o vendedor escolhe vendo o TEXTO, em vez de disparar
   // um "template padrão" que ele não sabe qual é
@@ -1658,7 +1686,25 @@ export default function Chat() {
   const [compondo, setCompondo] = useState<{ t: TemplateEscolha; valores: string[] } | null>(null);
   // filtro por VENDEDOR, como no board: só para quem enxerga mais de uma
   // carteira (admin/home). Vendedor já vê só a própria — chip seria redundante.
-  const [vendFiltro, setVendFiltro] = useState<string | null>(null);
+  const [vendFiltro, setVendFiltro] = useState<string | null>(() => memChat.ler()?.vendFiltro ?? null);
+
+  // Grava a escolha a cada mudança. UM efeito para as cinco, e não um `gravar()`
+  // em cada `onClick`: elas são mexidas do dropdown, dos chips de fila, dos
+  // chips de etapa, do seletor de vendedor, do seletor de número e da busca —
+  // uma esquecida gravaria estado parcial, e a volta traria metade do que a
+  // pessoa deixou, que é pior que trazer nada.
+  //
+  // ⚠️ FICA AQUI, e não junto das outras quatro lá em cima, porque `vendFiltro`
+  // é declarado NESTA linha: um efeito acima dela referenciando a variável é
+  // TDZ ("used before its declaration"), que o `tsc` pega.
+  //
+  // E continua ACIMA de todo `return` condicional, que é a regra que importa
+  // neste arquivo: a partir da checagem de sessão o render sai cedo, e um hook
+  // abaixo dela é chamado num render e não no outro — React #310, chat em
+  // branco. Já aconteceu aqui (§38.4).
+  useEffect(() => {
+    memChat.gravar({ filtro, busca, ordem, vendFiltro, linhaSel });
+  }, [filtro, busca, ordem, vendFiltro, linhaSel]);
 
   // Trocar o termo da busca ou o vendedor recomeça a agenda do topo. Sem isto,
   // quem tivesse expandido para 2.000 nomes e depois digitasse um nome ficaria
@@ -1824,15 +1870,66 @@ export default function Chat() {
     fetch("/api/session", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        setSessao(j?.role ? { role: j.role, carteira: j.carteira ?? null } : null);
+        const nova = j?.role ? { role: j.role, carteira: j.carteira ?? null } : null;
+        // guarda a resposta INTEIRA (papéis, e-mail): o board lê os mesmos
+        // campos dessa memória, e guardar só o recorte do chat o deixaria sem
+        // o seletor de papel depois de uma navegação.
+        memoriaDaSessao.guardar(j?.role ? j : null);
+        setSessao(nova);
         // "Ver como <vendedor>" (lib/verComo.ts): a escolha feita nos chips do
         // board vale aqui tambem, porque mora num cookie lido pelo servidor. A
         // lista ja chega estreitada; o seletor precisa dizer o mesmo, senao a
         // tela mostra uma carteira com "Todos os vendedores" escrito no botao.
         if (j?.ver_como) setVendFiltro(j.ver_como as string);
       })
-      .catch(() => setSessao(null));
+      // rede caiu: fica o que a aba já sabia. Só vira "sem sessão" se ela não
+      // sabia nada — senão uma falha de rede deslogaria a tela sozinha.
+      .catch(() => setSessao((s) => (s === undefined ? null : s)));
   }, []);
+
+  /**
+   * Põe uma resposta do `/api/chat` na tela. Extraída de `carregarLista` para a
+   * montagem poder REPETIR a última foto sem ir ao servidor — se os dois
+   * caminhos escrevessem os estados cada um do seu jeito, divergiriam no
+   * primeiro campo novo que a rota passasse a mandar.
+   */
+  const aplicarLista = useCallback((j: any) => {
+    setConversas(j?.conversas ?? []);
+    setVendedores(j?.vendedores ?? []);
+    setAtendentes(j?.atendentes ?? []);
+    setMeuEndereco(j?.meu_endereco ?? null);
+    setLinhas(j?.linhas ?? []);
+    if (j?.layout) setLayout(j.layout);
+    setErro(null);
+  }, []);
+
+  // A última lista, repetida na montagem. Sem isto o filtro voltaria mas a
+  // sidebar ficaria vazia enquanto o `/api/chat` responde — e é a rota mais
+  // chamada do sistema, medida em ~800 ms depois de otimizada (§71.2). A foto
+  // é substituída assim que a versão nova chega, logo abaixo.
+  useEffect(() => {
+    const guardada = fotoLista.pegar();
+    if (guardada) aplicarLista(guardada);
+  }, [aplicarLista]);
+
+  // ⚠️ Memória restaurada tem de bater com o que o servidor manda HOJE.
+  //
+  // `linhaSel` e `vendFiltro` guardam identificadores que vêm do banco — um
+  // número pode ser desativado em /admin, um vendedor sai de `carteira_config`.
+  // Restaurar às cegas deixaria o chip aceso apontando para algo que não existe
+  // mais, com a lista vazia e nenhuma explicação: o mesmo defeito que o `Set`
+  // serializado causaria no board, e a mesma régua de sempre — sumir é visível,
+  // mentir não.
+  //
+  // Só corrige DEPOIS de a lista chegar de verdade: enquanto `linhas` está vazia
+  // (antes da primeira resposta) não há com o que comparar, e limpar aí
+  // descartaria a escolha por falta de dado, não por ela estar errada.
+  useEffect(() => {
+    if (linhas.length && linhaSel && !linhas.some((l) => l.id === linhaSel)) setLinhaSel(null);
+  }, [linhas, linhaSel]);
+  useEffect(() => {
+    if (vendedores.length && vendFiltro && !vendedores.some((v) => v.slug === vendFiltro)) setVendFiltro(null);
+  }, [vendedores, vendFiltro]);
 
   const carregarLista = useCallback(async () => {
     if (carregandoLista.current) { pedidaDeNovo.current = true; return; }
@@ -1841,13 +1938,8 @@ export default function Chat() {
       const r = await fetch("/api/chat", { cache: "no-store" });
       const j = await r.json().catch(() => null);
       if (r.ok) {
-        setConversas(j?.conversas ?? []);
-        setVendedores(j?.vendedores ?? []);
-        setAtendentes(j?.atendentes ?? []);
-        setMeuEndereco(j?.meu_endereco ?? null);
-        setLinhas(j?.linhas ?? []);
-        if (j?.layout) setLayout(j.layout);
-        setErro(null);
+        aplicarLista(j);
+        fotoLista.guardar(j);
       }
       else if (r.status === 401) setSessao(null);
       else setErro(j?.error ?? `erro ${r.status}`);
@@ -1856,7 +1948,7 @@ export default function Chat() {
       // chegou aviso enquanto esta rodava: uma recarga a mais, nao N
       if (pedidaDeNovo.current) { pedidaDeNovo.current = false; carregarListaRef.current?.(); }
     }
-  }, []);
+  }, [aplicarLista]);
   carregarListaRef.current = carregarLista;
 
   // Escolher um vendedor no seletor: alem do filtro local (instantaneo, sobre a
