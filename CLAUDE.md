@@ -5763,19 +5763,51 @@ inscrição é quem se inscreve; o dono do envio é o servidor.
 
 ### 72.4 O batimento: não avisar quem está olhando a tela
 
-A aba do hub carimba `visto_em` a cada 45s enquanto está **visível e com foco**;
-a entrega pula quem carimbou nos últimos **90s** — o dobro, para uma batida
-perdida não virar aviso indevido.
+A aba do hub carimba `visto_em` enquanto está **visível e com foco**, e **apaga o
+carimbo quando sai de cena** (`blur`, `visibilitychange → hidden`, `pagehide`, e
+ao desmontar). A entrega, aqui, pula quem carimbou nos últimos **90s**.
+
+⚠️ **A primeira versão só tinha a metade "estou aqui", e isso engoliu a
+notificação no primeiro uso real.** Medido em produção em 14/09/2026:
+
+| | |
+|---|---|
+| inscrição criada (já carimbada — a pessoa acabara de clicar em ativar) | 07:02 |
+| cliente escreveu | 07:03 |
+| dentro dos 90s → aviso pulado | ✅ pela regra |
+| do lado de quem testou | *"não funcionou"* |
+
+No celular isso **não é caso de borda, é o fluxo normal**: sair do navegador,
+mandar a mensagem no WhatsApp e voltar leva menos de 90 segundos. Corrigido no
+lado do hub (`murano-app` §37.4); aqui o filtro não mudou — ele já tratava
+`visto_em` nulo como elegível, que é justamente o estado que a saída de cena
+produz.
 
 ⚠️ O filtro é `or(visto_em.is.null, visto_em.lt.<corte>)`. Um `lt` sozinho
-descartaria em silêncio a inscrição recém-criada, que ainda tem `visto_em` nulo:
-a pessoa ligaria os avisos e **nunca receberia nenhum**. Por isso a regressão
-exercita os quatro estados contra o PostgREST de verdade, e não contra uma
-função pura — o risco está na sintaxe do filtro, não na aritmética.
+descartaria em silêncio a inscrição que nunca carimbou: a pessoa ligaria os
+avisos e **nunca receberia nenhum**. Por isso a regressão exercita os quatro
+estados contra o PostgREST de verdade, e não contra uma função pura — o risco
+está na sintaxe do filtro, não na aritmética.
 
-E é carimbo, não booleano `focada`: booleano depende de alguém escrever `false`
-ao sair, e a aba fechada por engano ou o notebook que dorme deixariam o registro
-preso em "focada para sempre".
+E é carimbo, não booleano `focada`: a saída de cena é o caminho rápido, não a
+garantia. Aba fechada de repente, aparelho que dorme ou rede que cai não mandam
+aviso nenhum, e aí os 90s expiram sozinhos. Com booleano, a pessoa ficaria presa
+em "está olhando" para sempre.
+
+#### O método que separou o defeito da cadeia
+
+Nada no banco denunciava: a inscrição existia, com batimento, e `usada_em` nulo —
+o que é compatível com "a entrega não funciona" **e** com "a entrega foi pulada
+de propósito". O que desempatou foi **mandar um push real** para a inscrição de
+produção, com as chaves VAPID, por fora do app. Chegou ao aparelho. Logo a
+cadeia estava inteira e o defeito era a regra.
+
+⚠️ E um erro de método no meio: a primeira consulta cruzou cada mensagem com o
+`visto_em` de **agora**, não com o do momento da mensagem, e produziu um veredito
+que parecia explicar tudo e não explicava nada. **Carimbo só responde sobre o
+instante em que foi feito** — cruzar com o valor atual é a mesma doença do
+`.limit()` sobre universo não medido (§61.2): um filtro invisível disfarçado de
+resposta.
 
 ### 72.5 A ponte, e a trava que a sustenta
 
