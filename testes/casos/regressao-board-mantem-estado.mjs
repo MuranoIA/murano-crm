@@ -106,9 +106,22 @@ export default async function (t) {
     const foto = await aba.foto("board_mantem_estado");
 
     api.ok(voltou, `o board não voltou a desenhar card em 60 s — foto ${foto}`);
+    // A BUSCA é comparada EXATA: é a escolha da pessoa, e ou ela voltou ou não.
     api.igual(naVolta.busca, termo, `a busca se perdeu na volta — foto ${foto}`);
-    api.igual(naVolta.cards, comFiltro.cards,
-      `o filtro não foi reaplicado: ${comFiltro.cards} cards antes, ${naVolta.cards} depois — foto ${foto}`);
+
+    // ⚠️ A CONTAGEM, não. Comparar `naVolta.cards === comFiltro.cards` mediria a
+    // liveness do BANCO, não o produto: a base é de produção, uma mensagem que
+    // chega entre as duas medições muda um card de coluna de forma legítima.
+    // Medido em 12/09: 269 antes, 268 depois, sem defeito nenhum — a suíte
+    // acusaria o produto por um dado que mudou sozinho.
+    //
+    // O que prova o filtro reaplicado é ele ainda ESTAR RECORTANDO: a lista de
+    // volta tem de ser bem menor que a sem filtro, e vizinha da de antes.
+    api.ok(naVolta.cards < inicial.cards,
+      `o filtro não foi reaplicado: ${naVolta.cards} cards na volta contra ${inicial.cards} sem filtro — foto ${foto}`);
+    const desvio = Math.abs(naVolta.cards - comFiltro.cards);
+    api.ok(desvio <= Math.max(3, comFiltro.cards * 0.05),
+      `a lista de volta destoa demais: ${comFiltro.cards} antes, ${naVolta.cards} depois — foto ${foto}`);
     api.ok(aba.excecoes.length === 0, `exceção de JS: ${JSON.stringify(aba.excecoes.slice(0, 3))}`);
 
     return `busca "${termo}" sobreviveu · ${comFiltro.cards} de ${inicial.cards} cards nos dois lados`

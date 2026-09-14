@@ -1,6 +1,18 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+// ⚠️ `<Link>`, e não `<a href>`, para toda rota INTERNA deste menu.
+//
+// Com `<a>` o navegador faz uma navegação de documento: joga fora o bundle,
+// o React e toda a memória da aba, e baixa e interpreta tudo de novo do
+// outro lado. Medido em 12/09/2026 indo do board para o chat: o relógio de
+// `performance.now()` ZERAVA na chegada — a prova de que a página recarregou
+// inteira. O /chat já usava `<Link>`, então a volta era rápida e a ida não:
+// a navegação mais frequente do sistema era a lenta das duas.
+//
+// Isso também é o que fazia a memória de tela (lib/memoriaTela) não valer
+// nesse sentido: a foto do payload vive em memória e morre num recarregamento.
+import Link from "next/link";
 import OrcamentoFlutuante from "./OrcamentoFlutuante";
 import { TEMAS, temaSalvo, salvarTema, type TemaId } from "../lib/tema";
 import { prepararTrecho, segundosFmt, SEGUNDOS_PARABENS } from "../lib/musicaParabens";
@@ -9,6 +21,8 @@ import { rotuloDePapel } from "../lib/papel";
 // As colunas do board moram em lib/etapasBoard: o /chat filtra pelas MESMAS
 // etapas, e duas cópias do nome/cor/ordem divergiriam no primeiro ajuste.
 import { COLUNAS } from "../lib/etapasBoard";
+// o estado que sobrevive à troca de rota — o MESMO mecanismo que o /chat usa
+import { memoriaDeTela, fotoDeRota, memoriaDaSessao, type Sessao } from "../lib/memoriaTela";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -391,35 +405,11 @@ function dentroPeriodo(iso: string | null, periodo: Periodo): boolean {
   return Date.now() - new Date(iso).getTime() <= dias * 86400000;
 }
 
-// ---------------------------------------------------------------------------
-// MEMÓRIA DA TELA ENTRE NAVEGAÇÕES
+// ---- o que sobrevive a ir ao chat e voltar (lib/memoriaTela) --------------
 //
-// O problema, relatado em 12/09/2026: filtrar o board por produto, clicar num
-// card para ir ao chat e voltar por "Negociações" devolvia o board limpo, sem o
-// filtro e recarregando tudo.
-//
-// A causa é estrutural: board e chat são PÁGINAS diferentes do App Router.
-// `router.push("/chat")` e `<Link href="/">` desmontam a árvore inteira da
-// página que se deixa. Todo filtro daqui é `useState`, e `useState` morre na
-// desmontagem — na volta tudo nasce no padrão e o `/api/funil` é buscado de
-// novo. Não é desenho: nesta mesma tela o TEMA e os alertas silenciados
-// sobrevivem, porque escrevem em `localStorage`. Os filtros nunca entraram
-// nesse mecanismo.
-//
-// A memória mora em MÓDULO, não em React: um módulo carregado não é
-// desmontado quando a rota muda (o app é uma SPA), então a volta ao board
-// encontra tudo onde estava, sem serializar nada.
-//
-// ⚠️ `sessionStorage`, NÃO `localStorage`, e a diferença é de negócio: filtro é
-// contexto de uma sessão de trabalho, não preferência. Em `localStorage` ele
-// sobreviveria ao fechamento do navegador, e uma semana depois alguém abriria o
-// board filtrado por um produto que esqueceu, concluiria que "sumiram clientes"
-// e iria atrás de um bug que não existe. Em `sessionStorage` ele vale enquanto a
-// aba viver — que é exatamente "ir ao chat e voltar", e sobrevive também ao F5.
-//
-// O espelho em disco existe só para o F5; quem responde no caso comum é a
-// variável de módulo, que nem passa por JSON.
-const MEM_FILTROS = "crm_board_filtros";
+// O porquê disto existir, a escolha de `sessionStorage` e a foto em memória
+// moram na lib, que o /chat usa do mesmo jeito. Aqui fica só o que é do BOARD:
+// quais filtros entram, e o detalhe abaixo, que é dele.
 
 /** Só o que é ESCOLHA da pessoa. Painel aberto, modal e menu ficam de fora de
  *  propósito: reabrir um dropdown sozinho na volta é assombração, não memória. */
@@ -436,78 +426,46 @@ type FiltrosBoard = {
   paradoSel: string[];
 };
 
-let memFiltros: FiltrosBoard | null = null;
-
 // ⚠️ QUATRO DESTES FILTROS GUARDAM `Set`, E `JSON.stringify` APAGA `Set`.
 //
 // `prodFiltro`, `ncFiltro`, `cidFiltro` e `melhoresFiltro` carregam
-// `{clienteIds, codclis, tel8}` como `Set`, que é como o board decide, por
+// `{clienteIds, codclis, tel8}` como `Set`, que é como o board decide, cliente a
 // cliente, se o card entra. `JSON.stringify(new Set([1,2]))` devolve `{}` — sem
-// erro, sem aviso. Salvar assim faria o board voltar com o chip "Produto: 1 ·
-// 563 clientes" aceso e NENHUM card na tela, que é pior que perder o filtro:
-// perder é visível, mentir não.
+// erro, sem aviso. Salvo assim, o board voltaria com o chip "Produto: 1 · 563
+// clientes" aceso e NENHUM card na tela: pior que perder o filtro, porque perder
+// é visível e mentir não.
 //
 // Por isso o disco leva listas e a leitura remonta os `Set`. O caminho comum —
-// ir ao chat e voltar na mesma aba — nem passa por aqui: responde `memFiltros`,
-// que é o objeto vivo, com os `Set` de verdade.
+// ir ao chat e voltar na mesma aba — nem passa por aqui: a lib responde com o
+// objeto vivo, que tem os `Set` de verdade.
 const CHAVES_SET = ["clienteIds", "codclis", "tel8"] as const;
+const CAMPOS_COM_SET = ["prodFiltro", "ncFiltro", "cidFiltro", "melhoresFiltro"] as const;
 
-function paraDisco(f: FiltrosBoard): any {
-  const conv = (v: any) => {
-    if (!v) return v;
-    const saida: any = { ...v };
-    for (const k of CHAVES_SET) if (v[k] instanceof Set) saida[k] = [...v[k]];
-    return saida;
-  };
-  return { ...f, prodFiltro: conv(f.prodFiltro), ncFiltro: conv(f.ncFiltro),
-    cidFiltro: conv(f.cidFiltro), melhoresFiltro: conv(f.melhoresFiltro) };
-}
+const converterSets = (f: any, ida: boolean) => {
+  const saida: any = { ...f };
+  for (const campo of CAMPOS_COM_SET) {
+    const v = f?.[campo];
+    if (!v) continue;
+    const c: any = { ...v };
+    for (const k of CHAVES_SET) {
+      if (ida && v[k] instanceof Set) c[k] = [...v[k]];
+      if (!ida && Array.isArray(v[k])) c[k] = new Set(v[k]);
+    }
+    saida[campo] = c;
+  }
+  return saida;
+};
 
-function doDisco(o: any): FiltrosBoard {
-  const conv = (v: any) => {
-    if (!v) return v;
-    const saida: any = { ...v };
-    for (const k of CHAVES_SET) if (Array.isArray(v[k])) saida[k] = new Set(v[k]);
-    return saida;
-  };
-  return { ...o, prodFiltro: conv(o.prodFiltro), ncFiltro: conv(o.ncFiltro),
-    cidFiltro: conv(o.cidFiltro), melhoresFiltro: conv(o.melhoresFiltro) };
-}
+const memBoard = memoriaDeTela<FiltrosBoard>("crm_board_filtros", {
+  paraDisco: (f) => converterSets(f, true),
+  doDisco: (o) => converterSets(o, false) as FiltrosBoard,
+});
 
-function lerFiltrosSalvos(): FiltrosBoard | null {
-  if (memFiltros) return memFiltros;
-  if (typeof window === "undefined") return null;   // SSR
-  try {
-    const cru = window.sessionStorage.getItem(MEM_FILTROS);
-    if (cru) memFiltros = doDisco(JSON.parse(cru));
-  } catch { /* aba anônima, cota cheia, JSON corrompido: sem memória, board normal */ }
-  return memFiltros;
-}
+/** A última resposta do `/api/funil`, para a volta pintar os cards na hora. */
+const fotoBoard = fotoDeRota<any>();
 
-function gravarFiltros(f: FiltrosBoard) {
-  memFiltros = f;
-  try { window.sessionStorage.setItem(MEM_FILTROS, JSON.stringify(paraDisco(f))); } catch {}
-}
-
-/**
- * O ÚLTIMO PAYLOAD DO BOARD, para a volta pintar na hora.
- *
- * Isto responde a outra metade da mesma queixa — "ao alternar entre chat e
- * board, eles recarregam em vez de manter o último estado". Com o filtro de
- * volta mas a tela em branco por 2 s, metade do incômodo continuaria.
- *
- * Na montagem o board pinta o que tem guardado e busca a versão nova por baixo;
- * quando ela chega, substitui. É o padrão que o próprio board já pratica no
- * Realtime — mostrar o que se sabe e corrigir quando o servidor responde.
- *
- * ⚠️ NÃO fica em `sessionStorage`: são ~2 MB por carregamento, e serializar isso
- * a cada load custaria mais do que a pintura economiza. Mora só em memória, e
- * portanto morre no F5 — que é o certo, porque F5 é justamente o gesto de quem
- * quer dado novo.
- */
-let memPayload: { em: number; j: any } | null = null;
-/** Acima disso a foto guardada é velha demais para valer a pena mostrar. */
-const PAYLOAD_VALIDO_MS = 10 * 60_000;
+// A sessão é lida uma vez por aba e a instância é ÚNICA (mora na lib): quem
+// abre o chat primeiro já entrega o board sem portão, e vice-versa.
 
 export default function Page() {
   // tema visual (padrao / murano "Tema 1" / escuro "Dark"). Carrega do
@@ -545,7 +503,7 @@ export default function Page() {
   // do padrão. É o que faz o board voltar do chat como você o deixou.
   // `useState(() => ...)` é inicializador preguiçoso: lê o armazenamento uma
   // vez, na primeira montagem, e não a cada render.
-  const [filtro, setFiltro] = useState<string>(() => lerFiltrosSalvos()?.filtro ?? "todos");
+  const [filtro, setFiltro] = useState<string>(() => memBoard.ler()?.filtro ?? "todos");
   // "Ver como <vendedor>": a MESMA escolha dos chips, so que gravada num cookie
   // (lib/verComo.ts) e valendo no servidor. Sem isso ela morria aqui: nao valia
   // no /chat, nao valia nos indicadores nem nos relatorios, e sumia a cada
@@ -556,8 +514,8 @@ export default function Page() {
   // UMA carteira so, e uma lista tirada deles perderia as outras opcoes -- nao
   // haveria como trocar de vendedor nem voltar para "Todos".
   const [vendTodos, setVendTodos] = useState<string[]>([]);
-  const [busca, setBusca] = useState(() => lerFiltrosSalvos()?.busca ?? "");
-  const [sessao, setSessao] = useState<{ role: string; carteira: string | null; papeis?: string[]; email?: string | null } | null>(null);
+  const [busca, setBusca] = useState(() => memBoard.ler()?.busca ?? "");
+  const [sessao, setSessao] = useState<Sessao | null>(() => memoriaDaSessao.conhecida());
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
   const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
@@ -787,14 +745,19 @@ export default function Page() {
   const [metasInd, setMetasInd] = useState<{ slug: string; nome: string; meta: number }[]>([]);
   const [metasIndLoad, setMetasIndLoad] = useState(false);
   const [metasIndSalv, setMetasIndSalv] = useState(false);
-  const [checando, setChecando] = useState(true);
+  // ⚠️ Nasce FALSO quando a aba já conhece a sessão. Era `true` sempre, e por
+  // isso "Verificando sessão…" aparecia em TODA navegação entre board e chat:
+  // um portão de tela cheia esperando uma resposta que a aba já tinha. Medido
+  // na abertura do board: `/api/session` ocupava 816 ms, na frente de tudo.
+  // A revalidação continua acontecendo logo abaixo, por baixo da tela.
+  const [checando, setChecando] = useState(() => !memoriaDaSessao.conhecida());
   // reconhecimento otimista: cliente_id -> quando o vendedor abriu a conversa (epoch ms)
   const [acks, setAcks] = useState<Record<string, number>>({});
   // scroll infinito: quantos cards renderizar por coluna (col.key -> quantidade)
   const [visiveisPorColuna, setVisiveisPorColuna] = useState<Record<string, number>>({});
   // filtro de período por coluna (col.key -> período). Ausente = "todos".
   const [periodoPorColuna, setPeriodoPorColuna] = useState<Record<string, Periodo>>(
-    () => lerFiltrosSalvos()?.periodoPorColuna ?? {});
+    () => memBoard.ler()?.periodoPorColuna ?? {});
   // tooltip de regras da etapa: position:fixed via JS (escapa o overflow:hidden da coluna,
   // que senão corta o balão). Guardamos texto + coords da tela; clampado na borda direita.
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -809,7 +772,7 @@ export default function Page() {
   const [prodFiltro, setProdFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     produtos: number[]; periodo: string; total: number;
-  } | null>(() => lerFiltrosSalvos()?.prodFiltro ?? null);
+  } | null>(() => memBoard.ler()?.prodFiltro ?? null);
   // filtro "AINDA NÃO COMPROU" (cross-sell): quem já compra a LINHA do produto
   // mas nunca levou o produto em si. Ex.: já compra outra selagem, nunca comprou
   // A-LIZZ. A linha sai do agrupamento do WinThor (departamento/seção/marca) e é
@@ -825,7 +788,7 @@ export default function Page() {
   const [ncFiltro, setNcFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     alvo: number; linha: number[]; escopo: EscopoLinha; periodo: string; total: number;
-  } | null>(() => lerFiltrosSalvos()?.ncFiltro ?? null);
+  } | null>(() => memBoard.ler()?.ncFiltro ?? null);
   // filtro por cidade: mesma mecânica do de produto, porém SEM período (cidade é fixa).
   // A seleção guarda a chave normalizada (cidade_norm); o rótulo bonito vem de `cidades`.
   const [cidades, setCidades] = useState<{ cidade_norm: string; cidade: string; clientes: number }[]>([]);
@@ -836,24 +799,24 @@ export default function Page() {
   const [cidFiltro, setCidFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>;
     cidades: string[]; total: number;
-  } | null>(() => lerFiltrosSalvos()?.cidFiltro ?? null);
+  } | null>(() => memBoard.ler()?.cidFiltro ?? null);
   // filtro MELHORES CLIENTES: top N por ticket médio dos últimos 3 meses (90d),
   // entre quem comprou no período. Mesma mecânica de identificadores do produto.
   const [melhoresPainel, setMelhoresPainel] = useState(false);
   const [melhoresCarregando, setMelhoresCarregando] = useState(false);
   const [melhoresFiltro, setMelhoresFiltro] = useState<{
     clienteIds: Set<string>; codclis: Set<number>; tel8: Set<string>; qtd: number; total: number;
-  } | null>(() => lerFiltrosSalvos()?.melhoresFiltro ?? null);
+  } | null>(() => memBoard.ler()?.melhoresFiltro ?? null);
   // filtro por ciclo de compra (categorias do motor preditivo). "URGENTE" = ação LIGAR HOJE.
-  const [cicloSel, setCicloSel] = useState<string[]>(() => lerFiltrosSalvos()?.cicloSel ?? []);
+  const [cicloSel, setCicloSel] = useState<string[]>(() => memBoard.ler()?.cicloSel ?? []);
   const [cicloPainel, setCicloPainel] = useState(false);
   // Motor de ciclo ligado? Vem do /api/funil (crm_config, migration 0097).
   // Começa em `true` para a tela não piscar sem o selo antes da 1ª resposta —
   // o mesmo estado em que o interruptor nasce no banco.
   const [cicloAtivo, setCicloAtivo] = useState(true);
   const [saude, setSaude] = useState<any>(null);
-  const [semCadFiltro, setSemCadFiltro] = useState(() => lerFiltrosSalvos()?.semCadFiltro ?? false); // só leads sem cadastro no WinThor
-  const [paradoSel, setParadoSel] = useState<string[]>(() => lerFiltrosSalvos()?.paradoSel ?? []); // tempo parado (buckets de dias)
+  const [semCadFiltro, setSemCadFiltro] = useState(() => memBoard.ler()?.semCadFiltro ?? false); // só leads sem cadastro no WinThor
+  const [paradoSel, setParadoSel] = useState<string[]>(() => memBoard.ler()?.paradoSel ?? []); // tempo parado (buckets de dias)
 
   // Grava a escolha a cada mudança. UM efeito para os dez, e não um `gravar()`
   // em cada `onClick`: os filtros são mexidos de dezenas de lugares (chips,
@@ -861,7 +824,7 @@ export default function Page() {
   // um deles esquecido gravaria estado parcial — a tela voltaria com metade do
   // que você deixou, que é o pior resultado possível aqui.
   useEffect(() => {
-    gravarFiltros({ filtro, busca, periodoPorColuna, prodFiltro, ncFiltro,
+    memBoard.gravar({ filtro, busca, periodoPorColuna, prodFiltro, ncFiltro,
       cidFiltro, melhoresFiltro, cicloSel, semCadFiltro, paradoSel });
   }, [filtro, busca, periodoPorColuna, prodFiltro, ncFiltro, cidFiltro,
       melhoresFiltro, cicloSel, semCadFiltro, paradoSel]);
@@ -923,7 +886,7 @@ export default function Page() {
       const j = await r.json();
       if (j.error) { setErro(j.error); return; }
       aplicarPayload(j);
-      memPayload = { em: Date.now(), j };
+      fotoBoard.guardar(j);
     } catch (e: any) {
       setErro(String(e?.message ?? e));
     } finally {
@@ -1437,13 +1400,16 @@ export default function Page() {
     // quando ela chega, `load()` substitui. É a mesma regra que o board já
     // pratica no Realtime: mostrar o que se sabe e corrigir quando o servidor
     // responde. Primeira visita da aba não tem foto e nada muda para ela.
-    if (memPayload && Date.now() - memPayload.em < PAYLOAD_VALIDO_MS) {
-      aplicarPayload(memPayload.j, true);
-    }
+    const foto = fotoBoard.pegar();
+    if (foto) aplicarPayload(foto, true);
     void load();
+    // Revalida SEMPRE, mesmo já conhecendo a sessão: papel pode ter mudado num
+    // /trocar-papel de outra aba, e a pessoa pode ter sido desativada. A
+    // diferença é que agora isso corre por baixo, sem segurar a tela.
     fetch("/api/session")
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
+        memoriaDaSessao.guardar(s);
         setSessao(s);
         // o servidor ja vai devolver o board estreitado; o chip precisa dizer o
         // mesmo, senao a tela mostra uma carteira com "Todos" marcado.
@@ -1451,7 +1417,7 @@ export default function Page() {
         setVerComo(vc);
         if (vc) setFiltro(vc);
       })
-      .catch(() => setSessao(null))
+      .catch(() => { /* rede caiu: fica o que a aba já sabia, se sabia */ })
       .finally(() => setChecando(false));
   }, []);
 
@@ -2150,8 +2116,8 @@ export default function Page() {
           {!isMobile && (
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
-            <a href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</a>
-            <a href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</a>
+            <Link href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</Link>
+            <Link href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</Link>
             {/* Visões da Carteira = o módulo "Gestão de Carteira" do murano-app (app externo
                 MuranoIA/gestao-de-carteira, que roda sobre o murano-clientes-v2). Apontamos para a
                 PÁGINA DO HUB, não para o app: é o hub que tem a ponte de SSO — um token de uso
@@ -2171,7 +2137,7 @@ export default function Page() {
             <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" title="Segmentação da carteira do time IS — Top 30, recorrentes, consolidação e reativação (módulo do murano-app)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Visões da Carteira</a>
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
-              <a href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</a>
+              <Link href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</Link>
             )}
             {(() => {
                   // Dropdown "Ranking": admin vê tudo (metas/desfile/parabéns); vendedor e home veem
@@ -2220,22 +2186,22 @@ export default function Page() {
                               🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
                             </button>
                             </>)}
-                            <a href="/utilitarios/foto-ranking" onClick={() => setRankingMenuAberto(false)} title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={itemStyle}>
+                            <Link href="/utilitarios/foto-ranking" onClick={() => setRankingMenuAberto(false)} title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={itemStyle}>
                               📸 Subir foto no ranking
-                            </a>
+                            </Link>
                           </div>
                         </>
                       )}
                     </div>
                   );
                 })()}
-            <a href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</a>
+            <Link href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</Link>
             {/* Templates: para TODOS os papeis. O consultor escreve e manda para
                 o administrador avaliar (0110) -- e ve ali os que ja existem e
                 pode usar hoje, para nao sugerir o que ja esta no ar. */}
-            <a href="/templates" title="Ver os templates disponíveis e sugerir um novo" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Templates</a>
+            <Link href="/templates" title="Ver os templates disponíveis e sugerir um novo" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Templates</Link>
             {sessao.role === "admin" && (
-              <a href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</a>
+              <Link href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</Link>
             )}
           </nav>
           )}
@@ -2338,15 +2304,15 @@ export default function Page() {
           <>
             <div onClick={fecha} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,32,64,0.22)" }} />
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
-              <a href="/chat" onClick={fecha} style={row}>💬 Chat</a>
-              <a href="/relatorios" onClick={fecha} style={row}>Relatórios</a>
+              <Link href="/chat" onClick={fecha} style={row}>💬 Chat</Link>
+              <Link href="/relatorios" onClick={fecha} style={row}>Relatórios</Link>
               <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" onClick={fecha} style={row}>Visões da Carteira</a>
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
-                <a href="/analises" onClick={fecha} style={row}>Análises</a>
+                <Link href="/analises" onClick={fecha} style={row}>Análises</Link>
               )}
               <button onClick={() => { fecha(); abrirRanking(); }} style={row}>📊 Ranking (ao vivo) ↗</button>
-              <a href="/utilitarios/foto-ranking" onClick={fecha} style={row}>📸 Subir foto no ranking</a>
+              <Link href="/utilitarios/foto-ranking" onClick={fecha} style={row}>📸 Subir foto no ranking</Link>
               {sessao.role === "admin" && (
                 <>
                   <button onClick={() => { fecha(); dispararDesfile(); }} style={row}>🎉 Rodar desfile <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>▶ nas TVs</span></button>
@@ -2357,10 +2323,10 @@ export default function Page() {
                   <button onClick={() => { fecha(); abrirMusica(); }} style={row}>🎵 Música dos parabéns{musica ? <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{musica.nome}</span> : null}</button>
                 </>
               )}
-              <a href="/tickets" onClick={fecha} style={row}>🎫 Tickets</a>
-              <a href="/templates" onClick={fecha} style={row}>📨 Templates</a>
+              <Link href="/tickets" onClick={fecha} style={row}>🎫 Tickets</Link>
+              <Link href="/templates" onClick={fecha} style={row}>📨 Templates</Link>
               {sessao.role === "admin" && (
-                <a href="/admin" onClick={fecha} style={row}>⚙️ Administração</a>
+                <Link href="/admin" onClick={fecha} style={row}>⚙️ Administração</Link>
               )}
               <button onClick={() => { alternarTema(); }} style={row}>🎨 Tema: {TEMA_ROTULO[tema]} <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>trocar ↻</span></button>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
@@ -3105,8 +3071,8 @@ export default function Page() {
                       : "Avise o administrador — enquanto isso, uma resposta que não chega pode não ser da cliente.")}
               </span>
               {admin && (
-                <a href="/admin" style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: cor.fg,
-                  textDecoration: "underline" }}>Diagnosticar</a>
+                <Link href="/admin" style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: cor.fg,
+                  textDecoration: "underline" }}>Diagnosticar</Link>
               )}
             </div>
           );
