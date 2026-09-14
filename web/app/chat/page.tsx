@@ -2438,7 +2438,14 @@ export default function Chat() {
   }, [sel?.cliente_id, rotuloUsuario]);
 
   // aviso no título da aba: "(3) Chat" — o vendedor percebe sem estar na tela
-  const naoLidas = conversas.filter((c) => c.nao_lida).length;
+  // Global de propósito (§23.5): avisa que chegou mensagem e não pode calar
+  // porque alguém filtrou a tela. Mas ENCERRADA sai — o texto do aviso diz
+  // "aguardando resposta", e uma conversa que alguém fechou não está. Conversa
+  // SEM DONO fica: ela está esperando alguém de verdade.
+  //
+  // Nada se perde com isso: quando a cliente escreve numa conversa encerrada, o
+  // webhook a reabre (§18 item 4) — então ela volta a contar no mesmo instante.
+  const naoLidas = conversas.filter((c) => c.nao_lida && (c.status ?? "aberta") === "aberta").length;
   useEffect(() => {
     document.title = naoLidas ? `(${naoLidas}) Chat — Murano` : "Chat — Murano";
   }, [naoLidas]);
@@ -3803,7 +3810,19 @@ export default function Chat() {
   // avisa que chegou mensagem, e não pode calar por causa de um filtro na tela.
   const contaResolvidas = noEscopo.filter((c) => (c.status ?? "aberta") === "resolvida" && !c.na_fila).length;
   const contaFila = noEscopo.filter((c) => c.na_fila).length;
-  const contaPendentes = noEscopo.filter((c) => c.nao_lida && !c.na_fila).length;
+  // ⚠️ `status === "aberta"` É PARTE DA RÉGUA, e faltava aqui.
+  //
+  // A lista de "Mensagens não lidas" sempre exigiu as três condições; este
+  // contador exigia duas. Resultado medido em 14/09/2026: o selo dizia 4 para o
+  // Thiago e a lista mostrava 2; para a Kamilly, dizia 2 e a lista vinha VAZIA.
+  // A diferença era inteira de conversas não lidas que já tinham sido
+  // ENCERRADAS — e encerrada não está esperando ninguém.
+  //
+  // Um contador que não usa a régua da lista que ele rotula não erra de vez em
+  // quando: erra sempre que os dois conjuntos divergem, e cala sobre isso.
+  const contaPendentes = noEscopo.filter(
+    (c) => c.nao_lida && !c.na_fila && (c.status ?? "aberta") === "aberta",
+  ).length;
   // conta CONVERSAS com recado, nao recados: o badge fica ao lado de um icone
   // que leva a uma LISTA, e a lista tem uma linha por conversa. Contar notas
   // faria o "3" prometer tres linhas e entregar uma. Mesma escolha do chip
