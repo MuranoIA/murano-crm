@@ -45,6 +45,30 @@ export const COR_ETAPA: Record<EtapaBoard, string> =
 // iguais), e aqui seria pior, porque as duas telas ficam a um clique uma da
 // outra. O nome completo continua no `title` do chip, como o seletor de número
 // já faz com o parêntese do cadastro.
+/**
+ * Uma letra por etapa, para a faixa de filtro do chat caber em UMA linha.
+ *
+ * Medido em 14/09/2026: com os rótulos curtos, as sete pílulas ocupavam 3
+ * linhas no desktop e 4 com a janela pela metade — 71 a 96 px de altura, na
+ * coluna onde altura é o recurso mais escasso. Em sete partes iguais sobram
+ * 36 a 46 px por parte, o bastante para a letra e o número.
+ *
+ * ⚠️ PROSPECÇÃO E PEDIDO COMEÇAM COM A MESMA LETRA, e o desenho pedido era com
+ * letra única. O que os separa é a COR (roxo e verde, as mesmas do board), a
+ * posição — a ordem é sempre a do board — e o nome completo no `title`. Se um
+ * dia isso não bastar, a saída é duas letras (`Pr`/`Pe`), não trocar a ordem:
+ * a ordem é o que torna a faixa legível de relance.
+ */
+export const LETRA_ETAPA: Record<EtapaBoard, string> = {
+  prospeccao: "P",
+  sem_cadastro: "S",
+  ociosos: "O",
+  tentativa_contato: "T",
+  negociacao: "N",
+  pedido_emitido: "P",
+  vender_novamente: "V",
+};
+
 export const ROTULO_CURTO_ETAPA: Record<EtapaBoard, string> = {
   prospeccao: "Prospecção",
   sem_cadastro: "Sem cadastro",

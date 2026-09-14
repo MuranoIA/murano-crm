@@ -21,7 +21,7 @@ import { memoriaDeTela, fotoDeRota, memoriaDaSessao } from "../../lib/memoriaTel
 import { MenuSecundario } from "../MenuSecundario";
 import { ORIGEM_HUB } from "../../lib/hub";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
-import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
+import { COLUNAS, ETAPAS_SEM_CONVERSA, LETRA_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 import OrcamentoFlutuante from "../OrcamentoFlutuante";
@@ -4669,8 +4669,22 @@ export default function Chat() {
                   numa pílula de sidebar de 340px empurra a faixa para uma
                   quarta linha, e altura é o que esta coluna tem de mais
                   escasso. */}
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                <span title="Filtrar pela etapa do cliente no board" style={{ fontSize: 12, color: M.muted }}>🎯</span>
+              {/* ⚠️ UMA LINHA, sete partes IGUAIS — grid, não flex com wrap.
+                  Medido em 14/09/2026: com os rótulos, a faixa ocupava 3 linhas
+                  no desktop (71px) e 4 com a janela pela metade (96px). Em
+                  sete colunas iguais sobram 36 a 46px por parte, e a faixa cai
+                  para uma linha — 47 a 72px devolvidos à lista, que é o que
+                  esta coluna tem de mais escasso.
+
+                  `1fr` e não `auto`: com `auto` a parte de "Tentativa" ficaria
+                  maior que a de "Pedido" só porque o número tem mais dígitos, e
+                  a barra deixaria de ser uma régua. Partes iguais é o que
+                  permite achar a etapa pela POSIÇÃO, sem ler.
+
+                  O alvo 🎯 saiu: com sete células iguais a faixa já se lê como
+                  um controle segmentado, e ele seria uma oitava coluna comendo
+                  a largura de todas. */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, alignItems: "stretch" }}>
                 {COLUNAS.map((col) => {
                   const n = contaEtapa.get(col.key) ?? 0;
                   const on = etapaSel === col.key;
@@ -4681,20 +4695,23 @@ export default function Chat() {
                       onClick={() => alternarEtapa(col.key)}
                       title={on
                         ? `${col.titulo} — clique de novo para voltar para “${voltaPara ?? "a lista"}”`
-                        : `${col.titulo} — ${col.subLong}${n === 0 ? " · nenhuma conversa nesta etapa agora" : ""}`}
+                        : `${col.titulo}${n > 0 ? ` (${n})` : ""} — ${col.subLong}${n === 0 ? " · nenhuma conversa nesta etapa agora" : ""}`}
                       style={{
                         // aperta no desktop e folga no celular, e o motivo é o
                         // oposto em cada um: na sidebar de 340px cada pixel de
                         // largura é uma quarta linha de chips comendo a lista;
                         // no celular a lista tem a tela inteira, e o que falta
                         // é alvo para o polegar.
-                        display: "inline-flex", alignItems: "center", gap: 4,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
+                        minWidth: 0, overflow: "hidden",
                         // 6px, e não 7: medido, a faixa tem 288px úteis e com
                         // 7 o chip de Ociosos sobra por TRÊS pixels, jogando a
                         // faixa de três linhas para quatro. Ela continua sendo
                         // wrap — muda de 3 para 4 linhas se um contador passar
                         // de mil —, mas o caso de todo dia cabe em três.
-                        padding: isMobile ? "5px 9px" : "2px 6px",
+                        // No celular a altura sobe: a célula tem ~46px de
+                        // largura e o que falta lá é alvo para o polegar.
+                        padding: isMobile ? "7px 2px" : "4px 2px",
                         fontSize: isMobile ? 11.5 : 11, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
                         borderRadius: 999, whiteSpace: "nowrap",
                         // aceso = a COR DA ETAPA na borda e num filete embaixo, com
@@ -4710,10 +4727,18 @@ export default function Chat() {
                         opacity: n > 0 || on ? 1 : 0.5,
                       }}
                     >
-                      <span style={{ width: 8, height: 8, borderRadius: 8, background: col.cor, flexShrink: 0 }} />
-                      {ROTULO_CURTO_ETAPA[col.key]}
+                      {/* A bolinha vira a própria letra colorida: numa célula
+                          de 36px, ponto + letra + número não cabem, e a cor é
+                          o que separa as duas etapas que começam com P. */}
+                      <span style={{ fontWeight: 800, color: col.cor, flexShrink: 0 }}>{LETRA_ETAPA[col.key]}</span>
                       {n > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.8 : 0.6, fontVariantNumeric: "tabular-nums" }}>{n}</span>
+                        <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.85 : 0.65,
+                          fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "clip" }}>
+                          {/* 1.574 não cabe em 36px ao lado da letra. Abreviar é
+                              melhor que cortar: "1,5k" continua verdadeiro, e o
+                              número exato está no `title`. */}
+                          {n > 999 ? `${(n / 1000).toFixed(1).replace(".", ",")}k` : n}
+                        </span>
                       )}
                     </button>
                   );
