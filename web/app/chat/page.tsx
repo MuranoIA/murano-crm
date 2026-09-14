@@ -4034,9 +4034,6 @@ export default function Chat() {
                 </Link>
               );
             })}
-            {/* o "⋯": Relatórios, Visões, Visões da Carteira, Catálogo e Tickets */}
-            <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
-                  sombra: "0 12px 32px rgba(28,14,27,.20)" }} />
           </nav>
         ) : (
           <button onClick={() => setMenuMobile((v) => !v)} title="Menu"
@@ -4056,6 +4053,15 @@ export default function Chat() {
           </span>
           {!isMobile && <b style={{ fontSize: 12.5, color: M.wine }}>{rotuloUsuario}</b>}
         </span>
+        {/* o "⋯" fica no FIM da barra, ao lado do nome — pedido do usuário em
+            14/09/2026. Ele saiu de dentro do <nav>, que é a faixa com
+            `overflowX: auto` das abas do produto; fora dela o botão não tem mais
+            como empurrar a barra para a rolagem, que foi o que obrigou a altura
+            de 20px na primeira versão. */}
+        {!modoApp && !isMobile && (
+          <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
+                sombra: "0 12px 32px rgba(28,14,27,.20)" }} />
+        )}
         {menuMobile && isMobile && (
           <>
             <div onClick={() => setMenuMobile(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />

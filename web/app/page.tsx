@@ -2140,65 +2140,6 @@ export default function Page() {
             {sessao.role === "admin" && (
               <Link href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</Link>
             )}
-            {/* ---- O "⋯": as telas de apoio, e o Ranking ------------------
-                Relatórios, Visões, Visões da Carteira, Catálogo e Tickets vêm
-                da lista compartilhada (app/MenuSecundario.tsx). O Ranking entra
-                aqui como `children` porque NÃO é um link: são ações desta tela
-                (metas, música, desfile, parabéns), que dependem do estado dela.
-
-                ⚠️ ACHATADO, não aninhado. Era um dropdown; virar um dropdown
-                DENTRO de outro é frágil de fechar e péssimo no toque. Os itens
-                são os mesmos, sob um título próprio — nada ficou inalcançável,
-                e "Rodar desfile" continua a UM clique de distância de onde
-                estava. */}
-            <MenuSecundario
-              cores={{ texto: RD.gray, ink: RD.navy, surface: RD.surface, border: RD.border,
-                sombra: "0 12px 32px rgba(16,32,64,.20)" }}
-            >
-              {(() => {
-                const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer", textDecoration: "none" as const, fontFamily: "inherit" };
-                const admin = sessao.role === "admin";
-                return (
-                  <>
-                    <div style={{ padding: "8px 12px 5px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
-                      textTransform: "uppercase", color: RD.gray, opacity: 0.75, borderTop: `1px solid ${RD.border}` }}>
-                      Ranking
-                    </div>
-                    <button onClick={() => abrirRanking()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                      📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
-                    </button>
-                    <Link href="/utilitarios/foto-ranking" title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                      📸 Subir foto no ranking
-                    </Link>
-                    {admin && (<>
-                      <button onClick={() => { setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
-                        📅 Ver anteriores
-                      </button>
-                      <button onClick={() => abrirMeta()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                        🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
-                      </button>
-                      <button onClick={() => abrirMetasInd()} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                        🏅 Metas individuais
-                      </button>
-                      <button onClick={() => abrirMusica()} title={`Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca ${SEGUNDOS_PARABENS} segundos)`} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                        🎵 Música dos parabéns
-                      </button>
-                      <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                        🎉 Rodar desfile
-                        {desfileStatus === "enviando"
-                          ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
-                          : desfileStatus === "ok"
-                          ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
-                          : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
-                      </button>
-                      <button onClick={() => abrirParabens()} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
-                        🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
-                      </button>
-                    </>)}
-                  </>
-                );
-              })()}
-            </MenuSecundario>
 
             {/* Templates: para TODOS os papeis. O consultor escreve e manda para
                 o administrador avaliar (0110) -- e ve ali os que ja existem e
@@ -2261,6 +2202,70 @@ export default function Page() {
               </div>
             );
           })()}
+          {/* ---- O "⋯": as telas de apoio, e o Ranking ------------------
+              Fica no FIM da barra, depois do nome de quem está logado — pedido
+              do usuário em 14/09/2026. Saiu de dentro do <nav>, que é a faixa
+              das abas do produto.
+
+              Relatórios, Visões, Visões da Carteira, Catálogo e Tickets vêm da
+              lista compartilhada (app/MenuSecundario.tsx). O Ranking entra aqui
+              como `children` porque NÃO é um link: são ações desta tela (metas,
+              música, desfile, parabéns), que dependem do estado dela.
+
+              ⚠️ ACHATADO, não aninhado. Era um dropdown; virar um dropdown
+              DENTRO de outro é frágil de fechar e péssimo no toque. Os itens são
+              os mesmos, sob um título próprio — nada ficou inalcançável, e
+              "Rodar desfile" continua a UM clique de distância de onde estava. */}
+          {!isMobile && (
+            <MenuSecundario
+              cores={{ texto: RD.gray, ink: RD.navy, surface: RD.surface, border: RD.border,
+                sombra: "0 12px 32px rgba(16,32,64,.20)" }}
+            >
+              {(() => {
+                const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer", textDecoration: "none" as const, fontFamily: "inherit" };
+                const admin = sessao.role === "admin";
+                return (
+                  <>
+                    <div style={{ padding: "8px 12px 5px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
+                      textTransform: "uppercase", color: RD.gray, opacity: 0.75, borderTop: `1px solid ${RD.border}` }}>
+                      Ranking
+                    </div>
+                    <button onClick={() => abrirRanking()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                      📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
+                    </button>
+                    <Link href="/utilitarios/foto-ranking" title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                      📸 Subir foto no ranking
+                    </Link>
+                    {admin && (<>
+                      <button onClick={() => { setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
+                        📅 Ver anteriores
+                      </button>
+                      <button onClick={() => abrirMeta()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
+                      </button>
+                      <button onClick={() => abrirMetasInd()} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🏅 Metas individuais
+                      </button>
+                      <button onClick={() => abrirMusica()} title={`Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca ${SEGUNDOS_PARABENS} segundos)`} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎵 Música dos parabéns
+                      </button>
+                      <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎉 Rodar desfile
+                        {desfileStatus === "enviando"
+                          ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
+                          : desfileStatus === "ok"
+                          ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
+                          : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
+                      </button>
+                      <button onClick={() => abrirParabens()} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
+                      </button>
+                    </>)}
+                  </>
+                );
+              })()}
+            </MenuSecundario>
+          )}
           {!isMobile && (
           <div style={{ position: "relative", display: "inline-flex" }}>
             <button
