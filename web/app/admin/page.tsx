@@ -1640,9 +1640,16 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
       // de ticket faltando — lista errada com cara de certa, que é pior que
       // demorar. Para quem olha, é um turno só, um pouco mais longo.
       let j: any = null;
+      let ultimaProposta: any = null;
+      let ultimoResultado: any = null;
       let msgs = historico;
       const consultas: any[] = [];   // as retomadas trazem só as suas; junta todas
-      for (let tentativa = 0; tentativa < 4; tentativa++) {
+      // ⚠️ SEIS, e não quatro. Com o orçamento da rota baixado para 38 s
+      // (ver o comentário do TETO lá), cada requisição ficou curta de
+      // propósito e um pedido rico passa a precisar de mais retomadas. Quatro
+      // deixaria o turno morrer no meio — e morreria dizendo "não consegui",
+      // com a proposta quase pronta do outro lado.
+      for (let tentativa = 0; tentativa < 6; tentativa++) {
         const r = await fetch("/api/admin/disparo-massa/chat", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
@@ -1658,6 +1665,16 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
           break;
         }
         j = atual;
+        // ⚠️ A ÚLTIMA RETOMADA PODE VIR SEM PROPOSTA — e `j = atual` sozinho
+        // apagava a que já tinha sido montada. Medido em 14/09/2026: a volta 3
+        // devolveu 79 clientes por ESCOVAS/ALISANTES e a volta 4 voltou só com
+        // texto; a tela mostrava a conversa e NENHUM cartão, como se o
+        // assistente não tivesse chegado a lugar nenhum.
+        //
+        // Guardar a última que existiu não é teimosia: quando o modelo troca de
+        // proposta, a nova também é não-nula e vence. O que se evita é só o
+        // caso de perder o que já estava pronto.
+        if (atual.proposta) { ultimaProposta = atual.proposta; ultimoResultado = atual.resultado; }
         consultas.push(...(atual.consultas ?? []));
         msgs = atual.mensagens ?? msgs;
         if (!atual.incompleto) break;
@@ -1670,7 +1687,7 @@ function AssistenteCampanha({ disponivel, canal, aoAplicar, aberto, setAberto }:
           ? `${j.texto}\n\nParei por aqui: o pedido é grande e o tempo da requisição acabou. `
             + "Se faltou alguma coisa, peça o ajuste na próxima mensagem — não preciso recomeçar."
           : j.texto,
-        proposta: j.proposta, resultado: j.resultado, consultas,
+        proposta: j.proposta ?? ultimaProposta, resultado: j.resultado ?? ultimoResultado, consultas,
       }]);
     } catch (e: any) {
       setErro(e?.message ?? String(e));
