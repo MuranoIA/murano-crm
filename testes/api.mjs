@@ -15,6 +15,12 @@ export const SESSOES = {
   romulo: { crm_sessao: "romulo", crm_email: "ia@muranoprofessional.com.br" },
   admin: { crm_sessao: "admin", crm_email: "ia@muranoprofessional.com.br" },
   home: { crm_sessao: "home", crm_email: "ia@muranoprofessional.com.br" },
+  // `pos-venda` entrou em uso de verdade em 14/09/2026 (a atendente de
+  // pós-venda). Enxerga o mesmo que `home` e não tem as 4 features de admin —
+  // e é justamente por ser "igual a outro papel" que ele precisa de sessão
+  // própria aqui: um papel novo que cai no ramo errado não dá erro, dá tela
+  // vazia (§ o comentário de `tokenDePapel` em lib/papel.ts).
+  posVenda: { crm_sessao: "pos-venda", crm_email: "ia@muranoprofessional.com.br" },
   luana: { crm_sessao: "luana", crm_email: "luana.teste@muranoprofessional.com.br" },
   anonimo: null,
 };
