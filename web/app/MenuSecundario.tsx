@@ -81,12 +81,15 @@ export function MenuSecundario({ cores, children, aoNavegar }: {
           // Quadrado pequeno, como o usuário pediu: não compete com os itens
           // principais, só indica que há mais coisa atrás.
           //
-          // ⚠️ ALTURA 20, NÃO 26 — e isso não é gosto. A barra do chat é uma
-          // faixa com `overflow: auto`, e os itens dela medem 21px. Com 26 o
-          // botão passava da linha e a barra inteira ganhava SETAS DE ROLAGEM,
-          // nos dois eixos. Medido no navegador: só a foto mostrou, porque
-          // `tsc` e `next build` não sabem a altura de nada.
-          width: 22, height: 20, display: "inline-flex", alignItems: "center",
+          // ⚠️ ALTURA: 24, e a história importa. Enquanto ele morava DENTRO do
+          // <nav> do chat — uma faixa com `overflow: auto` cujos itens medem
+          // 21px — qualquer coisa acima de 21 fazia a barra inteira ganhar
+          // SETAS DE ROLAGEM nos dois eixos, e por isso ele era 20. Desde
+          // 14/09/2026 ele fica FORA do nav, no fim da barra ao lado do nome,
+          // onde os vizinhos são pílulas de ~26px. Se algum dia ele voltar para
+          // dentro do nav, a trava dos 21px volta junto — e só a foto mostra,
+          // porque `tsc` e `next build` não sabem a altura de nada.
+          width: 24, height: 24, display: "inline-flex", alignItems: "center",
           justifyContent: "center", marginLeft: 6, flexShrink: 0,
           fontSize: 14, lineHeight: 1, fontWeight: 700, fontFamily: "inherit",
           color: cores.texto, background: aberto ? cores.border : "transparent",
