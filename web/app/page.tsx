@@ -23,6 +23,8 @@ import { rotuloDePapel } from "../lib/papel";
 import { COLUNAS } from "../lib/etapasBoard";
 // o estado que sobrevive à troca de rota — o MESMO mecanismo que o /chat usa
 import { memoriaDeTela, fotoDeRota, memoriaDaSessao, type Sessao } from "../lib/memoriaTela";
+// o "⋯" que recolhe as telas de apoio — o MESMO componente do chat
+import { MenuSecundario } from "./MenuSecundario";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -519,7 +521,6 @@ export default function Page() {
   const [trocandoPapel, setTrocandoPapel] = useState(false);
   const [papelMenuAberto, setPapelMenuAberto] = useState(false);
   const [periodoMenuAberto, setPeriodoMenuAberto] = useState(false);
-  const [rankingMenuAberto, setRankingMenuAberto] = useState(false);
   const [orcamentoAberto, setOrcamentoAberto] = useState(false);
   const [menuMobile, setMenuMobile] = useState(false); // gaveta de navegação no celular
   // card ampliado (lupa): janela arrastável com o histórico rolável + resposta
@@ -2115,9 +2116,9 @@ export default function Page() {
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
           {!isMobile && (
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Negociações</span>
+            <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Funil</span>
             <Link href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</Link>
-            <Link href="/relatorios" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent" }}>Relatórios</Link>
+
             {/* Visões da Carteira = o módulo "Gestão de Carteira" do murano-app (app externo
                 MuranoIA/gestao-de-carteira, que roda sobre o murano-clientes-v2). Apontamos para a
                 PÁGINA DO HUB, não para o app: é o hub que tem a ponte de SSO — um token de uso
@@ -2134,68 +2135,71 @@ export default function Page() {
                 Embutir o app aqui dentro não é opção hoje: ele responde
                 `frame-ancestors 'self' https://app.muranoprofessional.com.br`, ou seja, recusa
                 ser enquadrado por qualquer origem que não seja o hub. */}
-            <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" title="Segmentação da carteira do time IS — Top 30, recorrentes, consolidação e reativação (módulo do murano-app)" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Visões da Carteira</a>
+
             <button onClick={() => setOrcamentoAberto(true)} style={{ display: "inline-flex", alignItems: "center", color: orcamentoAberto ? RD.cyan : RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent" }}>Orçamento</button>
             {sessao.role === "admin" && (
               <Link href="/analises" style={{ display: "inline-flex", alignItems: "center", color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Análises</Link>
             )}
-            {(() => {
-                  // Dropdown "Ranking": admin vê tudo (metas/desfile/parabéns); vendedor e home veem
-                  // só "Ranking ao vivo" e "Subir foto". Reusa a MESMA aba "ranking_murano".
-                  const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer", textDecoration: "none" as const };
-                  const admin = sessao.role === "admin";
-                  return (
-                    <div style={{ position: "relative", display: "inline-flex" }}>
-                      <button
-                        onClick={() => setRankingMenuAberto((v) => !v)}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, fontFamily: "inherit", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}
-                      >
-                        Ranking<span style={{ fontSize: 11, opacity: 0.7 }}>▾</span>
-                      </button>
-                      {rankingMenuAberto && (
-                        <>
-                          <div onClick={() => setRankingMenuAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
-                          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 101, minWidth: 230, background: RD.surface, border: `1px solid ${RD.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(16,32,64,.20)", overflow: "hidden" }}>
-                            {admin && (<>
-                            <button onClick={() => { setRankingMenuAberto(false); setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
-                              📅 Ver anteriores
-                            </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirMeta(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
-                            </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirMetasInd(); }} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              🏅 Metas individuais
-                            </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirMusica(); }} title={`Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca ${SEGUNDOS_PARABENS} segundos)`} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              🎵 Música dos parabéns
-                            </button>
-                            </>)}
-                            <button onClick={() => { setRankingMenuAberto(false); abrirRanking(); }} style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
-                            </button>
-                            {admin && (<>
-                            <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              🎉 Rodar desfile
-                              {desfileStatus === "enviando"
-                                ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
-                                : desfileStatus === "ok"
-                                ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
-                                : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
-                            </button>
-                            <button onClick={() => { setRankingMenuAberto(false); abrirParabens(); }} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={{ ...itemStyle, borderBottom: `1px solid ${RD.border}` }}>
-                              🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
-                            </button>
-                            </>)}
-                            <Link href="/utilitarios/foto-ranking" onClick={() => setRankingMenuAberto(false)} title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={itemStyle}>
-                              📸 Subir foto no ranking
-                            </Link>
-                          </div>
-                        </>
-                      )}
+            {/* ---- O "⋯": as telas de apoio, e o Ranking ------------------
+                Relatórios, Visões, Visões da Carteira, Catálogo e Tickets vêm
+                da lista compartilhada (app/MenuSecundario.tsx). O Ranking entra
+                aqui como `children` porque NÃO é um link: são ações desta tela
+                (metas, música, desfile, parabéns), que dependem do estado dela.
+
+                ⚠️ ACHATADO, não aninhado. Era um dropdown; virar um dropdown
+                DENTRO de outro é frágil de fechar e péssimo no toque. Os itens
+                são os mesmos, sob um título próprio — nada ficou inalcançável,
+                e "Rodar desfile" continua a UM clique de distância de onde
+                estava. */}
+            <MenuSecundario
+              cores={{ texto: RD.gray, ink: RD.navy, surface: RD.surface, border: RD.border,
+                sombra: "0 12px 32px rgba(16,32,64,.20)" }}
+            >
+              {(() => {
+                const itemStyle = { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left" as const, background: "transparent", border: "none", padding: "9px 12px", fontSize: 13, fontWeight: 600, color: RD.navy, cursor: "pointer", textDecoration: "none" as const, fontFamily: "inherit" };
+                const admin = sessao.role === "admin";
+                return (
+                  <>
+                    <div style={{ padding: "8px 12px 5px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
+                      textTransform: "uppercase", color: RD.gray, opacity: 0.75, borderTop: `1px solid ${RD.border}` }}>
+                      Ranking
                     </div>
-                  );
-                })()}
-            <Link href="/tickets" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Tickets</Link>
+                    <button onClick={() => abrirRanking()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                      📊 Ranking <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>ao vivo ↗</span>
+                    </button>
+                    <Link href="/utilitarios/foto-ranking" title="Enviar sua foto para aparecer ao lado do seu nome no ranking" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                      📸 Subir foto no ranking
+                    </Link>
+                    {admin && (<>
+                      <button onClick={() => { setDataAnterior(""); setVerAntModal(true); }} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }} title="Escolher uma data e abrir o ranking daquele dia">
+                        📅 Ver anteriores
+                      </button>
+                      <button onClick={() => abrirMeta()} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎯 Meta do dia{metaAtual ? <span style={{ marginLeft: "auto", fontSize: 12, color: RD.wine, fontWeight: 800 }}>R$ {metaAtual.toLocaleString("pt-BR")}</span> : null}
+                      </button>
+                      <button onClick={() => abrirMetasInd()} title="Meta individual do dia por vendedor — ao bater, aparece 'BATEU A META' nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🏅 Metas individuais
+                      </button>
+                      <button onClick={() => abrirMusica()} title={`Trocar a música que toca na tela de parabéns das TVs (MP3 ou MP4; toca ${SEGUNDOS_PARABENS} segundos)`} style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎵 Música dos parabéns
+                      </button>
+                      <button onClick={() => dispararDesfile()} disabled={desfileStatus === "enviando"} title="Passa a tela de parabéns de cada venda de hoje (3s cada) em todas as TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎉 Rodar desfile
+                        {desfileStatus === "enviando"
+                          ? <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>enviando…</span>
+                          : desfileStatus === "ok"
+                          ? <span style={{ marginLeft: "auto", fontSize: 11, color: RD.wine, fontWeight: 800 }}>✓ nas TVs</span>
+                          : <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>▶</span>}
+                      </button>
+                      <button onClick={() => abrirParabens()} title="Digite o nome de uma cliente com venda hoje para exibir a tela de parabéns dessa venda nas TVs" style={{ ...itemStyle, borderTop: `1px solid ${RD.border}` }}>
+                        🎊 Parabéns por cliente <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.7 }}>↗</span>
+                      </button>
+                    </>)}
+                  </>
+                );
+              })()}
+            </MenuSecundario>
+
             {/* Templates: para TODOS os papeis. O consultor escreve e manda para
                 o administrador avaliar (0110) -- e ve ali os que ja existem e
                 pode usar hoje, para nao sugerir o que ja esta no ar. */}
@@ -2305,8 +2309,8 @@ export default function Page() {
             <div onClick={fecha} style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(16,32,64,0.22)" }} />
             <div style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 201, background: RD.surface, borderTop: `1px solid ${RD.border}`, boxShadow: "0 14px 34px rgba(16,32,64,.2)", maxHeight: "82vh", overflowY: "auto" }}>
               <Link href="/chat" onClick={fecha} style={row}>💬 Chat</Link>
-              <Link href="/relatorios" onClick={fecha} style={row}>Relatórios</Link>
-              <a href="https://app.muranoprofessional.com.br/gestao-carteira" target="_top" onClick={fecha} style={row}>Visões da Carteira</a>
+
+
               <button onClick={() => { fecha(); setOrcamentoAberto(true); }} style={row}>Orçamento</button>
               {sessao.role === "admin" && (
                 <Link href="/analises" onClick={fecha} style={row}>Análises</Link>
@@ -2323,7 +2327,15 @@ export default function Page() {
                   <button onClick={() => { fecha(); abrirMusica(); }} style={row}>🎵 Música dos parabéns{musica ? <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7, maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{musica.nome}</span> : null}</button>
                 </>
               )}
-              <Link href="/tickets" onClick={fecha} style={row}>🎫 Tickets</Link>
+
+              {/* as telas de apoio que sairam desta lista continuam aqui, atras
+                  do "⋯" — a MESMA lista do desktop e do chat */}
+              <div style={{ padding: "8px 13px", borderBottom: `1px solid ${RD.border}` }}>
+                <MenuSecundario
+                  cores={{ texto: RD.gray, ink: RD.navy, surface: RD.surface, border: RD.border,
+                    sombra: "0 12px 32px rgba(16,32,64,.20)" }}
+                  aoNavegar={fecha} />
+              </div>
               <Link href="/templates" onClick={fecha} style={row}>📨 Templates</Link>
               {sessao.role === "admin" && (
                 <Link href="/admin" onClick={fecha} style={row}>⚙️ Administração</Link>
