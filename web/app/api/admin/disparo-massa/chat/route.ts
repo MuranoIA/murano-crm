@@ -75,8 +75,51 @@ const MAX_HISTORICO = 40;
 // (O PR de origem também tirava o banco do caminho crítico com um
 // `aquecerPublico`; isso ficou de fora aqui — ver a nota no ponto onde ele
 // seria chamado.)
+// ---------------------------------------------------------------------------
+// ⚠️ O TETO É FIXO E BEM ABAIXO DE `maxDuration`, e não "quase ele".
+//
+// Medido em 14/09/2026, com o MESMO pedido da supervisão (200 por vendedor,
+// sem compra no mês, sem janela aberta, que já compraram A-LIZZ):
+//
+//   1a execução ... 54,6 s   (parou por orçamento, devolveu `incompleto`)
+//   2a execução ... 41,9 s   4 voltas: 5,3+1,5 · 3,7+2,0 · 10,4+6,2 · 12,9
+//
+// O mesmo pedido, duas vezes, com 13 segundos de diferença. Contra um teto de
+// 60 s, isso não é "lento às vezes": é uma moeda. Quando cai do lado ruim a
+// Vercel mata a função no meio, o navegador não recebe corpo nem status, e a
+// tela mostra o que o navegador sabe dizer — "Failed to fetch". Que é
+// exatamente o que a supervisão viu, e é indistinguível de chave errada, rota
+// quebrada ou rede caída.
+//
+// Então o orçamento deixa de mirar no teto da plataforma e passa a mirar num
+// tempo em que a requisição CABE com folga. O turno continua inteiro: quando o
+// orçamento acaba, a rota devolve `incompleto` e a tela retoma com o mesmo
+// histórico — e o histórico carrega os `tool_result`, então nada do que já foi
+// apurado se perde. Mais requisições, cada uma curta, em vez de uma longa que
+// às vezes morre.
 const MARGEM_MS = 6_000;                       // resposta, serialização, rede
-const TETO_MS = maxDuration * 1000 - MARGEM_MS;
+/**
+ * A parede. Nenhuma requisição passa daqui — contra os 60 s de `maxDuration`
+ * sobram 15 s para serialização, rede e o que a Vercel cobra de si mesma.
+ *
+ * ⚠️ Não é "quando parar de pensar", é "quando a resposta TEM de estar saindo".
+ * A primeira versão deste orçamento mirava no teto da plataforma e a requisição
+ * chegou a 54,6 s; a segunda olhava a pior volta e ainda deixou uma chegar a
+ * 46,8 s, porque uma volta que COMEÇA dentro do orçamento pode terminar fora
+ * dele. A conta agora é sempre contra a parede.
+ */
+const LIMITE_MS = 45_000;
+/**
+ * Abaixo disto não vale começar outra volta.
+ *
+ * ⚠️ Tem de caber a volta INTEIRA: o raciocínio E as ferramentas. Com 12 s aqui
+ * uma requisição chegou a 56,3 s — o abort segurava a chamada ao modelo, e as
+ * ferramentas, que ninguém limitava, comiam o resto. `montar_publico` sozinho
+ * mede 12,5 s numa varredura fria.
+ */
+const RESTO_MINIMO_MS = 22_000;
+/** Uma chamada ao modelo nunca passa disto — o abort é o que torna a parede real. */
+const TETO_CHAMADA_MS = 25_000;
 
 type Bloco = Anthropic.ContentBlockParam;
 
@@ -387,6 +430,38 @@ function limparPii(linhas: any[]): any[] {
  * não existe: o departamento é "ESCOVAS/ALISANTES") e o filtro devolve zero
  * clientes sem erro nenhum -- o pior tipo de resposta errada.
  */
+/**
+ * O que a dimensão tem, quando a busca não achou nada.
+ *
+ * ⚠️ ESTA É A DIFERENÇA ENTRE UM BECO E UMA CONVERSA.
+ *
+ * Medido em 14/09/2026 com o pedido real da supervisão: ela pediu quem comprou
+ * "selagem", e a palavra não existe em NENHUMA dimensão do ERP — as seções são
+ * "BIO PLASTIA", "CAUTER SYSTEM PROF.", "MASC A LIZZ 1L". A ferramenta devolvia
+ * `{valores: []}` e pronto. Sem nada para trabalhar, o modelo gastou as seis
+ * voltas chamando a busca de novo — em duas delas com lixo no parâmetro — e a
+ * tela terminou dizendo "Não consegui montar isso. Tente descrever o público de
+ * outro jeito", que joga em quem perguntou a culpa de um vocabulário que só o
+ * sistema conhece.
+ *
+ * Uma pessoa, no lugar da ferramenta, diria "selagem não existe aqui; o que há
+ * é isto, isto e isto — qual você quer?". É o que ela passa a devolver.
+ */
+async function amostraDaDimensao(db: any, dimensao: string, limite = 40) {
+  try {
+    if (dimensao === "cidade" || dimensao === "bairro" || dimensao === "ramo") {
+      return (await rodarVocabulario(db, dimensao, "")).slice(0, limite);
+    }
+    const dim = dimensao.replace(/'/g, "");
+    const sql = `select valor, count(*) as clientes from vw_cliente_item where dimensao = '${dim}'`
+      + ` group by valor order by clientes desc limit ${limite}`;
+    const { data } = await db.rpc("crm_consulta_leitura", { p_sql: sql, p_limite: limite });
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 async function rodarVocabulario(db: any, dimensao: string, busca: string) {
   const b = busca.trim();
 
@@ -521,37 +596,87 @@ export async function POST(req: Request) {
   /** a resposta escrita já entrou no histórico dentro do laço */
   let respostaNoHistorico = false;
   const consultas: { sql: string; motivo: string; linhas: number; conjunto: string | null; erro?: string }[] = [];
+  /**
+   * Quanto cada volta levou, em ms: o raciocínio do modelo e as ferramentas,
+   * separados.
+   *
+   * Existe porque "Failed to fetch" não diz NADA. Quando a requisição morre no
+   * teto da Vercel, o navegador não recebe corpo, status nem motivo — e do lado
+   * de fora é indistinguível de chave errada, rota quebrada ou rede caída. Com
+   * os tempos na resposta, o turno que ESCAPOU conta onde o tempo foi; o que
+   * morreu continua mudo, mas o anterior já denuncia a tendência.
+   *
+   * Só números: nada aqui carrega dado de cliente.
+   */
+  const tempos: { volta: number; modelo_ms: number; ferramentas_ms: number }[] = [];
 
   try {
     let ultimaChamadaMs = 0;
+    /** a volta mais cara até aqui — só diagnóstico; a decisão é pela parede */
+    let piorVolta = 0;
+    /** o laço terminou porque o modelo parou de pedir ferramenta? */
+    let concluiu = false;
     for (let volta = 0; volta < MAX_VOLTAS; volta++) {
       // Cabe mais uma volta? A conta olha quanto a ÚLTIMA chamada levou, com
       // uma folga de 20%, em vez de um limite fixo — assim um turno de chamadas
       // rápidas aproveita o tempo todo, e um de chamadas lentas para antes de
       // ser morto pela Vercel. Parar aqui devolve o que já existe; ser morto lá
       // não devolve nada.
+      // Cabe mais uma volta? A conta é contra a PAREDE, não contra a média:
+      // uma volta que começa com pouco tempo sobrando termina fora dele, e as
+      // voltas deste assistente não se parecem entre si (medido no mesmo
+      // pedido: 6,8 s · 5,7 s · 16,6 s · 12,9 s). Parar aqui devolve o que já
+      // existe; ser morto pela Vercel não devolve nada.
       const decorrido = Date.now() - comecou;
-      if (volta > 0 && decorrido + ultimaChamadaMs * 1.2 > TETO_MS) {
+      const restante = LIMITE_MS - decorrido;
+      if (volta > 0 && restante < RESTO_MINIMO_MS) {
         // O modelo ainda tinha o que fazer: a tela retoma daqui (`continuar`).
         incompleto = true;
         break;
       }
       const antes = Date.now();
-      const r = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8000,
-        thinking: { type: "adaptive" },
-        system: sys,
-        tools: FERRAMENTAS,
-        messages: mensagens,
-      });
+
+      // ⚠️ E o abort é o que torna o teto REAL. Sem ele, o orçamento só decide
+      // se COMEÇA outra volta — uma chamada que já está correndo pode levar o
+      // tempo que quiser, e foi assim que a requisição chegou aos 54,6 s. Com
+      // ele, o pior caso de uma volta é conhecido.
+      //
+      // Abortar custa a chamada em curso, e só ela: o histórico já tem todos os
+      // `tool_result` das voltas anteriores, então a retomada continua de onde
+      // parou em vez de recomeçar.
+      const relogio = AbortSignal.timeout(
+        Math.max(5_000, Math.min(TETO_CHAMADA_MS, restante - MARGEM_MS)),
+      );
+      let r: Anthropic.Message;
+      try {
+        r = await client.messages.create({
+          model: MODEL,
+          max_tokens: 8000,
+          thinking: { type: "adaptive" },
+          system: sys,
+          tools: FERRAMENTAS,
+          messages: mensagens,
+        }, { signal: relogio });
+      } catch (e: any) {
+        // Só o abort vira retomada; qualquer outro erro sobe e vira recado.
+        const abortou = e?.name === "AbortError" || e?.name === "TimeoutError"
+          || /abort/i.test(String(e?.message ?? ""));
+        if (!abortou) throw e;
+        incompleto = true;
+        break;
+      }
 
       ultimaChamadaMs = Date.now() - antes;
 
       const chamadas = r.content.filter((c): c is Anthropic.ToolUseBlock => c.type === "tool_use");
       resposta = r.content.filter((c) => c.type === "text").map((c: any) => c.text).join("\n").trim();
 
-      if (!chamadas.length) { respostaNoHistorico = false; break; }
+      if (!chamadas.length) {
+        tempos.push({ volta, modelo_ms: ultimaChamadaMs, ferramentas_ms: 0 });
+        respostaNoHistorico = false;
+        concluiu = true;
+        break;
+      }
 
       mensagens.push({ role: "assistant", content: r.content as Bloco[] });
       // ⚠️ `r.content` JÁ traz os blocos de texto. Sem esta marca, o `push` do
@@ -560,6 +685,7 @@ export async function POST(req: Request) {
       respostaNoHistorico = true;
 
       const devolucoes: Anthropic.ToolResultBlockParam[] = [];
+      const antesFerramentas = Date.now();
       for (const ch of chamadas) {
         try {
           if (ch.name === "montar_publico") {
@@ -584,10 +710,31 @@ export async function POST(req: Request) {
 
           } else if (ch.name === "vocabulario") {
             const i = ch.input as any;
-            const vals = await rodarVocabulario(db, String(i.dimensao ?? ""), String(i.busca ?? ""));
+            const dim = String(i.dimensao ?? "");
+            const termo = String(i.busca ?? "");
+            const vals = await rodarVocabulario(db, dim, termo);
+
+            // Busca com termo e sem resultado: em vez de um vazio que não leva
+            // a lugar nenhum, devolve o que a dimensão TEM. Ver o comentário de
+            // `amostraDaDimensao` — foi assim que um pedido legítimo virou
+            // "tente descrever de outro jeito".
+            const vazio = termo.trim() !== "" && vals.length === 0;
+            const existem = vazio ? await amostraDaDimensao(db, dim) : null;
             devolucoes.push({
               type: "tool_result", tool_use_id: ch.id,
-              content: JSON.stringify({ dimensao: i.dimensao, valores: vals }),
+              content: JSON.stringify(
+                vazio
+                  ? {
+                      dimensao: dim,
+                      valores: [],
+                      nao_encontrado: termo,
+                      existem,
+                      nota: `Nenhum valor de "${dim}" contém "${termo}". Acima estão os mais comuns que EXISTEM. `
+                        + `Se algum for o que a pessoa quis dizer, use o valor exato; se nenhum for, PERGUNTE a ela `
+                        + `citando os candidatos — não invente o termo nem repita esta busca.`,
+                    }
+                  : { dimensao: dim, valores: vals },
+              ),
             });
 
           } else if (ch.name === "consultar_base") {
@@ -637,7 +784,17 @@ export async function POST(req: Request) {
         }
       }
       mensagens.push({ role: "user", content: devolucoes });
+      const ferramentasMs = Date.now() - antesFerramentas;
+      tempos.push({ volta, modelo_ms: ultimaChamadaMs, ferramentas_ms: ferramentasMs });
+      piorVolta = Math.max(piorVolta, ultimaChamadaMs + ferramentasMs);
     }
+
+    // ⚠️ Acabar as voltas NÃO é a mesma coisa que terminar. Antes disto, sair
+    // pelo contador deixava `incompleto = false` — e a tela concluía que o
+    // assistente tinha respondido, quando ele estava no meio do raciocínio. O
+    // recado que aparecia era "Não consegui montar isso", que descreve a tela e
+    // não o que aconteceu.
+    if (!concluiu && !incompleto) incompleto = true;
   } catch (e: any) {
     return Response.json({ error: recadoDoErro(e) }, { status: 502 });
   }
@@ -663,6 +820,9 @@ export async function POST(req: Request) {
     // as consultas livres aparecem na tela: quem confirma o disparo tem direito
     // de ver por qual caminho o público foi montado
     consultas,
+    // quanto cada volta levou — ver a declaração de `tempos`
+    tempos,
+    total_ms: Date.now() - comecou,
     mensagens,
   });
 }

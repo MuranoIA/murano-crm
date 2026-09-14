@@ -4412,42 +4412,20 @@ export default function Chat() {
                           </button>
                         );
                       })}
-                      {/* ---- ETAPAS DO CRM (§68) --------------------------
-                          Abaixo da carteira, sob um título que não é botão:
-                          as sete colunas do board, na ORDEM do board, vindas
-                          de lib/etapasBoard — a mesma lista que a outra tela
-                          desenha.
+                      {/* ---- as ETAPAS DO CRM saíram daqui (14/09/2026) ----
+                          Elas viviam também neste dropdown, abaixo das filas. Eram
+                          as MESMAS sete que a faixa de chips logo abaixo já oferece,
+                          na mesma tela e a um clique em vez de dois — e escrevendo o
+                          mesmo `filtro` (§68.2), então nunca foram duas escolhas, e
+                          sim duas portas para a mesma.
 
-                          Prospecção e Sem cadastro aparecem sabendo que hoje
-                          dão zero: as duas descrevem quem NÃO tem conversa, e
-                          a lista do chat é de conversas. Ficam apagadas, e a
-                          lista vazia explica que o vazio é estrutural em vez
-                          de parecer um filtro que deu errado. É a regra que
-                          esta sidebar já segue nos contadores: zero é
-                          desenhado apagado, nunca escondido — controle que
-                          some faz o olho procurar onde ele foi. */}
-                      <div style={{ padding: "7px 12px 4px", background: M.bg, borderBottom: `1px solid ${M.border}`, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: M.muted }}>
-                        Etapas do CRM
-                      </div>
-                      {COLUNAS.map((col) => {
-                        const n = contaEtapa.get(col.key) ?? 0;
-                        const on = etapaSel === col.key;
-                        return (
-                          <button key={col.key} onClick={() => { escolherEtapa(col.key); setMenuFila(false); }}
-                            title={n > 0 ? col.subLong : `${col.subLong} — nenhuma conversa nesta etapa agora`}
-                            style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "8px 12px", background: on ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit", opacity: n > 0 || on ? 1 : 0.5 }}>
-                            <span style={{ width: 18, display: "flex", justifyContent: "center" }}>
-                              <span style={{ width: 9, height: 9, borderRadius: 9, background: col.cor, display: "block" }} />
-                            </span>
-                            <span style={{ flex: 1, fontSize: 13, fontWeight: on ? 800 : 600, color: on ? M.wine : M.ink }}>{col.titulo}</span>
-                            {n > 0 && (
-                              <span style={{ minWidth: 20, padding: "1px 6px", borderRadius: 999, background: M.roxoSoft, color: M.wine, fontSize: 10.5, fontWeight: 800, textAlign: "center" }}>
-                                {n}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
+                          Duas portas idênticas na mesma tela custam: a lista do
+                          dropdown empurrava as filas para cima e obrigava a rolar
+                          dentro dele para chegar em "Minha carteira".
+
+                          ⚠️ A ESCOLHA CONTINUA INTEIRA: `escolherEtapa` e
+                          `alternarEtapa` não mudaram, e os chips seguem sendo o
+                          controle. O que saiu foi a segunda porta, não a sala. */}
                     </div>
                   </>
                 )}
