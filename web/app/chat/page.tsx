@@ -1657,6 +1657,7 @@ export default function Chat() {
   // --- P1: transferência e busca no conteúdo --------------------------------
   const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [baixandoPdf, setBaixandoPdf] = useState(false);
   // Quem atende SEM carteira (admin, home, pós-venda). Endereço `u:<email>`,
   // rótulo de gente. Lista separada de `vendedores` de propósito: aquela é
   // `carteira_config`, a tabela de vendedor COM RCA que alimenta board,
@@ -3813,6 +3814,37 @@ export default function Chat() {
   // largura — então elas ganham uma faixa própria, onde os cinco ícones cabem
   // inteiros. Faixa que rola escondendo botão é pior que faixa que custa 40px.
   const acoesEmFaixa = isMobile && !compacto;
+
+  // ---- baixar a conversa em PDF -------------------------------------------
+  //
+  // Chamada por `fetch`, e não um `<a href>` direto para a rota: o chat roda
+  // dentro de iframe (o hub embute o CRM, o board embute o chat na lupa), e
+  // assim dá para mostrar "gerando…" e o erro na própria tela, em vez de o
+  // navegador abrir uma aba que falha em silêncio.
+  const baixarPdf = async () => {
+    if (!sel || baixandoPdf) return;
+    setBaixandoPdf(true);
+    try {
+      const r = await fetch(`/api/chat/pdf?cliente_id=${encodeURIComponent(sel.cliente_id)}`);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || `falha ao gerar (${r.status})`);
+      }
+      // ⚠️ A rota devolve o ENDEREÇO, não os bytes: um PDF com fotos passa dos
+      // 4,5 MB que a Vercel corta (a mesma parede do PR #150), então o arquivo
+      // vem do Storage. O próprio link já carrega o nome e o cabeçalho de
+      // download — por isso não há `a.download` aqui, que em link de outra
+      // origem seria ignorado de qualquer forma.
+      const { url } = await r.json();
+      const a = document.createElement("a");
+      a.href = url; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e: any) {
+      setAviso(`Não consegui gerar o PDF: ${e?.message ?? e}`);
+    } finally {
+      setBaixandoPdf(false);
+    }
+  };
   // `bancada` troca o emoji por traço monocromático (item 18 do laudo): sete
   // emoji lado a lado são sete pesos e sete cores decididos pela fonte do
   // sistema, não por nós. Os outros desenhos seguem com o emoji — trocar o
@@ -4985,6 +5017,13 @@ export default function Chat() {
                       {rot("↩", "↩ Devolver", "devolver", "Devolver")}
                     </button>
                   )}
+                  {/* baixar a conversa: fica antes de Transferir/Resolver porque
+                      é LEITURA, não ação sobre o atendimento */}
+                  <button onClick={baixarPdf} disabled={baixandoPdf}
+                    title="Baixar esta conversa em PDF"
+                    style={{ fontSize: fonteBotao, fontWeight: 700, color: M.gray, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 999, padding: padBotao, cursor: baixandoPdf ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    {baixandoPdf ? "…" : rot("⤓", "⤓ PDF", "baixar", "PDF")}
+                  </button>
                   <button onClick={() => { setTransferindo((v) => !v); setResolvendo(false); }}
                     title="Passar esta conversa para outro vendedor"
                     style={{ fontSize: fonteBotao, fontWeight: 700, color: transferindo ? "#fff" : M.roxo, background: transferindo ? M.roxo : M.bg, border: `1px solid ${transferindo ? M.roxo : M.border}`, borderRadius: 999, padding: padBotao, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
