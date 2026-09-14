@@ -19,6 +19,7 @@ import { nomeComCodigo } from "../../lib/nomeCliente";
 import { memoriaDeTela, fotoDeRota, memoriaDaSessao } from "../../lib/memoriaTela";
 // o "⋯" que recolhe as telas de apoio — o MESMO componente do funil
 import { MenuSecundario } from "../MenuSecundario";
+import { ORIGEM_HUB } from "../../lib/hub";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
 import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
@@ -1502,6 +1503,62 @@ export default function Chat() {
     })();
   }, [conversas, embutido]);
 
+  // ---- o recado do HUB: abrir esta conversa (0134/0135) --------------------
+  //
+  // Quem clica em "Responder" na notificação está no hub
+  // (`app.muranoprofessional.com.br`); o Pulse roda num iframe de outra origem.
+  // `postMessage` é o único caminho de volta — e é por isso que o push teve de
+  // nascer lá: em iframe cross-origin o navegador recusa a permissão de
+  // notificação antes de perguntar (medido em 14/09/2026).
+  //
+  // ⚠️ O `event.origin` É A TRAVA, e não pode ser afrouxado. `message` é um
+  // canal aberto: qualquer página que embuta esta aqui pode postar. Sem a
+  // conferência, um site de fora mandaria `{tipo:"hub:abrir-conversa"}` com um
+  // id qualquer e leria pela tela a conversa de uma cliente. Por isso a origem
+  // é comparada antes de olhar o conteúdo, e não depois.
+  useEffect(() => {
+    if (!embutido) return; // fora do quadro não há pai para falar conosco
+
+    const ouvir = (e: MessageEvent) => {
+      if (e.origin !== ORIGEM_HUB) return;
+      const d = e.data;
+      if (!d || d.tipo !== "hub:abrir-conversa") return;
+      const alvo = typeof d.cliente_id === "string" ? d.cliente_id : null;
+      if (!alvo) return;
+
+      const abre = (c: Conversa) => {
+        abrirRef.current?.(c);
+        // O "Responder" promete responder: deixa o cursor na caixa. Depois do
+        // render, senão o elemento ainda não existe. Falhar aqui não custa a
+        // conversa — só o foco.
+        setTimeout(() => focarCaixaRef.current?.(), 350);
+      };
+
+      const achada = conversas.find((c) => c.cliente_id === alvo);
+      if (achada) { abre(achada); return; }
+
+      // Embutido não carrega a lista (§41.3): resolve direto na thread, o mesmo
+      // caminho que o deep link já usa.
+      void (async () => {
+        try {
+          const r = await fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(alvo)}`, { cache: "no-store" });
+          const j = await r.json().catch(() => null);
+          const cli = j?.cliente;
+          if (!cli) { setAviso("Não encontrei essa conversa."); return; }
+          abre({
+            cliente_id: cli.id, cliente: cli.nome, vendedor: cli.carteira ?? null,
+            etapa: null, telefone: cli.telefone ?? null, ultima_atividade: null,
+            ultima_mensagem: null, ultima_enviada_por: null, na_fila: !cli.carteira,
+          });
+        } catch { setAviso("Não consegui abrir essa conversa."); }
+      })();
+    };
+
+    window.addEventListener("message", ouvir);
+    return () => window.removeEventListener("message", ouvir);
+  }, [conversas, embutido]);
+
+
   // ⚠️ ESTE useEffect FICA AQUI, e não junto do resto da lógica da carteira lá
   // embaixo: a partir da linha ~1426 o componente tem `return` condicional
   // (`if (sessao === undefined) return ...`). Hook depois de um return é
@@ -1619,6 +1676,10 @@ export default function Chat() {
   // vendedor de onde ele foi parar.
   const clienteDaUrl = useRef<string | null>(null);
   const jaAbriuDaUrl = useRef(false);
+  // Ponte para o compositor, que só é declarado ~100 linhas abaixo. Mesmo
+  // motivo do `abrirRef`: hook não pode descer para depois do `return`
+  // condicional, e referenciar um `const` de baixo aqui em cima é TDZ.
+  const focarCaixaRef = useRef<(() => void) | null>(null);
   // `abrir()` é declarada bem abaixo, depois de coisas que ela usa. O efeito do
   // deep link roda ANTES dela no arquivo, e hook não pode descer para depois de
   // um `return` condicional (React #310, §38.4) — então a ponte é um ref.
@@ -2686,6 +2747,7 @@ export default function Chat() {
   }
   // ponte para o efeito do deep link, que roda acima desta declaração
   abrirRef.current = abrir;
+  focarCaixaRef.current = () => textoRef.current?.focus();
 
   // puxar da fila: "pegar" é uma transferência de ninguém para mim. Reaproveita
   // /api/chat/transferir (append-only), que aceita origem nula justamente por isso.

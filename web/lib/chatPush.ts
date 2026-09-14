@@ -11,6 +11,36 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type Inscricao = { id: number; endpoint: string; p256dh: string; auth: string };
 
+/**
+ * De qual TABELA veio a inscrição. São duas, e não por acaso:
+ *
+ *   `chat_push_inscricao` (0096)  — quem abre o CRM direto ou instalou o app
+ *   `hub_push_inscricao`  (0134)  — quem trabalha dentro do hub
+ *
+ * ⚠️ Não dá para unificar. São ORIGENS diferentes
+ * (`crm.muranoprofessional.com.br` e `app.muranoprofessional.com.br`), logo
+ * outro service worker, outro endpoint e outra permissão — revogar no hub não
+ * diz nada sobre a do CRM. E a do hub precisou existir porque, em iframe
+ * cross-origin, o navegador responde `Notification.permission = "denied"` antes
+ * de qualquer pergunta (medido em 14/09/2026): o botão que mora dentro do chat
+ * nunca teve chance para quem entra pelo hub.
+ *
+ * Quem ENTREGA é este arquivo, para as duas — é o webhook que sabe que uma
+ * cliente falou, e ele é daqui.
+ */
+type Origem = "crm" | "hub";
+type InscricaoComOrigem = Inscricao & { origem: Origem };
+
+/**
+ * Quanto tempo um batimento da aba do hub vale.
+ *
+ * A aba carimba a cada 45s enquanto está à frente; aqui vale o DOBRO. A folga
+ * é de propósito: uma batida perdida (aba congelada por um instante, rede ruim,
+ * máquina engasgada) não pode virar uma notificação na cara de quem está lendo
+ * a tela. Errar para o lado de não incomodar.
+ */
+const JANELA_DO_BATIMENTO_MS = 90_000;
+
 /** Chave pública VAPID, que o navegador precisa para se inscrever. */
 export const chavePublica = () => (process.env.VAPID_PUBLIC_KEY ?? "").trim();
 
@@ -59,15 +89,32 @@ export async function avisar(
   if (!configurar() || !usuarios.length) return zero;
 
   try {
-    const { data } = await sb
-      .from("chat_push_inscricao")
-      .select("id,endpoint,p256dh,auth")
-      .in("usuario", usuarios);
-    const inscricoes = (data ?? []) as Inscricao[];
+    const corte = new Date(Date.now() - JANELA_DO_BATIMENTO_MS).toISOString();
+
+    // As duas tabelas em paralelo. Do lado do hub, `visto_em` é o batimento da
+    // aba em foco: quem carimbou nos últimos 90s está OLHANDO a tela, e avisar
+    // quem está olhando é a forma mais rápida de a pessoa desligar os avisos e
+    // perder também os que importam.
+    //
+    // `or(visto_em.is.null, visto_em.lt.<corte>)` e não `lt` puro: inscrição
+    // recém-criada pode ter `visto_em` nulo, e um `lt` sozinho a descartaria em
+    // silêncio — a pessoa ligaria os avisos e nunca receberia nenhum.
+    const [doCrm, doHub] = await Promise.all([
+      sb.from("chat_push_inscricao").select("id,endpoint,p256dh,auth").in("usuario", usuarios),
+      sb.from("hub_push_inscricao").select("id,endpoint,p256dh,auth")
+        .in("usuario", usuarios)
+        .or(`visto_em.is.null,visto_em.lt.${corte}`),
+    ]);
+
+    const inscricoes: InscricaoComOrigem[] = [
+      ...((doCrm.data ?? []) as Inscricao[]).map((i) => ({ ...i, origem: "crm" as const })),
+      ...((doHub.data ?? []) as Inscricao[]).map((i) => ({ ...i, origem: "hub" as const })),
+    ];
     if (!inscricoes.length) return zero;
 
     const texto = JSON.stringify(carga);
-    const mortas: number[] = [];
+    const mortas: Record<Origem, number[]> = { crm: [], hub: [] };
+    const vivas: Record<Origem, number[]> = { crm: [], hub: [] };
     let enviadas = 0;
 
     // Em paralelo: são poucas inscrições (uma por aparelho de quem atende) e o
@@ -80,24 +127,68 @@ export async function avisar(
           { TTL: 3600 }, // uma hora: aviso de mensagem não vale mais que isso
         );
         enviadas++;
+        vivas[i.origem].push(i.id);
       } catch (e: any) {
         // 404/410 = inscrição morta (app desinstalado, permissão revogada).
         // Não se conserta, só se remove — deixá-la ali faria toda mensagem
         // futura gastar uma tentativa condenada.
         const st = e?.statusCode;
-        if (st === 404 || st === 410) mortas.push(i.id);
+        if (st === 404 || st === 410) mortas[i.origem].push(i.id);
       }
     }));
 
-    if (mortas.length) await sb.from("chat_push_inscricao").delete().in("id", mortas);
-    if (enviadas) {
-      await sb.from("chat_push_inscricao")
-        .update({ usada_em: new Date().toISOString() })
-        .in("id", inscricoes.filter((i) => !mortas.includes(i.id)).map((i) => i.id));
+    // Escrito sem esperteza de propósito: um `flatMap` com os builders do
+    // PostgREST misturados não é `Promise` para o TypeScript, e a versão
+    // "elegante" só compilava com um cast que esconderia um erro de verdade.
+    const agora = new Date().toISOString();
+    for (const origem of ["crm", "hub"] as Origem[]) {
+      const tabela = origem === "crm" ? "chat_push_inscricao" : "hub_push_inscricao";
+      if (mortas[origem].length) {
+        await sb.from(tabela).delete().in("id", mortas[origem]);
+      }
+      if (vivas[origem].length) {
+        await sb.from(tabela).update({ usada_em: agora }).in("id", vivas[origem]);
+      }
     }
-    return { enviadas, removidas: mortas.length };
+
+    return { enviadas, removidas: mortas.crm.length + mortas.hub.length };
   } catch {
     return zero;
+  }
+}
+
+/**
+ * O texto de uma RAJADA: "3 novas mensagens" em vez de três notificações.
+ *
+ * O agrupamento visual já acontece no aparelho, pela `tag` da notificação —
+ * cinco mensagens seguidas da mesma cliente atualizam uma só. Mas o TEXTO
+ * continuaria sendo só a última, e quem olhasse a tela bloqueada não saberia
+ * que havia mais. Contar resolve isso com uma consulta de cabeçalho.
+ *
+ * ⚠️ Conta só o que a CLIENTE mandou (`enviada_por='customer'`). Incluir as
+ * nossas faria "3 novas mensagens" aparecer depois de o vendedor responder
+ * duas vezes — anunciando como novidade o que ele mesmo acabou de escrever.
+ *
+ * Falha devolvendo o texto original: é enfeite, e enfeite não pode custar o
+ * aviso.
+ */
+export async function resumoDaRajada(
+  sb: SupabaseClient,
+  clienteId: string,
+  texto: string,
+  janelaMs = 2 * 60_000,
+): Promise<string> {
+  try {
+    const desde = new Date(Date.now() - janelaMs).toISOString();
+    const { count } = await sb
+      .from("mensagens")
+      .select("id", { count: "exact", head: true })
+      .eq("cliente_id", clienteId)
+      .eq("enviada_por", "customer")
+      .gte("criada_em", desde);
+    return (count ?? 0) > 1 ? `${count} novas mensagens` : texto;
+  } catch {
+    return texto;
   }
 }
 

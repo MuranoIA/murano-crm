@@ -46,6 +46,14 @@
 #    conversa nao apareceu. Ver o quadro abaixo.
 cd web && npm run build && ENSAIO_VISIVEL=1 npm start        # porta 3100
 
+# Para os dois passos da PONTE DO PUSH no ciclo11 (o hub mandando "abra esta
+# conversa"), o build precisa conhecer a origem do hub de ensaio. `ORIGEM_HUB`
+# é constante de BUILD (web/lib/hub.ts) — num build normal o chat recusa o
+# recado do host de ensaio, e está certo: a trava de origem é o que impede
+# qualquer página que embuta o chat de abrir a conversa de uma cliente.
+# Sem esta variável os dois passos aparecem como PULADO, com o motivo.
+cd web && NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 npm run build && ENSAIO_VISIVEL=1 npm start
+
 # 2. rode a suíte
 node testes/run.mjs                 # tudo
 node testes/run.mjs ciclo1          # só o que casa com o texto
