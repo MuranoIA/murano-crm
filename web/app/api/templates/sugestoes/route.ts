@@ -73,9 +73,32 @@ export async function GET() {
     if (m === "REJECTED") return { chave: "recusada_meta", rotulo: "A Meta recusou este template" };
     return { chave: "analise_meta", rotulo: "Criada na Meta, esperando a análise deles" };
   };
+  // ---- a imagem de cabeçalho, para quem vai OLHAR a sugestão --------------
+  // O bucket `wa-midia` é privado, então o caminho sozinho não serve de `src`.
+  // Sem isto o administrador avalia às cegas: a sugestão diz "com imagem" e ele
+  // não vê qual — e a imagem era justamente o que se perdia na aprovação.
+  //
+  // Em lote (`createSignedUrls`), e não uma chamada por linha: a lista traz até
+  // 200 sugestões, e uma ida ao Storage por item transformaria abrir a tela numa
+  // espera. Falha aqui não derruba a lista — a sugestão aparece sem a imagem,
+  // que é o comportamento de antes.
+  const caminhos = Array.from(new Set(
+    (data ?? []).map((x: any) => x.imagem_path).filter(Boolean) as string[],
+  ));
+  const urls = new Map<string, string>();
+  if (caminhos.length) {
+    try {
+      const { data: assinadas } = await db.storage.from("wa-midia").createSignedUrls(caminhos, 3600);
+      for (const a of assinadas ?? []) {
+        if ((a as any).path && (a as any).signedUrl) urls.set((a as any).path, (a as any).signedUrl);
+      }
+    } catch { /* a lista vale mais que a miniatura */ }
+  }
+
   const agora = Date.now();
   const sugestoes = (data ?? []).map((x: any) => ({
     ...x,
+    imagem_url: x.imagem_path ? urls.get(x.imagem_path) ?? null : null,
     estado: estadoDe(x),
     // Nao ha prazo para a analise do admin, entao a tela nao promete nenhum --
     // mostra ha quanto tempo espera, que e verdade verificavel.

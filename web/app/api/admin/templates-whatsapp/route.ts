@@ -94,6 +94,12 @@ export async function POST(req: Request) {
   const cabecalhoTexto = texto(form.get("cabecalho_texto"));
   const arquivo = form.get("imagem");
   const temImagem = arquivo instanceof File && arquivo.size > 0;
+  // A imagem pode vir de DOIS lugares: um arquivo que o admin acabou de
+  // escolher, ou uma que o consultor já mandou junto da sugestão e que está
+  // guardada no bucket. O segundo caso é o que faltava — sem ele a imagem da
+  // sugestão morria na passagem para este formulário, e o template ia para a
+  // Meta sem cabeçalho nenhum.
+  const daSugestao = temImagem ? "" : texto(form.get("imagem_path"));
 
   if (!nome) return Response.json({ error: "dê um nome ao template" }, { status: 400 });
   if (!corpo) return Response.json({ error: "o texto do template não pode ficar vazio" }, { status: 400 });
@@ -103,7 +109,7 @@ export async function POST(req: Request) {
   if (!["MARKETING", "UTILITY", "AUTHENTICATION"].includes(categoria)) {
     return Response.json({ error: "categoria inválida" }, { status: 400 });
   }
-  if (temImagem && cabecalhoTexto) {
+  if ((temImagem || daSugestao) && cabecalhoTexto) {
     // a Meta aceita UM cabeçalho por template; deixar os dois passarem faria a
     // recusa acontecer lá, minutos depois, sem o admin entender por quê
     return Response.json({ error: "escolha imagem OU cabeçalho de texto — a Meta aceita só um" }, { status: 400 });
@@ -166,6 +172,47 @@ export async function POST(req: Request) {
 
     try {
       handle = await subirImagemDeCabecalho(bytes, f.type, `${metaNome}.${ext}`);
+    } catch (e: any) {
+      return Response.json({ error: `a Meta recusou a imagem: ${e?.message ?? e}` }, { status: 502 });
+    }
+  } else if (daSugestao) {
+    // ---- a imagem que veio da sugestão do consultor ------------------------
+    //
+    // ⚠️ COPIADA, não referenciada. O template aponta para o arquivo que será
+    // ENVIADO a cada disparo, para sempre; a sugestão é um rascunho que o autor
+    // pode apagar enquanto está pendente. Deixar o template apontando para
+    // `sugestoes/…` faria o envio quebrar meses depois, quando alguém limpasse
+    // o rascunho — e quebraria em produção, na frente da cliente.
+    //
+    // O prefixo é conferido em vez de aceito: esta rota é de admin, mas um dia
+    // alguém passa um caminho vindo de outro lugar, e aí ela viraria um leitor
+    // de objeto qualquer do bucket. O único lugar que grava imagem de sugestão
+    // é a rota de sugestões, e ela grava sempre em `sugestoes/`.
+    if (!/^sugestoes\/[A-Za-z0-9._-]+\.(jpg|jpeg|png)$/i.test(daSugestao)) {
+      return Response.json({ error: "caminho de imagem inválido" }, { status: 400 });
+    }
+    const { data: obj, error: eDown } = await sbAdmin().storage.from("wa-midia").download(daSugestao);
+    if (eDown || !obj) {
+      // Recado específico: "não consegui criar" mandaria o admin conferir o
+      // texto, quando o que sumiu foi o arquivo.
+      return Response.json({
+        error: "a imagem desta sugestão não está mais no armazenamento — peça ao consultor para reenviá-la",
+      }, { status: 410 });
+    }
+    const bytes = new Uint8Array(await obj.arrayBuffer());
+    if (bytes.byteLength > TAMANHO_MAX) {
+      return Response.json({ error: "a imagem passa de 5 MB, o limite da Meta" }, { status: 400 });
+    }
+    const ext = /\.png$/i.test(daSugestao) ? "png" : "jpg";
+    const mime = ext === "png" ? "image/png" : "image/jpeg";
+    imagemPath = `templates/${metaNome}-${Date.now()}.${ext}`;
+
+    const { error: eUp } = await sbAdmin().storage.from("wa-midia")
+      .upload(imagemPath, bytes, { contentType: mime, upsert: true });
+    if (eUp) return Response.json({ error: `não consegui guardar a imagem: ${eUp.message}` }, { status: 500 });
+
+    try {
+      handle = await subirImagemDeCabecalho(bytes, mime, `${metaNome}.${ext}`);
     } catch (e: any) {
       return Response.json({ error: `a Meta recusou a imagem: ${e?.message ?? e}` }, { status: 502 });
     }

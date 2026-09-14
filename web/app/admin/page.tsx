@@ -856,12 +856,16 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
       const fd = new FormData();
       for (const k of ["nome", "categoria", "corpo", "rodape", "cabecalho_texto"]) fd.append(k, f[k] ?? "");
       if (f.botoes.length) fd.append("botoes", JSON.stringify(f.botoes));
+      // Arquivo novo ganha da imagem herdada: se o admin escolheu um, é porque
+      // quis trocar. Sem arquivo, vale o caminho que veio da sugestão.
       if (imagem) fd.append("imagem", imagem);
+      else if (f.imagem_path) fd.append("imagem_path", f.imagem_path);
       const r = await fetch("/api/admin/templates-whatsapp", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
       avisar("ok", j?.aviso ?? "Template criado.");
-      setF({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "", botoes: [] });
+      setF({ nome: "", categoria: "MARKETING", corpo: "", rodape: "", cabecalho_texto: "", botoes: [],
+             imagem_path: null, imagem_url: null });
       setImagem(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
       await recarregar();
@@ -951,10 +955,19 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
           // texto presta") com uma acao que bloqueia o nome por 30 dias se um
           // dia for apagado.
           publicar={(x: any) => {
+            // ⚠️ `imagem_path` VAI JUNTO. Sem ele o formulário abria sem
+            // cabeçalho e o template ia para a Meta sem a imagem que o consultor
+            // tinha mandado — e ninguém percebia, porque a tela não mostrava
+            // que havia imagem nenhuma.
             setF({ nome: x.nome, categoria: "MARKETING", corpo: x.corpo,
-                   rodape: x.rodape ?? "", cabecalho_texto: x.cabecalho_texto ?? "", botoes: [] });
+                   rodape: x.rodape ?? "", cabecalho_texto: x.cabecalho_texto ?? "", botoes: [],
+                   imagem_path: x.imagem_path ?? null, imagem_url: x.imagem_url ?? null });
+            setImagem(null);
+            if (arquivoRef.current) arquivoRef.current.value = "";
             setVista("cadastro");
-            avisar("ok", `Formulário preenchido com a sugestão de ${x.carteira ?? "a equipe"}. Confira a categoria e o identificador antes de criar.`);
+            avisar("ok", x.imagem_path
+              ? `Formulário preenchido com a sugestão de ${x.carteira ?? "a equipe"}, com a imagem dela. Confira a categoria e o identificador antes de criar.`
+              : `Formulário preenchido com a sugestão de ${x.carteira ?? "a equipe"}. Confira a categoria e o identificador antes de criar.`);
           }}
         />
       </>
@@ -1041,12 +1054,35 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
                     onChange={(e) => setImagem(e.target.files?.[0] ?? null)}
                     style={{ ...inputBase, width: 300, padding: "5px 7px" }} />
                   <span style={{ fontSize: 11.5, color: M.muted }}>JPEG ou PNG, até 5 MB — aparece acima do texto</span>
+                  {/* A imagem herdada da sugestão precisa aparecer, e precisa
+                      dizer que é herdada: sem isto o campo fica vazio e o admin
+                      conclui que não há imagem — foi assim que ela se perdia. */}
+                  {f.imagem_path && !imagem && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 6,
+                      background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9, padding: 8, width: 300, boxSizing: "border-box" }}>
+                      {f.imagem_url
+                        ? <img src={f.imagem_url} alt="" style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
+                        : <div style={{ width: 52, height: 52, borderRadius: 6, background: M.border, flexShrink: 0 }} />}
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: M.ink }}>imagem da sugestão</div>
+                        <div style={{ fontSize: 11, color: M.muted }}>vai junto ao criar; escolha um arquivo acima para trocar</div>
+                      </div>
+                      <button type="button"
+                        onClick={() => setF((x: any) => ({ ...x, imagem_path: null, imagem_url: null }))}
+                        title="Criar este template sem imagem de cabeçalho"
+                        style={{ background: "transparent", border: "none", color: M.gray, fontSize: 16,
+                          cursor: "pointer", fontFamily: "inherit", lineHeight: 1, padding: 2 }}>×</button>
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <label style={rotuloCampo}>Ou título de texto</label>
-                  <input value={f.cabecalho_texto} disabled={!!imagem} maxLength={60}
+                  {/* A Meta aceita UM cabeçalho. A imagem herdada conta como um
+                      — antes só o arquivo recém-escolhido desativava este campo,
+                      e a dupla imagem+título passaria para a recusa da Meta. */}
+                  <input value={f.cabecalho_texto} disabled={!!imagem || !!f.imagem_path} maxLength={60}
                     onChange={(e) => setF({ ...f, cabecalho_texto: e.target.value })}
-                    style={{ ...inputBase, width: 260, opacity: imagem ? 0.5 : 1 }} />
+                    style={{ ...inputBase, width: 260, opacity: (imagem || f.imagem_path) ? 0.5 : 1 }} />
                   <span style={{ fontSize: 11.5, color: M.muted }}>a Meta aceita um cabeçalho só</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1091,7 +1127,7 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
         </div>
 
         <div style={{ flex: "0 0 300px", minWidth: 260, position: "sticky", top: 18 }}>
-          <VisualizarTemplate f={f} imagemPreview={imagemPreview} />
+          <VisualizarTemplate f={f} imagemPreview={imagemPreview ?? f.imagem_url ?? null} />
         </div>
       </div>
 
@@ -2751,6 +2787,20 @@ function SugestoesAba({ sugs, templates, recarregar, avisar, publicar }: {
         {/* o texto COMO A CLIENTE VAI LER, nao o corpo cru: ninguem julga um
             texto com chaves no meio */}
         <div style={{ background: "#e8f6ff", border: "1px solid #cfeafb", borderRadius: 12, borderTopLeftRadius: 4, padding: "10px 13px", maxWidth: 560 }}>
+          {/* A imagem vem ANTES do texto porque é onde a cliente a vê: ela é o
+              cabeçalho do template. E precisa aparecer aqui — sem ela o
+              administrador avaliava às cegas uma sugestão que dizia "com
+              imagem", e era justamente a imagem que se perdia na aprovação. */}
+          {x.imagem_url && (
+            <img src={x.imagem_url} alt="imagem de cabeçalho da sugestão"
+              style={{ width: "100%", maxHeight: 180, objectFit: "cover", display: "block",
+                borderRadius: 8, marginBottom: 7 }} />
+          )}
+          {x.imagem_path && !x.imagem_url && (
+            <div style={{ fontSize: 12, color: M.laranja, marginBottom: 6 }}>
+              tem imagem, mas não consegui carregá-la agora
+            </div>
+          )}
           {x.cabecalho_texto && <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 3 }}>{x.cabecalho_texto}</div>}
           <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap", color: M.ink }}>{previa}</div>
           {x.rodape && <div style={{ fontSize: 11.5, color: M.gray, marginTop: 5 }}>{x.rodape}</div>}
