@@ -5833,11 +5833,28 @@ export default function Chat() {
                         <div style={{ height: 1, background: M.bg }} />
                         <div style={{ padding: "7px 13px 3px", fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5,
                           textTransform: "uppercase", color: M.muted }}>Localização</div>
+                        {/* ⚠️ Localização é MENSAGEM LIVRE: fora da janela de 24h a Meta
+                            recusa (131047) e nenhum template carrega um mapa.
+                            Medido em 12/09/2026: 12 tentativas num dia, todas falhando
+                            assim — e o menu oferecia os botões como se fossem funcionar.
+                            A tela já sabia (`janelaAberta`); só não perguntava.
+                            As opções continuam VISÍVEIS, apagadas: escondê-las faria o
+                            vendedor procurar o que sumiu, em vez de ler por quê. */}
+                        {!janelaAberta && (
+                          <div style={{ padding: "2px 13px 8px", fontSize: 11, lineHeight: 1.35, color: M.laranja }}>
+                            Fora da janela de 24h — só um TEMPLATE chega até ela agora.
+                          </div>
+                        )}
                         <button onClick={() => { setAnexoAberto(false); void pedirLocal(); }}
-                          title="A cliente recebe um botão e escolhe compartilhar. Não é acompanhamento ao vivo — a API do WhatsApp não entrega isso."
+                          disabled={!janelaAberta}
+                          title={janelaAberta
+                            ? "A cliente recebe um botão e escolhe compartilhar. Não é acompanhamento ao vivo — a API do WhatsApp não entrega isso."
+                            : "A janela de 24h fechou: este pedido não chegaria. Use o botão TEMPLATE para reabrir a conversa."}
                           style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
                             padding: "9px 13px", fontSize: 13, fontWeight: 600, color: M.ink,
-                            background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                            opacity: janelaAberta ? 1 : 0.4,
+                            background: "transparent", border: "none",
+                            cursor: janelaAberta ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
                           <span style={{ fontSize: 16 }}>🛰️</span>
                           <span style={{ minWidth: 0 }}>
                             <span style={{ display: "block" }}>Pedir a localização dela</span>
@@ -5847,10 +5864,14 @@ export default function Chat() {
                         {locais.length > 0 && <div style={{ height: 1, background: M.bg }} />}
                         {locais.map((l, i) => (
                           <button key={i} onClick={() => { setAnexoAberto(false); void enviarLocal(i, l.nome); }}
-                            title={l.endereco}
+                            disabled={!janelaAberta}
+                            title={janelaAberta ? l.endereco
+                              : `${l.endereco} — a janela de 24h fechou, este envio não chegaria.`}
                             style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
                               padding: "9px 13px", fontSize: 13, fontWeight: 600, color: M.ink,
-                              background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                              opacity: janelaAberta ? 1 : 0.4,
+                              background: "transparent", border: "none",
+                              cursor: janelaAberta ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
                             <span style={{ fontSize: 16 }}>📍</span>
                             <span style={{ minWidth: 0 }}>
                               <span style={{ display: "block" }}>{l.nome}</span>
