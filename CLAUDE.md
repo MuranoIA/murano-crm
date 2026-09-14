@@ -5690,3 +5690,135 @@ servir de discriminador. Mais os cinco destinos invalidos por `curl`.
 - **O Git Bash converte argumento que comeca com `/`** em caminho do Windows:
   `node script.mjs /chat` chega como `C:/Program Files/Git/chat`. Prefixar com
   `MSYS_NO_PATHCONV=1`.
+
+## 72. Push do chat para quem trabalha dentro do hub (14/09/2026) — migrations 0134 e 0135
+
+O Web Push do chat existe desde a §18/0096 e funciona. Só que, em 14/09/2026, o
+banco tinha **duas inscrições ativas, as duas do dev, as duas em acesso direto**
+ao `crm.muranoprofessional.com.br`. Nenhuma do time — que trabalha dentro do hub.
+
+### 72.1 ⚠️ A causa, MEDIDA. E ela invalida qualquer conserto no lado do chat
+
+Com a permissão no estado "nunca decidiu":
+
+| contexto | `Notification.permission` ANTES de pedir |
+|---|---|
+| topo, sem iframe | `default` — dá para perguntar |
+| iframe de MESMA origem | `default` — dá para perguntar |
+| **iframe CROSS-ORIGIN** | **`denied`**, antes de qualquer pergunta |
+
+O CRM roda em iframe do hub (§17), e as origens são diferentes
+(`app.` × `crm.`). Ali `requestPermission()` volta **sem mostrar prompt nenhum**.
+E **não há `allow=` que resolva**: notificação não é recurso delegável por
+Permissions Policy, diferente do microfone (§22.5) — onde a correção foi o hub
+delegar. Aqui não existe delegação a pedir.
+
+Ou seja: o botão "ativar avisos" que mora em `app/chat/page.tsx` (§18 P0) nunca
+teve chance para quem entra pelo hub, e nenhum ajuste nele mudaria isso.
+
+⚠️ **A armadilha que custaria horas:** no MESMO instante em que
+`Notification.permission` dizia `denied`, `navigator.permissions.query` respondeu
+`prompt`. Quem confiar na Permissions API conclui que pode perguntar, pede,
+recebe `default` e fica tentando para sempre — sem prompt e sem erro no console.
+**A régua é `Notification.permission`.** É o mesmo tipo de engano do `??` da
+§22.6.1 e da §62.5: uma API responde "não sei" e alguém lê como fato apurado.
+
+### 72.2 Duas tabelas, e por que não dá para unificar
+
+| tabela | de quem |
+|---|---|
+| `chat_push_inscricao` (0096) | quem abre o CRM direto ou instalou o app |
+| `hub_push_inscricao` (0134) | quem trabalha dentro do hub |
+
+São **origens** diferentes: outro service worker, outro endpoint, outra
+permissão. Revogar no hub não diz nada sobre a do CRM. Uma tabela só faria toda
+consulta carregar um `where origem = ...` que alguém esqueceria — e o sintoma
+seria notificação entregue à origem errada, que falha em silêncio.
+
+**O que NÃO se duplicou:** a entrega e a régua de quem recebe. `avisar()` serve
+as duas tabelas, e `destinatarios()` continua sendo a única resposta para "quem
+vê esta conversa". O gatilho segue sendo o webhook — o único lugar que sabe que
+uma cliente falou.
+
+Hub e CRM dividem o **mesmo projeto Supabase** (`wtunzezigncwjpcqsfzk`,
+conferido no `.env.local` dos dois). É isso que dispensa chamada entre serviços.
+
+### 72.3 A 0135 existe porque o hub não usa service_role
+
+O padrão desta casa é RLS ligado **sem policy**, com `service_role` atravessando.
+Serve para tudo que só o nosso servidor escreve. Mas quem escreve a inscrição é o
+hub, e o `packages/supabase/src/server.ts` de lá diz, em texto: *"Nao usamos
+service_role no app"*. Um cliente privilegiado novo lá dentro seria a primeira
+exceção a essa regra — e exceção de segurança que entra por conveniência não
+volta.
+
+Então a 0135 dá policies pelo **e-mail do JWT** (`auth.jwt() ->> 'email'`, e não
+`auth.uid()`: é o e-mail que amarra `acesso.email`, `chat_push_inscricao.usuario`
+e esta tabela). O `with check` no UPDATE não é redundante — sem ele daria para
+pegar a própria linha e reescrever o `usuario` para o de outro, que é a mesma
+brecha do INSERT por outro caminho.
+
+A ENTREGA continua com `service_role`, daqui. O recorte é esse: o dono da
+inscrição é quem se inscreve; o dono do envio é o servidor.
+
+### 72.4 O batimento: não avisar quem está olhando a tela
+
+A aba do hub carimba `visto_em` a cada 45s enquanto está **visível e com foco**;
+a entrega pula quem carimbou nos últimos **90s** — o dobro, para uma batida
+perdida não virar aviso indevido.
+
+⚠️ O filtro é `or(visto_em.is.null, visto_em.lt.<corte>)`. Um `lt` sozinho
+descartaria em silêncio a inscrição recém-criada, que ainda tem `visto_em` nulo:
+a pessoa ligaria os avisos e **nunca receberia nenhum**. Por isso a regressão
+exercita os quatro estados contra o PostgREST de verdade, e não contra uma
+função pura — o risco está na sintaxe do filtro, não na aritmética.
+
+E é carimbo, não booleano `focada`: booleano depende de alguém escrever `false`
+ao sair, e a aba fechada por engano ou o notebook que dorme deixariam o registro
+preso em "focada para sempre".
+
+### 72.5 A ponte, e a trava que a sustenta
+
+O clique em "Responder" chega ao chat como `postMessage` do hub. `lib/hub.ts`
+guarda a origem como **constante**: `event.origin.endsWith("muranoprofessional.com.br")`
+pareceria equivalente e não é — `muranoprofessional.com.br.evil.com` passa nesse
+teste. Sem a trava, qualquer página que embutisse o chat leria a conversa de uma
+cliente.
+
+O foco na caixa usa a ponte `focarCaixaRef`, pelo motivo da §38.4: o `textoRef`
+é declarado ~200 linhas abaixo, e hook não desce para depois do `return`
+condicional.
+
+⚠️ **"Responder" NÃO abre campo de texto, e não há como abrir** — campo dentro
+da notificação é `RemoteInput` do Android nativo. O botão faz o caminho mais
+curto que existe: a conversa certa, com o cursor na caixa. Em Safari/iOS
+`actions` nem aparece. **Não prometer digitação pela notificação.**
+
+### 72.6 O que foi verificado, e como
+
+- **push de verdade** entregue ao service worker do hub pelo CDP
+  (`ServiceWorker.deliverPushMessage`): notificação com título, corpo, a `tag`
+  por conversa e o botão Responder;
+- **três pushes da mesma cliente = UMA notificação** ("3 novas mensagens"); outra
+  cliente, notificação separada;
+- **ciclo11 9/9**, com dois passos novos: o hub abre a conversa certa com o
+  cursor na caixa, e uma página de **outra origem** manda o mesmo recado e nada
+  acontece;
+- as 4 falhas da suíte de regressão foram medidas **contra o master, no mesmo
+  build**: 3 falham iguais lá, e a das prévias é instável nos dois (passa na 1ª
+  rodada, pula na 2ª).
+
+### 72.7 Pendências
+
+1. **`VAPID_PUBLIC_KEY` na Vercel do `murano-app`** — só a pública; a privada
+   fica aqui, que é quem assina. Sem ela a pastilha não aparece (degrada).
+2. **Notificação em duplicata** para quem tem o app do CRM instalado **e** o hub
+   aberto: são duas inscrições legítimas, de origens diferentes, e não há como
+   casar aparelhos entre origens. Limitação da plataforma, não escolha.
+3. ⚠️ **Achado PRÉ-EXISTENTE, não introduzido aqui:** toda tabela deste banco
+   concede `TRUNCATE` a `anon` e `authenticated` por padrão do Supabase
+   (conferido em `chat_leitura`, `chat_push_inscricao` e na tabela nova). **RLS
+   não protege contra TRUNCATE.** As tabelas fechadas na §12.5 dependem de RLS
+   sem policy — que barra select/insert/update/delete e não isso. Corrigir é
+   `revoke` em massa, com o mesmo risco de rollback silencioso que a §12.5 e a
+   §71.5 já nomeiam. **Decisão pendente do usuário.**
