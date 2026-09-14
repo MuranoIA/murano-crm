@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { sendLocation, sendLocationRequest, linhaDaConversa } from "../../../../lib/whatsapp";
 import { lerLocais, type Local } from "../../../../lib/locais";
+import { janelaDaConversa, recadoDeJanelaFechada } from "../../../../lib/janela24h";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +70,16 @@ export async function POST(req: Request) {
     const texto = String(b?.texto ?? "").trim()
       || "Pode compartilhar sua localização? Assim consigo confirmar o endereço.";
     try {
-      const linha = await linhaDaConversa(sb, cliente_id);
+      // ⚠️ `db`, o CLIENTE — não `sb`, que aqui é a FUNÇÃO que cria o cliente.
+      // Estava `linhaDaConversa(sb, ...)`, e a falha era silenciosa: dentro dela
+      // todo acesso a `sb.from` estoura, cada camada tem o próprio `catch`, e o
+      // resultado era cair sempre no número da env — ignorando tanto a escolha
+      // do admin em /admin quanto o número em que a cliente falou.
+      const linha = await linhaDaConversa(db, cliente_id);
+      const j = await janelaDaConversa(db, cliente_id, linha);
+      if (!j.aberta) {
+        return Response.json({ error: recadoDeJanelaFechada(j), foraDaJanela: true }, { status: 422 });
+      }
       const { wamid } = await sendLocationRequest(t, texto, linha);
       // Espelha o PEDIDO na thread. Sem isso o vendedor não vê que já pediu e
       // pede de novo — o mesmo cuidado do cartão de permissão de chamada
@@ -81,6 +91,16 @@ export async function POST(req: Request) {
       }, { onConflict: "id" });
       return Response.json({ ok: true, id: wamid, pedido: true });
     } catch (e: any) {
+      // A Meta às vezes recusa na hora, às vezes aceita e falha pelo webhook.
+      // A guarda acima cobre o segundo caso; este `if` cobre o primeiro, com o
+      // mesmo formato que as rotas irmãs devolvem — assim a tela tem um único
+      // sinal para tratar.
+      if (e?.foraDaJanela) {
+        return Response.json({
+          error: "Fora da janela de 24h do WhatsApp — envie um template para reabrir a conversa.",
+          foraDaJanela: true,
+        }, { status: 422 });
+      }
       return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
     }
   }
@@ -96,8 +116,21 @@ export async function POST(req: Request) {
   // Localização é mensagem LIVRE: fora da janela de 24h a Meta recusa, e nenhum
   // template carrega um mapa. Recusar aqui, com o nome do problema, evita a
   // falha chegar minutos depois pelo webhook, sem contexto.
+  //
+  // ⚠️ ESTE COMENTÁRIO EXISTIA DESDE A 0111, E A CHECAGEM NÃO. Relatado em
+  // 12/09/2026 como "envio de localização não está funcionando": no banco,
+  // 12 tentativas num dia, todas para a mesma cliente, todas `failed` com
+  // 131047. A rota deixava clicar, respondia `ok`, a Meta ACEITAVA (devolvendo
+  // um wamid de verdade) e a falha só voltava pelo webhook — quando voltava:
+  // duas daquelas tentativas seguem presas em `wait` até hoje.
+  //
+  // Agora a promessa do comentário está no código.
   try {
-    const linha = await linhaDaConversa(sb, cliente_id);
+    const linha = await linhaDaConversa(db, cliente_id);   // `db`, o cliente — ver a nota acima
+    const j = await janelaDaConversa(db, cliente_id, linha);
+    if (!j.aberta) {
+      return Response.json({ error: recadoDeJanelaFechada(j), foraDaJanela: true }, { status: 422 });
+    }
     const { wamid } = await sendLocation(tel, local, linha);
     // A mensagem JÁ FOI para a cliente neste ponto. Se o espelho falhar, ela
     // recebeu um mapa que não existe na thread — o vendedor manda de novo. Por
@@ -122,6 +155,12 @@ export async function POST(req: Request) {
     if (r1.error && /localizacao/i.test(r1.error.message)) await espelho(false);
     return Response.json({ ok: true, id: wamid, local: local.nome });
   } catch (e: any) {
+    if (e?.foraDaJanela) {
+      return Response.json({
+        error: "Fora da janela de 24h do WhatsApp — envie um template para reabrir a conversa.",
+        foraDaJanela: true,
+      }, { status: 422 });
+    }
     return Response.json({ error: e?.message ?? String(e) }, { status: 502 });
   }
 }
