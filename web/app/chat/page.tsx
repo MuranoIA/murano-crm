@@ -291,7 +291,7 @@ const NAV: { href: string; rotulo: string; soAdmin?: boolean; acao?: "orcamento"
 // supervisão não aprovou a visão do time inteiro. Não repropor sem ele reabrir o
 // assunto. O campo que ela usava (`ultima_enviada_por`) continua existindo e é
 // usado por `nao_lida`, pela prévia da lista e pelo board: não é resíduo dela.
-type Fila = "pendentes" | "todas" | "resolvidas" | "fila" | "carteira" | "notas";
+type Fila = "pendentes" | "todas" | "favoritos" | "resolvidas" | "fila" | "carteira" | "notas";
 // O dropdown escolhe UMA coisa: ou uma fila, ou uma etapa do board. As etapas
 // entraram nele (e não num segundo seletor ao lado) porque a pergunta é a
 // mesma — "que recorte da lista eu quero ver agora?" — e dois controles para a
@@ -304,6 +304,10 @@ const etapaDaSelecao = (f: Selecao): EtapaBoard | null =>
 const FILAS: { k: Fila; icone: string; rotulo: string; dica: string }[] = [
   { k: "todas", icone: "💬", rotulo: "Meus atendimentos", dica: "conversas abertas sob sua responsabilidade" },
   { k: "pendentes", icone: "🔔", rotulo: "Mensagens não lidas", dica: "o cliente falou e ninguém leu ainda" },
+  // Favoritos (0137, pedido da Anne Karoline). Fica entre as duas primeiras
+  // porque é a lista CURTA de quem atende — o que ela escolheu retomar hoje —,
+  // e não mais um recorte automático como as de baixo.
+  { k: "favoritos", icone: "⭐", rotulo: "Favoritos", dica: "conversas que VOCÊ marcou para retomar depois" },
   { k: "fila", icone: "🚶", rotulo: "Fila de espera", dica: "sem dono — qualquer um pode pegar" },
   // Recados da supervisao (0129). Fica ao lado da fila de espera porque as duas
   // respondem a mesma pergunta -- "tem alguma coisa esperando por MIM?" -- e
@@ -357,6 +361,8 @@ type Conversa = {
   telefone: string | null; ultima_atividade: string | null;
   ultima_mensagem: string | null; ultima_enviada_por: string | null;
   nao_lida?: boolean; status?: string | null; motivo?: string | null;
+  /** marcada por MIM para retomar depois (0137) — não é estado da conversa */
+  favorita?: boolean;
   na_fila?: boolean;   // sem dono: qualquer um pode puxar
   // recado interno que ainda nao vi (0129): quantos, de quem, e de quando e o
   // mais recente. `nota_nova` e CONTAGEM, nao booleano -- 3 recados numa
@@ -2854,6 +2860,38 @@ export default function Chat() {
   }
 
   // resolver / reabrir a conversa (o substituto do "fechar atendimento" do RD)
+  /**
+   * Favoritar / desfavoritar (0137).
+   *
+   * Otimista, como o envio e o resolver: o gesto é um lembrete pessoal, e
+   * esperar a rede para a estrela acender faria a consultora clicar duas vezes.
+   * Falhou, volta ao que era e diz — silenciar deixaria a estrela acesa
+   * prometendo uma lista que não teria a conversa depois do F5.
+   */
+  async function alternarFavorito(c: Conversa) {
+    const novo = !c.favorita;
+    const aplica = (v: boolean) => {
+      setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, favorita: v } : x)));
+      setSel((atual) => (atual && atual.cliente_id === c.cliente_id ? { ...atual, favorita: v } : atual));
+    };
+    aplica(novo);
+    try {
+      const r = await fetch("/api/chat/favorito", {
+        method: novo ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cliente_id: c.cliente_id }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        aplica(!novo);
+        setAviso(j?.error ?? "não consegui salvar o favorito");
+      }
+    } catch {
+      aplica(!novo);
+      setAviso("não consegui salvar o favorito");
+    }
+  }
+
   async function mudarStatus(status: "aberta" | "resolvida", motivo?: string) {
     if (!sel) return;
     const antes = sel.status ?? "aberta";
@@ -3739,6 +3777,13 @@ export default function Chat() {
       // conversa ja encerrada ("faltou combinar a entrega"), e esconde-la faria
       // o contador prometer um numero que a lista nao mostra.
       if (!c.nota_nova) return false;
+    } else if (filtro === "favoritos") {
+      // Favorito ATRAVESSA o recorte de dono e o de status, como "Recados":
+      // marcar é um lembrete de quem marcou, não um estado da conversa. A
+      // supervisora acompanha um caso que não é dela; e quem marcou uma
+      // conversa já encerrada quer voltar nela exatamente por isso.
+      // Escondê-la faria o contador prometer um número que a lista não mostra.
+      if (!c.favorita) return false;
     } else if (filtro === "fila" ? !c.na_fila : c.na_fila) return false;
     if (filtro === "pendentes" && !(st === "aberta" && c.nao_lida)) return false;
     if (filtro === "resolvidas" && st !== "resolvida") return false;
@@ -3764,6 +3809,7 @@ export default function Chat() {
   // faria o "3" prometer tres linhas e entregar uma. Mesma escolha do chip
   // abaixo, pelo mesmo motivo.
   const contaNotas = noEscopo.filter((c) => c.nota_nova).length;
+  const contaFavoritos = noEscopo.filter((c) => c.favorita).length;
   // uma passada só pelas ~1.100 conversas, não sete filtros
   const contaEtapa = new Map<string, number>();
   for (const c of noEscopo) {
@@ -4330,6 +4376,7 @@ export default function Chat() {
                         const n = f.k === "pendentes" ? contaPendentes
                           : f.k === "fila" ? contaFila
                           : f.k === "notas" ? contaNotas
+                          : f.k === "favoritos" ? contaFavoritos
                           : f.k === "resolvidas" ? contaResolvidas
                           : noEscopo.filter((c) => !c.na_fila).length - contaResolvidas;
                         const on = filtro === f.k;
@@ -4833,6 +4880,9 @@ export default function Chat() {
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        {c.favorita && (
+                          <span title="nos seus favoritos" style={{ fontSize: 11, color: "#b08900", flexShrink: 0 }}>★</span>
+                        )}
                         <b style={{ fontSize: 13.5, color: M.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, fontWeight: c.nao_lida ? 900 : 700 }}>{nomeComCodigo(c.cliente, c.codcli)}</b>
                         {(c.status ?? "aberta") === "resolvida" && (
                           <span title="conversa resolvida" style={{ fontSize: 10, color: "#1a6b3c", flexShrink: 0 }}>✓</span>
@@ -5181,6 +5231,22 @@ export default function Chat() {
                   )}
                   {/* baixar a conversa: fica antes de Transferir/Resolver porque
                       é LEITURA, não ação sobre o atendimento */}
+                  {/* A estrela fica entre as ações da conversa porque é sobre
+                      ESTA conversa — mas é a única que não muda nada para os
+                      outros: ninguém além de quem clicou vê diferença. */}
+                  <button onClick={() => void alternarFavorito(sel)}
+                    title={sel.favorita
+                      ? "Tirar dos seus favoritos"
+                      : "Marcar para retomar depois — aparece na sua lista Favoritos"}
+                    aria-pressed={!!sel.favorita}
+                    style={{ fontSize: fonteBotao, fontWeight: 700,
+                      color: sel.favorita ? "#8a6100" : M.gray,
+                      background: sel.favorita ? "#fdf3d8" : M.bg,
+                      border: `1px solid ${sel.favorita ? "#e8d08a" : M.border}`,
+                      borderRadius: 999, padding: padBotao, cursor: "pointer",
+                      fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    {sel.favorita ? "★" : "☆"}{acoesSoIcone ? "" : sel.favorita ? " Favorita" : " Favoritar"}
+                  </button>
                   <button onClick={baixarPdf} disabled={baixandoPdf}
                     title="Baixar esta conversa em PDF"
                     style={{ fontSize: fonteBotao, fontWeight: 700, color: M.gray, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 999, padding: padBotao, cursor: baixandoPdf ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
