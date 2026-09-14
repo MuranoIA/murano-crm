@@ -24,6 +24,7 @@ import { ORIGEM_HUB } from "../../lib/hub";
 import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
+import OrcamentoFlutuante from "../OrcamentoFlutuante";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de atendimento, layout inspirado no WhatsApp
@@ -262,10 +263,21 @@ function Logo({ size = 26 }: { size?: number }) {
 // também no funil, que não os tinha todos.
 //
 // A lista de lá mora em `app/MenuSecundario.tsx`, uma só para as duas telas.
-const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
+// ⚠️ A MESMA barra do funil, na MESMA ordem. Até 14/09/2026 esta lista tinha
+// quatro itens e a do funil tinha seis: quem estava no chat não via Orçamento
+// nem Templates, e para chegar neles tinha de voltar ao funil primeiro. Pedido
+// do usuário, com print das duas telas lado a lado.
+//
+// `acao` existe porque nem todo item é link: Orçamento abre um painel flutuante
+// (o mesmo componente do funil), e não uma rota. Um `<Link href="/orcamento">`
+// levaria à página cheia e tiraria o consultor da conversa — que é o oposto do
+// que um orçamento durante o atendimento pede.
+const NAV: { href: string; rotulo: string; soAdmin?: boolean; acao?: "orcamento" }[] = [
   { href: "/", rotulo: "Funil" },
   { href: "/chat", rotulo: "💬 Chat" },
+  { href: "#orcamento", rotulo: "Orçamento", acao: "orcamento" },
   { href: "/analises", rotulo: "Análises", soAdmin: true },
+  { href: "/templates", rotulo: "Templates" },
   { href: "/admin", rotulo: "⚙️ Administração", soAdmin: true },
 ];
 
@@ -1627,6 +1639,7 @@ export default function Chat() {
   const [menuOrdem, setMenuOrdem] = useState(false);
   const [menuAcoes, setMenuAcoes] = useState(false);    // kebab ⋮ do cabeçalho
   const [menuMobile, setMenuMobile] = useState(false);  // ☰ da barra de navegação
+  const [orcamentoAberto, setOrcamentoAberto] = useState(false);  // painel flutuante, igual ao do funil
   const [abaContato, setAbaContato] = useState<AbaContato>("perfil");
   // estado do Realtime — ocupa no rodapé da lista a posição do "Online" do RD,
   // mas dizendo algo verdadeiro: se caiu, o chat depende do poll de 60s
@@ -1703,12 +1716,27 @@ export default function Chat() {
   const presencaIdRef = useRef<string>(
     typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Math.random()),
   );
-  // como apareço para os outros. Sem e-mail: o canal é público (§15.4)
+  // Como apareço para os outros — no pill de identidade e na presença
+  // ("👀 Fulano está aqui"). Sem e-mail: o canal é público (§15.4).
+  //
+  // ⚠️ Este ternário é anterior ao papel `pos-venda` e jogava TODO papel sem
+  // carteira que não fosse admin no balde "Supervisão". A atendente de pós-venda
+  // aparecia como "Supervisão" — não é um rótulo feio, é um rótulo FALSO: ela
+  // não supervisiona ninguém, e quem visse a presença dela concluiria a coisa
+  // errada sobre quem está na conversa. Só a captura de tela pegou.
+  //
+  // `home` continua "Supervisão" de propósito: é o que a Lais vê hoje, lê melhor
+  // que o "Home" do `rotuloDePapel`, e trocá-lo seria mudar a tela de alguém que
+  // não pediu. A divergência entre os dois rótulos está anotada para você decidir.
   const rotuloUsuario = !sessao
     ? ""
     : sessao.carteira
       ? cap(sessao.carteira)
-      : sessao.role === "admin" ? "Admin" : "Supervisão";
+      : sessao.role === "admin"
+        ? "Admin"
+        : sessao.role === "pos-venda"
+          ? "Pós-venda"
+          : "Supervisão";
   const [painelAberto, setPainelAberto] = useState(true);
   // --- P1: notas internas e respostas rápidas -------------------------------
   const [notas, setNotas] = useState<Nota[]>([]);
@@ -4087,14 +4115,25 @@ export default function Chat() {
           <nav style={{ display: "flex", alignItems: "center", alignSelf: "stretch", gap: 2, marginLeft: 8, minWidth: 0, overflowX: "auto" }}>
             {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
               const ativo = n.href === "/chat";
-              return (
-                <Link key={n.href} href={n.href}
-                  style={{ display: "inline-flex", alignItems: "center", whiteSpace: "nowrap", textDecoration: "none",
-                    fontSize: 14, fontWeight: ativo ? 800 : 600, color: ativo ? M.roxo : M.gray,
-                    padding: "0 10px", borderBottom: `2px solid ${ativo ? M.roxo : "transparent"}` }}>
-                  {n.rotulo}
-                </Link>
-              );
+              const estilo = {
+                display: "inline-flex" as const, alignItems: "center" as const,
+                whiteSpace: "nowrap" as const, textDecoration: "none" as const,
+                fontSize: 14, fontWeight: (ativo ? 800 : 600) as number,
+                color: ativo ? M.roxo : M.gray,
+                padding: "0 10px", borderBottom: `2px solid ${ativo ? M.roxo : "transparent"}`,
+              };
+              // O item de ação não navega: abre o painel aqui mesmo, sem tirar
+              // o consultor da conversa.
+              if (n.acao === "orcamento") {
+                return (
+                  <button key={n.href} onClick={() => setOrcamentoAberto(true)}
+                    style={{ ...estilo, color: orcamentoAberto ? M.roxo : M.gray,
+                      background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                    {n.rotulo}
+                  </button>
+                );
+              }
+              return <Link key={n.href} href={n.href} style={estilo}>{n.rotulo}</Link>;
             })}
           </nav>
         ) : (
@@ -4128,12 +4167,25 @@ export default function Chat() {
           <>
             <div onClick={() => setMenuMobile(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
             <div style={{ position: "absolute", top: "100%", left: 12, zIndex: 101, minWidth: 210, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
-              {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => (
-                <Link key={n.href} href={n.href} onClick={() => setMenuMobile(false)}
-                  style={{ display: "block", padding: "10px 13px", fontSize: 13.5, fontWeight: 600, color: n.href === "/chat" ? M.roxo : M.ink, textDecoration: "none", borderBottom: `1px solid ${M.bg}` }}>
-                  {n.rotulo}
-                </Link>
-              ))}
+              {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
+                const est = { display: "block" as const, width: "100%", textAlign: "left" as const,
+                  padding: "10px 13px", fontSize: 13.5, fontWeight: 600,
+                  color: n.href === "/chat" ? M.roxo : M.ink, textDecoration: "none" as const,
+                  borderBottom: `1px solid ${M.bg}` };
+                if (n.acao === "orcamento") {
+                  return (
+                    <button key={n.href} onClick={() => { setMenuMobile(false); setOrcamentoAberto(true); }}
+                      style={{ ...est, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+                      {n.rotulo}
+                    </button>
+                  );
+                }
+                return (
+                  <Link key={n.href} href={n.href} onClick={() => setMenuMobile(false)} style={est}>
+                    {n.rotulo}
+                  </Link>
+                );
+              })}
               <div style={{ padding: "8px 13px" }}>
                 <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
                   sombra: "0 12px 32px rgba(28,14,27,.20)" }}
@@ -6515,6 +6567,11 @@ export default function Chat() {
           </>
         );
       })()}
+
+      {/* O MESMO painel do funil, o mesmo componente — não uma segunda
+          implementação. Fica no fim do JSX, como lá, porque é camada
+          flutuante e não parte do layout. */}
+      {orcamentoAberto && <OrcamentoFlutuante onClose={() => setOrcamentoAberto(false)} />}
     </div>
   );
 }
