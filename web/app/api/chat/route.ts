@@ -369,7 +369,13 @@ export async function GET() {
     vendedores: vendedores ?? [],
     atendentes,
     meu_endereco: meuEndereco,
-    nao_lidas: conversas.filter((c: any) => c.nao_lida && !c.na_fila).length,
+    // A MESMA régua da lista e do selo na tela: sem `status`, este número
+    // contaria conversas já encerradas. Hoje nenhuma tela o consome — e é
+    // justamente por isso que ele precisa nascer certo: o dia em que alguém
+    // usar, vai usar o que estiver aqui.
+    nao_lidas: conversas.filter(
+      (c: any) => c.nao_lida && !c.na_fila && (c.status ?? "aberta") === "aberta",
+    ).length,
     na_fila: conversas.filter((c: any) => c.na_fila).length,
     // qual desenho da tela esta pessoa deve ver (0095). O piloto ganha do
     // global; valor desconhecido cai no padrão em vez de deixar a tela sem
