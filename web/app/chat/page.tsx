@@ -17,6 +17,8 @@ import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCa
 import { nomeComCodigo } from "../../lib/nomeCliente";
 // o estado que sobrevive à troca de rota — o MESMO mecanismo que o board usa
 import { memoriaDeTela, fotoDeRota, memoriaDaSessao } from "../../lib/memoriaTela";
+// o "⋯" que recolhe as telas de apoio — o MESMO componente do funil
+import { MenuSecundario } from "../MenuSecundario";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
 import { COLUNAS, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
@@ -253,14 +255,16 @@ function Logo({ size = 26 }: { size?: number }) {
 
 // as mesmas rotas do menu do board, na mesma ordem — quem vem do board não perde
 // a referência ao entrar no chat
+// ⚠️ Quatro itens saíram daqui em 14/09/2026 — Relatórios, Visões, Catálogo e
+// Tickets — e foram para o `MenuSecundario` (o "⋯"), a pedido do usuário, para
+// enxugar a barra. Eles NÃO sumiram: continuam a um clique, e agora aparecem
+// também no funil, que não os tinha todos.
+//
+// A lista de lá mora em `app/MenuSecundario.tsx`, uma só para as duas telas.
 const NAV: { href: string; rotulo: string; soAdmin?: boolean }[] = [
-  { href: "/", rotulo: "Negociações" },
+  { href: "/", rotulo: "Funil" },
   { href: "/chat", rotulo: "💬 Chat" },
-  { href: "/relatorios", rotulo: "Relatórios" },
-  { href: "/visoes", rotulo: "Visões" },
   { href: "/analises", rotulo: "Análises", soAdmin: true },
-  { href: "/catalogos", rotulo: "Catálogo" },
-  { href: "/tickets", rotulo: "Tickets" },
   { href: "/admin", rotulo: "⚙️ Administração", soAdmin: true },
 ];
 
@@ -4030,6 +4034,9 @@ export default function Chat() {
                 </Link>
               );
             })}
+            {/* o "⋯": Relatórios, Visões, Visões da Carteira, Catálogo e Tickets */}
+            <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
+                  sombra: "0 12px 32px rgba(28,14,27,.20)" }} />
           </nav>
         ) : (
           <button onClick={() => setMenuMobile((v) => !v)} title="Menu"
@@ -4059,6 +4066,11 @@ export default function Chat() {
                   {n.rotulo}
                 </Link>
               ))}
+              <div style={{ padding: "8px 13px" }}>
+                <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
+                  sombra: "0 12px 32px rgba(28,14,27,.20)" }}
+                  aoNavegar={() => setMenuMobile(false)} />
+              </div>
             </div>
           </>
         )}
