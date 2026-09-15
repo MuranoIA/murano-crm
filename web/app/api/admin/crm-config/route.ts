@@ -16,6 +16,29 @@ export const dynamic = "force-dynamic";
 
 const MECANISMOS = [
   {
+    chave: "aviso_pos_venda_ativo",
+    rotulo: "Avisar a cliente ao transferir para o pós-venda",
+    resumo:
+      "Quando o consultor passa a conversa para quem atende o pós-venda, a cliente recebe " +
+      "uma mensagem dizendo isso — em vez de ver, do nada, outra pessoa escrevendo por ali.",
+    desliga: [
+      "A mensagem automática à cliente na transferência para o pós-venda",
+      "O recado na tela de quem transferiu, dizendo se ela foi avisada",
+    ],
+    mantem: [
+      "A transferência em si, e o registro dela na conversa",
+      "As transferências entre consultores, que nunca avisam a cliente",
+      "O aviso de pausa e a resposta de fora do horário, que são outros mecanismos",
+    ],
+    nota:
+      "Só envia dentro da janela de 24h. Medido em 14/09 sobre as 192 transferências já " +
+      "feitas: a janela estava aberta em 79% a 82% delas — nas outras a cliente NÃO é " +
+      "avisada (fora da janela só template chega, e template é cobrado) e quem transferiu " +
+      "vê isso na tela, na hora. Um aviso por conversa a cada 12h, para a conversa que vai " +
+      "e volta não repetir o mesmo recado. A mensagem é gravada como automática, então " +
+      "fica fora do indicador de tempo de resposta.",
+  },
+  {
     chave: "ciclo_ativo",
     rotulo: "Motor de ciclo de compra",
     resumo:
@@ -107,6 +130,16 @@ export async function GET() {
           "da janela de 24h — fora dela exigiria template, e um aviso de intervalo não vale isso. " +
           "A rota também recusa repetir para quem já foi avisado.",
         texto: cfg.texto_pausa,
+      },
+      // texto da transferência para o pós-venda (0138): mesma razão da pausa —
+      // o que a cliente lê não pode depender de um deploy para mudar
+      avisoPosVenda: {
+        rotulo: "Aviso de transferência para o pós-venda",
+        resumo:
+          "O que a cliente recebe quando a conversa passa para quem atende o pós-venda. " +
+          "Só sai dentro da janela de 24h; fora dela quem transferiu é avisado na tela de " +
+          "que a cliente NÃO foi informada. Um por conversa a cada 12h.",
+        texto: (cfg as any).aviso_pos_venda_texto ?? null,
       },
       // ---- campos da ficha de cadastro (0109) -----------------------------
       // A lista mora no banco porque quem sabe o que o WinThor exige e quem
@@ -289,6 +322,28 @@ export async function PUT(req: Request) {
     }, { onConflict: "id" });
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true, aviso: "Aviso de pausa atualizado." });
+  }
+
+  // O texto da transferência para o pós-venda (0138). Mesmo molde do aviso de
+  // pausa, e pelo mesmo motivo: quem sabe a palavra certa para a cliente é quem
+  // atende, não quem faz deploy.
+  if (chave === "aviso_pos_venda_texto") {
+    const t = String(valor ?? "").trim();
+    if (t.length < 10) return Response.json({ error: "o aviso precisa de pelo menos 10 caracteres" }, { status: 400 });
+    if (t.length > 900) return Response.json({ error: "o aviso ficou longo demais (máx. 900)" }, { status: 400 });
+    // Sem variável nenhuma no texto, e isto é decisão: `{{1}}` aqui não seria
+    // preenchido por ninguém — a cliente leria as chaves. Quem tem variável é
+    // template, que passa por outro caminho.
+    if (/\{\{.*?\}\}/.test(t)) {
+      return Response.json({
+        error: "este texto vai literal para a cliente — tire os campos entre chaves",
+      }, { status: 400 });
+    }
+    const { error } = await sb.from("crm_config").upsert({
+      id: 1, aviso_pos_venda_texto: t, atualizado_por: g.email, atualizado_em: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ ok: true, aviso: "Texto da transferência para o pós-venda atualizado." });
   }
 
   if (!CHAVES.includes(chave)) {
