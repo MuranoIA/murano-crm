@@ -2536,6 +2536,12 @@ export default function Chat() {
       const j = await r.json().catch(() => null);
       if (!r.ok) { setAviso(j?.error ?? `erro ${r.status}`); return; }
       setObsTransf("");
+      // O desfecho do aviso à cliente (transferência para o pós-venda). Vem
+      // ANTES de fechar a thread de propósito: transferir para fora da minha
+      // carteira tira a conversa da tela, e é justamente aí que eu preciso
+      // saber se a cliente ficou sem aviso — depois de ela sumir da lista não
+      // há mais onde contar.
+      if (j?.aviso) setAviso(j.aviso);
       setTransferencias((ts) => [...ts, j.transferencia]);
       // se saiu da minha carteira, ela deixa a minha lista — fecha a thread para
       // não ficar uma conversa aberta que já não é mais minha
