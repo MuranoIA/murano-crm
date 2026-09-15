@@ -1966,48 +1966,76 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
   const selecionados: any[] = previa?.selecionados ?? [];
   const custo = selecionados.length * CUSTO_TEMPLATE;
-  // 1,8s entre um envio e outro (o mesmo `enviar()` abaixo). Com centenas de
-  // clientes isso deixa de ser detalhe: e o tempo que a aba fica aberta.
-  const minutos = Math.round((selecionados.length * 1.8) / 60);
+  // CONCORRENCIA envios em paralelo, não mais um a um com pausa de 1,8s. Aquela
+  // pausa era herança do RD Conversas — cota de ~48 chamadas/min COMPARTILHADA
+  // com o ETL (§14.5) — e sobrou depois que os dois saíram (0131). A Cloud API
+  // é outra conta, sem esse teto conhecido, e quem protege contra excesso agora
+  // é a retentativa em `enviarUm` (abaixo), não um temporizador calibrado para
+  // um fornecedor que não existe mais.
+  const CONCORRENCIA = 6;
+  // Estimativa de parede: total / faixas, ~1,5s por chamada (rota da Vercel +
+  // Graph). É aproximação para o aviso da tela, não uma medição — a
+  // retentativa pode alongar campanhas com muito 429.
+  const minutos = Math.round((selecionados.length / CONCORRENCIA) * 1.5 / 60);
+
+  // Códigos da Meta que significam "devagar, não errado" — vale tentar de novo
+  // com espera. Mesma lista de `lib/erroMeta.ts` (seção "limites"), mas aqui o
+  // formato da mensagem é "Graph NNNNN: ..." (lib/whatsapp.ts:86), não
+  // "Meta NNNNN" (esse é o formato do webhook assíncrono, outro caminho) — por
+  // isso a extração é local, e não `codigoMeta()`.
+  const RETRY_GRAPH = new Set(["130429", "131056", "80007", "131048"]);
+  const BACKOFF_MS = [1500, 3000, 6000];
+
+  async function enviarUm(alvo: any): Promise<{ ok: boolean; erro?: string }> {
+    for (let tentativa = 0; ; tentativa++) {
+      try {
+        const r = await fetch("/api/send-template", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cliente_id: alvo.envio_id,
+            ...(tpl?.envio_id ? { template_id: tpl.envio_id } : {}),
+            // só quando o template pede mais de um campo: com um campo só, o
+            // servidor põe o primeiro nome sozinho — que é o de sempre
+            ...(camposExtras.length
+              ? { variaveis: [alvo.primeiro_nome, ...camposExtras.map((_, k) => extras[k])] }
+              : {}),
+          }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && !j.error) return { ok: true };
+        const erro: string = j.error || `HTTP ${r.status}`;
+        const cod = /\bGraph\s+(\d{2,6})\b/.exec(erro)?.[1];
+        const valeTentar = (r.status === 429 || (cod && RETRY_GRAPH.has(cod))) && tentativa < BACKOFF_MS.length;
+        if (valeTentar) { await new Promise((res) => setTimeout(res, BACKOFF_MS[tentativa])); continue; }
+        return { ok: false, erro };
+      } catch (e: any) {
+        if (tentativa < BACKOFF_MS.length) { await new Promise((res) => setTimeout(res, BACKOFF_MS[tentativa])); continue; }
+        return { ok: false, erro: e?.message || "erro de rede" };
+      }
+    }
+  }
 
   async function enviar() {
     setFase("enviando");
     setFalhas([]);
-    // Aqui o ETL do RD era PAUSADO antes do envio e retomado no finally, para
-    // liberar a cota de ~48 chamadas/min que os dois dividiam. Sem o ETL
-    // (0131) não há com quem dividir: a cota da Cloud API é outra, e o
-    // throttle de 1.800 ms entre envios, abaixo, continua sendo o que a
-    // respeita.
 
-    let ok = 0, ruins = 0;
+    let ok = 0, ruins = 0, feitos = 0;
     const detalhe: { cliente: string; erro: string }[] = [];
     const total = selecionados.length;
     setProg({ feitos: 0, ok: 0, falhas: 0, total });
     try {
-      for (let i = 0; i < total; i++) {
-        const alvo = selecionados[i];
-        let erro = "";
-        try {
-          const r = await fetch("/api/send-template", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              cliente_id: alvo.envio_id,
-              ...(tpl?.envio_id ? { template_id: tpl.envio_id } : {}),
-              // só quando o template pede mais de um campo: com um campo só, o
-              // servidor põe o primeiro nome sozinho — que é o de sempre
-              ...(camposExtras.length
-                ? { variaveis: [alvo.primeiro_nome, ...camposExtras.map((_, k) => extras[k])] }
-                : {}),
-            }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (r.ok && !j.error) ok++;
-          else { ruins++; erro = j.error || `HTTP ${r.status}`; }
-        } catch (e: any) { ruins++; erro = e?.message || "erro de rede"; }
-        if (erro) detalhe.push({ cliente: alvo.cliente, erro });
-        setProg({ feitos: i + 1, ok, falhas: ruins, total });
-        if (i < total - 1) await new Promise((res) => setTimeout(res, 1800)); // throttle p/ não estourar 429
+      let proximo = 0;
+      async function faixa() {
+        while (proximo < total) {
+          const i = proximo++;
+          const alvo = selecionados[i];
+          const r = await enviarUm(alvo);
+          if (r.ok) ok++; else { ruins++; detalhe.push({ cliente: alvo.cliente, erro: r.erro || "erro" }); }
+          feitos++;
+          setProg({ feitos, ok, falhas: ruins, total });
+        }
       }
+      await Promise.all(Array.from({ length: Math.min(CONCORRENCIA, total) }, faixa));
     } finally {
       setFalhas(detalhe);
       setFase("fim");
@@ -2028,8 +2056,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         </div>
         {fase === "enviando" && (
           <div style={{ fontSize: 12, color: M.muted, marginTop: 10, lineHeight: 1.5 }}>
-            Não feche esta aba até terminar. A sincronização de fundo está pausada (libera a cota do RD)
-            e volta sozinha no fim.
+            Não feche esta aba até terminar — o envio roda em {CONCORRENCIA} faixas paralelas aqui dentro.
           </div>
         )}
         {fase === "fim" && falhas.length > 0 && (
@@ -2317,10 +2344,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               {minutos >= 2 && <> · ~<b>{minutos} min</b> de aba aberta</>}
             </div>
 
-            {/* O teto subiu para 2000, e 2000 são ~60 minutos com a tela ligada:
-                o envio é um laço do NAVEGADOR, um cliente por vez (§26.2). Quem
-                fecha a aba no meio para a campanha no meio — e isso tem de ser
-                dito ANTES de confirmar, não descoberto depois. */}
+            {/* O envio continua sendo um laço do NAVEGADOR (§26.2), agora em
+                CONCORRENCIA faixas em vez de uma só — mas ainda É a aba. Quem
+                fecha no meio para a campanha no meio, e isso tem de ser dito
+                ANTES de confirmar, não descoberto depois. */}
             {minutos >= 30 && (
               <div style={{ marginTop: 10 }}>
                 <Recado tipo="aviso">
