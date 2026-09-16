@@ -379,14 +379,22 @@ export function avisoDeTeto(pedido: any, f: FiltrosPublico): string[] {
   return avisos;
 }
 
-export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
+export async function montarPublico(
+  db: any, f: FiltrosPublico, cache: CachePublico = {},
+  // Lista já resolvida (código digitado, planilha) — pula a varredura da
+  // vw_funil inteira e usa exatamente estes cards. Carteira/etapa não filtram
+  // aqui: a lista já É a segmentação (lib/publicoManual.ts).
+  cardsManual?: any[],
+): Promise<Publico> {
   const carteiras = await carteirasDosTimes(db, f);
   const avisos: string[] = [];
 
   // 1) cards do funil. Busca a view INTEIRA uma vez e filtra carteira/etapa em
   //    memória: o assistente refaz o público várias vezes no mesmo turno, e
   //    repetir a varredura a cada tentativa foi o que estourou o tempo.
-  if (!cache.cards) {
+  if (cardsManual) {
+    cache.cards = cardsManual;
+  } else if (!cache.cards) {
     const todos: any[] = [];
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await semEnsaio(db.from(VIEW_FUNIL_TELA).select(COLS))
@@ -403,8 +411,8 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     }
     cache.cards = todos;
   }
-  const setCarteiras = carteiras.length ? new Set(carteiras) : null;
-  const setEtapas = f.etapas.length ? new Set(f.etapas) : null;
+  const setCarteiras = cardsManual ? null : (carteiras.length ? new Set(carteiras) : null);
+  const setEtapas = cardsManual ? null : (f.etapas.length ? new Set(f.etapas) : null);
   const cards = cache.cards.filter((c: any) =>
     (!setCarteiras || setCarteiras.has(String(c.vendedor)))
     && (!setEtapas || setEtapas.has(String(c.etapa))));
