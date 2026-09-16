@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { TEMAS, temaSalvo, type Paleta } from "../../../lib/tema";
+import { DDDS_VALIDOS } from "../../../lib/telefone";
 
 const TITULOS: Record<string, { titulo: string; desc: string }> = {
   melhores: { titulo: "🏆 30 Melhores", desc: "Top 30 por frequência e monetização (F/M) — ativo/inativo pela regra dos 120 dias" },
@@ -20,7 +21,13 @@ const cap = (s: any) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice
 const linkZap = (tel: any) => {
   const dig = String(tel ?? "").replace(/\D/g, "");
   if (dig.length < 8) return null;
-  return `https://wa.me/${dig.length <= 11 ? "55" + dig : dig}`;
+  // "55" só entra se o DDD resultante existir de fato — nunca só pelo tamanho
+  // (lib/telefone.ts, DDDS_VALIDOS; achado ao consertar o número da Mariana
+  // Auricélia em 16/09/2026, que era do Suriname e não do Brasil).
+  const comDDI = (dig.length === 10 || dig.length === 11) && DDDS_VALIDOS.has(Number(dig.slice(0, 2)))
+    ? "55" + dig
+    : dig;
+  return `https://wa.me/${comDDI}`;
 };
 
 export default function VisaoCaso() {
