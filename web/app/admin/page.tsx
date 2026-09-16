@@ -2022,9 +2022,17 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
   async function conferirManual() {
     setCarregandoPrevia(true);
+    // A rota tem maxDuration=60 (a mesma varredura de custo do modo automático,
+    // §63.6 já mediu 41-55s em produção para esse motor). Um teto no CLIENTE
+    // evita a tela ficar presa em "Conferindo…" para sempre se o Vercel matar a
+    // função sem devolver resposta — sem isto o fetch pode não estourar erro
+    // nenhum, só ficar pendurado.
+    const abortar = new AbortController();
+    const teto = setTimeout(() => abortar.abort(), 58_000);
     try {
       const r = await fetch("/api/admin/disparo-massa", {
         method: "POST", headers: { "Content-Type": "application/json" },
+        signal: abortar.signal,
         body: JSON.stringify({
           acao: "previa",
           codclis: itensManuais.map((i) => i.codcli),
@@ -2035,8 +2043,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); setPrevia(null); return; }
       setPrevia(j);
     } catch (e: any) {
-      avisar("erro", e?.message ?? String(e));
+      avisar("erro", e?.name === "AbortError"
+        ? "Não respondeu em tempo (mais de 58s). Tente de novo — costuma ser mais rápido na segunda tentativa."
+        : e?.message ?? String(e));
     } finally {
+      clearTimeout(teto);
       setCarregandoPrevia(false);
     }
   }
@@ -2516,6 +2527,12 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               <Botao cor={M.wine} disabled={itensManuais.length === 0 || carregandoPrevia} onClick={conferirManual}>
                 {carregandoPrevia ? "Conferindo…" : `Conferir público (${itensManuais.length})`}
               </Botao>
+              {carregandoPrevia && (
+                <span style={{ fontSize: 12, color: M.muted, flexBasis: "100%" }}>
+                  Confere cada código contra o WinThor e as proteções de custo (número morto, lixeira,
+                  anti-repetição) — costuma levar de 15 a 30 segundos.
+                </span>
+              )}
             </div>
           </div>
         )}
