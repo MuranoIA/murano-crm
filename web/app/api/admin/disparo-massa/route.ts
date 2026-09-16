@@ -2,6 +2,7 @@ import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
+import { resolverListaManual } from "../../../../lib/publicoManual";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -115,6 +116,15 @@ export async function GET() {
   });
 }
 
+/**
+ * Teto do público DIGITADO/PLANILHA — bem menor que o `LIMITE_MAX` (2.000) do
+ * automático. `resolverListaManual` faz uma ida ao banco POR código (achar ou
+ * criar o contato), e não uma varredura em lote como o motor por filtro —
+ * 2.000 códigos nesse regime não cabem nos 60s da rota. Passar disso é sinal
+ * de que o filtro automático é a ferramenta certa, não este caminho.
+ */
+const LIMITE_MANUAL = 500;
+
 // --- POST: prévia do público ------------------------------------------------
 export async function POST(req: Request) {
   const g = guardaAdmin("montar o público do disparo");
@@ -125,6 +135,29 @@ export async function POST(req: Request) {
   if (b.acao !== "previa") return Response.json({ error: "ação desconhecida" }, { status: 400 });
 
   try {
+    // Público DECLARADO por código (lista digitada ou planilha) — pula a
+    // segmentação por filtro e usa exatamente esses clientes. As proteções de
+    // custo (número morto, lixeira, anti-repetição, conversa aberta) continuam
+    // valendo: só quem monta o público muda, não o que barra o envio.
+    if (Array.isArray(b.codclis)) {
+      const codclis: number[] = b.codclis.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
+      const unicos: number[] = Array.from(new Set(codclis));
+      if (unicos.length > LIMITE_MANUAL) {
+        return Response.json({
+          error: `A lista tem ${unicos.length} códigos — o teto de uma lista digitada/planilha é `
+            + `${LIMITE_MANUAL}. Para públicos maiores, use os filtros automáticos (aba "Automático").`,
+        }, { status: 400 });
+      }
+      const { cards, semAlcance } = await resolverListaManual(sbAdmin(), unicos);
+      const publico = await montarPublico(
+        sbAdmin(),
+        lerFiltros({ diasRecontato: b.filtros?.diasRecontato, semConversaAberta: b.filtros?.semConversaAberta, limite: LIMITE_MANUAL }),
+        {},
+        cards,
+      );
+      return Response.json({ ...publico, semAlcance });
+    }
+
     const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
     return Response.json(publico);
   } catch (e: any) {

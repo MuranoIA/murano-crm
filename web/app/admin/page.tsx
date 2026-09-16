@@ -1890,6 +1890,21 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   // filtro que corta sem aparecer e o que ninguem consegue conferir.
   const [extrasErp, setExtrasErp] = useState<any>(null);
 
+  // --- fonte do público: filtro automático, lista digitada, ou planilha -----
+  // As três terminam no MESMO lugar (montarPublico) — só muda quem entra na
+  // conta. Carteira/etapa/tempo parado somem nas duas últimas: a lista JÁ é a
+  // segmentação. As proteções de custo (número morto, lixeira, anti-repetição,
+  // conversa aberta) continuam valendo nas três.
+  const [fonte, setFonte] = useState<"auto" | "manual" | "planilha">("auto");
+  const [itensManuais, setItensManuais] = useState<{ codcli: number; nome: string | null; cidade: string | null }[]>([]);
+  const [modoEntrada, setModoEntrada] = useState<"nome" | "codigo">("nome");
+  const [buscaTexto, setBuscaTexto] = useState("");
+  const [sugestoes, setSugestoes] = useState<{ codcli: number; nome: string; cidade: string | null; estado: string | null }[]>([]);
+  const [buscandoSugestao, setBuscandoSugestao] = useState(false);
+  const [erroEntrada, setErroEntrada] = useState<string | null>(null);
+  const [enviandoPlanilha, setEnviandoPlanilha] = useState(false);
+  const [avisoPlanilha, setAvisoPlanilha] = useState<string | null>(null);
+
   const [previa, setPrevia] = useState<any>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
   const [fase, setFase] = useState<"montar" | "confirmar" | "enviando" | "fim">("montar");
@@ -1905,7 +1920,12 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
   // a prévia é recalculada sozinha a cada mudança de filtro, com respiro: são
   // ~4 mil linhas da vw_funil por chamada, não é para disparar a cada tecla
+  //
+  // SÓ no modo automático: lista manual/planilha tem "Conferir público" como
+  // gesto explícito (abaixo), porque conferir provisiona contato de verdade
+  // (escreve em `clientes`) — não é algo para rodar a cada tecla.
   useEffect(() => {
+    if (fonte !== "auto") return;
     let vivo = true;
     const t = setTimeout(async () => {
       setCarregandoPrevia(true);
@@ -1932,8 +1952,94 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       }
     }, 400);
     return () => { vivo = false; clearTimeout(t); };
-  }, [carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
+  }, [fonte, carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
       semConversaAberta, porVendedor, limite, canalTpl, extrasErp, avisar]);
+
+  // --- lista manual: autocomplete por nome -----------------------------------
+  // Nunca texto livre além deste ponto: a sugestão que a pessoa clica é que
+  // vira entrada da lista, com o codcli já resolvido por trás.
+  useEffect(() => {
+    if (modoEntrada !== "nome" || buscaTexto.trim().length < 2) { setSugestoes([]); return; }
+    let vivo = true;
+    const t = setTimeout(async () => {
+      setBuscandoSugestao(true);
+      try {
+        const r = await fetch(`/api/admin/disparo-massa/lista?nome=${encodeURIComponent(buscaTexto.trim())}`);
+        const j = await r.json().catch(() => ({}));
+        if (vivo) setSugestoes(r.ok ? (j.itens ?? []) : []);
+      } catch { if (vivo) setSugestoes([]); }
+      finally { if (vivo) setBuscandoSugestao(false); }
+    }, 300);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [modoEntrada, buscaTexto]);
+
+  function adicionarItem(item: { codcli: number; nome: string | null; cidade: string | null }) {
+    setItensManuais((atual) => atual.some((i) => i.codcli === item.codcli) ? atual : [...atual, item]);
+    setBuscaTexto(""); setSugestoes([]); setErroEntrada(null); setPrevia(null);
+  }
+
+  function removerItem(codcli: number) {
+    setItensManuais((atual) => atual.filter((i) => i.codcli !== codcli));
+    setPrevia(null);
+  }
+
+  async function adicionarPorCodigo() {
+    const n = Number(buscaTexto.trim());
+    if (!Number.isFinite(n) || n <= 0) { setErroEntrada("digite um código válido"); return; }
+    if (itensManuais.some((i) => i.codcli === n)) { setBuscaTexto(""); return; }
+    setErroEntrada(null);
+    try {
+      const r = await fetch(`/api/admin/disparo-massa/lista?codcli=${n}`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setErroEntrada(j?.error ?? "erro ao buscar"); return; }
+      if (!j.item) { setErroEntrada(`código ${n} não existe no WinThor`); return; }
+      adicionarItem(j.item);
+    } catch (e: any) { setErroEntrada(e?.message ?? String(e)); }
+  }
+
+  async function subirPlanilha(arquivo: File) {
+    setEnviandoPlanilha(true); setAvisoPlanilha(null);
+    try {
+      const fd = new FormData(); fd.append("arquivo", arquivo);
+      const r = await fetch("/api/admin/disparo-massa/planilha", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      const novos: number[] = j.codclis ?? [];
+      const jaTinha = new Set(itensManuais.map((i) => i.codcli));
+      const acrescentados = novos.filter((c) => !jaTinha.has(c));
+      setItensManuais((atual) => [...atual, ...acrescentados.map((codcli) => ({ codcli, nome: null, cidade: null }))]);
+      setPrevia(null);
+      const partes = [`${novos.length} código(s) reconhecido(s)`];
+      if (acrescentados.length < novos.length) partes.push(`${novos.length - acrescentados.length} já estavam na lista`);
+      if ((j.invalidos ?? []).length) partes.push(`${j.invalidos.length} linha(s) sem código legível`);
+      setAvisoPlanilha(partes.join(" · "));
+    } catch (e: any) {
+      avisar("erro", e?.message ?? String(e));
+    } finally {
+      setEnviandoPlanilha(false);
+    }
+  }
+
+  async function conferirManual() {
+    setCarregandoPrevia(true);
+    try {
+      const r = await fetch("/api/admin/disparo-massa", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "previa",
+          codclis: itensManuais.map((i) => i.codcli),
+          filtros: { diasRecontato, semConversaAberta },
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); setPrevia(null); return; }
+      setPrevia(j);
+    } catch (e: any) {
+      avisar("erro", e?.message ?? String(e));
+    } finally {
+      setCarregandoPrevia(false);
+    }
+  }
 
   // O assistente propoe; quem aplica e o admin, num clique. Nada aqui envia --
   // depois de aplicado o publico ainda passa por Revisar e Confirmar.
@@ -2154,10 +2260,27 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       <div id="quem-recebe" />
       <Bloco
         titulo="2. Quem recebe"
-        ajuda={conversaAberta
+        ajuda={fonte !== "auto"
+          ? "O público é a lista abaixo. Cada código é conferido de verdade — WinThor, telefone, e as mesmas proteções de custo do modo automático (número morto, lixeira, anti-repetição, conversa aberta)."
+          : conversaAberta
           ? "Quem manda aqui é a conversa acima. Estes campos mostram o que foi combinado, mas não aceitam edição — feche a conversa para escolher à mão."
           : "O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."}
       >
+        <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
+          {([["auto", "Automático"], ["manual", "Lista manual"], ["planilha", "Planilha"]] as const).map(([v, r]) => {
+            const on = fonte === v;
+            return (
+              <button key={v} onClick={() => { setFonte(v); setPrevia(null); }}
+                style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.wine : M.bg,
+                  border: `1px solid ${on ? M.wine : M.border}` }}>
+                {r}
+              </button>
+            );
+          })}
+        </div>
+
+        {fonte === "auto" && (
         <div style={{ opacity: conversaAberta ? 0.55 : 1, pointerEvents: conversaAberta ? "none" : "auto" }}
           aria-disabled={conversaAberta}>
         <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Carteiras</span></div>
@@ -2277,8 +2400,127 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           </label>
         </div>
         </div>
+        )}
 
-        {criteriosExtras(extrasErp).length > 0 && (
+        {fonte !== "auto" && (
+          <div>
+            {fonte === "manual" && (
+              <>
+                <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
+                  {([["nome", "Por nome"], ["codigo", "Por código"]] as const).map(([v, r]) => {
+                    const on = modoEntrada === v;
+                    return (
+                      <button key={v} onClick={() => { setModoEntrada(v); setBuscaTexto(""); setSugestoes([]); setErroEntrada(null); }}
+                        style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                          borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                          border: `1px solid ${on ? M.roxo : M.border}` }}>
+                        {r}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, maxWidth: 440 }}>
+                  <input value={buscaTexto}
+                    onChange={(e) => { setBuscaTexto(e.target.value); setErroEntrada(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && modoEntrada === "codigo") { e.preventDefault(); adicionarPorCodigo(); } }}
+                    placeholder={modoEntrada === "nome" ? "digite o nome do cliente…" : "digite o código do cliente…"}
+                    style={{ ...inputBase, flex: 1 }} />
+                  {modoEntrada === "codigo" && (
+                    <button onClick={adicionarPorCodigo} title="adicionar"
+                      style={{ width: 34, height: 34, fontSize: 18, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                        borderRadius: 8, color: "#fff", background: M.wine, border: "none", lineHeight: 1 }}>
+                      +
+                    </button>
+                  )}
+                </div>
+                {erroEntrada && <div style={{ fontSize: 12, color: "#b3261e", marginBottom: 8 }}>{erroEntrada}</div>}
+
+                {modoEntrada === "nome" && buscaTexto.trim().length >= 2 && (
+                  <div style={{ border: `1px solid ${M.border}`, borderRadius: 8, marginBottom: 12, maxHeight: 220, overflow: "auto", maxWidth: 440 }}>
+                    {buscandoSugestao && <div style={{ padding: 10, fontSize: 12.5, color: M.gray }}>buscando…</div>}
+                    {!buscandoSugestao && sugestoes.length === 0 && (
+                      <div style={{ padding: 10, fontSize: 12.5, color: M.gray }}>nenhum cliente encontrado no WinThor</div>
+                    )}
+                    {sugestoes.map((s) => (
+                      <button key={s.codcli} onClick={() => adicionarItem(s)}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", fontSize: 13,
+                          fontFamily: "inherit", cursor: "pointer", background: "transparent", border: "none",
+                          borderBottom: `1px solid ${M.bg}` }}>
+                        <b>{s.nome}</b>{" "}
+                        <span style={{ color: M.muted, fontSize: 12 }}>
+                          · {s.codcli}{s.cidade ? ` · ${s.cidade}${s.estado ? "/" + s.estado : ""}` : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {fonte === "planilha" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "inline-block" }}>
+                  <input type="file" accept=".xlsx,.csv" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) subirPlanilha(f); e.target.value = ""; }} />
+                  <span style={{ display: "inline-block", padding: "8px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                    borderRadius: 999, color: "#fff", background: enviandoPlanilha ? M.muted : M.wine }}>
+                    {enviandoPlanilha ? "enviando…" : "Escolher planilha (.xlsx ou .csv)"}
+                  </span>
+                </label>
+                <div style={{ fontSize: 12, color: M.muted, marginTop: 8 }}>
+                  Precisa de uma coluna chamada <code>codcli</code> (ou <code>código</code>/<code>code</code>) —
+                  as demais colunas são ignoradas.
+                </div>
+                {avisoPlanilha && <div style={{ fontSize: 12.5, color: M.ink, marginTop: 8 }}>{avisoPlanilha}</div>}
+              </div>
+            )}
+
+            {itensManuais.length > 0 && (
+              <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, marginBottom: 16, maxHeight: 260, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr><th style={th}>Cliente</th><th style={th}>Código</th><th style={th}></th></tr></thead>
+                  <tbody>
+                    {itensManuais.map((i) => (
+                      <tr key={i.codcli}>
+                        <td style={td}>
+                          {i.nome ?? <i style={{ color: M.muted }}>nome aparece ao conferir</i>}
+                          {i.cidade ? ` · ${i.cidade}` : ""}
+                        </td>
+                        <td style={{ ...td, fontFamily: "ui-monospace, monospace" }}>{i.codcli}</td>
+                        <td style={{ ...td, textAlign: "right" }}>
+                          <BotaoLeve onClick={() => removerItem(i.codcli)}>remover</BotaoLeve>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={rotuloCampo}>Não repetir template por</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  <input type="number" min={0} max={60} value={diasRecontato}
+                    onChange={(e) => setDiasRecontato(Math.min(60, Math.max(0, Number(e.target.value) || 0)))}
+                    style={{ ...inputBase, width: 80 }} />
+                  <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
+                </div>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: M.ink, cursor: "pointer" }}>
+                <input type="checkbox" checked={semConversaAberta}
+                  onChange={(e) => setSemConversaAberta(e.target.checked)} />
+                Pular quem <b style={{ fontWeight: 700 }}>está em conversa aberta</b>
+              </label>
+              <Botao cor={M.wine} disabled={itensManuais.length === 0 || carregandoPrevia} onClick={conferirManual}>
+                {carregandoPrevia ? "Conferindo…" : `Conferir público (${itensManuais.length})`}
+              </Botao>
+            </div>
+          </div>
+        )}
+
+        {fonte === "auto" && criteriosExtras(extrasErp).length > 0 && (
           <div style={{ marginTop: 16, padding: "11px 13px", background: M.roxoSoft,
             border: `1px solid ${M.roxo}`, borderRadius: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7, flexWrap: "wrap" }}>
@@ -2349,6 +2591,21 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                   .filter(([, n]) => Number(n) > 0)
                   .map(([k, n]) => `${n} ${CORTE_ROTULO_SEM_RD[k] ?? CORTE_ROTULO[k] ?? k}`)
                   .join(" · ")}
+              </div>
+            )}
+
+            {(previa.semAlcance ?? []).length > 0 && (
+              <div style={{ marginTop: 10, padding: "9px 12px", background: "rgba(179,38,30,.06)",
+                border: "1px solid rgba(179,38,30,.25)", borderRadius: 8, maxHeight: 150, overflow: "auto" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: "#b3261e", marginBottom: 4,
+                  textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  {previa.semAlcance.length} da lista não deu para alcançar
+                </div>
+                {previa.semAlcance.map((s: any) => (
+                  <div key={s.codcli} style={{ fontSize: 12, color: M.ink, lineHeight: 1.6 }}>
+                    <b>{s.codcli}</b>{s.nome ? ` · ${s.nome}` : ""} — {s.motivo}
+                  </div>
+                ))}
               </div>
             )}
 
