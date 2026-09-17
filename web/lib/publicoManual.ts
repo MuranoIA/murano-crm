@@ -81,40 +81,64 @@ export async function resolverListaManual(db: any, codclis: number[]): Promise<R
 
   const cards: CardManual[] = [];
   const semAlcance: ResolucaoLista["semAlcance"] = [];
+  let algumNovoComCpf = false;
 
-  for (const cod of unicos) {
-    const row = porCod.get(cod);
-    if (!row) { semAlcance.push({ codcli: cod, nome: null, motivo: "código não existe no WinThor" }); continue; }
+  /**
+   * Resolve os códigos em PARALELO (lotes de 8), não um a um.
+   *
+   * ⚠️ Achado medindo antes de decidir (16/09/2026): com o laço em série e
+   * `acharOuCriarContato` rodando a reconciliação por item, 56 códigos levaram
+   * ~49s — perto do teto de 60s da rota. `pularReconciliacao: true` some com a
+   * parte redundante (a função reconcilia a BASE INTEIRA a cada chamada, não só
+   * o contato — rodá-la 56 vezes no mesmo pedido não traz nada que uma vez não
+   * traga); o lote de 8 aproveita que são chamadas de rede, não CPU.
+   */
+  const LOTE = 8;
+  for (let de = 0; de < unicos.length; de += LOTE) {
+    const fatia = unicos.slice(de, de + LOTE);
+    await Promise.all(fatia.map(async (cod) => {
+      const row = porCod.get(cod);
+      if (!row) { semAlcance.push({ codcli: cod, nome: null, motivo: "código não existe no WinThor" }); return; }
 
-    const sit = situacaoDoTelefone(row.telefone);
-    if (!sit.pode) {
-      semAlcance.push({
-        codcli: cod, nome: row.nome,
-        motivo: sit.motivo === "sem_telefone"
-          ? "sem telefone no cadastro do WinThor"
-          : `telefone incompleto no cadastro (${sit.bruto})`,
+      const sit = situacaoDoTelefone(row.telefone);
+      if (!sit.pode) {
+        semAlcance.push({
+          codcli: cod, nome: row.nome,
+          motivo: sit.motivo === "sem_telefone"
+            ? "sem telefone no cadastro do WinThor"
+            : `telefone incompleto no cadastro (${sit.bruto})`,
+        });
+        return;
+      }
+
+      const slug = row.rca_num != null ? (slugPorRca.get(Number(row.rca_num)) ?? null) : null;
+      let resolvido;
+      try {
+        resolvido = await acharOuCriarContato(db, {
+          telefone: sit.telefone,
+          nome: row.nome,
+          erp: { codcli: row.codcli, nome: row.nome, cpf: row.cpf, carteira: slug },
+          pularReconciliacao: true,
+        });
+      } catch (e: any) {
+        semAlcance.push({ codcli: cod, nome: row.nome, motivo: `erro ao preparar o contato: ${e?.message ?? e}` });
+        return;
+      }
+
+      if (!resolvido.ja_existia && row.cpf) algumNovoComCpf = true;
+      cards.push({
+        cliente_id: resolvido.cliente_id, cliente: resolvido.nome, vendedor: resolvido.carteira,
+        etapa: null, ultima_atividade: null, telefone: resolvido.telefone, venda_valor: null,
+        rd_cliente_id: null, codcli: cod,
       });
-      continue;
-    }
+    }));
+  }
 
-    const slug = row.rca_num != null ? (slugPorRca.get(Number(row.rca_num)) ?? null) : null;
-    let resolvido;
-    try {
-      resolvido = await acharOuCriarContato(db, {
-        telefone: sit.telefone,
-        nome: row.nome,
-        erp: { codcli: row.codcli, nome: row.nome, cpf: row.cpf, carteira: slug },
-      });
-    } catch (e: any) {
-      semAlcance.push({ codcli: cod, nome: row.nome, motivo: `erro ao preparar o contato: ${e?.message ?? e}` });
-      continue;
-    }
-
-    cards.push({
-      cliente_id: resolvido.cliente_id, cliente: resolvido.nome, vendedor: resolvido.carteira,
-      etapa: null, ultima_atividade: null, telefone: resolvido.telefone, venda_valor: null,
-      rd_cliente_id: null, codcli: cod,
-    });
+  // A reconciliação pulada acima acontece UMA vez aqui, para o lote inteiro —
+  // é a mesma chamada, só que uma vez em vez de N. Falhar não pode custar o
+  // público já resolvido: o cron de 10 min pega de qualquer jeito.
+  if (algumNovoComCpf) {
+    try { await db.rpc("wth_reconciliar_vinculos"); } catch { /* o cron pega */ }
   }
 
   return { cards, semAlcance };

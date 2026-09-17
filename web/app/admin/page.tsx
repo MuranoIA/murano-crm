@@ -2037,6 +2037,9 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           acao: "previa",
           codclis: itensManuais.map((i) => i.codcli),
           filtros: { diasRecontato, semConversaAberta },
+          // Planilha, a pedido do usuário: "a planilha já é resultado de um
+          // filtro externo" — nem as proteções de custo rodam. Upload + envio.
+          pularProtecoes: fonte === "planilha",
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -2271,7 +2274,9 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       <div id="quem-recebe" />
       <Bloco
         titulo="2. Quem recebe"
-        ajuda={fonte !== "auto"
+        ajuda={fonte === "planilha"
+          ? "O público é a lista abaixo. Cada código é conferido de verdade no WinThor — sem nenhum filtro de proteção por cima: a planilha já é o resultado curado."
+          : fonte === "manual"
           ? "O público é a lista abaixo. Cada código é conferido de verdade — WinThor, telefone, e as mesmas proteções de custo do modo automático (número morto, lixeira, anti-repetição, conversa aberta)."
           : conversaAberta
           ? "Quem manda aqui é a conversa acima. Estes campos mostram o que foi combinado, mas não aceitam edição — feche a conversa para escolher à mão."
@@ -2509,28 +2514,42 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={rotuloCampo}>Não repetir template por</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <input type="number" min={0} max={60} value={diasRecontato}
-                    onChange={(e) => setDiasRecontato(Math.min(60, Math.max(0, Number(e.target.value) || 0)))}
-                    style={{ ...inputBase, width: 80 }} />
-                  <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
-                </div>
+            {fonte === "planilha" && (
+              <div style={{ fontSize: 12.5, color: M.ink, background: M.bg, border: `1px solid ${M.border}`,
+                borderRadius: 8, padding: "9px 12px", marginBottom: 16, lineHeight: 1.55 }}>
+                A planilha já é o público — sem número morto, lixeira, anti-repetição ou conversa
+                aberta cortando ninguém. São duas coisas só: <b>upload</b> e <b>envio</b>.
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: M.ink, cursor: "pointer" }}>
-                <input type="checkbox" checked={semConversaAberta}
-                  onChange={(e) => setSemConversaAberta(e.target.checked)} />
-                Pular quem <b style={{ fontWeight: 700 }}>está em conversa aberta</b>
-              </label>
+            )}
+
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
+              {fonte === "manual" && (
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <label style={rotuloCampo}>Não repetir template por</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <input type="number" min={0} max={60} value={diasRecontato}
+                        onChange={(e) => setDiasRecontato(Math.min(60, Math.max(0, Number(e.target.value) || 0)))}
+                        style={{ ...inputBase, width: 80 }} />
+                      <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
+                    </div>
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: M.ink, cursor: "pointer" }}>
+                    <input type="checkbox" checked={semConversaAberta}
+                      onChange={(e) => setSemConversaAberta(e.target.checked)} />
+                    Pular quem <b style={{ fontWeight: 700 }}>está em conversa aberta</b>
+                  </label>
+                </>
+              )}
               <Botao cor={M.wine} disabled={itensManuais.length === 0 || carregandoPrevia} onClick={conferirManual}>
                 {carregandoPrevia ? "Conferindo…" : `Conferir público (${itensManuais.length})`}
               </Botao>
               {carregandoPrevia && (
                 <span style={{ fontSize: 12, color: M.muted, flexBasis: "100%" }}>
-                  Confere cada código contra o WinThor e as proteções de custo (número morto, lixeira,
-                  anti-repetição) — costuma levar de 15 a 30 segundos.
+                  {fonte === "planilha"
+                    ? "Confere cada código contra o WinThor (sem proteção nenhuma) — costuma ser rápido."
+                    : "Confere cada código contra o WinThor e as proteções de custo (número morto, lixeira, "
+                      + "anti-repetição) — costuma levar de 15 a 30 segundos, mais para listas grandes."}
                 </span>
               )}
             </div>
