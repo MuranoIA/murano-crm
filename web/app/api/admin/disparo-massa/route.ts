@@ -136,9 +136,15 @@ export async function POST(req: Request) {
 
   try {
     // Público DECLARADO por código (lista digitada ou planilha) — pula a
-    // segmentação por filtro e usa exatamente esses clientes. As proteções de
-    // custo (número morto, lixeira, anti-repetição, conversa aberta) continuam
-    // valendo: só quem monta o público muda, não o que barra o envio.
+    // segmentação por filtro e usa exatamente esses clientes.
+    //
+    // Lista digitada: as proteções de custo (número morto, lixeira,
+    // anti-repetição, conversa aberta) continuam valendo — só quem monta o
+    // público muda, não o que barra o envio.
+    //
+    // Planilha (`pularProtecoes`, 16/09/2026, a pedido do usuário): "a
+    // planilha já é resultado de um filtro externo" — nem essas proteções
+    // rodam. É upload + envio, sem peneira nenhuma no meio.
     if (Array.isArray(b.codclis)) {
       const codclis: number[] = b.codclis.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
       const unicos: number[] = Array.from(new Set(codclis));
@@ -149,11 +155,15 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
       const { cards, semAlcance } = await resolverListaManual(sbAdmin(), unicos);
+      const pularProtecoes = !!b.pularProtecoes;
       const publico = await montarPublico(
         sbAdmin(),
-        lerFiltros({ diasRecontato: b.filtros?.diasRecontato, semConversaAberta: b.filtros?.semConversaAberta, limite: LIMITE_MANUAL }),
+        lerFiltros(pularProtecoes
+          ? { limite: LIMITE_MANUAL }
+          : { diasRecontato: b.filtros?.diasRecontato, semConversaAberta: b.filtros?.semConversaAberta, limite: LIMITE_MANUAL }),
         {},
         cards,
+        pularProtecoes,
       );
       return Response.json({ ...publico, semAlcance });
     }

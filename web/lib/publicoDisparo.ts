@@ -385,6 +385,14 @@ export async function montarPublico(
   // vw_funil inteira e usa exatamente estes cards. Carteira/etapa não filtram
   // aqui: a lista já É a segmentação (lib/publicoManual.ts).
   cardsManual?: any[],
+  // Planilha, a pedido do usuário (16/09/2026): "a planilha já é resultado de
+  // um filtro externo" — pula TODA proteção de custo (número morto, lixeira,
+  // anti-repetição, conversa aberta). Só existe destino ou não existe; quem
+  // decidiu a lista foi quem subiu o arquivo, não este motor. Também pula o
+  // contexto caro que sustenta essas checagens (§ o comentário no passo 2) —
+  // sem ele para que buscar, é o que fazia até uma lista pequena esperar ~15s
+  // à toa.
+  pularProtecoes?: boolean,
 ): Promise<Publico> {
   const carteiras = await carteirasDosTimes(db, f);
   const avisos: string[] = [];
@@ -436,6 +444,10 @@ export async function montarPublico(
   const cfg = await lerCrmConfig(db);
   const soCloudP = !linhasVisiveis(cfg).includes("rd");
 
+  const vazio = { data: [] as any[] };
+  if (pularProtecoes) {
+    cache.ctx = { dispRes: vazio, descRes: vazio, cicloRes: vazio, linhaRes: vazio, morto: new Set<string>(), abertaRes: vazio, statusRes: vazio };
+  }
   if (!cache.ctx) cache.ctx = await (async () => {
   const [dispRes, descRes, cicloRes, linhaRes, desfRes, abertaRes, statusRes] = await Promise.all([
     // anti-repetição: só conta template que saiu pelo número em uso
