@@ -26,6 +26,7 @@ import { COLUNAS, ETAPAS_SEM_CONVERSA, LETRA_ETAPA, type EtapaBoard } from "../.
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 import OrcamentoFlutuante from "../OrcamentoFlutuante";
+import { useSugestoesPendentes, SeloSugestoes } from "../sugestoesPendentes";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de atendimento, layout inspirado no WhatsApp
@@ -1394,6 +1395,10 @@ export default function Chat() {
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
+  // A fila de sugestões de template esperando o admin. Hook no TOPO, junto do
+  // estado — nunca perto de onde é usado: esta tela já teve React #310 por um
+  // `useEffect` escrito depois de um `return` condicional, com build verde.
+  const sugestoes = useSugestoesPendentes(sessao?.role === "admin");
   // rodando como app instalado (PWA na tela inicial ou APK/TWA). Em efeito, e
   // nao no render, porque `ehApp()` lê `window` — calcular direto daria
   // hidratação divergente entre servidor e cliente.
@@ -4288,7 +4293,14 @@ export default function Chat() {
                   </button>
                 );
               }
-              return <Link key={n.href} href={n.href} style={estilo}>{n.rotulo}</Link>;
+              return (
+                <Link key={n.href} href={n.href} style={estilo}>
+                  {n.rotulo}
+                  {/* O mesmo selo do board, do mesmo módulo: o número desta
+                      fila não pode diferir entre as duas telas. */}
+                  {n.href === "/admin" && <SeloSugestoes fila={sugestoes} />}
+                </Link>
+              );
             })}
           </nav>
         ) : (
@@ -4338,6 +4350,7 @@ export default function Chat() {
                 return (
                   <Link key={n.href} href={n.href} onClick={() => setMenuMobile(false)} style={est}>
                     {n.rotulo}
+                    {n.href === "/admin" && <SeloSugestoes fila={sugestoes} />}
                   </Link>
                 );
               })}
