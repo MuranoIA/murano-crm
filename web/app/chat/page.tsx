@@ -11,6 +11,7 @@ import {
 // mesma régua das variáveis do template usada pela rota de envio — a tela avisa
 // cedo, o servidor confere de novo (lib/templateVars.ts)
 import { Icone, type NomeIcone } from "./icones";
+import { useVirtualizacao } from "./virtual";
 import { variaveisDe, aplicarVariaveis, conferirVariaveis } from "../../lib/templateVars";
 import { traduzErroMeta, codigoMeta, SEM_REENVIO } from "../../lib/erroMeta";
 import { CAMPOS_PADRAO, faltando, fichaEmTexto, textoPedidoDeDados, type CampoCadastro } from "../../lib/cadastroCampos";
@@ -25,6 +26,7 @@ import { COLUNAS, ETAPAS_SEM_CONVERSA, LETRA_ETAPA, type EtapaBoard } from "../.
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 import OrcamentoFlutuante from "../OrcamentoFlutuante";
+import { useSugestoesPendentes, SeloSugestoes } from "../sugestoesPendentes";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de atendimento, layout inspirado no WhatsApp
@@ -1393,6 +1395,10 @@ export default function Chat() {
   // desenho da tela em vigor para esta pessoa (0095). Vem do mesmo load da
   // lista — o servidor já resolveu global × piloto em `layoutEfetivo`.
   const [layout, setLayout] = useState<string>("original");
+  // A fila de sugestões de template esperando o admin. Hook no TOPO, junto do
+  // estado — nunca perto de onde é usado: esta tela já teve React #310 por um
+  // `useEffect` escrito depois de um `return` condicional, com build verde.
+  const sugestoes = useSugestoesPendentes(sessao?.role === "admin");
   // rodando como app instalado (PWA na tela inicial ou APK/TWA). Em efeito, e
   // nao no render, porque `ehApp()` lê `window` — calcular direto daria
   // hidratação divergente entre servidor e cliente.
@@ -1866,6 +1872,7 @@ export default function Chat() {
   const recargaLenta = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fimRef = useRef<HTMLDivElement>(null);
   const rolagemRef = useRef<HTMLDivElement>(null);   // área das mensagens (botões ⌃⌄)
+  const listaRef = useRef<HTMLDivElement>(null);   // área rolável da sidebar (conversas/carteira)
   // Tudo o que fica ABAIXO das mensagens: rodapé da conversa, faixa da janela
   // de 24h, prévia de anexo/áudio e o compositor. Os botões flutuantes de
   // rolagem precisam ficar acima disso, e a altura é VARIÁVEL — a faixa quebra
@@ -2256,15 +2263,35 @@ export default function Chat() {
   const [destacada, setDestacada] = useState<string | null>(null);
   const [indoParaCitada, setIndoParaCitada] = useState(false);
   const destaqueTimer = useRef<any>(null);
+  // A thread passou a ser virtualizada por DIA (useVirtualizacao mais abaixo):
+  // um grupo fora da janela visível não está no DOM, e `querySelector` não
+  // acha o que não foi desenhado. `forcarNaThread` é o que continua fazendo
+  // "ir até a mensagem citada" funcionar quando o alvo está longe da posição
+  // atual de rolagem (medido: p95 de 19 mensagens de distância, a mais longe
+  // já vista a 68 — bem fora de qualquer margem de renderização razoável).
+  const [forcarNaThread, setForcarNaThread] = useState<Set<string> | undefined>(undefined);
 
-  /** Rola até a bolha, se ela estiver desenhada. Devolve se conseguiu. */
-  function rolarAteMensagem(id: string): boolean {
+  /** Rola até a bolha, forçando o grupo do dia a desenhar se preciso. */
+  async function rolarAteMensagem(id: string): Promise<boolean> {
     const cx = rolagemRef.current;
+    if (!cx) return false;
     // `CSS.escape` porque o id é um wamid da Meta e não temos contrato sobre
     // que caracteres ele pode ter — um ponto ou dois-pontos solto no seletor
     // viraria outra consulta, em silêncio.
-    const el = cx?.querySelector(`[data-msg="${CSS.escape(id)}"]`) as HTMLElement | null;
-    if (!cx || !el) return false;
+    let el = cx.querySelector(`[data-msg="${CSS.escape(id)}"]`) as HTMLElement | null;
+    if (!el) {
+      // pelo espelho, não pela closure: ver a nota no `msgsRef` — sem ele,
+      // um segundo `carregarAntigas()` dentro do mesmo `irParaCitada` ainda
+      // enxergaria o `msgs` de quando a busca começou.
+      const alvo = (msgsRef.current ?? [])?.find((m) => m.id === id);
+      if (!alvo) return false;   // não está carregada — quem chama decide se busca mais
+      setForcarNaThread(new Set([diaBR(alvo.criada_em)]));
+      // dois quadros: um para o React desenhar o grupo forçado, outro para o
+      // navegador terminar o layout antes de medir a posição.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      el = cx.querySelector(`[data-msg="${CSS.escape(id)}"]`) as HTMLElement | null;
+    }
+    if (!el) return false;
     // Posição pelo retângulo, não por `offsetTop`: a bolha tem ancestrais
     // posicionados no meio do caminho (o agrupamento, a coluna do D1), e
     // `offsetTop` mede até o primeiro deles, não até a área de rolagem.
@@ -2276,23 +2303,30 @@ export default function Chat() {
     });
     setDestacada(id);
     if (destaqueTimer.current) clearTimeout(destaqueTimer.current);
-    destaqueTimer.current = setTimeout(() => setDestacada(null), 2000);
+    // solta a força junto com o destaque: até lá, o grupo fica garantido no
+    // DOM mesmo que a rolagem suave ainda não tenha chegado perto dele —
+    // soltar cedo demais desmontaria a bolha no meio da própria animação.
+    destaqueTimer.current = setTimeout(() => { setDestacada(null); setForcarNaThread(undefined); }, 2000);
     return true;
   }
 
   async function irParaCitada(id: string) {
-    if (rolarAteMensagem(id)) return;
-    // Não está desenhada: é mais antiga que o lote carregado. Puxa lotes até
+    if (await rolarAteMensagem(id)) return;
+    // Não está carregada: é mais antiga que o lote buscado. Puxa lotes até
     // achar — parando quando nada novo chega, que é o fim do histórico.
     setIndoParaCitada(true);
     try {
-      const conta = () => rolagemRef.current?.querySelectorAll("[data-msg]").length ?? 0;
+      // pelo TAMANHO de `msgs`, não pela contagem de bolhas no DOM: com a
+      // thread virtualizada, carregar mais mensagens não aumenta o que está
+      // desenhado se o lote novo cair fora da janela atual — contar o DOM
+      // faria o laço desistir cedo demais, achando que acabou o histórico.
+      const conta = () => msgsRef.current?.length ?? 0;
       let antes = conta();
       for (let i = 0; i < 6; i++) {
         await carregarAntigas();
-        // um tique para o React desenhar o lote antes de procurar no DOM
+        // um tique para o estado assentar antes de tentar de novo
         await new Promise((r) => setTimeout(r, 80));
-        if (rolarAteMensagem(id)) return;
+        if (await rolarAteMensagem(id)) return;
         const agora = conta();
         if (agora === antes) break;   // não veio nada: acabou o histórico
         antes = agora;
@@ -3633,17 +3667,6 @@ export default function Chat() {
     } finally { setEnviando(false); }
   }
 
-  if (sessao === undefined) return <div style={{ padding: 40, color: M.gray, fontSize: 14, background: M.bg, minHeight: "100vh" }}>Verificando sessão…</div>;
-  if (sessao === null) {
-    return (
-      <div style={{ minHeight: "100vh", background: M.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: M.ink }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>Chat</div>
-        <div style={{ color: M.gray, fontSize: 14 }}>Sessão expirada — entre pelo funil e volte.</div>
-        <Link href="/" style={{ color: M.azul, fontSize: 14, textDecoration: "none" }}>← ir para o login</Link>
-      </div>
-    );
-  }
-
   // ---- os dois seletores do topo da sidebar: número e vendedor -------------
   // Eles CRUZAM com as filas em vez de substituí-las ("pendentes do Murano Shop",
   // "encerradas da Kamilly" são perguntas legítimas), e cruzam entre si.
@@ -4117,6 +4140,29 @@ export default function Chat() {
     else grupos.push({ dia: d, itens: [it] });
   }
 
+  // ---- virtualização — desenhar só o que cabe na tela, não tudo -----------
+  // Medido em produção (17/09/2026): uma aba do chat aberta havia acumulado
+  // 43.788 nós de DOM, e travou de verdade num notebook comum (2 núcleos,
+  // 8GB) — Runtime.evaluate não respondia nem a `1` por 45s. Nenhuma das duas
+  // listas abaixo tinha "janela virtual": cada linha da sidebar e cada bolha
+  // da thread viravam elemento de verdade, mesmo fora da tela.
+  //
+  // A thread é virtualizada por DIA (grupo inteiro), não por mensagem: o
+  // agrupamento visual por autor (`abreGrupo`/`fechaGrupo`, olha o vizinho
+  // dentro do MESMO dia) e o `gap` do container do dia continuam intocados —
+  // achatar para o nível de mensagem exigiria reescrever aquele cálculo e
+  // corria o risco de sutilmente errar o "última bolha do grupo mostra a
+  // hora". Um dia com centenas de mensagens não se beneficiaria tanto, mas
+  // não é o caso comum (a thread já limita a 200 por vez, §57).
+  const virtLista = useVirtualizacao({
+    itens: ordenadas, chave: (c) => c.cliente_id, raizRef: listaRef,
+    alturaEstimada: bc ? 56 : 60, overscanPx: 800,
+  });
+  const virtThread = useVirtualizacao({
+    itens: grupos, chave: (g) => g.dia, raizRef: rolagemRef,
+    alturaEstimada: 260, overscanPx: 1000, forcarChaves: forcarNaThread,
+  });
+
   // respostas rápidas visíveis no picker: filtradas pelo que veio depois da `/`
   const termo = texto.startsWith("/") ? texto.slice(1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
   const respostasFiltradas = respostas.filter(
@@ -4124,6 +4170,25 @@ export default function Chat() {
   );
   const idxAtual = Math.min(pickerIdx, Math.max(0, respostasFiltradas.length - 1));
   const podeSalvar = !!texto.trim() && !texto.startsWith("/");
+
+  // Os dois checks abaixo ERAM um `return` antecipado logo depois dos hooks de
+  // sessão — mas a virtualização (`useVirtualizacao`, duas chamadas acima)
+  // também é hook, e um `return` condicional ENTRE hooks quebra a ordem deles
+  // entre o primeiro render ("Verificando sessão…") e os seguintes: "Rendered
+  // more hooks than during the previous render". Nada entre a posição antiga
+  // do guard e aqui referencia `sessao` sem `?.`, então mover para depois de
+  // TODOS os hooks — e só então decidir o que renderizar — é seguro. Regra
+  // geral do arquivo (§38.4 do CLAUDE.md): hook nunca depois de um return.
+  if (sessao === undefined) return <div style={{ padding: 40, color: M.gray, fontSize: 14, background: M.bg, minHeight: "100vh" }}>Verificando sessão…</div>;
+  if (sessao === null) {
+    return (
+      <div style={{ minHeight: "100vh", background: M.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: M.ink }}>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>Chat</div>
+        <div style={{ color: M.gray, fontSize: 14 }}>Sessão expirada — entre pelo funil e volte.</div>
+        <Link href="/" style={{ color: M.azul, fontSize: 14, textDecoration: "none" }}>← ir para o login</Link>
+      </div>
+    );
+  }
 
   return (
     // D1 usa 100dvh: no celular, `100vh` conta a barra do navegador como se ela
@@ -4228,7 +4293,14 @@ export default function Chat() {
                   </button>
                 );
               }
-              return <Link key={n.href} href={n.href} style={estilo}>{n.rotulo}</Link>;
+              return (
+                <Link key={n.href} href={n.href} style={estilo}>
+                  {n.rotulo}
+                  {/* O mesmo selo do board, do mesmo módulo: o número desta
+                      fila não pode diferir entre as duas telas. */}
+                  {n.href === "/admin" && <SeloSugestoes fila={sugestoes} />}
+                </Link>
+              );
             })}
           </nav>
         ) : (
@@ -4278,6 +4350,7 @@ export default function Chat() {
                 return (
                   <Link key={n.href} href={n.href} onClick={() => setMenuMobile(false)} style={est}>
                     {n.rotulo}
+                    {n.href === "/admin" && <SeloSugestoes fila={sugestoes} />}
                   </Link>
                 );
               })}
@@ -4775,7 +4848,7 @@ export default function Chat() {
                 )}
               </div>
             </div>
-            <div className={bc ? "bc-rolagem" : undefined} style={{ flex: 1, overflowY: "auto" }}>
+            <div ref={listaRef} className={bc ? "bc-rolagem" : undefined} style={{ flex: 1, overflowY: "auto" }}>
               {erro && <div style={{ padding: 14, fontSize: 12.5, color: M.laranja }}>{erro}</div>}
 
               {/* ---- MINHA CARTEIRA: a agenda, não uma fila de conversas ----
@@ -4888,12 +4961,14 @@ export default function Chat() {
                     </div>
                   );
               })()}
-              {ordenadas.map((c) => {
+              {virtLista.paddingTopo > 0 && <div style={{ height: virtLista.paddingTopo, flexShrink: 0 }} aria-hidden />}
+              {ordenadas.slice(virtLista.alcance.inicio, virtLista.alcance.fim).map((c) => {
                 const ativa = sel?.cliente_id === c.cliente_id;
                 const doCliente = c.ultima_enviada_por === "customer";
                 return (
                   <button
                     key={c.cliente_id}
+                    ref={virtLista.medir(c.cliente_id)}
                     onClick={() => abrir(c)}
                     style={{ display: "flex", alignItems: "center", gap: G.gapLinha, width: "100%", textAlign: "left", padding: G.linhaPad, minHeight: G.linhaAlt || undefined, background: ativa ? M.roxoSoft : "transparent", border: "none", borderBottom: `1px solid ${M.bg}`, cursor: "pointer", fontFamily: "inherit", boxSizing: "border-box" }}
                   >
@@ -4974,6 +5049,7 @@ export default function Chat() {
                   </button>
                 );
               })}
+              {virtLista.paddingBase > 0 && <div style={{ height: virtLista.paddingBase, flexShrink: 0 }} aria-hidden />}
               {busca && !ordenadas.length && !buscandoMsgs && !achadosNovos.length && (
                 bc
                   ? <Estado glifo="🔍" titulo={`Nada encontrado para “${busca}”`} texto="A busca por nome e telefone é local; procurar dentro das mensagens exige três letras e roda no servidor, logo abaixo." />
@@ -5441,8 +5517,9 @@ export default function Chat() {
                     </div>
                   )}
 
-                  {grupos.map((g) => (
-                    <div key={g.dia} style={{ display: "flex", flexDirection: "column", gap: G.gapDia }}>
+                  {virtThread.paddingTopo > 0 && <div style={{ height: virtThread.paddingTopo, flexShrink: 0 }} aria-hidden />}
+                  {grupos.slice(virtThread.alcance.inicio, virtThread.alcance.fim).map((g) => (
+                    <div key={g.dia} ref={virtThread.medir(g.dia)} style={{ display: "flex", flexDirection: "column", gap: G.gapDia }}>
                       <div style={{ alignSelf: "center", fontSize: 10.5, fontWeight: 700, color: M.gray, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 999, padding: "3px 12px", margin: "8px 0 4px" }}>
                         {g.dia.split("-").reverse().join("/")}
                       </div>
@@ -5760,6 +5837,7 @@ export default function Chat() {
                       })}
                     </div>
                   ))}
+                  {virtThread.paddingBase > 0 && <div style={{ height: virtThread.paddingBase, flexShrink: 0 }} aria-hidden />}
                   <div ref={fimRef} />
                 </div>
 

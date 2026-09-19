@@ -81,6 +81,17 @@ export async function acharOuCriarContato(
     nome?: string | null;
     carteiraDeQuemCriou?: string | null;
     erp?: { codcli: number; nome: string | null; cpf: string | null; carteira: string | null } | null;
+    // Quem resolve uma LISTA (lib/publicoManual.ts) chama isto dezenas/centenas
+    // de vezes no mesmo pedido — `wth_reconciliar_vinculos()` reconcilia a base
+    // INTEIRA a cada chamada, não só este contato, então rodá-la por item é
+    // 100% redundante e é o que fazia 56 códigos passarem de 48s. Quem chama em
+    // lote pula aqui e roda a reconciliação UMA vez, depois do laço inteiro.
+    pularReconciliacao?: boolean;
+    // Contatos que JÁ casam com este telefone, achados por quem chama. Quem
+    // resolve milhares de códigos (lib/publicoManual.ts) lê `clientes` uma vez
+    // e cruza em memória: a consulta abaixo, feita por código, custava ~190 ms
+    // cada e era o que fazia 250 códigos levarem 28 s.
+    candidatos?: any[];
   },
 ): Promise<ContatoResolvido> {
   const tel8 = tel8De(opts.telefone);
@@ -88,10 +99,16 @@ export async function acharOuCriarContato(
   // Match pelos 8 ÚLTIMOS dígitos, a mesma chave do webhook e do ETL: o RD
   // guarda 12 dígitos (sem o nono) e a Meta manda 13, então comparar o número
   // inteiro erraria justamente nos contatos que já existem (§16.3).
-  const { data: existentes, error: e1 } = await sb
-    .from("clientes").select("id,nome_completo,carteira,telefone,cpf")
-    .like("telefone", `%${tel8}`).limit(5);
-  if (e1) throw new Error(e1.message);
+  let existentes: any[] | null;
+  if (opts.candidatos) {
+    existentes = opts.candidatos;
+  } else {
+    const r = await sb
+      .from("clientes").select("id,nome_completo,carteira,telefone,cpf")
+      .like("telefone", `%${tel8}`).limit(5);
+    if (r.error) throw new Error(r.error.message);
+    existentes = r.data;
+  }
 
   if (existentes?.length) {
     // mesma preferência do webhook: se houver mais de um, fica com quem tem dono
@@ -100,7 +117,9 @@ export async function acharOuCriarContato(
     // vínculo, o histórico de compra e o painel do ERP
     if (opts.erp?.cpf && !escolhido.cpf) {
       await sb.from("clientes").update({ cpf: opts.erp.cpf }).eq("id", escolhido.id);
-      try { await sb.rpc("wth_reconciliar_vinculos"); } catch { /* o cron de 10 min pega */ }
+      if (!opts.pularReconciliacao) {
+        try { await sb.rpc("wth_reconciliar_vinculos"); } catch { /* o cron de 10 min pega */ }
+      }
     }
     return {
       cliente_id: escolhido.id,
@@ -149,7 +168,9 @@ export async function acharOuCriarContato(
 
   // com CPF, o vínculo com o WinThor nasce agora e não daqui a dez minutos —
   // quem acabou de abrir a conversa quer ver o histórico junto
-  if (novo.cpf) { try { await sb.rpc("wth_reconciliar_vinculos"); } catch { /* o cron pega */ } }
+  if (novo.cpf && !opts.pularReconciliacao) {
+    try { await sb.rpc("wth_reconciliar_vinculos"); } catch { /* o cron pega */ }
+  }
 
   return {
     cliente_id: novo.id,

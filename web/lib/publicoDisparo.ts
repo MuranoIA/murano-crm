@@ -136,8 +136,16 @@ function lerRecorte(v: any): RecorteItem | null {
   return { dimensao: dim as DimensaoItem, valores, dias: naoNeg(v.dias) };
 }
 
-/** Aceita o que vier da rede (tela ou Claude) e devolve filtros válidos. */
-export function lerFiltros(f: any): FiltrosPublico {
+/**
+ * Aceita o que vier da rede (tela ou Claude) e devolve filtros válidos.
+ *
+ * `tetoLimite` é o teto do TOTAL do disparo. O automático usa `LIMITE_MAX`; a
+ * lista digitada e a planilha passam o delas (`LIMITE_LISTA`, 5.000), que é
+ * maior de propósito: ali a pessoa declarou quem quer atingir, e cortar uma
+ * lista já curada em 2.000 seria descartar clientes que ela escolheu a dedo.
+ * A cota por vendedor continua presa a `LIMITE_MAX` — não faz sentido para lista.
+ */
+export function lerFiltros(f: any, tetoLimite: number = LIMITE_MAX): FiltrosPublico {
   const per = String(f?.semCompraNo ?? "");
   return {
     carteiras: lista(f?.carteiras),
@@ -148,7 +156,7 @@ export function lerFiltros(f: any): FiltrosPublico {
     semCompraNo: (PERIODOS_COMPRA as readonly string[]).includes(per) ? (per as PeriodoCompra) : null,
     semConversaAberta: !!f?.semConversaAberta,
     porVendedor: Math.min(LIMITE_MAX, naoNeg(f?.porVendedor)),
-    limite: Math.min(LIMITE_MAX, Math.max(1, num(f?.limite, 20))),
+    limite: Math.min(tetoLimite, Math.max(1, num(f?.limite, 20))),
 
     cidades: lista(f?.cidades),
     estados: lista(f?.estados).map((e) => e.toUpperCase()),
@@ -378,14 +386,30 @@ export function avisoDeTeto(pedido: any, f: FiltrosPublico): string[] {
   return avisos;
 }
 
-export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePublico = {}): Promise<Publico> {
+export async function montarPublico(
+  db: any, f: FiltrosPublico, cache: CachePublico = {},
+  // Lista já resolvida (código digitado, planilha) — pula a varredura da
+  // vw_funil inteira e usa exatamente estes cards. Carteira/etapa não filtram
+  // aqui: a lista já É a segmentação (lib/publicoManual.ts).
+  cardsManual?: any[],
+  // Planilha, a pedido do usuário (16/09/2026): "a planilha já é resultado de
+  // um filtro externo" — pula TODA proteção de custo (número morto, lixeira,
+  // anti-repetição, conversa aberta). Só existe destino ou não existe; quem
+  // decidiu a lista foi quem subiu o arquivo, não este motor. Também pula o
+  // contexto caro que sustenta essas checagens (§ o comentário no passo 2) —
+  // sem ele para que buscar, é o que fazia até uma lista pequena esperar ~15s
+  // à toa.
+  pularProtecoes?: boolean,
+): Promise<Publico> {
   const carteiras = await carteirasDosTimes(db, f);
   const avisos: string[] = [];
 
   // 1) cards do funil. Busca a view INTEIRA uma vez e filtra carteira/etapa em
   //    memória: o assistente refaz o público várias vezes no mesmo turno, e
   //    repetir a varredura a cada tentativa foi o que estourou o tempo.
-  if (!cache.cards) {
+  if (cardsManual) {
+    cache.cards = cardsManual;
+  } else if (!cache.cards) {
     const todos: any[] = [];
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await semEnsaio(db.from(VIEW_FUNIL_TELA).select(COLS))
@@ -402,8 +426,8 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     }
     cache.cards = todos;
   }
-  const setCarteiras = carteiras.length ? new Set(carteiras) : null;
-  const setEtapas = f.etapas.length ? new Set(f.etapas) : null;
+  const setCarteiras = cardsManual ? null : (carteiras.length ? new Set(carteiras) : null);
+  const setEtapas = cardsManual ? null : (f.etapas.length ? new Set(f.etapas) : null);
   const cards = cache.cards.filter((c: any) =>
     (!setCarteiras || setCarteiras.has(String(c.vendedor)))
     && (!setEtapas || setEtapas.has(String(c.etapa))));
@@ -427,6 +451,10 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
   const cfg = await lerCrmConfig(db);
   const soCloudP = !linhasVisiveis(cfg).includes("rd");
 
+  const vazio = { data: [] as any[] };
+  if (pularProtecoes) {
+    cache.ctx = { dispRes: vazio, descRes: vazio, cicloRes: vazio, linhaRes: vazio, morto: new Set<string>(), abertaRes: vazio, statusRes: vazio };
+  }
   if (!cache.ctx) cache.ctx = await (async () => {
   const [dispRes, descRes, cicloRes, linhaRes, desfRes, abertaRes, statusRes] = await Promise.all([
     // anti-repetição: só conta template que saiu pelo número em uso
@@ -670,7 +698,7 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0,
     ativo_demais: 0, numero_morto: 0, comprou_no_periodo: 0, conversa_aberta: 0,
     sem_dados_do_erp: 0, localizacao: 0, produto: 0, financeiro: 0, recencia: 0,
-    ramo: 0, ciclo: 0, conjunto: 0,
+    ramo: 0, ciclo: 0, conjunto: 0, telefone_repetido: 0,
   };
   const elegiveis: Alvo[] = [];
   const vistos = new Set<string>();
@@ -725,7 +753,11 @@ export async function montarPublico(db: any, f: FiltrosPublico, cache: CachePubl
     if (dias < f.diasMin) { cortes.ativo_demais++; continue; }
 
     // dedup: prospecção e conversa podem apontar para o mesmo contato do RD
-    if (vistos.has(envio)) continue;
+    // ⚠️ NOMEADO (18/09/2026). Isto cortava em silêncio: numa lista de 4.209
+    // clientes, 55 saíam sem dizer por quê, e "vão receber 4.154" parecia perda.
+    // São contatos que compartilham o telefone com outro da lista — mandar duas
+    // vezes para o mesmo número é gasto sem ganho.
+    if (vistos.has(envio)) { cortes.telefone_repetido++; continue; }
     vistos.add(envio);
 
     const ci = (cod != null && cicloCod.get(Number(cod)))

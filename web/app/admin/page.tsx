@@ -1441,6 +1441,8 @@ const OBRIGATORIOS_ROTULO: Record<string, boolean> = {
 // O laço de envio mora no NAVEGADOR de propósito: centenas de envios não cabem
 // no tempo de uma rota da Vercel. Fica no navegador, com throttle entre um
 // envio e o seguinte, como o board já fazia.
+/** Quantas linhas de uma lista grande vão para a tela; o resto vale, só não é desenhado. */
+const LINHAS_VISIVEIS = 300;
 const CUSTO_TEMPLATE = 0.43; // R$ por template disparado
 const moedaBR = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -1461,6 +1463,7 @@ const CORTE_ROTULO: Record<string, string> = {
   // O texto diz "não recebe", e não "falhou": quem falhou por janela fechada
   // continua no público -- é justamente quem o template alcança.
   numero_morto: "o número não recebe no WhatsApp (falha confirmada)",
+  telefone_repetido: "compartilham o telefone com outro da lista (o número recebe uma vez só)",
   comprou_no_periodo: "já compraram no período pedido",
   conversa_aberta: "estão em conversa aberta agora",
 };
@@ -1865,6 +1868,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   const padrao = templates.find((t) => t.id === 0) ?? templates.find((t) => t.padrao) ?? templates[0] ?? null;
 
   const limiteMax: number = cfg.limiteMax ?? 1000;
+  // teto da lista digitada / planilha e tamanho do lote de conferência: vêm do
+  // servidor (`lib/publicoManual.ts`) para a tela não guardar uma segunda cópia
+  // do número que a rota vai cobrar
+  const limiteLista: number = cfg.limiteLista ?? 5000;
+  const loteResolver: number = cfg.loteResolver ?? 250;
   const [tplId, setTplId] = useState<number | null>(padrao?.id ?? null);
   const [extras, setExtras] = useState<string[]>([]);
   const [carteiras, setCarteiras] = useState<string[]>([]);
@@ -1890,8 +1898,28 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   // filtro que corta sem aparecer e o que ninguem consegue conferir.
   const [extrasErp, setExtrasErp] = useState<any>(null);
 
+  // --- fonte do público: filtro automático, lista digitada, ou planilha -----
+  // As três terminam no MESMO lugar (montarPublico) — só muda quem entra na
+  // conta. Carteira/etapa/tempo parado somem nas duas últimas: a lista JÁ é a
+  // segmentação. As proteções de custo (número morto, lixeira, anti-repetição,
+  // conversa aberta) continuam valendo nas três.
+  const [fonte, setFonte] = useState<"auto" | "manual" | "planilha">("auto");
+  const [itensManuais, setItensManuais] = useState<{ codcli: number; nome: string | null; cidade: string | null }[]>([]);
+  const [modoEntrada, setModoEntrada] = useState<"nome" | "codigo">("nome");
+  const [buscaTexto, setBuscaTexto] = useState("");
+  const [sugestoes, setSugestoes] = useState<{ codcli: number; nome: string; cidade: string | null; estado: string | null }[]>([]);
+  const [buscandoSugestao, setBuscandoSugestao] = useState(false);
+  const [erroEntrada, setErroEntrada] = useState<string | null>(null);
+  const [enviandoPlanilha, setEnviandoPlanilha] = useState(false);
+  const [avisoPlanilha, setAvisoPlanilha] = useState<string | null>(null);
+
   const [previa, setPrevia] = useState<any>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
+  // a conferência da lista é em lotes: "750 de 5.000" em vez de uma tela que
+  // parece presa. `cancelarConf` é ref, e não estado, porque o laço precisa ler
+  // o valor de AGORA e não o do render em que ele começou.
+  const [confProg, setConfProg] = useState<{ feitos: number; total: number } | null>(null);
+  const cancelarConf = useRef(false);
   const [fase, setFase] = useState<"montar" | "confirmar" | "enviando" | "fim">("montar");
   const [prog, setProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
   const [falhas, setFalhas] = useState<{ cliente: string; erro: string }[]>([]);
@@ -1905,7 +1933,17 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
 
   // a prévia é recalculada sozinha a cada mudança de filtro, com respiro: são
   // ~4 mil linhas da vw_funil por chamada, não é para disparar a cada tecla
+  //
+  // SÓ no modo automático: lista manual/planilha tem "Conferir público" como
+  // gesto explícito (abaixo), porque conferir provisiona contato de verdade
+  // (escreve em `clientes`) — não é algo para rodar a cada tecla.
   useEffect(() => {
+    // ⚠️ Sair do modo automático DESLIGA o indicador. A prévia automática varre
+    // ~4 mil clientes e leva vários segundos; quem troca para "Planilha" nesse
+    // meio tempo tem a resposta descartada (`vivo`), mas o `finally` de lá
+    // também não roda para o novo modo — e o botão "Conferir" ficava preso em
+    // "Conferindo…" e desabilitado até recarregar a página.
+    if (fonte !== "auto") { setCarregandoPrevia(false); return; }
     let vivo = true;
     const t = setTimeout(async () => {
       setCarregandoPrevia(true);
@@ -1932,8 +1970,172 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       }
     }, 400);
     return () => { vivo = false; clearTimeout(t); };
-  }, [carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
+  }, [fonte, carteiras, times, etapas, diasMin, diasRecontato, semCompraNo,
       semConversaAberta, porVendedor, limite, canalTpl, extrasErp, avisar]);
+
+  // --- lista manual: autocomplete por nome -----------------------------------
+  // Nunca texto livre além deste ponto: a sugestão que a pessoa clica é que
+  // vira entrada da lista, com o codcli já resolvido por trás.
+  useEffect(() => {
+    if (modoEntrada !== "nome" || buscaTexto.trim().length < 2) { setSugestoes([]); return; }
+    let vivo = true;
+    const t = setTimeout(async () => {
+      setBuscandoSugestao(true);
+      try {
+        const r = await fetch(`/api/admin/disparo-massa/lista?nome=${encodeURIComponent(buscaTexto.trim())}`);
+        const j = await r.json().catch(() => ({}));
+        if (vivo) setSugestoes(r.ok ? (j.itens ?? []) : []);
+      } catch { if (vivo) setSugestoes([]); }
+      finally { if (vivo) setBuscandoSugestao(false); }
+    }, 300);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [modoEntrada, buscaTexto]);
+
+  function adicionarItem(item: { codcli: number; nome: string | null; cidade: string | null }) {
+    if (itensManuais.length >= limiteLista && !itensManuais.some((i) => i.codcli === item.codcli)) {
+      setErroEntrada(`a lista já está no teto de ${limiteLista.toLocaleString("pt-BR")} clientes`);
+      return;
+    }
+    setItensManuais((atual) => atual.some((i) => i.codcli === item.codcli) ? atual : [...atual, item]);
+    setBuscaTexto(""); setSugestoes([]); setErroEntrada(null); setPrevia(null);
+  }
+
+  function removerItem(codcli: number) {
+    setItensManuais((atual) => atual.filter((i) => i.codcli !== codcli));
+    setPrevia(null);
+  }
+
+  async function adicionarPorCodigo() {
+    const n = Number(buscaTexto.trim());
+    if (!Number.isFinite(n) || n <= 0) { setErroEntrada("digite um código válido"); return; }
+    if (itensManuais.some((i) => i.codcli === n)) { setBuscaTexto(""); return; }
+    setErroEntrada(null);
+    try {
+      const r = await fetch(`/api/admin/disparo-massa/lista?codcli=${n}`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setErroEntrada(j?.error ?? "erro ao buscar"); return; }
+      if (!j.item) { setErroEntrada(`código ${n} não existe no WinThor`); return; }
+      adicionarItem(j.item);
+    } catch (e: any) { setErroEntrada(e?.message ?? String(e)); }
+  }
+
+  async function subirPlanilha(arquivo: File) {
+    setEnviandoPlanilha(true); setAvisoPlanilha(null);
+    try {
+      const fd = new FormData(); fd.append("arquivo", arquivo);
+      const r = await fetch("/api/admin/disparo-massa/planilha", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { avisar("erro", j?.error ?? `erro ${r.status}`); return; }
+      const novos: number[] = j.codclis ?? [];
+      const jaTinha = new Set(itensManuais.map((i) => i.codcli));
+      const acrescentados = novos.filter((c) => !jaTinha.has(c));
+      // O teto é RECUSA, e não corte: cortar em silêncio deixaria de fora
+      // clientes que a pessoa pôs na planilha sem ela saber quais. Nada é
+      // adicionado, e o recado diz quanto faltou.
+      if (itensManuais.length + acrescentados.length > limiteLista) {
+        const total = itensManuais.length + acrescentados.length;
+        avisar("erro", `Com esta planilha a lista ficaria com ${total.toLocaleString("pt-BR")} clientes — o teto de uma `
+          + `campanha é ${limiteLista.toLocaleString("pt-BR")}. Nada foi adicionado. Divida a planilha e rode uma `
+          + "campanha para cada parte.");
+        return;
+      }
+      setItensManuais((atual) => [...atual, ...acrescentados.map((codcli) => ({ codcli, nome: null, cidade: null }))]);
+      setPrevia(null);
+      const partes = [`${novos.length.toLocaleString("pt-BR")} código(s) reconhecido(s)`];
+      if (j.repetidos) partes.push(`${j.repetidos} repetido(s) na planilha, contados uma vez`);
+      if (acrescentados.length < novos.length) partes.push(`${novos.length - acrescentados.length} já estavam na lista`);
+      if ((j.invalidos ?? []).length) partes.push(`${j.invalidos.length} linha(s) sem código legível`);
+      setAvisoPlanilha(partes.join(" · "));
+    } catch (e: any) {
+      avisar("erro", e?.message ?? String(e));
+    } finally {
+      setEnviandoPlanilha(false);
+    }
+  }
+
+  // Uma chamada ao servidor, com teto de tempo e UMA nova tentativa.
+  //
+  // O teto no CLIENTE evita a tela presa em "Conferindo…" para sempre se o
+  // Vercel matar a função sem devolver resposta — o fetch pode não estourar erro
+  // nenhum, só ficar pendurado. A nova tentativa existe porque agora são
+  // dezenas de chamadas seguidas: uma oscilação de rede no lote 17 de 20 não
+  // pode custar os 16 já conferidos. Erro 4xx NÃO é repetido — a mesma chamada
+  // falharia igual.
+  async function postarPublico(corpo: any): Promise<any> {
+    let ultimo = "";
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const abortar = new AbortController();
+      const teto = setTimeout(() => abortar.abort(), 58_000);
+      try {
+        const r = await fetch("/api/admin/disparo-massa", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          signal: abortar.signal, body: JSON.stringify(corpo),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) return j;
+        const msg = j?.error ?? `erro ${r.status}`;
+        if (r.status < 500) throw Object.assign(new Error(msg), { definitivo: true });
+        ultimo = msg;
+      } catch (e: any) {
+        if (e?.definitivo) throw e;
+        ultimo = e?.name === "AbortError" ? "não respondeu em tempo (mais de 58s)" : (e?.message ?? String(e));
+      } finally {
+        clearTimeout(teto);
+      }
+    }
+    throw new Error(ultimo);
+  }
+
+  // Confere a lista em LOTES e depois pede a prévia UMA vez (18/09/2026).
+  //
+  // Conferir um código é uma ida ao banco por código (achar o contato, ou
+  // criá-lo) e a rota tem 60 s: era daí que vinha o teto de 500. Em lotes de
+  // `loteResolver` o tempo de cada chamada deixa de depender do tamanho da lista.
+  async function conferirManual() {
+    setCarregandoPrevia(true);
+    setPrevia(null);
+    cancelarConf.current = false;
+    const cods = itensManuais.map((i) => i.codcli);
+    const cards: any[] = [];
+    const semAlcance: any[] = [];
+    try {
+      for (let de = 0; de < cods.length; de += loteResolver) {
+        if (cancelarConf.current) { avisar("ok", "Conferência cancelada. Nada foi enviado."); return; }
+        setConfProg({ feitos: de, total: cods.length });
+        const lote = await postarPublico({ acao: "resolver", codclis: cods.slice(de, de + loteResolver) });
+        cards.push(...(lote.cards ?? []));
+        semAlcance.push(...(lote.semAlcance ?? []));
+      }
+      if (cancelarConf.current) { avisar("ok", "Conferência cancelada. Nada foi enviado."); return; }
+      setConfProg({ feitos: cods.length, total: cods.length });
+      const j = await postarPublico({
+        acao: "previa",
+        cards,
+        filtros: { diasRecontato, semConversaAberta },
+        // Planilha, a pedido do usuário: "a planilha já é resultado de um
+        // filtro externo" — nem as proteções de custo rodam. Upload + envio.
+        pularProtecoes: fonte === "planilha",
+      });
+      setPrevia({ ...j, semAlcance });
+    } catch (e: any) {
+      avisar("erro", e?.message ?? String(e));
+      setPrevia(null);
+    } finally {
+      setConfProg(null);
+      setCarregandoPrevia(false);
+    }
+  }
+
+  // baixa a lista dos que não deu para alcançar: com milhares de linhas na
+  // planilha, "37 ficaram de fora" sem dizer QUEM é um recado que não se resolve
+  function baixarSemAlcance() {
+    const linhas = [["codcli", "nome", "motivo"], ...(previa?.semAlcance ?? []).map((s: any) => [s.codcli, s.nome ?? "", s.motivo])];
+    const csv = "\ufeff" + linhas.map((l: any[]) => l.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "clientes-nao-alcancados.csv";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
 
   // O assistente propoe; quem aplica e o admin, num clique. Nada aqui envia --
   // depois de aplicado o publico ainda passa por Revisar e Confirmar.
@@ -2181,10 +2383,29 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
       <div id="quem-recebe" />
       <Bloco
         titulo="2. Quem recebe"
-        ajuda={conversaAberta
+        ajuda={fonte === "planilha"
+          ? "O público é a lista abaixo. Cada código é conferido de verdade no WinThor — sem nenhum filtro de proteção por cima: a planilha já é o resultado curado."
+          : fonte === "manual"
+          ? "O público é a lista abaixo. Cada código é conferido de verdade — WinThor, telefone, e as mesmas proteções de custo do modo automático (número morto, lixeira, anti-repetição, conversa aberta)."
+          : conversaAberta
           ? "Quem manda aqui é a conversa acima. Estes campos mostram o que foi combinado, mas não aceitam edição — feche a conversa para escolher à mão."
           : "O público é conferido no servidor e mostrado abaixo antes de qualquer envio. Sem carteira marcada, vale a equipe toda."}
       >
+        <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
+          {([["auto", "Automático"], ["manual", "Lista manual"], ["planilha", "Planilha"]] as const).map(([v, r]) => {
+            const on = fonte === v;
+            return (
+              <button key={v} onClick={() => { setFonte(v); setPrevia(null); }}
+                style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                  borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.wine : M.bg,
+                  border: `1px solid ${on ? M.wine : M.border}` }}>
+                {r}
+              </button>
+            );
+          })}
+        </div>
+
+        {fonte === "auto" && (
         <div style={{ opacity: conversaAberta ? 0.55 : 1, pointerEvents: conversaAberta ? "none" : "auto" }}
           aria-disabled={conversaAberta}>
         <div style={{ marginBottom: 6 }}><span style={rotuloCampo}>Carteiras</span></div>
@@ -2304,8 +2525,179 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           </label>
         </div>
         </div>
+        )}
 
-        {criteriosExtras(extrasErp).length > 0 && (
+        {fonte !== "auto" && (
+          <div>
+            {fonte === "manual" && (
+              <>
+                <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
+                  {([["nome", "Por nome"], ["codigo", "Por código"]] as const).map(([v, r]) => {
+                    const on = modoEntrada === v;
+                    return (
+                      <button key={v} onClick={() => { setModoEntrada(v); setBuscaTexto(""); setSugestoes([]); setErroEntrada(null); }}
+                        style={{ padding: "5px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                          borderRadius: 999, color: on ? "#fff" : M.gray, background: on ? M.roxo : M.bg,
+                          border: `1px solid ${on ? M.roxo : M.border}` }}>
+                        {r}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, maxWidth: 440 }}>
+                  <input value={buscaTexto}
+                    onChange={(e) => { setBuscaTexto(e.target.value); setErroEntrada(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && modoEntrada === "codigo") { e.preventDefault(); adicionarPorCodigo(); } }}
+                    placeholder={modoEntrada === "nome" ? "digite o nome do cliente…" : "digite o código do cliente…"}
+                    style={{ ...inputBase, flex: 1 }} />
+                  {modoEntrada === "codigo" && (
+                    <button onClick={adicionarPorCodigo} title="adicionar"
+                      style={{ width: 34, height: 34, fontSize: 18, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+                        borderRadius: 8, color: "#fff", background: M.wine, border: "none", lineHeight: 1 }}>
+                      +
+                    </button>
+                  )}
+                </div>
+                {erroEntrada && <div style={{ fontSize: 12, color: "#b3261e", marginBottom: 8 }}>{erroEntrada}</div>}
+
+                {modoEntrada === "nome" && buscaTexto.trim().length >= 2 && (
+                  <div style={{ border: `1px solid ${M.border}`, borderRadius: 8, marginBottom: 12, maxHeight: 220, overflow: "auto", maxWidth: 440 }}>
+                    {buscandoSugestao && <div style={{ padding: 10, fontSize: 12.5, color: M.gray }}>buscando…</div>}
+                    {!buscandoSugestao && sugestoes.length === 0 && (
+                      <div style={{ padding: 10, fontSize: 12.5, color: M.gray }}>nenhum cliente encontrado no WinThor</div>
+                    )}
+                    {sugestoes.map((s) => (
+                      <button key={s.codcli} onClick={() => adicionarItem(s)}
+                        style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", fontSize: 13,
+                          fontFamily: "inherit", cursor: "pointer", background: "transparent", border: "none",
+                          borderBottom: `1px solid ${M.bg}` }}>
+                        <b>{s.nome}</b>{" "}
+                        <span style={{ color: M.muted, fontSize: 12 }}>
+                          · {s.codcli}{s.cidade ? ` · ${s.cidade}${s.estado ? "/" + s.estado : ""}` : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {fonte === "planilha" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "inline-block" }}>
+                  <input type="file" accept=".xlsx,.csv" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) subirPlanilha(f); e.target.value = ""; }} />
+                  <span style={{ display: "inline-block", padding: "8px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                    borderRadius: 999, color: "#fff", background: enviandoPlanilha ? M.muted : M.wine }}>
+                    {enviandoPlanilha ? "enviando…" : "Escolher planilha (.xlsx ou .csv)"}
+                  </span>
+                </label>
+                <div style={{ fontSize: 12, color: M.muted, marginTop: 8 }}>
+                  Precisa de uma coluna chamada <code>codcli</code> (ou <code>código</code>/<code>code</code>) —
+                  as demais colunas são ignoradas. Até <b>{limiteLista.toLocaleString("pt-BR")}</b> clientes por planilha.
+                </div>
+                {/* A planilha de exemplo: a dúvida mais comum de quem sobe o arquivo pela
+                    primeira vez é "que coluna? em que formato?". Baixa por link direto —
+                    a rota exige admin, o cookie de sessão vai junto. */}
+                <a href="/api/admin/disparo-massa/planilha" download
+                  style={{ display: "inline-block", marginTop: 8, fontSize: 12.5, fontWeight: 700, color: M.wine, textDecoration: "underline" }}>
+                  ⬇ Baixar planilha de exemplo (.xlsx)
+                </a>
+                {avisoPlanilha && <div style={{ fontSize: 12.5, color: M.ink, marginTop: 8 }}>{avisoPlanilha}</div>}
+              </div>
+            )}
+
+            {itensManuais.length > 0 && (
+              <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, marginBottom: 16, maxHeight: 260, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr><th style={th}>Cliente</th><th style={th}>Código</th><th style={th}></th></tr></thead>
+                  <tbody>
+                    {itensManuais.slice(0, LINHAS_VISIVEIS).map((i) => (
+                      <tr key={i.codcli}>
+                        <td style={td}>
+                          {i.nome ?? <i style={{ color: M.muted }}>nome aparece ao conferir</i>}
+                          {i.cidade ? ` · ${i.cidade}` : ""}
+                        </td>
+                        <td style={{ ...td, fontFamily: "ui-monospace, monospace" }}>{i.codcli}</td>
+                        <td style={{ ...td, textAlign: "right" }}>
+                          <BotaoLeve onClick={() => removerItem(i.codcli)}>remover</BotaoLeve>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {/* Milhares de linhas com botão viram dezenas de milhares de nós — e o
+                    computador do time é de 2 núcleos (§27). Só as primeiras vão para a
+                    tela; a lista inteira continua valendo para a conferência. */}
+                {itensManuais.length > LINHAS_VISIVEIS && (
+                  <div style={{ padding: "8px 12px", fontSize: 12, color: M.muted, background: M.bg }}>
+                    mostrando {LINHAS_VISIVEIS} de <b>{itensManuais.length.toLocaleString("pt-BR")}</b> — a lista inteira
+                    vale para a conferência e o envio
+                  </div>
+                )}
+              </div>
+            )}
+
+            {itensManuais.length > 0 && (
+              <div style={{ fontSize: 12.5, color: M.gray, margin: "-8px 0 14px" }}>
+                <b>{itensManuais.length.toLocaleString("pt-BR")}</b> de {limiteLista.toLocaleString("pt-BR")} clientes na lista
+                {" · "}
+                <BotaoLeve onClick={() => { setItensManuais([]); setPrevia(null); setAvisoPlanilha(null); }}>limpar a lista</BotaoLeve>
+              </div>
+            )}
+
+            {fonte === "planilha" && (
+              <div style={{ fontSize: 12.5, color: M.ink, background: M.bg, border: `1px solid ${M.border}`,
+                borderRadius: 8, padding: "9px 12px", marginBottom: 16, lineHeight: 1.55 }}>
+                A planilha já é o público — sem número morto, lixeira, anti-repetição ou conversa
+                aberta cortando ninguém. São duas coisas só: <b>upload</b> e <b>envio</b>.
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
+              {fonte === "manual" && (
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <label style={rotuloCampo}>Não repetir template por</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <input type="number" min={0} max={60} value={diasRecontato}
+                        onChange={(e) => setDiasRecontato(Math.min(60, Math.max(0, Number(e.target.value) || 0)))}
+                        style={{ ...inputBase, width: 80 }} />
+                      <span style={{ fontSize: 12.5, color: M.gray }}>dias</span>
+                    </div>
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: M.ink, cursor: "pointer" }}>
+                    <input type="checkbox" checked={semConversaAberta}
+                      onChange={(e) => setSemConversaAberta(e.target.checked)} />
+                    Pular quem <b style={{ fontWeight: 700 }}>está em conversa aberta</b>
+                  </label>
+                </>
+              )}
+              <Botao cor={M.wine} disabled={itensManuais.length === 0 || carregandoPrevia} onClick={conferirManual}>
+                {carregandoPrevia
+                  ? (confProg && confProg.total > loteResolver
+                      ? `Conferindo ${confProg.feitos.toLocaleString("pt-BR")} de ${confProg.total.toLocaleString("pt-BR")}…`
+                      : "Conferindo…")
+                  : `Conferir público (${itensManuais.length.toLocaleString("pt-BR")})`}
+              </Botao>
+              {carregandoPrevia && confProg && confProg.total > loteResolver && (
+                <BotaoLeve onClick={() => { cancelarConf.current = true; }}>cancelar</BotaoLeve>
+              )}
+              {carregandoPrevia && (
+                <span style={{ fontSize: 12, color: M.muted, flexBasis: "100%" }}>
+                  {fonte === "planilha"
+                    ? "Confere cada código contra o WinThor (sem proteção nenhuma), em lotes de "
+                    : "Confere cada código contra o WinThor e as proteções de custo (número morto, lixeira, "
+                      + "anti-repetição), em lotes de "}
+                  {loteResolver} — uma lista grande leva alguns minutos. Nada é enviado nesta etapa.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {fonte === "auto" && criteriosExtras(extrasErp).length > 0 && (
           <div style={{ marginTop: 16, padding: "11px 13px", background: M.roxoSoft,
             border: `1px solid ${M.roxo}`, borderRadius: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7, flexWrap: "wrap" }}>
@@ -2379,6 +2771,29 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               </div>
             )}
 
+            {(previa.semAlcance ?? []).length > 0 && (
+              <div style={{ marginTop: 10, padding: "9px 12px", background: "rgba(179,38,30,.06)",
+                border: "1px solid rgba(179,38,30,.25)", borderRadius: 8, maxHeight: 150, overflow: "auto" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 800, color: "#b3261e",
+                    textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    {previa.semAlcance.length.toLocaleString("pt-BR")} da lista não deu para alcançar
+                  </span>
+                  <BotaoLeve onClick={baixarSemAlcance}>baixar a lista (.csv)</BotaoLeve>
+                </div>
+                {previa.semAlcance.slice(0, LINHAS_VISIVEIS).map((s: any) => (
+                  <div key={s.codcli} style={{ fontSize: 12, color: M.ink, lineHeight: 1.6 }}>
+                    <b>{s.codcli}</b>{s.nome ? ` · ${s.nome}` : ""} — {s.motivo}
+                  </div>
+                ))}
+                {previa.semAlcance.length > LINHAS_VISIVEIS && (
+                  <div style={{ fontSize: 12, color: M.muted, marginTop: 4 }}>
+                    mostrando {LINHAS_VISIVEIS} — o .csv tem todos
+                  </div>
+                )}
+              </div>
+            )}
+
             {selecionados.length > 0 && (
               <div style={{ marginTop: 14, maxHeight: 260, overflow: "auto", border: `1px solid ${M.border}`, borderRadius: 10 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2387,7 +2802,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                     <th style={th}>Etapa</th><th style={th}>Parado</th>
                   </tr></thead>
                   <tbody>
-                    {selecionados.map((s: any) => (
+                    {selecionados.slice(0, LINHAS_VISIVEIS).map((s: any) => (
                       <tr key={s.envio_id}>
                         <td style={{ ...td, fontWeight: 600 }}>{s.cliente}</td>
                         <td style={td}>{s.vendedor ?? "—"}</td>
@@ -2397,6 +2812,11 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
                     ))}
                   </tbody>
                 </table>
+                {selecionados.length > LINHAS_VISIVEIS && (
+                  <div style={{ padding: "8px 12px", fontSize: 12, color: M.muted, background: M.bg }}>
+                    mostrando {LINHAS_VISIVEIS} de <b>{selecionados.length.toLocaleString("pt-BR")}</b> — todos os {selecionados.length.toLocaleString("pt-BR")} vão receber
+                  </div>
+                )}
               </div>
             )}
 

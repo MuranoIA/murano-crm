@@ -4,6 +4,7 @@ import { carteiraDe, veTudo } from "./papel";
 import { usuarioDaSessao } from "./chatUsuario";
 import { carregarAtribuicoes, donoEfetivo } from "./chatEscopo";
 import { linhaPadrao, linhaDeEnvio } from "./whatsapp";
+import { DDDS_VALIDOS } from "./telefone";
 
 // ---------------------------------------------------------------------------
 // Peças comuns às rotas de ligação (/api/chat/ligacao e /ligacao/acao).
@@ -67,15 +68,26 @@ export async function donoDaConversa(
 /**
  * Telefone do cliente em E.164 sem '+', como a Meta espera.
  *
- * O `55` só é acrescentado quando o número tem cara de brasileiro sem DDI (10 ou
- * 11 dígitos). Números do RD costumam vir com 12 dígitos (DDI + DDD sem o nono)
- * e passam direto — mesma tolerância do link wa.me que o chat já usa.
+ * O `55` só é acrescentado quando o número tem 10 ou 11 dígitos **e** o DDD
+ * que sobraria é um dos 67 de fato atribuídos no Brasil (`DDDS_VALIDOS`, em
+ * `telefone.ts`) — nunca só pelo tamanho. Números do RD costumam vir com 12
+ * dígitos (DDI + DDD sem o nono) e passam direto — mesma tolerância do link
+ * wa.me que o chat já usa.
+ *
+ * Um número de FORA do Brasil cujo total também dá 10 dígitos (código do país
+ * + local — ex.: Suriname `597` + 7 dígitos) fica intacto, porque o "DDD" que
+ * sairia dele (aqui, `59`) não existe na lista. Foi essa lacuna que corrompeu
+ * o número da Mariana Auricélia (16/09/2026): a mensagem de texto usa
+ * `clientes.telefone` cru e funcionou; a ligação passava por esta função, que
+ * prendia `55` cegamente — e quebrou.
  */
 export function telefoneE164(bruto: string | null | undefined, clienteId?: string): string | null {
   let d = String(bruto ?? "").replace(/\D/g, "");
   if (!d && clienteId?.startsWith("wa:")) d = clienteId.slice(3).replace(/\D/g, "");
   if (!d) return null;
-  if (d.length <= 11) d = `55${d}`;
+  if ((d.length === 10 || d.length === 11) && DDDS_VALIDOS.has(Number(d.slice(0, 2)))) {
+    d = `55${d}`;
+  }
   return d;
 }
 
