@@ -30,14 +30,13 @@ import { codigoMeta, FALHA_DO_NUMERO } from "./erroMeta";
 const PAGE = 1000;
 const COLS = "cliente_id,cliente,vendedor,etapa,ultima_atividade,telefone,venda_valor,rd_cliente_id,codcli";
 
-/** Teto de um disparo. 1000 × 1,8s de espaço entre envios ≈ 30 min de aba aberta. */
-// Teto de UMA campanha. Subiu de 1.000 para 2.000 porque o pedido real ("2 mil
-// clientes das sete carteiras") era cortado pela metade SEM AVISO — a tela
-// mostrava o publico aparado como se fosse o pedido. O preco e honesto e
-// aparece na previa: 2.000 envios sao ~60 minutos com a aba aberta, porque o
-// laco de envio roda no navegador (a cota do envio nao cabe no tempo de uma
-// rota da Vercel, §26.2).
-export const LIMITE_MAX = 2000;
+// Teto de UMA campanha. Não é mais calibrado por tempo de aba aberta: o envio
+// no navegador (§26.2) passou a rodar em faixas concorrentes em vez de uma
+// pausa fixa de 1,8s por cliente (herança do RD Conversas, removida com a
+// conta em 0131) — então o teto agora só existe para pegar erro de digitação
+// (um zero a mais sem querer), não para limitar duração. 10.000 fica bem acima
+// da base inteira de clientes (~5-8 mil, todas as carteiras somadas).
+export const LIMITE_MAX = 10000;
 
 /** Buckets de compra que a `vw_pedido_bi_card` já calcula — não invente outros. */
 export const PERIODOS_COMPRA = ["hoje", "ontem", "semana", "quinzena", "mes"] as const;
