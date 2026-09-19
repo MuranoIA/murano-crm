@@ -2211,8 +2211,15 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         if (valeTentar) { await new Promise((res) => setTimeout(res, BACKOFF_MS[tentativa])); continue; }
         return { ok: false, erro };
       } catch (e: any) {
-        if (tentativa < BACKOFF_MS.length) { await new Promise((res) => setTimeout(res, BACKOFF_MS[tentativa])); continue; }
-        return { ok: false, erro: e?.message || "erro de rede" };
+        // ⚠️ SEM nova tentativa por erro de REDE, e é de propósito. Quando o
+        // `fetch` estoura (timeout, conexão que cai), não dá para saber se a
+        // resposta se perdeu ANTES de o servidor falar com a Meta ou DEPOIS —
+        // e depois significa que o template JÁ SAIU. Tentar de novo mandaria o
+        // mesmo template duas vezes: R$ 0,43 a mais e a cliente recebendo em
+        // dobro. Só as tentativas acima são seguras, porque lá a Meta disse
+        // explicitamente "devagar" e a mensagem NÃO saiu.
+        // Vira falha visível, com o aviso de que pode ter saído.
+        return { ok: false, erro: `${e?.message || "erro de rede"} — a mensagem PODE ter saído: confira no chat antes de reenviar` };
       }
     }
   }
