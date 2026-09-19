@@ -25,6 +25,7 @@ import { COLUNAS } from "../lib/etapasBoard";
 import { memoriaDeTela, fotoDeRota, memoriaDaSessao, type Sessao } from "../lib/memoriaTela";
 // o "⋯" que recolhe as telas de apoio — o MESMO componente do chat
 import { MenuSecundario } from "./MenuSecundario";
+import { useSugestoesPendentes, SeloSugestoes, idadeEmPalavras } from "./sugestoesPendentes";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -816,6 +817,11 @@ export default function Page() {
   // o mesmo estado em que o interruptor nasce no banco.
   const [cicloAtivo, setCicloAtivo] = useState(true);
   const [saude, setSaude] = useState<any>(null);
+  // A fila de sugestões de template esperando o admin. O hook fica JUNTO DO
+  // ESTADO, no topo — nunca perto de onde é usado, lá embaixo: um hook abaixo
+  // de um `return` condicional é chamado num render e não no outro, e isso
+  // derrubou o chat inteiro uma vez (React #310), com build verde.
+  const sugestoes = useSugestoesPendentes(sessao?.role === "admin");
   const [semCadFiltro, setSemCadFiltro] = useState(() => memBoard.ler()?.semCadFiltro ?? false); // só leads sem cadastro no WinThor
   const [paradoSel, setParadoSel] = useState<string[]>(() => memBoard.ler()?.paradoSel ?? []); // tempo parado (buckets de dias)
 
@@ -2146,7 +2152,7 @@ export default function Page() {
                 pode usar hoje, para nao sugerir o que ja esta no ar. */}
             <Link href="/templates" title="Ver os templates disponíveis e sugerir um novo" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>Templates</Link>
             {sessao.role === "admin" && (
-              <Link href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração</Link>
+              <Link href="/admin" title="Usuários, vendedores, horário, linhas, templates, disparo em massa e gestão de carteira" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>⚙️ Administração<SeloSugestoes fila={sugestoes} /></Link>
             )}
           </nav>
           )}
@@ -2343,7 +2349,7 @@ export default function Page() {
               </div>
               <Link href="/templates" onClick={fecha} style={row}>📨 Templates</Link>
               {sessao.role === "admin" && (
-                <Link href="/admin" onClick={fecha} style={row}>⚙️ Administração</Link>
+                <Link href="/admin" onClick={fecha} style={row}>⚙️ Administração<SeloSugestoes fila={sugestoes} /></Link>
               )}
               <button onClick={() => { alternarTema(); }} style={row}>🎨 Tema: {TEMA_ROTULO[tema]} <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>trocar ↻</span></button>
               <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
@@ -3094,6 +3100,41 @@ export default function Page() {
             </div>
           );
         })()}
+
+        {/* ---- SUGESTÃO DE TEMPLATE ESQUECIDA ----------------------------
+            Pedido do usuário: "para que o template não fique esquecido lá".
+
+            ⚠️ A faixa NÃO aparece a cada sugestão, e o motivo é medição, não
+            economia de pixel. Das 11 já avaliadas, SETE foram respondidas em
+            menos de 4 horas — o admin é rápido quando vê. Uma faixa que
+            aparecesse nessas sete estaria errada 7 vezes em 11, e aviso que
+            aparece quando está tudo bem é aviso que se aprende a ignorar.
+            Com o limiar de 4h ela teria aparecido nas quatro que passaram do
+            dia (incluindo duas de 9 e 12 dias) e em nenhuma das outras.
+
+            O SELO ao lado de "Administração" continua mostrando o número desde
+            a primeira — ele é ambiente, não cobra. A faixa cobra. */}
+        {sugestoes.cobrando && (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap",
+            background: "#fff7e6", border: "1px solid #f3ddad", borderRadius: 10,
+            padding: "11px 14px", marginBottom: 14, fontSize: 12.5, color: "#8a5a00", lineHeight: 1.5 }}>
+            <span style={{ fontSize: 16, lineHeight: 1 }}>✍️</span>
+            <span style={{ flex: 1, minWidth: 220 }}>
+              <b>
+                {sugestoes.n === 1
+                  ? "Uma sugestão de template espera sua avaliação"
+                  : `${sugestoes.n} sugestões de template esperam sua avaliação`}
+                .
+              </b>{" "}
+              {/* A IDADE é o que cria urgência. "2 pendentes" não distingue o
+                  normal do esquecido; "a mais antiga há 3 dias" distingue. */}
+              A mais antiga chegou {idadeEmPalavras(sugestoes.horas)}, e quem a
+              escreveu não consegue usar o template até você decidir.
+            </span>
+            <Link href="/admin" style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 700,
+              color: "#8a5a00", textDecoration: "underline" }}>Avaliar</Link>
+          </div>
+        )}
 
         {ncFiltro && (
           <div style={{
