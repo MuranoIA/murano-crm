@@ -22,3 +22,7 @@ apk/.bubblewrap/
 
 # saidas da suite de QA (screenshots, resultado.json)
 testes/saidas/
+
+# medições da fase 0 do chat-v2 (saída crua, refazível pelo medir.mjs)
+prototipos/chat-v2/medicoes/
+prototipos/chat-v2/build-master.log
