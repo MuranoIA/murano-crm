@@ -18,14 +18,17 @@ const semAcento = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 
 export type LeituraPlanilha = {
+  /** códigos únicos, na ordem em que apareceram */
   codclis: number[];
+  /** quantas linhas repetiam um código que já tinha aparecido */
+  repetidos: number;
   /** linhas que tinham algo na coluna mas não deu para ler como número */
   invalidos: string[];
   totalLinhas: number;
 };
 
 function extraiCodigos(linhas: string[][]): LeituraPlanilha {
-  if (!linhas.length) return { codclis: [], invalidos: [], totalLinhas: 0 };
+  if (!linhas.length) return { codclis: [], repetidos: 0, invalidos: [], totalLinhas: 0 };
 
   const cabecalho = linhas[0].map((c) => semAcento(String(c ?? "")));
   const idx = cabecalho.findIndex((c) => SINONIMOS_COLUNA.includes(c));
@@ -36,16 +39,24 @@ function extraiCodigos(linhas: string[][]): LeituraPlanilha {
     );
   }
 
+  // Únicos AQUI, e não só na conferência: a tela mostra "N códigos reconhecidos"
+  // e compara com o teto — contar a mesma linha duas vezes faria uma planilha
+  // de 4.800 clientes parecer passar de 5.000.
+  const vistos = new Set<number>();
   const codclis: number[] = [];
+  let repetidos = 0;
   const invalidos: string[] = [];
   for (let i = 1; i < linhas.length; i++) {
     const bruto = String(linhas[i]?.[idx] ?? "").trim();
     if (!bruto) continue;
     const n = Number(bruto.replace(/\D/g, ""));
-    if (Number.isFinite(n) && n > 0) codclis.push(n);
-    else invalidos.push(bruto);
+    if (Number.isFinite(n) && n > 0) {
+      if (vistos.has(n)) { repetidos++; continue; }
+      vistos.add(n);
+      codclis.push(n);
+    } else invalidos.push(bruto);
   }
-  return { codclis, invalidos, totalLinhas: linhas.length - 1 };
+  return { codclis, repetidos, invalidos, totalLinhas: linhas.length - 1 };
 }
 
 async function linhasDoXlsx(buffer: ArrayBuffer): Promise<string[][]> {
