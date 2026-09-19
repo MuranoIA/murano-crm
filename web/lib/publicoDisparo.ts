@@ -137,8 +137,16 @@ function lerRecorte(v: any): RecorteItem | null {
   return { dimensao: dim as DimensaoItem, valores, dias: naoNeg(v.dias) };
 }
 
-/** Aceita o que vier da rede (tela ou Claude) e devolve filtros válidos. */
-export function lerFiltros(f: any): FiltrosPublico {
+/**
+ * Aceita o que vier da rede (tela ou Claude) e devolve filtros válidos.
+ *
+ * `tetoLimite` é o teto do TOTAL do disparo. O automático usa `LIMITE_MAX`; a
+ * lista digitada e a planilha passam o delas (`LIMITE_LISTA`, 5.000), que é
+ * maior de propósito: ali a pessoa declarou quem quer atingir, e cortar uma
+ * lista já curada em 2.000 seria descartar clientes que ela escolheu a dedo.
+ * A cota por vendedor continua presa a `LIMITE_MAX` — não faz sentido para lista.
+ */
+export function lerFiltros(f: any, tetoLimite: number = LIMITE_MAX): FiltrosPublico {
   const per = String(f?.semCompraNo ?? "");
   return {
     carteiras: lista(f?.carteiras),
@@ -149,7 +157,7 @@ export function lerFiltros(f: any): FiltrosPublico {
     semCompraNo: (PERIODOS_COMPRA as readonly string[]).includes(per) ? (per as PeriodoCompra) : null,
     semConversaAberta: !!f?.semConversaAberta,
     porVendedor: Math.min(LIMITE_MAX, naoNeg(f?.porVendedor)),
-    limite: Math.min(LIMITE_MAX, Math.max(1, num(f?.limite, 20))),
+    limite: Math.min(tetoLimite, Math.max(1, num(f?.limite, 20))),
 
     cidades: lista(f?.cidades),
     estados: lista(f?.estados).map((e) => e.toUpperCase()),
@@ -691,7 +699,7 @@ export async function montarPublico(
     sem_contato: 0, sem_telefone: 0, descartado: 0, disparo_recente: 0,
     ativo_demais: 0, numero_morto: 0, comprou_no_periodo: 0, conversa_aberta: 0,
     sem_dados_do_erp: 0, localizacao: 0, produto: 0, financeiro: 0, recencia: 0,
-    ramo: 0, ciclo: 0, conjunto: 0,
+    ramo: 0, ciclo: 0, conjunto: 0, telefone_repetido: 0,
   };
   const elegiveis: Alvo[] = [];
   const vistos = new Set<string>();
@@ -746,7 +754,11 @@ export async function montarPublico(
     if (dias < f.diasMin) { cortes.ativo_demais++; continue; }
 
     // dedup: prospecção e conversa podem apontar para o mesmo contato do RD
-    if (vistos.has(envio)) continue;
+    // ⚠️ NOMEADO (18/09/2026). Isto cortava em silêncio: numa lista de 4.209
+    // clientes, 55 saíam sem dizer por quê, e "vão receber 4.154" parecia perda.
+    // São contatos que compartilham o telefone com outro da lista — mandar duas
+    // vezes para o mesmo número é gasto sem ganho.
+    if (vistos.has(envio)) { cortes.telefone_repetido++; continue; }
     vistos.add(envio);
 
     const ci = (cod != null && cicloCod.get(Number(cod)))

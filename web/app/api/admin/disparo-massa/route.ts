@@ -2,7 +2,7 @@ import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
-import { resolverListaManual } from "../../../../lib/publicoManual";
+import { resolverListaManual, LIMITE_LISTA, LOTE_RESOLVER, type CardManual } from "../../../../lib/publicoManual";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -107,6 +107,10 @@ export async function GET() {
       carteiras: cartRes.data ?? [],
       historico,
       limiteMax: LIMITE_MAX,
+      // teto e tamanho de lote da lista digitada / planilha: a tela lê daqui, para
+      // não carregar uma segunda cópia do número que o servidor vai cobrar
+      limiteLista: LIMITE_LISTA,
+      loteResolver: LOTE_RESOLVER,
       // a tela do chat precisa saber se o assistente está configurado para não
       // oferecer uma caixa de conversa que responde 501 no primeiro envio
       temAssistente: !!process.env.ANTHROPIC_API_KEY,
@@ -117,55 +121,121 @@ export async function GET() {
 }
 
 /**
- * Teto do público DIGITADO/PLANILHA — bem menor que o `LIMITE_MAX` (2.000) do
- * automático. `resolverListaManual` faz uma ida ao banco POR código (achar ou
- * criar o contato), e não uma varredura em lote como o motor por filtro —
- * 2.000 códigos nesse regime não cabem nos 60s da rota. Passar disso é sinal
- * de que o filtro automático é a ferramenta certa, não este caminho.
+ * Valida os cards que a tela devolve depois de conferir a lista em lotes.
+ *
+ * A tela junta os cards das chamadas de `resolver` e os manda de volta numa
+ * só, para a prévia. Não dá para confiar no formato cegamente — mas também não
+ * há por que reconferir cada um no banco (seria refazer o trabalho que levou
+ * minutos): só entra o que tem a forma de um card, campo a campo, e o que sobra
+ * é descartado. Falta de campo é ERRO, e não "pula": pular calado tiraria
+ * clientes da campanha sem ninguém saber.
  */
-const LIMITE_MANUAL = 500;
+function lerCards(x: any): { cards: CardManual[] } | { erro: string } {
+  if (!Array.isArray(x)) return { erro: "cards inválido" };
+  if (x.length > LIMITE_LISTA) {
+    return { erro: `A lista tem ${x.length} clientes — o teto de uma lista digitada/planilha é ${LIMITE_LISTA}.` };
+  }
+  const cards: CardManual[] = [];
+  for (const c of x) {
+    const cliente_id = String(c?.cliente_id ?? "").trim();
+    const telefone = String(c?.telefone ?? "").trim();
+    const codcli = Number(c?.codcli);
+    if (!cliente_id || !telefone || !Number.isFinite(codcli) || codcli <= 0) {
+      return { erro: "a lista conferida veio com um cliente incompleto — refaça a conferência." };
+    }
+    cards.push({
+      cliente_id, telefone, codcli,
+      cliente: String(c?.cliente ?? ""),
+      vendedor: c?.vendedor == null ? null : String(c.vendedor),
+      etapa: null, ultima_atividade: null, venda_valor: null, rd_cliente_id: null,
+    });
+  }
+  return { cards };
+}
 
-// --- POST: prévia do público ------------------------------------------------
+const numerosUnicos = (x: any): number[] =>
+  Array.from(new Set(
+    (Array.isArray(x) ? x : []).map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0),
+  ));
+
+// --- POST: conferir um lote / prévia do público ------------------------------
+//
+// ⚠️ POR QUE SÃO DUAS AÇÕES (18/09/2026). Conferir um código é uma ida ao banco
+// POR código — achar o contato, ou criá-lo — e a rota tem 60 s. 56 códigos já
+// custaram ~49 s; o teto de 500 nasceu daí. Em vez de fazer o total caber numa
+// chamada, a tela confere em lotes de `LOTE_RESOLVER` (`acao: "resolver"`) e
+// depois pede a prévia UMA vez com todos os cards (`acao: "previa"` + `cards`).
+// O tempo de cada chamada deixa de depender do tamanho da lista, e o único teto
+// que sobra é o de negócio (`LIMITE_LISTA`).
 export async function POST(req: Request) {
   const g = guardaAdmin("montar o público do disparo");
   if (g.erro) return g.erro;
 
   const b = await corpo(req);
   if (!b) return Response.json({ error: "body inválido" }, { status: 400 });
-  if (b.acao !== "previa") return Response.json({ error: "ação desconhecida" }, { status: 400 });
+  if (b.acao !== "previa" && b.acao !== "resolver") {
+    return Response.json({ error: "ação desconhecida" }, { status: 400 });
+  }
 
   try {
-    // Público DECLARADO por código (lista digitada ou planilha) — pula a
-    // segmentação por filtro e usa exatamente esses clientes.
-    //
-    // Lista digitada: as proteções de custo (número morto, lixeira,
-    // anti-repetição, conversa aberta) continuam valendo — só quem monta o
-    // público muda, não o que barra o envio.
-    //
-    // Planilha (`pularProtecoes`, 16/09/2026, a pedido do usuário): "a
-    // planilha já é resultado de um filtro externo" — nem essas proteções
-    // rodam. É upload + envio, sem peneira nenhuma no meio.
-    if (Array.isArray(b.codclis)) {
-      const codclis: number[] = b.codclis.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0);
-      const unicos: number[] = Array.from(new Set(codclis));
-      if (unicos.length > LIMITE_MANUAL) {
+    // ---- um lote de códigos -> cards ----
+    if (b.acao === "resolver") {
+      const unicos = numerosUnicos(b.codclis);
+      if (!unicos.length) return Response.json({ cards: [], semAlcance: [] });
+      if (unicos.length > LOTE_RESOLVER) {
         return Response.json({
-          error: `A lista tem ${unicos.length} códigos — o teto de uma lista digitada/planilha é `
-            + `${LIMITE_MANUAL}. Para públicos maiores, use os filtros automáticos (aba "Automático").`,
+          error: `Um lote aceita até ${LOTE_RESOLVER} códigos e vieram ${unicos.length}. `
+            + "Recarregue a página — a tela deve mandar a lista em lotes.",
         }, { status: 400 });
       }
       const { cards, semAlcance } = await resolverListaManual(sbAdmin(), unicos);
+      return Response.json({ cards, semAlcance });
+    }
+
+    // ---- prévia ----
+    // Público DECLARADO (lista digitada ou planilha) — pula a segmentação por
+    // filtro e usa exatamente esses clientes.
+    //
+    // Lista digitada: as proteções de custo (número morto, lixeira,
+    // anti-repetição, conversa aberta) continuam valendo.
+    //
+    // Planilha (`pularProtecoes`, 16/09/2026, a pedido do usuário): "a planilha
+    // já é resultado de um filtro externo" — nem essas proteções rodam. É
+    // upload + envio, sem peneira nenhuma no meio.
+    if (b.cards !== undefined || Array.isArray(b.codclis)) {
+      let cards: CardManual[];
+      let semAlcanceInline: any[] = [];
+      if (b.cards !== undefined) {
+        const lido = lerCards(b.cards);
+        if ("erro" in lido) return Response.json({ error: lido.erro }, { status: 400 });
+        cards = lido.cards;
+      } else {
+        // Caminho antigo (uma aba aberta antes desta mudança ainda manda
+        // `codclis`): só vale para uma lista pequena, que cabe numa chamada.
+        const unicos = numerosUnicos(b.codclis);
+        if (unicos.length > LOTE_RESOLVER) {
+          return Response.json({
+            error: `A lista tem ${unicos.length} códigos e esta versão da tela não a confere de uma vez. `
+              + "Recarregue a página e confira de novo — o teto agora é " + LIMITE_LISTA + ".",
+          }, { status: 400 });
+        }
+        const r = await resolverListaManual(sbAdmin(), unicos);
+        cards = r.cards;
+        semAlcanceInline = r.semAlcance;
+      }
+
       const pularProtecoes = !!b.pularProtecoes;
       const publico = await montarPublico(
         sbAdmin(),
         lerFiltros(pularProtecoes
-          ? { limite: LIMITE_MANUAL }
-          : { diasRecontato: b.filtros?.diasRecontato, semConversaAberta: b.filtros?.semConversaAberta, limite: LIMITE_MANUAL }),
+          ? { limite: LIMITE_LISTA }
+          : { diasRecontato: b.filtros?.diasRecontato, semConversaAberta: b.filtros?.semConversaAberta, limite: LIMITE_LISTA },
+          LIMITE_LISTA),
         {},
         cards,
         pularProtecoes,
       );
-      return Response.json({ ...publico, semAlcance });
+      return Response.json({ ...publico, semAlcance: semAlcanceInline });
     }
 
     const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
