@@ -1,4 +1,5 @@
 import { situacaoDoTelefone, acharOuCriarContato } from "./contatoDoErp";
+import { tel8De } from "./telefone";
 
 // ---------------------------------------------------------------------------
 // Público do disparo em massa DECLARADO por código de cliente — lista digitada
@@ -18,6 +19,63 @@ import { situacaoDoTelefone, acharOuCriarContato } from "./contatoDoErp";
 // ---------------------------------------------------------------------------
 
 const COLS_ERP = "codcli,cpf,nome,telefone,cidade,estado,rca_num";
+
+/**
+ * Teto de UMA campanha por lista digitada ou planilha.
+ *
+ * Decisão do usuário (18/09/2026): "que siga independente da quantidade de
+ * nomes na lista, respeitando apenas o teto de 5 mil". Era 500 — número que
+ * vinha de a conferência ser uma ida ao banco por código dentro de uma rota de
+ * 60 s. Isso não é mais um limite da lista: a tela confere em LOTES
+ * (`LOTE_RESOLVER`), então o total deixou de importar para o tempo de cada
+ * chamada. O teto que sobra é o de negócio.
+ */
+export const LIMITE_LISTA = 5000;
+
+/**
+ * Quantos códigos uma chamada de conferência aceita. Não é o teto da lista: é
+ * o que cabe com folga nos 60 s da rota (56 códigos custaram ~49 s no regime
+ * antigo, e resolver contato é escrita de verdade em `clientes`). A tela manda
+ * a lista em fatias deste tamanho.
+ */
+export const LOTE_RESOLVER = 250;
+
+/** Lotes de 200: uma URL com `in.(…)` de 5.000 códigos estoura o limite de tamanho. */
+const LOTE_CONSULTA = 200;
+
+/**
+ * A partir de quantos códigos vale ler `clientes` inteira em vez de consultar um
+ * contato por código.
+ *
+ * Medido em 18/09/2026: uma consulta `like %tel8` custa ~190 ms e um lote de 250
+ * fazia 250 delas (28 s). Ler a tabela inteira leva ~1,2 s (5.211 linhas, 6
+ * páginas) — então acima de umas dezenas de códigos a leitura única ganha, e o
+ * cruzamento vira memória. Abaixo disso a consulta por código continua sendo a
+ * mais barata (e não puxa 5 mil linhas para conferir três nomes).
+ *
+ * ⚠️ Custo cresce com a base de contatos: com 20 mil contatos são ~5 s por lote.
+ * Se a tabela crescer muito, o caminho é uma função no banco que devolva só os
+ * contatos dos telefones pedidos.
+ */
+const LIMIAR_LEITURA_UNICA = 30;
+
+/** telefone (8 últimos dígitos) -> contatos que casam. O mesmo critério de `acharOuCriarContato`. */
+async function mapaDeContatos(db: any): Promise<Map<string, any[]>> {
+  const mapa = new Map<string, any[]>();
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await db.from("clientes")
+      .select("id,nome_completo,carteira,telefone,cpf").order("id", { ascending: true }).range(de, de + 999);
+    if (error) throw new Error(error.message);
+    for (const c of data ?? []) {
+      const t8 = tel8De(String(c.telefone ?? ""));
+      if (t8.length !== 8) continue;
+      const l = mapa.get(t8);
+      if (l) l.push(c); else mapa.set(t8, [c]);
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return mapa;
+}
 
 export type ItemErp = { codcli: number; nome: string; cidade: string | null; estado: string | null };
 
@@ -67,14 +125,28 @@ export async function resolverListaManual(db: any, codclis: number[]): Promise<R
   const unicos = [...new Set(codclis.filter((n) => Number.isFinite(n) && n > 0))];
   if (!unicos.length) return { cards: [], semAlcance: [] };
 
-  const [{ data: erp, error: e1 }, { data: cfgCart, error: e2 }] = await Promise.all([
-    db.from("wth_carteira").select(COLS_ERP).in("codcli", unicos),
+  // ⚠️ EM LOTES, e não `.in("codcli", unicos)` com a lista inteira. Dois erros
+  // silenciosos moram aí: a URL com milhares de códigos passa do tamanho que o
+  // servidor aceita, e — pior — o PostgREST corta a resposta em 1.000 linhas
+  // SEM avisar (§61.2). Com a lista inteira, do milésimo código em diante
+  // clientes que existem no WinThor voltavam como "código não existe", e o
+  // recado culpava a planilha. Cada lote de 200 volta com no máximo 200 linhas.
+  const consultas: Promise<{ data: any[] | null; error: any }>[] = [];
+  for (let de = 0; de < unicos.length; de += LOTE_CONSULTA) {
+    consultas.push(
+      db.from("wth_carteira").select(COLS_ERP).in("codcli", unicos.slice(de, de + LOTE_CONSULTA)),
+    );
+  }
+  const [lotes, { data: cfgCart, error: e2 }] = await Promise.all([
+    Promise.all(consultas),
     db.from("carteira_config").select('rca_num,slug').eq("ativo", true),
   ]);
-  if (e1) throw new Error(e1.message);
+  const erroLote = lotes.find((l) => l.error)?.error;
+  if (erroLote) throw new Error(erroLote.message);
   if (e2) throw new Error(e2.message);
+  const erp = lotes.flatMap((l) => l.data ?? []);
 
-  const porCod = new Map<number, any>((erp ?? []).map((r: any) => [Number(r.codcli), r]));
+  const porCod = new Map<number, any>(erp.map((r: any) => [Number(r.codcli), r]));
   const slugPorRca = new Map<number, string>(
     (cfgCart ?? []).filter((c: any) => c.rca_num != null).map((c: any) => [Number(c.rca_num), c.slug]),
   );
@@ -82,6 +154,9 @@ export async function resolverListaManual(db: any, codclis: number[]): Promise<R
   const cards: CardManual[] = [];
   const semAlcance: ResolucaoLista["semAlcance"] = [];
   let algumNovoComCpf = false;
+
+  // Lista grande: lê os contatos UMA vez e cruza em memória (ver LIMIAR_LEITURA_UNICA).
+  const contatos = unicos.length > LIMIAR_LEITURA_UNICA ? await mapaDeContatos(db) : null;
 
   /**
    * Resolve os códigos em PARALELO (lotes de 8), não um a um.
@@ -119,7 +194,16 @@ export async function resolverListaManual(db: any, codclis: number[]): Promise<R
           nome: row.nome,
           erp: { codcli: row.codcli, nome: row.nome, cpf: row.cpf, carteira: slug },
           pularReconciliacao: true,
+          candidatos: contatos ? (contatos.get(tel8De(sit.telefone)) ?? []) : undefined,
         });
+        // um contato recém-criado entra no mapa: dois códigos com o mesmo
+        // telefone no mesmo lote acham o MESMO contato, e não criam dois
+        if (contatos && !resolvido.ja_existia) {
+          contatos.set(tel8De(sit.telefone), [{
+            id: resolvido.cliente_id, nome_completo: resolvido.nome, carteira: resolvido.carteira,
+            telefone: resolvido.telefone, cpf: row.cpf ?? null,
+          }]);
+        }
       } catch (e: any) {
         semAlcance.push({ codcli: cod, nome: row.nome, motivo: `erro ao preparar o contato: ${e?.message ?? e}` });
         return;
