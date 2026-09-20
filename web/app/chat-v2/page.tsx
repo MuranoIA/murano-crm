@@ -26,17 +26,23 @@ export default async function PaginaChatV2({
   // escrito como Promise-compatível de propósito (spec §6): no Next 15+
   // `searchParams` vira assíncrono, e aqui a mudança será só tirar o await de
   // cima de um objeto que já é aguardado.
-  searchParams?: { cliente?: string };
+  searchParams?: { cliente?: string; embed?: string };
 }) {
   const s = sessaoDoChat();
   if (!s) redirect("/?erro=sessao");
 
   const cliente = typeof searchParams?.cliente === "string" ? searchParams.cliente : null;
+  // A lupa do board embute ESTA tela num iframe estreito (§41). Lido no
+  // servidor, e não de `location.search`, para o cabeçalho do produto nunca
+  // piscar dentro do quadro antes de o JS decidir escondê-lo.
+  const embutido = searchParams?.embed === "1";
 
+  // No embutido a lista não é usada (a lupa mostra UMA conversa), então ela
+  // vem no tamanho mínimo: o que aquela tela precisa é da thread.
   const [lista, thread] = await Promise.all([
-    lerLista(s, 60),
+    lerLista(s, embutido ? 1 : 60),
     cliente ? lerThread(cliente, 40) : Promise.resolve(null),
   ]);
 
-  return <Casca inicial={lista} threadInicial={thread} />;
+  return <Casca inicial={lista} threadInicial={thread} embutido={embutido} />;
 }

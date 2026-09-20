@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { escopoCarteira } from "../../../lib/verComo";
 import { usuarioDaSessao } from "../../../lib/chatUsuario";
-import { veTudo, carteiraDe } from "../../../lib/papel";
+import { veTudo, carteiraDe, papelDe } from "../../../lib/papel";
 
 // ---------------------------------------------------------------------------
 // A ÚNICA porta do chat-v2 para sessão e banco no servidor.
@@ -23,6 +23,8 @@ export type Sessao = {
   /** carteira de verdade da pessoa, para autorização (§31.2) */
   carteiraReal: string | null;
   veTudo: boolean;
+  /** papel ativo no cookie — o rótulo de presença sai dele quando não há carteira */
+  papel: string | null;
 };
 
 export function sessaoDoChat(): Sessao | null {
@@ -35,6 +37,7 @@ export function sessaoDoChat(): Sessao | null {
     carteira: escopoCarteira(),
     carteiraReal: carteiraDe(sessao),
     veTudo: veTudo(sessao),
+    papel: papelDe(sessao),
   };
 }
 

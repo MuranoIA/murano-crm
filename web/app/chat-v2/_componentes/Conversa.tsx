@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { Thread, type Nota, type Transferencia } from "./Thread";
+import type { Ligacao } from "../../../lib/ligacaoDados";
 import { Compositor } from "./Compositor";
 import type { Conversa as TConversa, Mensagem } from "./tipos";
 import { iniciais, nomeLimpo, telefoneBonito, tomDoAvatar } from "./formato";
@@ -90,6 +91,13 @@ export function Conversa({
   aoReabrir,
   aoPegar,
   aoErro,
+  ligacoes,
+  podeLigar,
+  aoLigar,
+  ligando,
+  presentes,
+  aoRegistrarGesto,
+  semVoltar,
 }: {
   conversa: TConversa | null;
   mensagens: Mensagem[];
@@ -120,6 +128,21 @@ export function Conversa({
   aoReabrir: () => void;
   aoPegar: () => void;
   aoErro: (msg: string) => void;
+  /** as chamadas desta conversa, como marcos na thread */
+  ligacoes: Ligacao[];
+  /** resolvido no SERVIDOR pela mesma função que a rota de ligação usa
+   *  (`conversaNaCloud`). A tela não deduz: botão que aparece e falha é pior
+   *  que botão ausente (§22.7 / nota do /api/chat/thread). */
+  podeLigar: boolean;
+  aoLigar: (() => void) | null;
+  ligando: boolean;
+  /** outras pessoas nesta conversa agora */
+  presentes?: string[];
+  /** o compositor devolve por aqui os dois gestos que moram dentro dele
+   *  (gravar e anexar), para o `?acao=` da lupa do board poder disparar */
+  aoRegistrarGesto?: (fn: ((qual: "audio" | "anexo") => void) | null) => void;
+  /** na lupa não há lista para onde voltar */
+  semVoltar?: boolean;
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
 
@@ -145,7 +168,7 @@ export function Conversa({
           data-ripple
           onClick={aoVoltar}
           aria-label="Voltar para a lista"
-          className="grid size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca md:hidden"
+          className={["grid size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca md:hidden", semVoltar ? "hidden" : ""].join(" ")}
         >
           <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
             <path d="m14 6-6 6 6 6" />
@@ -182,6 +205,18 @@ export function Conversa({
           </button>
         )}
 
+        {/* Ligar só existe quando há linha para discar. Botão desabilitado
+            com explicação seria pior: convida a clicar e ensina que o sistema
+            não funciona. `aoLigar` nulo = a camada de ligação ainda está
+            carregando (ela é dinâmica) — some por um instante, não trava. */}
+        {podeLigar && conversa.telefone && aoLigar && (
+          <Acao rotulo={ligando ? "já há uma ligação em andamento" : "Ligar pelo WhatsApp"} cor="ok" onClick={ligando ? () => {} : aoLigar}>
+            <svg viewBox="0 0 24 24" className={["size-5", ligando ? "opacity-40" : ""].join(" ")} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z" />
+            </svg>
+          </Acao>
+        )}
+
         <Acao rotulo={conversa.favorita ? "Desfavoritar" : "Favoritar"} ativo={conversa.favorita} onClick={aoFavoritar}>
           <svg viewBox="0 0 24 24" className="size-5" fill={conversa.favorita ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
             <path d="m12 4 2.4 5 5.6.8-4 3.9 1 5.5-5-2.7-5 2.7 1-5.5-4-3.9 5.6-.8L12 4Z" />
@@ -208,6 +243,16 @@ export function Conversa({
         </Acao>
       </header>
 
+      {/* ---- anti-colisão: alguém mais está aqui --------------------------
+          Azul porque é estado, não erro: duas pessoas na mesma conversa é
+          normal (o supervisor confere enquanto a consultora atende). O que o
+          aviso evita é a resposta duplicada. */}
+      {presentes && presentes.length > 0 && (
+        <p className="shrink-0 border-b border-v2-azul/15 bg-v2-azul-claro px-3 py-1 text-[12px] text-v2-azul">
+          👀 {presentes.join(", ")} {presentes.length > 1 ? "estão" : "está"} nesta conversa agora
+        </p>
+      )}
+
       {/* ---- a conversa ---------------------------------------------------- */}
       {carregando ? (
         <div className="flex-1 space-y-3 p-4">
@@ -222,6 +267,7 @@ export function Conversa({
           mensagens={mensagens}
           notas={notas}
           transferencias={transferencias}
+          ligacoes={ligacoes}
           citadas={citadas}
           temMais={temMais}
           carregandoAntigas={carregandoAntigas}
@@ -274,6 +320,7 @@ export function Conversa({
         aoLocal={aoLocal}
         aoNota={aoNota}
         aoErro={aoErro}
+        aoRegistrarGesto={aoRegistrarGesto}
       />
     </section>
   );

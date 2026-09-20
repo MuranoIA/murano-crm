@@ -32,7 +32,10 @@ export type Mensagem = {
 
 export type Thread = {
   cliente_id: string;
-  cliente: { nome: string | null; telefone: string | null; codcli: number | null } | null;
+  /** ⚠️ Sem `codcli`: ele NÃO existe em `public.clientes` (vem da view da
+   *  lista, que é materializada). O cabeçalho mostra "cód. N" quando a conversa
+   *  está na lista, e omite quando não está — omitir é melhor que inventar. */
+  cliente: { nome: string | null; telefone: string | null } | null;
   mensagens: Mensagem[];
   /** true quando há conversa mais antiga do que o lote devolvido */
   tem_mais: boolean;
@@ -51,7 +54,13 @@ export async function lerThread(cliente_id: string, limite = 40): Promise<Thread
   q = filtroLinhas(q, cfg);
   const [msgsRes, clienteRes] = await Promise.all([
     q.order("criada_em", { ascending: false }).limit(limite + 1),
-    sb.from("clientes").select("nome_completo,telefone,codcli").eq("id", cliente_id).maybeSingle(),
+    // ⚠️ `codcli` NÃO É COLUNA DE `clientes` — pedi-lo aqui fazia o PostgREST
+    // devolver ERRO, não uma linha sem o campo (§62.6). O efeito era mudo e
+    // grande: `cliente` vinha nulo, a conversa não tinha de onde nascer e a
+    // tela abria em "Escolha uma conversa à esquerda". Ou seja, o link do
+    // board, o push e o F5 dentro de um atendimento — os três casos que a
+    // primeira carga no servidor existe para atender — caíam numa tela vazia.
+    sb.from("clientes").select("nome_completo,telefone").eq("id", cliente_id).maybeSingle(),
   ]);
 
   const cruas = (msgsRes.data ?? []).filter((m: any) => m.tipo !== "evento_sistema");
@@ -66,7 +75,7 @@ export async function lerThread(cliente_id: string, limite = 40): Promise<Thread
   await textoDoTemplate(sb, mensagens, c?.nome_completo ?? null);
   return {
     cliente_id,
-    cliente: c ? { nome: c.nome_completo ?? null, telefone: c.telefone ?? null, codcli: c.codcli ?? null } : null,
+    cliente: c ? { nome: c.nome_completo ?? null, telefone: c.telefone ?? null } : null,
     mensagens,
     tem_mais,
   };

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { ItemConversa } from "./ItemConversa";
+import { Filtros, quantosRecortes, type Recortes } from "./Filtros";
 import { FILAS, type Conversa, type Fila } from "./tipos";
 
 // A coluna da esquerda: busca, recortes e a lista.
@@ -26,6 +27,16 @@ export function ListaConversas({
   aoTrocarFila,
   aoBuscar,
   aoChegarNoFim,
+  presentes,
+  recortes,
+  aoMudarRecortes,
+  filtrosAbertos,
+  aoAbrirFiltros,
+  consultores,
+  linhas,
+  contaPorConsultor,
+  contaPorLinha,
+  contaPorEtapa,
 }: {
   conversas: Conversa[];
   selecionada: string | null;
@@ -39,6 +50,17 @@ export function ListaConversas({
   aoTrocarFila: (f: Fila) => void;
   aoBuscar: (t: string) => void;
   aoChegarNoFim: () => void;
+  /** cliente_id -> rótulos de OUTRAS pessoas com a conversa aberta agora */
+  presentes: Record<string, string[]>;
+  recortes: Recortes;
+  aoMudarRecortes: (r: Recortes) => void;
+  filtrosAbertos: boolean;
+  aoAbrirFiltros: () => void;
+  consultores: { endereco: string; nome: string; cor: string | null }[];
+  linhas: { id: string; rotulo: string; numero: string | null }[];
+  contaPorConsultor: Map<string, number>;
+  contaPorLinha: Map<string, number>;
+  contaPorEtapa: Map<string, number>;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
 
@@ -141,8 +163,48 @@ export function ListaConversas({
               </button>
             );
           })}
+
+          {/* Os RECORTES ficam atrás de um botão, e os chips de fila não: a
+              fila é a primeira pergunta do dia (achado 1 do laudo de UX) e o
+              recorte é ocasional. Esconder o recorte não esconde contador
+              nenhum — ele nasce sem filtro. */}
+          <button
+            data-ripple
+            onClick={aoAbrirFiltros}
+            aria-pressed={filtrosAbertos}
+            aria-expanded={filtrosAbertos}
+            title="Filtrar por consultor, número ou coluna do board"
+            className={[
+              "flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-colors duration-150",
+              filtrosAbertos || quantosRecortes(recortes) > 0
+                ? "bg-v2-azul text-white"
+                : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
+            ].join(" ")}
+          >
+            <svg viewBox="0 0 24 24" className="size-[15px]" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+              <path d="M4 6h16M7 12h10M10 18h4" />
+            </svg>
+            Filtros
+            {quantosRecortes(recortes) > 0 && (
+              <span className="min-w-4 rounded-full bg-white/20 px-1 text-[11px] tabular-nums">
+                {quantosRecortes(recortes)}
+              </span>
+            )}
+          </button>
         </div>
       </div>
+
+      <Filtros
+        aberto={filtrosAbertos}
+        recortes={recortes}
+        aoMudar={aoMudarRecortes}
+        consultores={consultores}
+        linhas={linhas}
+        contaPorConsultor={contaPorConsultor}
+        contaPorLinha={contaPorLinha}
+        contaPorEtapa={contaPorEtapa}
+        carregando={!completa}
+      />
 
       {/* ---- a lista ------------------------------------------------------ */}
       <div ref={raiz} onScroll={aoRolar} className="rolagem min-h-0 flex-1 overflow-y-auto">
@@ -162,7 +224,12 @@ export function ListaConversas({
             alturaEstimada={72}
             ativo={conversas.length > 40}
             renderItem={(c) => (
-              <ItemConversa c={c} selecionada={c.cliente_id === selecionada} aoAbrir={aoAbrir} />
+              <ItemConversa
+                c={c}
+                selecionada={c.cliente_id === selecionada}
+                aoAbrir={aoAbrir}
+                presentes={presentes[c.cliente_id]}
+              />
             )}
           />
         )}

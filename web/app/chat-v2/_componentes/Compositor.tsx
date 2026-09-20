@@ -30,6 +30,7 @@ export function Compositor({
   aoLocal,
   aoNota,
   aoErro,
+  aoRegistrarGesto,
 }: {
   podeEnviar: boolean;
   janelaAberta: boolean;
@@ -43,6 +44,10 @@ export function Compositor({
   aoLocal: (indice: number) => void;
   aoNota: (texto: string) => void;
   aoErro: (msg: string) => void;
+  /** publica para cima os dois gestos que só existem aqui dentro — gravar e
+   *  anexar. É o que permite o `?acao=` da lupa do board disparar o microfone
+   *  ou o seletor de arquivo sem que o texto suba de componente (§50.1). */
+  aoRegistrarGesto?: (fn: ((qual: "audio" | "anexo") => void) | null) => void;
 }) {
   const [texto, setTexto] = useState("");
   const [nota, setNota] = useState(false);
@@ -53,6 +58,15 @@ export function Compositor({
   const campo = useRef<HTMLTextAreaElement>(null);
   const arquivo = useRef<HTMLInputElement>(null);
   const { gravando, segundos, gravar, parar } = useGravador((f) => aoArquivos([f], ""), aoErro);
+
+  useEffect(() => {
+    if (!aoRegistrarGesto) return;
+    aoRegistrarGesto((qual) => {
+      if (qual === "audio") void gravar();
+      else arquivo.current?.click();
+    });
+    return () => aoRegistrarGesto(null);
+  }, [aoRegistrarGesto, gravar]);
 
   // cresce até ~5 linhas e depois rola por dentro.
   // ⚠️ `height = "0px"` antes de ler o `scrollHeight`: com "auto" o navegador

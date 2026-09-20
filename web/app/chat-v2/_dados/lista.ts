@@ -2,7 +2,10 @@ import "server-only";
 import { banco, type Sessao } from "./servidor";
 import { VIEW_CHAT_LISTA } from "../../../lib/crmConfig";
 import { semEnsaio } from "../../../lib/ensaio";
-import { carregarAtribuicoes, aplicaEscopo, donoEfetivo, emLotes } from "../../../lib/chatEscopo";
+import {
+  carregarAtribuicoes, aplicaEscopo, donoEfetivo, emLotes, enderecoDePessoa, enderecoDeAtendimento,
+} from "../../../lib/chatEscopo";
+import { classificadorDeEtapa, type EtapaBoard } from "../../../lib/etapasBoard";
 
 // ---------------------------------------------------------------------------
 // A lista de conversas do chat-v2.
@@ -20,13 +23,21 @@ import { carregarAtribuicoes, aplicaEscopo, donoEfetivo, emLotes } from "../../.
 // se a régua de escopo mudar, muda para os dois (a §71.1 já registrou o preço
 // de duas fontes para a mesma pergunta).
 //
-// ⚠️ O que ainda NÃO entra aqui, e por quê:
-//   · etapa do board (§68) — exige `vw_venda_card` + descartados, 2 consultas;
-//   · linha/número de cada conversa — exige varrer `vw_chat_linha_cliente`
-//     (5,5 idas na fase 0), e com um número só em operação (§69) o filtro por
-//     número não tem o que separar hoje;
-//   · SLA / quem está esperando — `vw_chat_espera`.
-// Entram quando a fase pedir, medindo o custo de cada um.
+// ⚠️ Os RECORTES da fase 4 (etapa do board e número) são OPCIONAIS aqui, e é
+// isso que os mantém fora do caminho da primeira pintura:
+//
+//   · `etapas` custa 2 consultas (`vw_venda_card` + `wth_descartados`) e nada
+//     em bytes — a etapa vai como uma palavra por conversa. A classificação é
+//     a de `lib/etapasBoard`, a MESMA do board e do chat antigo: mandar os
+//     ingredientes para o navegador classificar criaria uma segunda régua, e a
+//     §68.1 mediu o preço de errá-la (344 de 1.113 conversas na coluna errada).
+//   · `linhas` custa a varredura de `vw_chat_linha_cliente` (4.157 linhas hoje,
+//     5 páginas) — e só é paga quando há MAIS DE UMA linha ativa em
+//     `chat_linha`. Hoje há uma (medido em 20/09/2026: Murano Professional com
+//     4.144 conversas; as outras quatro estão inativas e somam 13), então o
+//     seletor não tem o que separar e a varredura não acontece.
+//
+// Ainda de fora: SLA / quem está esperando (`vw_chat_espera`).
 // ---------------------------------------------------------------------------
 
 const COLS =
@@ -49,6 +60,11 @@ export type Conversa = {
   na_fila: boolean;
   status: string;
   motivo: string | null;
+  /** coluna do board (§68). Só vem com `opts.etapas`. `null` = cliente sem
+   *  coluna nenhuma (descartado) — ele fica na lista e some de todo filtro. */
+  etapa_board?: EtapaBoard | null;
+  /** por qual número esta conversa corre. Só vem com `opts.linhas`. */
+  linha_id?: string | null;
 };
 
 export type Contagens = {
@@ -66,10 +82,24 @@ export type Lista = {
   /** contadores dos chips, sobre a lista INTEIRA (ver `contarFilas`) */
   contagens?: Contagens;
   vendedores: { slug: string; cor: string | null }[];
+  /** quem atende SEM carteira (admin, home, pós-venda marcados em /admin).
+   *  Endereço `u:email`, nunca um slug — dar carteira a quem não tem RCA
+   *  contaminaria board, disparo e relatórios (ver lib/chatEscopo). */
+  atendentes: { endereco: string; nome: string; papel: string }[];
+  /** os números ATIVOS. Uma linha só = o seletor por número não aparece. */
+  linhas: { id: string; rotulo: string; numero: string | null }[];
   meu_usuario: string;
+  /** sob qual endereço EU atendo — o que é "meu" no filtro por consultor */
+  meu_endereco: string | null;
+  /** como eu apareço para os outros na presença. Nunca o e-mail: o canal é
+   *  público (§15.4), então nada de identificável entra nele. */
+  meu_rotulo: string;
   minha_carteira: string | null;
   em: string;
 };
+
+/** O que a lista traz ALÉM do essencial. Nada disto entra na primeira carga. */
+export type Extras = { etapas?: boolean; linhas?: boolean };
 
 const semSinteticos = (q: any) =>
   semEnsaio(q.not("cliente_id", "like", "venda:%").not("cliente_id", "like", "winthor:%"));
@@ -141,17 +171,38 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
   return c;
 }
 
-export async function lerLista(s: Sessao, limite: number | null = 60): Promise<Lista> {
+export async function lerLista(
+  s: Sessao,
+  limite: number | null = 60,
+  extras: Extras = {},
+): Promise<Lista> {
   const sb = banco();
   const PAGE = 1000;
 
-  const [atrib, favoritosRes, leiturasRes, estadosRes, vendedoresRes] = await Promise.all([
+  const [atrib, favoritosRes, leiturasRes, estadosRes, vendedoresRes, atendemRes, linhasRes, meuEndereco] =
+    await Promise.all([
     carregarAtribuicoes(sb),
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
     sb.from("chat_conversa").select("cliente_id,status,motivo"),
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
+    // quem atende sem carteira. `carteira is null` porque quem tem já está
+    // na lista acima, sob o slug, e apareceria duas vezes; `atende_chat`
+    // (0130) separa quem atende de quem só administra.
+    sb.from("acesso").select("email,nome,papel")
+      .eq("ativo", true).is("carteira", null).eq("atende_chat", true).order("email"),
+    // 5 linhas na tabela: cabe no mesmo Promise.all sem custo perceptível, e
+    // é ele que decide se a varredura cara de `vw_chat_linha_cliente` vale.
+    sb.from("chat_linha").select("phone_number_id,rotulo,numero").eq("ativo", true).order("rotulo"),
+    // o MEU endereço de atendimento: o cookie não basta, porque quem entra
+    // como admin pode ter carteira (o caso do Romulo) e o papel ativo não
+    // muda de quem é a conversa.
+    enderecoDeAtendimento(sb, s.sessao, s.usuario),
   ]);
+
+  const linhasAtivas = (linhasRes.data ?? []).map((l: any) => ({
+    id: String(l.phone_number_id), rotulo: String(l.rotulo ?? l.phone_number_id), numero: l.numero ?? null,
+  }));
 
   // ---- as conversas do escopo ---------------------------------------------
   const linhas: any[] = [];
@@ -222,6 +273,15 @@ export async function lerLista(s: Sessao, limite: number | null = 60): Promise<L
   const favoritas = new Set((favoritosRes.data ?? []).map((f: any) => f.cliente_id));
   const estado = new Map((estadosRes.data ?? []).map((e: any) => [e.cliente_id, e]));
 
+  // ---- RECORTES OPCIONAIS (fase 4) ---------------------------------------
+  // Pedidos só quando a tela abre os filtros. Ver a nota do cabeçalho.
+  const [etapaDe, porLinha] = await Promise.all([
+    extras.etapas ? classificador(sb, (vendedoresRes.data ?? []).map((v: any) => v.slug)) : null,
+    // uma linha só não separa nada: a varredura de 4 mil clientes seria paga
+    // para desenhar um seletor de uma opção
+    extras.linhas && linhasAtivas.length > 1 ? mapaDeLinhas(sb) : null,
+  ]);
+
   const conversas: Conversa[] = [...doEscopo, ...daFila]
     .map((c: any) => {
       const marca = lidaAte.get(c.cliente_id);
@@ -236,6 +296,11 @@ export async function lerLista(s: Sessao, limite: number | null = 60): Promise<L
         favorita: favoritas.has(c.cliente_id),
         status: e?.status ?? "aberta",
         motivo: e?.motivo ?? null,
+        ...(etapaDe ? { etapa_board: etapaDe(c) } : {}),
+        // sem mensagem nenhuma a conversa não corre por linha alguma — e
+        // etiquetá-la com a linha padrão inventaria um fato (§62.5, o `?? "rd"`
+        // que chamava de RD quem nunca tinha falado conosco)
+        ...(porLinha ? { linha_id: porLinha.get(c.cliente_id) ?? null } : {}),
       } as Conversa;
     })
     .sort((a, b) => (a.ultima_atividade < b.ultima_atividade ? 1 : -1));
@@ -244,8 +309,81 @@ export async function lerLista(s: Sessao, limite: number | null = 60): Promise<L
     conversas,
     tem_mais: limite !== null && linhas.length >= limite,
     vendedores: (vendedoresRes.data ?? []) as any[],
+    atendentes: (atendemRes.data ?? []).map((p: any) => ({
+      endereco: enderecoDePessoa(String(p.email)),
+      nome: (p.nome && String(p.nome).trim()) || String(p.email),
+      papel: String(p.papel ?? ""),
+    })),
+    linhas: linhasAtivas,
     meu_usuario: s.usuario,
+    meu_endereco: meuEndereco,
+    meu_rotulo: rotuloDePresenca(s),
     minha_carteira: s.carteira,
     em: new Date().toISOString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Como EU apareço na presença para os outros.
+//
+// ⚠️ Nunca o e-mail: o canal de presença é público (§15.4). E nunca "Supervisão"
+// para todo mundo sem carteira — a atendente de pós-venda aparecia assim no
+// chat antigo, e não é um rótulo feio, é um rótulo FALSO: quem visse concluiria
+// a coisa errada sobre quem está na conversa.
+// ---------------------------------------------------------------------------
+function rotuloDePresenca(s: Sessao): string {
+  if (s.carteira) return s.carteira.charAt(0).toUpperCase() + s.carteira.slice(1);
+  return s.papel === "admin" ? "Admin" : s.papel === "pos-venda" ? "Pós-venda" : "Supervisão";
+}
+
+// ---------------------------------------------------------------------------
+// A COLUNA DO BOARD de cada conversa (§68).
+//
+// ⚠️ A `etapa` que a view devolve NÃO é a coluna do board: as duas etapas de
+// VENDA vêm da nota fiscal (`vw_venda_card`, 0105) e ganham das de conversa.
+// Por isso a régua é importada de `lib/etapasBoard`, a mesma do board — uma
+// segunda cópia divergiria, e a divergência aparece como "o board diz Vender
+// novamente, o chat diz Ociosos".
+// ---------------------------------------------------------------------------
+async function classificador(sb: any, slugsAtivos: string[]) {
+  const PAGE = 1000;
+  const [vendas, descartados] = await Promise.all([
+    (async () => {
+      const out: any[] = [];
+      // 644 linhas hoje — uma página. Pagina mesmo assim porque o PostgREST
+      // corta em 1000 em silêncio, e o dia em que passar disso não vem com aviso.
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await sb.from("vw_venda_card")
+          .select("cliente_id,codcli,telefone,etapa,vendedor_slug,conversa_aberta")
+          .order("codcli", { ascending: true })
+          .range(from, from + PAGE - 1);
+        out.push(...(data ?? []));
+        if (!data || data.length < PAGE) break;
+      }
+      return out;
+    })(),
+    sb.from("wth_descartados").select("cliente_id,codcli,tel8"),
+  ]);
+  return classificadorDeEtapa({
+    vendas: vendas as any[],
+    descartados: (descartados?.data ?? []) as any[],
+    slugsAtivos,
+  });
+}
+
+/** cliente → número por onde a conversa corre. Só chamada com 2+ linhas ativas. */
+async function mapaDeLinhas(sb: any): Promise<Map<string, string>> {
+  const PAGE = 1000;
+  const m = new Map<string, string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await sb.from("vw_chat_linha_cliente")
+      .select("cliente_id,linha_id")
+      // desempate obrigatório: sem ordem total o Postgres pode repetir uma
+      // linha numa página e omiti-la na outra
+      .order("cliente_id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    for (const l of data ?? []) m.set((l as any).cliente_id, (l as any).linha_id);
+    if (!data || data.length < PAGE) break;
+  }
+  return m;
 }

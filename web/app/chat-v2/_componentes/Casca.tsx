@@ -10,6 +10,14 @@ import { Snackbars, useAvisos } from "./Avisos";
 import { enviarArquivos, type Progresso } from "./anexos";
 import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
+import { SEM_RECORTE, type Recortes } from "./Filtros";
+import { useRealtimeDoChat } from "./realtime";
+import {
+  useAvisoDeChegada, usePermissaoDeNotificacao, usePonteDoHub, usePush, useTituloDaAba,
+} from "./notificacoes";
+import { lembrarTelaAtual } from "../../lembrarTela";
+import type { Ligacao } from "../../../lib/ligacaoDados";
+import type { ApiLigacao } from "./Ligacao";
 import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
@@ -17,6 +25,14 @@ const Templates = dynamic(() => import("./Templates"), { ssr: false });
 const Transferir = dynamic(() => import("./Dialogos").then((m) => m.Transferir), { ssr: false });
 const Resolver = dynamic(() => import("./Dialogos").then((m) => m.Resolver), { ssr: false });
 const Encaminhar = dynamic(() => import("./Dialogos").then((m) => m.Encaminhar), { ssr: false });
+
+// ⚠️ A camada de ligação é dinâmica pela ORDEM, não pela condição: ela precisa
+// estar montada SEMPRE (é ela que faz a campainha tocar quando a cliente liga),
+// mas o `RTCPeerConnection`, o `getUserMedia` e a máquina de estados não podem
+// estar no pedaço de JS da primeira pintura. Chega um instante depois, com a
+// tela já de pé — e não envolve nada, para não arrastar a lista para fora do
+// SSR (ver o cabeçalho de Ligacao.tsx).
+const CamadaLigacao = dynamic(() => import("./Ligacao"), { ssr: false });
 
 // ---------------------------------------------------------------------------
 // A casca: três regiões, uma escolha de fila, uma conversa aberta.
@@ -56,7 +72,18 @@ function juntarNovas(atual: Mensagem[], chegou: Mensagem[]): Mensagem[] {
   return [...sobrevive, ...chegou].sort((a, b) => (a.criada_em < b.criada_em ? -1 : 1));
 }
 
-export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicial: Thread | null }) {
+export function Casca({
+  inicial,
+  threadInicial,
+  embutido,
+}: {
+  inicial: Lista;
+  threadInicial: Thread | null;
+  /** a lupa do board (`?embed=1`): uma conversa só, sem a navegação do produto.
+   *  Vem do SERVIDOR e não de `location.search` para que o cabeçalho nunca
+   *  pisque dentro do quadro antes de o JS decidir escondê-lo. */
+  embutido: boolean;
+}) {
   const [lista, setLista] = useState<Conversa[]>(inicial.conversas);
   const [completa, setCompleta] = useState(!inicial.tem_mais);
   const [carregandoLista, setCarregandoLista] = useState(false);
@@ -75,6 +102,11 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   // o que veio junto da thread: notas, transferências e os trechos citados
   const [notas, setNotas] = useState<Nota[]>([]);
   const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
+  const [ligacoes, setLigacoes] = useState<Ligacao[]>([]);
+  // Pode ligar para esta conversa? Vem RESOLVIDO do servidor, pela mesma
+  // `conversaNaCloud()` que a rota de ligação usa para decidir — a tela não
+  // deduz do rótulo da linha, que é outra pergunta.
+  const [podeLigar, setPodeLigar] = useState(false);
   const [citadas, setCitadas] = useState<Record<string, { conteudo: string | null; enviada_por: string | null }>>({});
   const [progresso, setProgresso] = useState<Progresso | null>(null);
   const [locais, setLocais] = useState<{ nome: string; endereco?: string }[]>([]);
@@ -91,7 +123,7 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
           cliente_id: threadInicial.cliente_id,
           cliente: threadInicial.cliente.nome,
           telefone: threadInicial.cliente.telefone,
-          codcli: threadInicial.cliente.codcli,
+          codcli: null, // não vem de `clientes`; a lista é que o traz
           vendedor: null, carteira_dona: null, transferida_de: null, etapa: null,
           ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
           nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
@@ -117,6 +149,27 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   const [precisaCompleta, setPrecisaCompleta] = useState(false);
   const [contagensServidor, setContagensServidor] = useState<Record<string, number> | null>(null);
 
+  // ---- os recortes da fase 4 (consultor, número, coluna do board) ---------
+  // `precisaExtras` é o que autoriza a lista completa a vir COM etapa e linha.
+  // São 2 consultas a mais no servidor e uma varredura de 4 mil clientes; quem
+  // não abre os filtros não paga por nenhuma das duas.
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
+  const [precisaExtras, setPrecisaExtras] = useState(false);
+  const [recortes, setRecortes] = useState<Recortes>(SEM_RECORTE);
+  const [comExtras, setComExtras] = useState(false);
+
+  // ---- a camada de ligação publica para cá o botão de discar --------------
+  // `useCallback` sem dependências: se esta função mudasse de identidade, o
+  // efeito que publica dispararia a cada render e o laço não teria fim.
+  const [ligacao, setLigacao] = useState<ApiLigacao | null>(null);
+  // ponte para os dois gestos que moram dentro do compositor (o texto não sobe,
+  // e estes também não precisam subir — só o gatilho)
+  const gesto = useRef<((qual: "audio" | "anexo") => void) | null>(null);
+  const registrarGesto = useCallback((fn: ((qual: "audio" | "anexo") => void) | null) => {
+    gesto.current = fn;
+  }, []);
+  const publicarLigacao = useCallback((api: ApiLigacao | null) => setLigacao(api), []);
+
   // os contadores dos chips: pedidos DEPOIS da pintura, porque contar varre as
   // ~4 mil conversas. Enquanto não chegam, o chip aparece sem número — nunca
   // com zero, que seria mentira.
@@ -127,8 +180,10 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       .catch(() => {});
   }, []);
   useEffect(() => {
+    // dentro da lupa não há chips para numerar: a tela mostra UMA conversa
+    if (embutido) return;
     recarregarContagens();
-  }, [recarregarContagens]);
+  }, [recarregarContagens, embutido]);
 
   // endereços salvos (crm_config.locais): uma consulta por sessão, e o menu do
   // clipe já abre com eles
@@ -150,15 +205,20 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   // medidos. As 4 mil conversas só são necessárias para buscar, filtrar por
   // outro recorte ou rolar até o fim — e é nesses três momentos que elas vêm.
   useEffect(() => {
-    if (completa || !precisaCompleta) return;
+    // A lista completa vem uma vez; se a pessoa abrir os filtros DEPOIS, ela
+    // volta uma segunda vez trazendo etapa e número. Duas idas no pior caso, e
+    // só para quem filtra.
+    const faltaExtras = precisaExtras && !comExtras;
+    if ((completa && !faltaExtras) || (!precisaCompleta && !precisaExtras)) return;
     let vivo = true;
     setCarregandoLista(true);
-    fetch("/api/chat-v2/lista")
+    fetch(`/api/chat-v2/lista${precisaExtras ? "?etapas=1&linhas=1" : ""}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`lista: ${r.status}`))))
       .then((j: Lista) => {
         if (!vivo) return;
         setLista(j.conversas);
         setCompleta(true);
+        if (precisaExtras) setComExtras(true);
       })
       .catch(() => {
         /* fica com a primeira página: degradar é melhor que tela vazia */
@@ -167,17 +227,21 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     return () => {
       vivo = false;
     };
-  }, [completa, precisaCompleta]);
+  }, [completa, precisaCompleta, precisaExtras, comExtras]);
 
   // recarrega a lista visível (só o que já temos: página ou completa)
   const recarregarLista = useCallback(() => {
-    const url = completa ? "/api/chat-v2/lista" : "/api/chat-v2/lista?limite=60";
+    // a lupa não tem lista para recarregar (§41.3): buscar as ~4 mil conversas
+    // para desenhar UMA seria o desperdício que a §15.1 corrigiu no board
+    if (embutido) return;
+    const extras = comExtras ? "&etapas=1&linhas=1" : "";
+    const url = completa ? `/api/chat-v2/lista?${extras.slice(1)}` : `/api/chat-v2/lista?limite=60${extras}`;
     fetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j: Lista) => setLista(j.conversas))
       .catch(() => {});
     recarregarContagens();
-  }, [completa, recarregarContagens]);
+  }, [completa, comExtras, embutido, recarregarContagens]);
 
   // ---- abrir uma conversa -------------------------------------------------
   const abrir = useCallback((id: string) => {
@@ -185,6 +249,8 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     abertaRef.current = id; // antes do render: a guarda precisa valer já
     setMensagens([]);
     setTemMais(false);
+    setLigacoes([]);
+    setPodeLigar(false);
     setCarregandoThread(true);
     // a conversa aberta mora na URL: o voltar do navegador funciona, o F5
     // mantém a tela, e o link do board continua valendo (§64.4)
@@ -192,6 +258,11 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       const u = new URL(window.location.href);
       u.searchParams.set("cliente", id);
       window.history.replaceState(null, "", u);
+      // ⚠️ Trocar de conversa NÃO é uma navegação: a URL muda por
+      // `replaceState`, o `usePathname` não se mexe e o efeito do LembrarTela
+      // nunca rodaria. Sem esta chamada, a volta do SSO dentro do hub acerta o
+      // chat e erra a conversa (§64.4). A função já sabe não gravar no embutido.
+      lembrarTelaAtual();
     } catch {}
 
     fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}`)
@@ -202,6 +273,8 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
         setTemMais(!!j.tem_mais);
         setNotas(j.notas ?? []);
         setTransferencias(j.transferencias ?? []);
+        setLigacoes(j.ligacoes ?? []);
+        setPodeLigar(!!j.pode_ligar);
         setCitadas(j.citadas ?? {});
         if (j.cliente) {
           setAvulsa({
@@ -239,6 +312,8 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     setAberta(null);
     abertaRef.current = null;
     setMensagens([]);
+    setLigacoes([]);
+    setPodeLigar(false);
     setPainelAberto(false);
     try {
       const u = new URL(window.location.href);
@@ -246,6 +321,32 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       window.history.replaceState(null, "", u);
     } catch {}
   }, []);
+
+  // ---- o complemento da conversa que veio no HTML ------------------------
+  //
+  // A carga do servidor traz as mensagens — é o que faz o link do board, o push
+  // e o F5 dentro de um atendimento abrirem a conversa sem esperar JS. Ela NÃO
+  // traz notas, transferências, ligações nem o "pode ligar", que exigem outras
+  // consultas e não valem o atraso da primeira pintura. Eles chegam aqui,
+  // depois de a tela já estar de pé — e só isso é aproveitado da resposta: as
+  // mensagens já estão na tela e trocá-las apagaria o que chegou no meio.
+  const jaCompletou = useRef(false);
+  useEffect(() => {
+    const id = threadInicial?.cliente_id;
+    if (!id || jaCompletou.current) return;
+    jaCompletou.current = true;
+    fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => {
+        if (abertaRef.current !== id) return;
+        setNotas(j.notas ?? []);
+        setTransferencias(j.transferencias ?? []);
+        setLigacoes(j.ligacoes ?? []);
+        setPodeLigar(!!j.pode_ligar);
+        setCitadas((c) => ({ ...c, ...(j.citadas ?? {}) }));
+      })
+      .catch(() => {});
+  }, [threadInicial?.cliente_id]);
 
   const carregarAntigas = useCallback(() => {
     const id = abertaRef.current;
@@ -301,49 +402,18 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
 
   // ---- Realtime: o Postgres avisa, o navegador não pergunta ---------------
   //
-  // O chat antigo já paga esta conta (§15): sem isto, a alternativa é polling,
-  // que escala com o número de abas abertas e não com o trabalho. O aviso vem
-  // pelo canal público `board`, com `{carteira}` no payload e nada de PII.
-  useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !anon) return;
-    let canal: any = null;
-    let cancelado = false;
-    let balde: any = null;
-
-    (async () => {
-      try {
-        const { createBrowserClient } = await import("@supabase/ssr");
-        if (cancelado) return;
-        const supa = createBrowserClient(url, anon);
-        canal = supa
-          .channel("board")
-          .on("broadcast", { event: "mudou" }, (msg: any) => {
-            const cart = msg?.payload?.carteira ?? msg?.payload?.payload?.carteira ?? null;
-            if (cart && inicial.minha_carteira && cart !== inicial.minha_carteira) return;
-            // a bolha entra na hora; a lista (cara) espera um balde de 1,2 s,
-            // senão uma rajada de dez mensagens vira dez recargas empilhadas
-            apanharNovas();
-            if (!balde) {
-              balde = setTimeout(() => {
-                balde = null;
-                recarregarLista();
-              }, 1200);
-            }
-          })
-          .subscribe();
-      } catch {
-        /* sem realtime: o poll de 60 s cobre */
-      }
-    })();
-
-    return () => {
-      cancelado = true;
-      if (balde) clearTimeout(balde);
-      try { canal?.unsubscribe(); } catch {}
-    };
-  }, [apanharNovas, recarregarLista, inicial.minha_carteira]);
+  // Um socket, dois canais: `board` (chegou mensagem) e `chat-presenca` (quem
+  // está em qual conversa). Ver `_componentes/realtime.ts`. Sem isto a
+  // alternativa é polling, que escala com o número de abas abertas e não com o
+  // trabalho (§15.1).
+  const presentes = useRealtimeDoChat({
+    minhaCarteira: inicial.minha_carteira,
+    meuRotulo: inicial.meu_rotulo,
+    conversaAberta: aberta,
+    aoChegarMensagem: apanharNovas,
+    aoMudarLista: recarregarLista,
+    semLista: embutido,
+  });
 
   // rede de proteção: se o Realtime cair, 60 s é o pior atraso possível
   useEffect(() => {
@@ -353,6 +423,57 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     }, 60_000);
     return () => clearInterval(t);
   }, [apanharNovas, recarregarLista]);
+
+  // ---- avisar que chegou mensagem ----------------------------------------
+  // Quatro degraus, do mais fraco ao mais forte: título da aba, bipe,
+  // notificação do sistema e push com o app fechado. Ver `notificacoes.ts`.
+  //
+  // O número é GLOBAL de propósito (§23.5): ele diz que chegou mensagem e não
+  // pode calar porque alguém filtrou a tela. Conversa ENCERRADA sai — o texto
+  // do aviso diz "aguardando resposta", e uma conversa fechada não está. Nada
+  // se perde: quando a cliente escreve numa encerrada, o webhook a reabre.
+  // ⚠️ SOBRE A LISTA INTEIRA, nunca sobre a primeira página. Com as 60
+  // primeiras o título dizia "(6)" enquanto o chip dizia 16 — medido em
+  // 20/09/2026, e é o tipo de número que ensina a não confiar na tela. Antes de
+  // os contadores do servidor chegarem, o valor é `null`: os dois avisos ficam
+  // calados em vez de anunciar zero.
+  const naoLidas = useMemo<number | null>(() => {
+    if (completa) return lista.filter((c) => c.nao_lida && !c.na_fila && c.status !== "resolvida").length;
+    return contagensServidor ? contagensServidor.nao_lidas : null;
+  }, [lista, completa, contagensServidor]);
+  // dentro da lupa o título da aba é do BOARD, e a lista nem é carregada:
+  // sobrescrevê-lo daria um número que a tela hospedeira não explica
+  useTituloDaAba(embutido ? null : naoLidas);
+  useAvisoDeChegada(embutido ? null : naoLidas);
+  usePermissaoDeNotificacao(!embutido);
+  const push = usePush(!embutido);
+
+  // o "Responder" do push chega por `postMessage` do hub — e a origem é a trava
+  usePonteDoHub(embutido, (id) => abrir(id));
+
+  // ---- `?acao=` — o card do board pedindo um gesto ------------------------
+  // Os ícones 📞 🎤 📎 do card abrem esta tela embutida já executando a ação. É
+  // assim que o card os oferece SEM reimplementar WebRTC, gravador e upload:
+  // quem executa é o dono deles, aqui (§50.1).
+  const acaoFeita = useRef(false);
+  useEffect(() => {
+    if (!embutido || acaoFeita.current || !aberta) return;
+    let acao: string | null = null;
+    try { acao = new URLSearchParams(window.location.search).get("acao"); } catch {}
+    if (!acao) return;
+    // ligar espera a camada dinâmica chegar; anexo e áudio, o compositor
+    if (acao === "ligar" && !ligacao) return;
+    acaoFeita.current = true;
+    // a thread ainda está pintando: abrir o seletor de arquivo ou o microfone
+    // no meio disso deixa a tela piscando atrás do diálogo
+    const t = setTimeout(() => {
+      const conversa = lista.find((c) => c.cliente_id === aberta) ?? avulsa;
+      if (acao === "ligar") ligacao?.ligar(aberta, nomeLimpo(conversa?.cliente ?? null));
+      else gesto.current?.(acao as "audio" | "anexo");
+    }, 350);
+    return () => clearTimeout(t);
+  }, [embutido, aberta, ligacao, lista, avulsa]);
+
 
   // ---- ENVIAR -------------------------------------------------------------
   //
@@ -682,10 +803,32 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     };
   }, [lista, completa, contagensServidor]);
 
+  // ---- os três recortes que cruzam (§23.5) --------------------------------
+  //
+  // Cada um conta DENTRO do que os outros já escolheram. Sem isso o chip
+  // promete 12 e a lista entrega 3 — e o número na tela passa a ser folclore.
+  //
+  // ⚠️ A FILA DE ESPERA escapa do filtro por consultor: conversa sem dono não
+  // pertence a carteira nenhuma, e escondê-la ao escolher um consultor faria
+  // sumir justamente o que qualquer um pode pegar.
+  const passaVend = useCallback(
+    (c: Conversa) => !recortes.vendedor || c.na_fila || c.vendedor === recortes.vendedor,
+    [recortes.vendedor],
+  );
+  const passaLinha = useCallback(
+    (c: Conversa) => !recortes.linha || c.linha_id === recortes.linha,
+    [recortes.linha],
+  );
+  const passaEtapa = useCallback(
+    (c: Conversa) => !recortes.etapa || c.etapa_board === recortes.etapa,
+    [recortes.etapa],
+  );
+
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const so = t.replace(/\D/g, "");
     return lista.filter((c) => {
+      if (!passaVend(c) || !passaLinha(c) || !passaEtapa(c)) return false;
       const passaFila =
         fila === "todas"
           ? !c.na_fila && c.status !== "resolvida"
@@ -702,7 +845,60 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       const tel = String(c.telefone ?? "").replace(/\D/g, "");
       return nome.includes(t) || (so.length >= 3 && tel.includes(so));
     });
-  }, [lista, fila, busca]);
+  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa]);
+
+  // ---- quem aparece no seletor de consultor -------------------------------
+  //
+  // Carteira SEM conversa some: opção que filtra para o vazio só atrapalha.
+  // ⚠️ Quem atende SEM carteira entra SEMPRE, tenha conversa ou não — e essa é
+  // a exceção à regra, não um descuido. Carteira sem conversa é uma opção
+  // morta; uma PESSOA é outra coisa: o supervisor procura por ela justamente
+  // para saber se está com alguma coisa, e "não aparece na lista" responde isso
+  // do jeito errado, dizendo que ela não existe (§23.5).
+  const consultores = useMemo(() => {
+    // vendedor já vê só a própria carteira (o servidor recorta): "Todos" e o
+    // próprio nome seriam a mesma lista
+    if (inicial.minha_carteira) return [];
+    const cor = new Map(inicial.vendedores.map((v) => [v.slug, v.cor]));
+    const comConversa = new Set(
+      lista.filter((c) => !c.na_fila && c.vendedor && !c.vendedor.startsWith("u:")).map((c) => c.vendedor as string),
+    );
+    const daCasa = inicial.atendentes.map((a) => ({ endereco: a.endereco, nome: a.nome, cor: null as string | null }));
+    const carteiras = [...comConversa].sort().map((slug) => ({
+      endereco: slug,
+      nome: slug.charAt(0).toUpperCase() + slug.slice(1),
+      cor: cor.get(slug) ?? null,
+    }));
+    return [...carteiras, ...daCasa];
+  }, [lista, inicial.vendedores, inicial.atendentes, inicial.minha_carteira]);
+
+  // contadores cruzados: cada dimensão conta sobre a lista já filtrada pelas
+  // OUTRAS duas (e pela fila, que é o recorte de cima)
+  const contagensDosRecortes = useMemo(() => {
+    const naFila = (c: Conversa) =>
+      fila === "todas" ? !c.na_fila && c.status !== "resolvida"
+      : fila === "nao_lidas" ? c.nao_lida && !c.na_fila && c.status !== "resolvida"
+      : fila === "favoritas" ? c.favorita
+      : fila === "fila" ? c.na_fila
+      : c.status === "resolvida";
+
+    const porConsultor = new Map<string, number>();
+    const porLinha = new Map<string, number>();
+    const porEtapa = new Map<string, number>();
+    for (const c of lista) {
+      if (!naFila(c)) continue;
+      if (passaLinha(c) && passaEtapa(c) && c.vendedor) {
+        porConsultor.set(c.vendedor, (porConsultor.get(c.vendedor) ?? 0) + 1);
+      }
+      if (passaVend(c) && passaEtapa(c) && c.linha_id) {
+        porLinha.set(c.linha_id, (porLinha.get(c.linha_id) ?? 0) + 1);
+      }
+      if (passaVend(c) && passaLinha(c) && c.etapa_board) {
+        porEtapa.set(c.etapa_board, (porEtapa.get(c.etapa_board) ?? 0) + 1);
+      }
+    }
+    return { porConsultor, porLinha, porEtapa };
+  }, [lista, fila, passaVend, passaLinha, passaEtapa]);
 
   // a da lista ganha (tem dono, não lida, status); a avulsa é a rede de
   // proteção para quem ainda não entrou na view materializada
@@ -716,32 +912,69 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       <Ripple />
       <Snackbars avisos={avisos} fechar={fechar} />
 
-      {/* ---- app bar ------------------------------------------------------ */}
-      <header className="flex shrink-0 items-center gap-3 bg-v2-vinho px-3 text-white shadow-e2 pt-[env(safe-area-inset-top)]">
-        <div className="flex h-12 items-center gap-3">
-          <a
-            href="/"
-            data-ripple
-            className="grid size-9 place-items-center rounded-full text-white/90 hover:bg-white/10"
-            aria-label="Voltar ao board"
-            title="Board"
-          >
-            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m14 6-6 6 6 6" />
-            </svg>
-          </a>
-          <span className="text-[15px] font-semibold tracking-tight">Chat</span>
-          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-            v2 · fase 3
+      {/* ---- app bar ------------------------------------------------------
+          Dentro da lupa do board ela NÃO aparece: ali a tela mostra uma
+          conversa só, dentro de um quadro que já tem cabeçalho, e um segundo
+          "Chat" com botão de voltar disputaria a navegação da página que a
+          hospeda (§41.5). */}
+      {!embutido && (
+        <header className="flex shrink-0 items-center gap-3 bg-v2-vinho px-3 text-white shadow-e2 pt-[env(safe-area-inset-top)]">
+          <div className="flex h-12 items-center gap-3">
+            <a
+              href="/"
+              data-ripple
+              className="grid size-9 place-items-center rounded-full text-white/90 hover:bg-white/10"
+              aria-label="Voltar ao board"
+              title="Board"
+            >
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m14 6-6 6 6 6" />
+              </svg>
+            </a>
+            <span className="text-[15px] font-semibold tracking-tight">Chat</span>
+            <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+              v2 · fase 4
+            </span>
+          </div>
+
+          <span className="ml-auto flex items-center gap-2">
+            {/* `null` = ainda não sabemos se há push, e nesse estado nada é
+                desenhado: um botão que pisca e some ao descobrir que já estava
+                ativo é pior que esperar meio segundo. */}
+            {push.estado !== null && (
+              <button
+                data-ripple
+                onClick={() => push.alternar().then((m) => m && avisar(m, { tom: push.estado ? "neutro" : "ok" }))}
+                disabled={push.ocupado}
+                aria-pressed={push.estado}
+                title={push.estado ? "Notificações ligadas neste aparelho" : "Receber aviso com o app fechado"}
+                className={[
+                  "grid size-9 place-items-center rounded-full",
+                  push.estado ? "bg-white/20 text-white" : "text-white/70 hover:bg-white/10",
+                ].join(" ")}
+              >
+                <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 9a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5h-15S6 13 6 9Z" />
+                  <path d="M10.5 18.5a1.8 1.8 0 0 0 3 0" />
+                  {!push.estado && <path d="m4 4 16 16" />}
+                </svg>
+              </button>
+            )}
+            <span className="truncate text-[12px] text-white/80">
+              {inicial.minha_carteira ? `carteira ${inicial.minha_carteira}` : inicial.meu_usuario}
+            </span>
           </span>
-        </div>
-        <span className="ml-auto truncate text-[12px] text-white/80">
-          {inicial.minha_carteira ? `carteira ${inicial.minha_carteira}` : inicial.meu_usuario}
-        </span>
-      </header>
+        </header>
+      )}
 
       {/* ---- as três regiões ---------------------------------------------- */}
       <div className="flex min-h-0 flex-1">
+        {/* No embutido a coluna de lista NÃO É DESENHADA — nem escondida por
+            CSS. A lupa mostra UMA conversa; buscar as ~4 mil para montar uma
+            lista invisível seria o desperdício que a §15.1 corrigiu, e a busca
+            e os contadores continuariam rodando atrás do quadro. É por isso
+            também que ali o `?cliente=` é resolvido direto na thread. */}
+        {!embutido && (
         <div
           className={[
             "min-h-0 w-full shrink-0 border-r border-v2-linha md:w-[320px] lg:w-[344px]",
@@ -768,10 +1001,27 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
               if (t.trim().length >= 2) setPrecisaCompleta(true);
             }}
             aoChegarNoFim={() => setPrecisaCompleta(true)}
+            presentes={presentes}
+            recortes={recortes}
+            aoMudarRecortes={setRecortes}
+            filtrosAbertos={filtrosAbertos}
+            // abrir os filtros é o gesto que manda buscar a lista inteira COM
+            // etapa e número — e é o único momento em que essa conta é paga
+            aoAbrirFiltros={() => {
+              setFiltrosAbertos((v) => !v);
+              setPrecisaCompleta(true);
+              setPrecisaExtras(true);
+            }}
+            consultores={consultores}
+            linhas={inicial.linhas}
+            contaPorConsultor={contagensDosRecortes.porConsultor}
+            contaPorLinha={contagensDosRecortes.porLinha}
+            contaPorEtapa={contagensDosRecortes.porEtapa}
           />
         </div>
+        )}
 
-        <div className={["min-h-0 min-w-0 flex-1", aberta ? "block" : "hidden md:block"].join(" ")}>
+        <div className={["min-h-0 min-w-0 flex-1", aberta || embutido ? "block" : "hidden md:block"].join(" ")}>
           <TelaConversa
             conversa={conversaAberta}
             mensagens={mensagens}
@@ -806,6 +1056,17 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
             aoReabrir={() => mudarStatus("aberta")}
             aoPegar={pegar}
             aoErro={(msg) => avisar(msg, { tom: "erro" })}
+            ligacoes={ligacoes}
+            podeLigar={podeLigar}
+            aoLigar={
+              ligacao && aberta
+                ? () => ligacao.ligar(aberta, nomeLimpo(conversaAberta?.cliente ?? null))
+                : null
+            }
+            ligando={!!ligacao && (ligacao.ocupado || ligacao.emChamada)}
+            presentes={aberta ? presentes[aberta] : undefined}
+            aoRegistrarGesto={registrarGesto}
+            semVoltar={embutido}
           />
         </div>
 
@@ -867,6 +1128,24 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
           aoConfirmar={encaminhar}
         />
       )}
+
+      {/* A camada de ligação fica montada SEMPRE (é ela que faz a campainha
+          tocar quando a cliente liga), mas chega depois da primeira pintura. */}
+      <CamadaLigacao
+        sessao={{ role: inicial.minha_carteira ? "vendedor" : "admin", carteira: inicial.minha_carteira }}
+        aoMudar={() => {
+          // a ligação virou um marco na thread e mexeu na lista
+          const id = abertaRef.current;
+          if (id) {
+            fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}`)
+              .then((r) => r.json())
+              .then((j) => abertaRef.current === id && setLigacoes(j.ligacoes ?? []))
+              .catch(() => {});
+          }
+          recarregarLista();
+        }}
+        aoPublicar={publicarLigacao}
+      />
 
       {templates && conversaAberta && (
         <Templates

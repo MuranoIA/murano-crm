@@ -5,6 +5,8 @@ import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { Bolha } from "./Bolha";
 import type { Mensagem } from "./tipos";
 import { chaveDoDia, diaDaMensagem, hora } from "./formato";
+import { MarcoLigacao } from "./MarcoLigacao";
+import type { Ligacao } from "../../../lib/ligacaoDados";
 
 export type Nota = { id: number; cliente_id: string; autor: string; texto: string; criada_em: string };
 export type Transferencia = {
@@ -20,19 +22,25 @@ type Item =
   | { tipo: "dia"; chave: string; rotulo: string }
   | { tipo: "msg"; chave: string; m: Mensagem; primeira: boolean; ultima: boolean }
   | { tipo: "nota"; chave: string; n: Nota }
-  | { tipo: "transf"; chave: string; t: Transferencia };
+  | { tipo: "transf"; chave: string; t: Transferencia }
+  | { tipo: "ligacao"; chave: string; l: Ligacao };
 
 // A conversa. Separador de dia, agrupamento por autor e rolagem que respeita
 // onde a pessoa está: quem subiu para reler um preço não é arrancado de lá
 // quando chega mensagem nova (a mesma regra da §65.3 do CLAUDE.md).
 //
-// Notas internas e transferências entram INTERCALADAS pela data, no ponto da
-// conversa em que aconteceram — é o que faz a thread contar a história inteira
-// em vez de só o que trafegou no WhatsApp.
+// Notas internas, transferências e LIGAÇÕES entram INTERCALADAS pela data, no
+// ponto da conversa em que aconteceram — é o que faz a thread contar a história
+// inteira em vez de só o que trafegou no WhatsApp.
+//
+// ⚠️ Nenhuma das três é uma linha de `mensagens`, e não pode virar: ali elas
+// seriam "a última mensagem" da conversa, moveriam o card de coluna no board e
+// abririam uma espera no indicador de tempo de resposta (§21.2, §22.3).
 export function Thread({
   mensagens,
   notas,
   transferencias,
+  ligacoes,
   citadas,
   temMais,
   carregandoAntigas,
@@ -44,6 +52,7 @@ export function Thread({
   mensagens: Mensagem[];
   notas: Nota[];
   transferencias: Transferencia[];
+  ligacoes?: Ligacao[];
   citadas: Record<string, { conteudo: string | null; enviada_por: string | null }>;
   temMais: boolean;
   carregandoAntigas: boolean;
@@ -83,6 +92,8 @@ export function Thread({
     for (const n of notas) cru.push({ em: n.criada_em, faz: () => ({ tipo: "nota", chave: `nota-${n.id}`, n }) });
     for (const t of transferencias)
       cru.push({ em: t.criada_em, faz: () => ({ tipo: "transf", chave: `tr-${t.id}`, t }) });
+    for (const l of ligacoes ?? [])
+      cru.push({ em: l.iniciada_em, faz: () => ({ tipo: "ligacao", chave: `lig-${l.id}`, l }) });
 
     cru.sort((a, b) => (a.em < b.em ? -1 : a.em > b.em ? 1 : 0));
 
@@ -97,7 +108,7 @@ export function Thread({
       out.push(cru[i].faz(i));
     }
     return out;
-  }, [mensagens, notas, transferencias]);
+  }, [mensagens, notas, transferencias, ligacoes]);
 
   // ⚠️ ROLAR UMA VEZ PARA O FIM NÃO BASTA — a primeira foto do v2 mostrou a
   // conversa abrindo com as últimas bolhas cortadas embaixo, e um punhado de
@@ -219,6 +230,8 @@ export function Thread({
                     <p className="mt-1 whitespace-pre-wrap break-words text-[13.5px] leading-5 text-amber-950">{i.n.texto}</p>
                   </div>
                 </div>
+              ) : i.tipo === "ligacao" ? (
+                <MarcoLigacao l={i.l} />
               ) : i.tipo === "transf" ? (
                 <div className="my-2 flex justify-center px-3">
                   <span className="rounded-full bg-v2-vinho-claro px-3 py-1 text-[11.5px] text-v2-vinho-texto">

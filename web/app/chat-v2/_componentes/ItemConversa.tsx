@@ -12,10 +12,13 @@ function Linha({
   c,
   selecionada,
   aoAbrir,
+  presentes,
 }: {
   c: Conversa;
   selecionada: boolean;
   aoAbrir: (id: string) => void;
+  /** outras pessoas com esta conversa aberta agora (anti-colisão) */
+  presentes?: string[];
 }) {
   const resolvida = c.status === "resolvida";
   return (
@@ -75,7 +78,7 @@ function Linha({
           )}
         </span>
 
-        {(c.na_fila || resolvida || c.transferida_de) && (
+        {(c.na_fila || resolvida || c.transferida_de || (presentes && presentes.length > 0)) && (
           <span className="mt-1 flex flex-wrap items-center gap-1">
             {c.na_fila && (
               <span className="rounded-full bg-v2-laranja-claro px-1.5 py-px text-[10px] font-medium text-v2-laranja">
@@ -90,6 +93,16 @@ function Linha({
             {c.transferida_de && (
               <span className="rounded-full bg-v2-vinho-claro px-1.5 py-px text-[10px] font-medium text-v2-vinho-texto">
                 ↪ de {c.transferida_de}
+              </span>
+            )}
+            {/* anti-colisão: alguém já está nesta conversa. Na LISTA basta o
+                aviso de que há gente — o nome de quem é aparece ao abrir. */}
+            {presentes && presentes.length > 0 && (
+              <span
+                title={`${presentes.join(", ")} ${presentes.length > 1 ? "estão" : "está"} nesta conversa`}
+                className="rounded-full bg-v2-azul-claro px-1.5 py-px text-[10px] font-medium text-v2-azul"
+              >
+                👀 {presentes.length > 1 ? `${presentes.length} atendendo` : presentes[0]}
               </span>
             )}
           </span>

@@ -24,36 +24,15 @@ import { explicarErroMicrofone } from "./microfone";
 // ---------------------------------------------------------------------------
 
 
-export type Ligacao = {
-  id: number; canal: "whatsapp"; direcao: "saida" | "entrada";
-  status: string; call_id: string | null; carteira: string | null; por: string | null;
-  telefone?: string | null;
-  iniciada_em: string; atendida_em: string | null; encerrada_em: string | null;
-  duracao_seg: number | null; motivo: string | null; observacao: string | null;
-  cliente_id?: string;
-};
+// O que uma ligação É (tipos, desfechos, formatação) mora em `ligacaoDados`,
+// sem React e sem WebRTC — ver o cabeçalho de lá. Reexportado aqui para que
+// quem já conduz a chamada não precise importar de dois lugares.
+export {
+  VIVOS, ligacaoViva, DESFECHOS, duracaoBR, horaBR,
+} from "./ligacaoDados";
+export type { Ligacao, Chamada } from "./ligacaoDados";
 
-export const VIVOS = ["discando", "tocando", "em_curso"];
-export const ligacaoViva = (l: Ligacao | null | undefined) => !!l && VIVOS.includes(l.status);
-
-// Desfecho da ligação — a nossa tabulação por voz. Espelha os motivos de
-// encerramento da conversa (§18 item 4) porque a pergunta é a mesma: no que deu?
-export const DESFECHOS: { v: string; rotulo: string }[] = [
-  { v: "venda_realizada", rotulo: "✅ Venda realizada" },
-  { v: "follow_up", rotulo: "🕗 Follow-up agendado" },
-  { v: "sem_interesse", rotulo: "🚫 Sem interesse" },
-  { v: "nao_atendeu", rotulo: "📵 Não atendeu" },
-  { v: "caixa_postal", rotulo: "📼 Caixa postal" },
-  { v: "outro", rotulo: "• Outro" },
-];
-
-export const duracaoBR = (seg: number | null | undefined) => {
-  if (seg == null) return null;
-  const m = Math.floor(seg / 60), s = seg % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-};
-export const horaBR = (iso: string) =>
-  new Date(new Date(iso).getTime() - 3 * 3600 * 1000).toISOString().slice(11, 16);
+import { VIVOS, type Chamada, type Ligacao } from "./ligacaoDados";
 
 // ---------------------------------------------------------------------------
 // Campainha. WebAudio em vez de <audio src>: não exige arquivo no bundle e não
@@ -102,7 +81,6 @@ function usarCampainha() {
 // ---------------------------------------------------------------------------
 // O hook
 // ---------------------------------------------------------------------------
-export type Chamada = Ligacao & { cliente_id: string; cliente_nome?: string };
 
 export function useLigacao(opts: {
   sessao: { role: string; carteira: string | null } | null;
