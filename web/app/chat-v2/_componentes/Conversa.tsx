@@ -36,6 +36,10 @@ export function Conversa({
   aoVoltar,
   aoAbrirContato,
   painelAberto,
+  enviando,
+  aoEnviar,
+  aoTemplate,
+  aoReenviar,
 }: {
   conversa: TConversa | null;
   mensagens: Mensagem[];
@@ -46,6 +50,10 @@ export function Conversa({
   aoVoltar: () => void;
   aoAbrirContato: () => void;
   painelAberto: boolean;
+  enviando: boolean;
+  aoEnviar: (texto: string) => void;
+  aoTemplate: () => void;
+  aoReenviar: (m: Mensagem) => void;
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
 
@@ -124,6 +132,7 @@ export function Conversa({
           temMais={temMais}
           carregandoAntigas={carregandoAntigas}
           aoCarregarAntigas={aoCarregarAntigas}
+          aoReenviar={aoReenviar}
         />
       )}
 
@@ -157,7 +166,13 @@ export function Conversa({
         </div>
       )}
 
-      <Compositor podeEnviar={false} />
+      <Compositor
+        podeEnviar={!carregando}
+        janelaAberta={j.aberta}
+        enviando={enviando}
+        aoEnviar={aoEnviar}
+        aoTemplate={aoTemplate}
+      />
     </section>
   );
 }

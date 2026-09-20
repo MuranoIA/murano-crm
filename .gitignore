@@ -27,3 +27,8 @@ testes/saidas/
 prototipos/chat-v2/medicoes/
 prototipos/chat-v2/build-master.log
 prototipos/chat-v2/build-v2.log
+.chrome-v2/
+
+# entrada local para testar no celular — NUNCA versionar (ver o cabeçalho do arquivo)
+web/app/dev-entrar/
+.chave-dev

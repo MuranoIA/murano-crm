@@ -1,11 +1,17 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListaConversas } from "./ListaConversas";
 import { Conversa as TelaConversa } from "./Conversa";
 import { PainelContato } from "./PainelContato";
 import { Ripple } from "./Ripple";
+import { Snackbars, useAvisos } from "./Avisos";
+import { nomeLimpo } from "./formato";
 import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
+
+// pesado e raro: quem não manda template não baixa este código
+const Templates = dynamic(() => import("./Templates"), { ssr: false });
 
 // ---------------------------------------------------------------------------
 // A casca: três regiões, uma escolha de fila, uma conversa aberta.
@@ -19,6 +25,31 @@ import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
 // O único uso de estado para layout é "tem conversa aberta?" — que é estado de
 // navegação, não de tamanho de tela.
 // ---------------------------------------------------------------------------
+
+/**
+ * O INCREMENTAL (`?desde=`): o que chegou é sempre mais novo que o que está na
+ * tela, então a regra é acrescentar — nunca substituir.
+ *
+ * ⚠️ A primeira versão desta função descartava o que fosse mais antigo que o
+ * lote recebido, e o teste pegou na hora: ao enviar uma mensagem, a fala da
+ * cliente SUMIA da tela. Aquela regra é da FOTO (abaixo), não daqui.
+ *
+ * A bolha `tmp:` morre quando a mesma fala, do mesmo lado, volta do servidor —
+ * senão a mensagem aparece em dobro por um instante.
+ */
+function juntarNovas(atual: Mensagem[], chegou: Mensagem[]): Mensagem[] {
+  if (!chegou.length) return atual;
+  const porId = new Set(chegou.map((m) => m.id));
+  const sobrevive = atual.filter((m) => {
+    if (porId.has(m.id)) return false;
+    if (!m.id.startsWith("tmp:")) return true;
+    const gemea = chegou.find(
+      (c) => c.enviada_por !== "customer" && (c.conteudo ?? "") === (m.conteudo ?? ""),
+    );
+    return !gemea;
+  });
+  return [...sobrevive, ...chegou].sort((a, b) => (a.criada_em < b.criada_em ? -1 : 1));
+}
 
 export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicial: Thread | null }) {
   const [lista, setLista] = useState<Conversa[]>(inicial.conversas);
@@ -34,6 +65,27 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   const [carregandoThread, setCarregandoThread] = useState(false);
   const [carregandoAntigas, setCarregandoAntigas] = useState(false);
   const [painelAberto, setPainelAberto] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [templates, setTemplates] = useState(false);
+  // A conversa aberta pode NÃO estar na lista: `vw_chat_conversa` é
+  // materializada e só atualiza a cada 2 min (0139), então uma conversa que
+  // acabou de nascer — ou um link do board para alguém fora do recorte — abriria
+  // numa tela vazia. Esta é a conversa montada a partir da própria thread.
+  const [avulsa, setAvulsa] = useState<Conversa | null>(
+    threadInicial?.cliente
+      ? {
+          cliente_id: threadInicial.cliente_id,
+          cliente: threadInicial.cliente.nome,
+          telefone: threadInicial.cliente.telefone,
+          codcli: threadInicial.cliente.codcli,
+          vendedor: null, carteira_dona: null, transferida_de: null, etapa: null,
+          ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
+          nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
+        }
+      : null,
+  );
+
+  const { avisos, avisar, fechar } = useAvisos();
 
   // qual conversa está na tela AGORA, lido no momento em que a resposta chega.
   // É a guarda da §70: sem ela, a thread da cliente A aparece dentro da B.
@@ -42,33 +94,38 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     abertaRef.current = aberta;
   }, [aberta]);
 
-  // ---- o resto da lista, SÓ QUANDO PRECISA -------------------------------
-  //
-  // A primeira página (60 conversas) já veio no HTML, e os contadores dos chips
-  // vieram calculados no servidor sobre a lista inteira — então a tela abre
-  // completa sem baixar tudo.
-  //
-  // ⚠️ A primeira versão puxava a lista inteira em segundo plano, sempre: a
-  // pintura melhorou (7,4 s → 1 s) mas a sessão continuava custando 2,7 MB,
-  // medidos. As 4 mil conversas só são necessárias para buscar, filtrar por
-  // outro recorte ou rolar até o fim — e é nesses três momentos que elas vêm.
+  // a mensagem mais nova que já temos: é o cursor do incremental `?desde=`
+  const msgsRef = useRef<Mensagem[]>(mensagens);
+  useEffect(() => {
+    msgsRef.current = mensagens;
+  }, [mensagens]);
+
   const [precisaCompleta, setPrecisaCompleta] = useState(false);
   const [contagensServidor, setContagensServidor] = useState<Record<string, number> | null>(null);
 
   // os contadores dos chips: pedidos DEPOIS da pintura, porque contar varre as
   // ~4 mil conversas. Enquanto não chegam, o chip aparece sem número — nunca
   // com zero, que seria mentira.
-  useEffect(() => {
-    let vivo = true;
+  const recarregarContagens = useCallback(() => {
     fetch("/api/chat-v2/contagens")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j) => vivo && setContagensServidor(j))
+      .then((j) => setContagensServidor(j))
       .catch(() => {});
-    return () => {
-      vivo = false;
-    };
   }, []);
+  useEffect(() => {
+    recarregarContagens();
+  }, [recarregarContagens]);
 
+  // ---- o resto da lista, SÓ QUANDO PRECISA -------------------------------
+  //
+  // A primeira página (60 conversas) já veio no HTML, e os contadores dos chips
+  // vieram de uma rota que devolve cinco números — então a tela abre completa
+  // sem baixar tudo.
+  //
+  // ⚠️ A primeira versão puxava a lista inteira em segundo plano, sempre: a
+  // pintura melhorou (7,4 s → 1 s) mas a sessão continuava custando 2,7 MB,
+  // medidos. As 4 mil conversas só são necessárias para buscar, filtrar por
+  // outro recorte ou rolar até o fim — e é nesses três momentos que elas vêm.
   useEffect(() => {
     if (completa || !precisaCompleta) return;
     let vivo = true;
@@ -88,6 +145,16 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       vivo = false;
     };
   }, [completa, precisaCompleta]);
+
+  // recarrega a lista visível (só o que já temos: página ou completa)
+  const recarregarLista = useCallback(() => {
+    const url = completa ? "/api/chat-v2/lista" : "/api/chat-v2/lista?limite=60";
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: Lista) => setLista(j.conversas))
+      .catch(() => {});
+    recarregarContagens();
+  }, [completa, recarregarContagens]);
 
   // ---- abrir uma conversa -------------------------------------------------
   const abrir = useCallback((id: string) => {
@@ -110,12 +177,39 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
         if (abertaRef.current !== id) return; // trocou de conversa no meio
         setMensagens(j.mensagens ?? []);
         setTemMais(!!j.tem_mais);
+        if (j.cliente) {
+          setAvulsa({
+            cliente_id: id,
+            cliente: j.cliente.nome ?? null,
+            telefone: j.cliente.telefone ?? null,
+            codcli: null,
+            vendedor: j.cliente.carteira ?? null,
+            carteira_dona: j.cliente.carteira ?? null,
+            transferida_de: null, etapa: null,
+            ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
+            nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
+          });
+        }
       })
       .catch(() => abertaRef.current === id && setMensagens([]))
       .finally(() => abertaRef.current === id && setCarregandoThread(false));
-  }, []);
 
-  const fechar = useCallback(() => {
+    // ---- marcar como lida -------------------------------------------------
+    // SÓ QUEM ATENDE marca — a régua mora no servidor (`/api/chat/lida`), que
+    // recusa quem está apenas conferindo a conversa de outra pessoa. A tela
+    // apaga o marcador na hora e não espera resposta: se o servidor recusar, o
+    // próximo carregamento devolve o "não lida", que é o certo.
+    setLista((atual) => atual.map((c) => (c.cliente_id === id ? { ...c, nao_lida: false } : c)));
+    fetch("/api/chat/lida", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cliente_id: id }),
+    })
+      .then(() => recarregarContagens())
+      .catch(() => {});
+  }, [recarregarContagens]);
+
+  const fechar_ = useCallback(() => {
     setAberta(null);
     abertaRef.current = null;
     setMensagens([]);
@@ -129,9 +223,10 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
 
   const carregarAntigas = useCallback(() => {
     const id = abertaRef.current;
-    if (!id || !mensagens.length) return;
+    const atuais = msgsRef.current;
+    if (!id || !atuais.length) return;
     setCarregandoAntigas(true);
-    const cursor = mensagens[0].criada_em;
+    const cursor = atuais[0].criada_em;
     fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}&antes=${encodeURIComponent(cursor)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`antes: ${r.status}`))))
       .then((j) => {
@@ -141,7 +236,194 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
       })
       .catch(() => {})
       .finally(() => abertaRef.current === id && setCarregandoAntigas(false));
-  }, [mensagens]);
+  }, []);
+
+  // ---- o que chegou depois: incremental, não a thread inteira -------------
+  //
+  // 7,8 kB em vez de 82 kB, e um índice em vez de seis consultas (§65.3). O
+  // `estados` vem junto porque o aviso do Realtime também dispara quando o
+  // TIQUE de uma mensagem antiga muda — sem isso o ✓✓ congelaria até o poll.
+  const apanharNovas = useCallback(() => {
+    const id = abertaRef.current;
+    if (!id) return;
+    const atuais = msgsRef.current;
+    // âncora nunca é uma bolha otimista: a data dela é do relógio do NAVEGADOR,
+    // e um relógio adiantado faria o `desde` pular mensagens para sempre
+    const reais = atuais.filter((m) => !m.id.startsWith("tmp:"));
+    const desde = reais.length ? reais[reais.length - 1].criada_em : null;
+    if (!desde) return;
+    fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}&desde=${encodeURIComponent(desde)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => {
+        if (abertaRef.current !== id) return;
+        const estados: Mensagem[] = j.estados ?? [];
+        setMensagens((atual) => {
+          const comEstado = estados.length
+            ? atual.map((m) => {
+                const e = estados.find((x: any) => x.id === m.id);
+                return e ? { ...m, status: e.status ?? m.status, erro: (e as any).erro ?? m.erro } : m;
+              })
+            : atual;
+          return juntarNovas(comEstado, j.mensagens ?? []);
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  // ---- Realtime: o Postgres avisa, o navegador não pergunta ---------------
+  //
+  // O chat antigo já paga esta conta (§15): sem isto, a alternativa é polling,
+  // que escala com o número de abas abertas e não com o trabalho. O aviso vem
+  // pelo canal público `board`, com `{carteira}` no payload e nada de PII.
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anon) return;
+    let canal: any = null;
+    let cancelado = false;
+    let balde: any = null;
+
+    (async () => {
+      try {
+        const { createBrowserClient } = await import("@supabase/ssr");
+        if (cancelado) return;
+        const supa = createBrowserClient(url, anon);
+        canal = supa
+          .channel("board")
+          .on("broadcast", { event: "mudou" }, (msg: any) => {
+            const cart = msg?.payload?.carteira ?? msg?.payload?.payload?.carteira ?? null;
+            if (cart && inicial.minha_carteira && cart !== inicial.minha_carteira) return;
+            // a bolha entra na hora; a lista (cara) espera um balde de 1,2 s,
+            // senão uma rajada de dez mensagens vira dez recargas empilhadas
+            apanharNovas();
+            if (!balde) {
+              balde = setTimeout(() => {
+                balde = null;
+                recarregarLista();
+              }, 1200);
+            }
+          })
+          .subscribe();
+      } catch {
+        /* sem realtime: o poll de 60 s cobre */
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+      if (balde) clearTimeout(balde);
+      try { canal?.unsubscribe(); } catch {}
+    };
+  }, [apanharNovas, recarregarLista, inicial.minha_carteira]);
+
+  // rede de proteção: se o Realtime cair, 60 s é o pior atraso possível
+  useEffect(() => {
+    const t = setInterval(() => {
+      apanharNovas();
+      recarregarLista();
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [apanharNovas, recarregarLista]);
+
+  // ---- ENVIAR -------------------------------------------------------------
+  //
+  // A bolha aparece ANTES de o servidor confirmar. Se falhar, ela não some: vira
+  // uma bolha com o motivo traduzido e um botão de reenviar — porque sumir é o
+  // pior desfecho possível (a pessoa acha que mandou).
+  const enviarTexto = useCallback(
+    (texto: string, idExistente?: string) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      const tmp = idExistente ?? `tmp:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+      const otimista: Mensagem = {
+        id: tmp,
+        conteudo: texto,
+        enviada_por: "operator",
+        tipo: "mensagem",
+        status: "wait",
+        criada_em: new Date().toISOString(),
+        midia_tipo: null, midia_mime: null, midia_nome: null,
+        reacao: null, resposta_a: null, erro: null,
+      };
+      setMensagens((atual) => [...atual.filter((m) => m.id !== tmp), otimista]);
+      setEnviando(true);
+
+      fetch("/api/send-message", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, texto }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+          return j;
+        })
+        .then(() => {
+          if (abertaRef.current !== id) return;
+          // o servidor gravou: o incremental traz a linha de verdade (com id
+          // da Meta e tique), e `juntar` remove a otimista
+          apanharNovas();
+          recarregarLista();
+        })
+        .catch((e) => {
+          const motivo = String(e?.message ?? e);
+          if (abertaRef.current === id) {
+            setMensagens((atual) =>
+              atual.map((m) => (m.id === tmp ? { ...m, status: "failed", erro: motivo } : m)),
+            );
+          }
+          avisar("A mensagem não saiu.", {
+            tom: "erro",
+            acao: { rotulo: "Reenviar", fazer: () => enviarTexto(texto, tmp) },
+          });
+        })
+        .finally(() => setEnviando(false));
+    },
+    [apanharNovas, recarregarLista, avisar],
+  );
+
+  const reenviar = useCallback(
+    (m: Mensagem) => {
+      if (!m.conteudo) return;
+      setMensagens((atual) => atual.filter((x) => x.id !== m.id));
+      enviarTexto(m.conteudo, m.id.startsWith("tmp:") ? m.id : undefined);
+    },
+    [enviarTexto],
+  );
+
+  // ---- TEMPLATE -----------------------------------------------------------
+  const enviarTemplate = useCallback(
+    (t: { template_id: string; nome: string; variaveis: string[]; texto: string }) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setEnviando(true);
+      fetch("/api/send-template", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          cliente_id: id,
+          template_id: t.template_id,
+          // só manda `variaveis` quando o template pede campos: a rota recusa
+          // lista vazia em template de um campo só, e preenche o nome sozinha
+          ...(t.variaveis.length ? { variaveis: t.variaveis } : {}),
+        }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+          return j;
+        })
+        .then(() => {
+          setTemplates(false);
+          avisar(`Template "${t.nome}" enviado.`, { tom: "ok" });
+          apanharNovas();
+          recarregarLista();
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setEnviando(false));
+    },
+    [apanharNovas, recarregarLista, avisar],
+  );
 
   // ---- recortes e contadores ---------------------------------------------
   // Com a lista inteira em mãos, conta daqui (é de graça e fica exato mesmo
@@ -190,11 +472,17 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     });
   }, [lista, fila, busca]);
 
-  const conversaAberta = useMemo(() => lista.find((c) => c.cliente_id === aberta) ?? null, [lista, aberta]);
+  // a da lista ganha (tem dono, não lida, status); a avulsa é a rede de
+  // proteção para quem ainda não entrou na view materializada
+  const conversaAberta = useMemo(
+    () => lista.find((c) => c.cliente_id === aberta) ?? (avulsa?.cliente_id === aberta ? avulsa : null),
+    [lista, aberta, avulsa],
+  );
 
   return (
     <div className="v2 flex h-dvh min-h-0 flex-col overflow-hidden">
       <Ripple />
+      <Snackbars avisos={avisos} fechar={fechar} />
 
       {/* ---- app bar ------------------------------------------------------ */}
       <header className="flex shrink-0 items-center gap-3 bg-v2-vinho px-3 text-white shadow-e2 pt-[env(safe-area-inset-top)]">
@@ -212,7 +500,7 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
           </a>
           <span className="text-[15px] font-semibold tracking-tight">Chat</span>
           <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-            v2 · fase 1
+            v2 · fase 2
           </span>
         </div>
         <span className="ml-auto truncate text-[12px] text-white/80">
@@ -259,9 +547,13 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
             carregando={carregandoThread}
             carregandoAntigas={carregandoAntigas}
             aoCarregarAntigas={carregarAntigas}
-            aoVoltar={fechar}
+            aoVoltar={fechar_}
             aoAbrirContato={() => setPainelAberto((v) => !v)}
             painelAberto={painelAberto}
+            enviando={enviando}
+            aoEnviar={enviarTexto}
+            aoTemplate={() => setTemplates(true)}
+            aoReenviar={reenviar}
           />
         </div>
 
@@ -290,6 +582,15 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
             </div>
           </div>
         </div>
+      )}
+
+      {templates && conversaAberta && (
+        <Templates
+          primeiroNome={nomeLimpo(conversaAberta.cliente).split(/\s+/)[0] ?? ""}
+          enviando={enviando}
+          aoFechar={() => setTemplates(false)}
+          aoEnviar={enviarTemplate}
+        />
       )}
     </div>
   );

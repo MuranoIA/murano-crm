@@ -16,11 +16,13 @@ export function Thread({
   temMais,
   carregandoAntigas,
   aoCarregarAntigas,
+  aoReenviar,
 }: {
   mensagens: Mensagem[];
   temMais: boolean;
   carregandoAntigas: boolean;
   aoCarregarAntigas: () => void;
+  aoReenviar?: (m: Mensagem) => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
   const ultimaChave = mensagens.length ? mensagens[mensagens.length - 1].id : "";
@@ -148,7 +150,7 @@ export function Thread({
                 </span>
               </div>
             ) : (
-              <Bolha m={i.m} primeiraDoGrupo={i.primeira} ultimaDoGrupo={i.ultima} />
+              <Bolha m={i.m} primeiraDoGrupo={i.primeira} ultimaDoGrupo={i.ultima} aoReenviar={aoReenviar} />
             )
           }
         />

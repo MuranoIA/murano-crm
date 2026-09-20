@@ -12,11 +12,15 @@ export const dynamic = "force-dynamic";
 //
 // ⚠️ Não substitui o `/api/chat`: aquele continua servindo o chat antigo,
 // intocado (regra 4 da spec).
-export async function GET() {
+export async function GET(req: Request) {
   const s = sessaoDoChat();
   if (!s) return Response.json({ error: "não autenticado" }, { status: 401 });
+  // `?limite=60` = a mesma primeira página que a carga do servidor manda. É o
+  // que a tela pede para se atualizar sem baixar as 4 mil conversas de novo.
+  const cru = new URL(req.url).searchParams.get("limite");
+  const limite = cru && Number.isFinite(Number(cru)) ? Math.min(Math.max(Number(cru), 1), 1000) : null;
   try {
-    return Response.json(await lerLista(s, null));
+    return Response.json(await lerLista(s, limite));
   } catch (e: any) {
     return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
   }

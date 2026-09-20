@@ -54,14 +54,19 @@ function BolhaBase({
   m,
   primeiraDoGrupo,
   ultimaDoGrupo,
+  aoReenviar,
 }: {
   m: Mensagem;
   primeiraDoGrupo: boolean;
   ultimaDoGrupo: boolean;
+  aoReenviar?: (m: Mensagem) => void;
 }) {
   const minha = m.enviada_por !== "customer";
   const falhou = m.status === "failed" || !!m.erro;
-  const tick = minha && !falhou ? TICK[String(m.status ?? "")] : null;
+  // `tmp:` = ainda não voltou do servidor. A bolha já está na tela (otimismo),
+  // e o relógio diz a verdade: saiu daqui, ainda não há recibo.
+  const otimista = m.id.startsWith("tmp:");
+  const tick = minha && !falhou && !otimista ? TICK[String(m.status ?? "")] : null;
   const erro = falhou ? traduzErroMeta(m.erro) : null;
 
   return (
@@ -92,6 +97,14 @@ function BolhaBase({
 
         <span className="mt-1 flex items-center justify-end gap-1 text-[11px] tabular-nums text-v2-tinta-fraca">
           {hora(m.criada_em)}
+          {otimista && (
+            <span aria-label="enviando" title="enviando" className="leading-none">
+              <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7.5V12l3 2" />
+              </svg>
+            </span>
+          )}
           {tick && (
             <span aria-label={tick.rotulo} title={tick.rotulo} className={tick.azul ? "text-v2-azul" : ""}>
               {tick.txt}
@@ -109,10 +122,21 @@ function BolhaBase({
         // `title`, que exige hover — inalcançável no celular (achado 5 do laudo)
         <span
           title={erro.tecnico}
-          className="mt-1 max-w-[min(72%,560px)] rounded-lg bg-v2-erro-claro px-2 py-1 text-[12px] leading-4 text-v2-erro"
+          className="mt-1 flex max-w-[min(72%,560px)] items-center gap-2 rounded-lg bg-v2-erro-claro px-2 py-1 text-[12px] leading-4 text-v2-erro"
         >
-          {erro.texto}
-          {erro.acao ? ` ${erro.acao}` : ""}
+          <span className="min-w-0 flex-1">
+            {erro.texto}
+            {erro.acao ? ` ${erro.acao}` : ""}
+          </span>
+          {aoReenviar && m.conteudo && !m.midia_tipo && (
+            <button
+              data-ripple
+              onClick={() => aoReenviar(m)}
+              className="shrink-0 rounded-md px-1.5 py-0.5 font-semibold underline underline-offset-2"
+            >
+              Reenviar
+            </button>
+          )}
         </span>
       )}
     </div>
