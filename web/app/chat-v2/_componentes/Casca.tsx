@@ -73,6 +73,11 @@ function juntarNovas(atual: Mensagem[], chegou: Mensagem[]): Mensagem[] {
   return [...sobrevive, ...chegou].sort((a, b) => (a.criada_em < b.criada_em ? -1 : 1));
 }
 
+/** O que mostrar no lugar do texto quando a mensagem citada é mídia. */
+const rotuloDeMidia = (t: string | null) =>
+  ({ image: "📷 Foto", sticker: "📷 Figurinha", audio: "🎤 Áudio", voice: "🎤 Áudio",
+    video: "🎬 Vídeo", document: "📎 Documento" } as Record<string, string>)[String(t ?? "")] ?? "mensagem";
+
 export function Casca({
   inicial,
   threadInicial,
@@ -113,6 +118,8 @@ export function Casca({
   const [locais, setLocais] = useState<{ nome: string; endereco?: string }[]>([]);
   const [dialogo, setDialogo] = useState<null | "transferir" | "resolver">(null);
   const [encaminhando, setEncaminhando] = useState<Mensagem | null>(null);
+  // a mensagem que a próxima resposta vai CITAR (null = nenhuma)
+  const [citando, setCitando] = useState<Mensagem | null>(null);
   const [ocupado, setOcupado] = useState(false);
   // A conversa aberta pode NÃO estar na lista: `vw_chat_conversa` é
   // materializada e só atualiza a cada 2 min (0139), então uma conversa que
@@ -298,6 +305,11 @@ export function Casca({
     setTemMais(false);
     setLigacoes([]);
     setPodeLigar(false);
+    // ⚠️ a citação é DESTA conversa. Sem limpar, trocar de cliente no meio de
+    // uma resposta mandaria para a nova a citação da anterior — o servidor
+    // recusaria a citação (ela não é desta conversa), mas a tela teria
+    // prometido uma coisa e entregue outra.
+    setCitando(null);
     setCarregandoThread(true);
     // a conversa aberta mora na URL: o voltar do navegador funciona, o F5
     // mantém a tela, e o link do board continua valendo (§64.4)
@@ -434,6 +446,10 @@ export function Casca({
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j) => {
         if (abertaRef.current !== id) return;
+        // os trechos citados do lote vêm junto: sem isto, a bolha que responde
+        // uma mensagem antiga aparece SEM a citação até a próxima recarga
+        // completa — e some justamente no instante em que se olha para ela
+        if (j.citadas) setCitadas((c) => ({ ...c, ...j.citadas }));
         const estados: Mensagem[] = j.estados ?? [];
         setMensagens((atual) => {
           const comEstado = estados.length
@@ -529,9 +545,26 @@ export function Casca({
   // uma bolha com o motivo traduzido e um botão de reenviar — porque sumir é o
   // pior desfecho possível (a pessoa acha que mandou).
   const enviarTexto = useCallback(
-    (texto: string, idExistente?: string) => {
+    (texto: string, idExistente?: string, citarId?: string | null) => {
       const id = abertaRef.current;
       if (!id) return;
+      // a citação vale para ESTE envio. Some da caixa na hora, junto com o
+      // texto — quem manda já está pensando na próxima frase, e uma citação
+      // que sobra é a próxima mensagem respondendo a coisa errada.
+      const citar = citarId !== undefined ? citarId : (citando?.id ?? null);
+      // O trecho citado já está na tela — não há por que esperar o servidor
+      // para desenhá-lo dentro da bolha nova. Sem isto a bolha aparece "crua" e
+      // ganha a citação segundos depois, num pulo de layout.
+      if (citar) {
+        const alvo = msgsRef.current.find((m) => m.id === citar);
+        if (alvo) {
+          setCitadas((c) => ({
+            ...c,
+            [citar]: { conteudo: alvo.conteudo, enviada_por: alvo.enviada_por },
+          }));
+        }
+      }
+      setCitando(null);
       const tmp = idExistente ?? `tmp:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
       const otimista: Mensagem = {
         id: tmp,
@@ -541,7 +574,7 @@ export function Casca({
         status: "wait",
         criada_em: new Date().toISOString(),
         midia_tipo: null, midia_mime: null, midia_nome: null,
-        reacao: null, resposta_a: null, erro: null,
+        reacao: null, resposta_a: citar, erro: null,
       };
       setMensagens((atual) => [...atual.filter((m) => m.id !== tmp), otimista]);
       setEnviando(true);
@@ -549,7 +582,7 @@ export function Casca({
       fetch("/api/send-message", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cliente_id: id, texto }),
+        body: JSON.stringify({ cliente_id: id, texto, ...(citar ? { responder_a: citar } : {}) }),
       })
         .then(async (r) => {
           const j = await r.json().catch(() => ({}));
@@ -572,19 +605,19 @@ export function Casca({
           }
           avisar("A mensagem não saiu.", {
             tom: "erro",
-            acao: { rotulo: "Reenviar", fazer: () => enviarTexto(texto, tmp) },
+            acao: { rotulo: "Reenviar", fazer: () => enviarTexto(texto, tmp, citar) },
           });
         })
         .finally(() => setEnviando(false));
     },
-    [apanharNovas, recarregarLista, avisar],
+    [apanharNovas, recarregarLista, avisar, citando],
   );
 
   const reenviar = useCallback(
     (m: Mensagem) => {
       if (!m.conteudo) return;
       setMensagens((atual) => atual.filter((x) => x.id !== m.id));
-      enviarTexto(m.conteudo, m.id.startsWith("tmp:") ? m.id : undefined);
+      enviarTexto(m.conteudo, m.id.startsWith("tmp:") ? m.id : undefined, m.resposta_a);
     },
     [enviarTexto],
   );
@@ -628,8 +661,12 @@ export function Casca({
     async (arquivos: File[], legenda: string) => {
       const id = abertaRef.current;
       if (!id || !arquivos.length) return;
+      // citar vale para mídia também: responder uma foto com outra foto é o
+      // gesto normal de quem atende salão
+      const citar = citando?.id ?? null;
+      setCitando(null);
       setEnviando(true);
-      const r = await enviarArquivos(id, arquivos, legenda, setProgresso);
+      const r = await enviarArquivos(id, arquivos, legenda, setProgresso, citar);
       setEnviando(false);
       if (r.pararTudo) avisar(r.pararTudo, { tom: "erro" });
       for (const f of r.falhas) avisar(`${f.nome}: ${f.razao}`, { tom: "erro" });
@@ -639,7 +676,7 @@ export function Casca({
         recarregarLista();
       }
     },
-    [apanharNovas, recarregarLista, avisar],
+    [apanharNovas, recarregarLista, avisar, citando],
   );
 
   const mandarLocal = useCallback(
@@ -1118,6 +1155,17 @@ export function Casca({
             presentes={aberta ? presentes[aberta] : undefined}
             aoRegistrarGesto={registrarGesto}
             semVoltar={embutido}
+            citando={
+              citando
+                ? {
+                    id: citando.id,
+                    trecho: citando.conteudo || rotuloDeMidia(citando.midia_tipo),
+                    minha: citando.enviada_por !== "customer",
+                  }
+                : null
+            }
+            aoResponder={setCitando}
+            aoCancelarCitacao={() => setCitando(null)}
           />
         </div>
 

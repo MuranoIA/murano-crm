@@ -56,6 +56,22 @@ export function envWa(nome: string): string {
 }
 const env = envWa;
 
+/**
+ * O wamid que esta mensagem está CITANDO, quando há uma.
+ *
+ * ⚠️ Só wamid serve. A Meta exige o id DELA (`wamid.…`) — um id nosso (a bolha
+ * otimista `tmp:`) ou um id herdado do RD faria o Graph recusar a mensagem
+ * inteira com 131009, e o que a pessoa escreveu se perderia por causa do
+ * enfeite. Então a citação é DESCARTADA quando não dá para citar, e a mensagem
+ * sai mesmo assim: perder a citação é aborrecido, perder a mensagem não é
+ * aceitável.
+ */
+export const podeCitar = (id: unknown): boolean =>
+  typeof id === "string" && id.startsWith("wamid.");
+
+const contextoDe = (citar?: string | null) =>
+  podeCitar(citar) ? { context: { message_id: citar as string } } : {};
+
 async function post(payload: Record<string, unknown>, de?: string | null): Promise<EnvioOk> {
   // Ensaio de carga: nada sai para quem nao esta na lista de destinos reais.
   // Fica ANTES de ler as envs de proposito — assim o ensaio roda mesmo numa
@@ -93,9 +109,18 @@ async function post(payload: Record<string, unknown>, de?: string | null): Promi
   return { wamid };
 }
 
-/** Mensagem de texto livre — só dentro da janela de 24h. `to` = telefone E.164 sem '+' (ex.: 5591981959789). */
-export function sendText(to: string, texto: string, de?: string | null): Promise<EnvioOk> {
-  return post({ to, type: "text", text: { body: texto, preview_url: false } }, de);
+/**
+ * Mensagem de texto livre — só dentro da janela de 24h. `to` = telefone E.164
+ * sem '+' (ex.: 5591981959789).
+ *
+ * `citar` é o wamid da mensagem que esta responde. Opcional e no fim da lista
+ * de propósito: esta função é chamada também pelo chat antigo, e um parâmetro
+ * novo no meio quebraria todas as chamadas existentes em silêncio.
+ */
+export function sendText(
+  to: string, texto: string, de?: string | null, citar?: string | null,
+): Promise<EnvioOk> {
+  return post({ to, type: "text", text: { body: texto, preview_url: false }, ...contextoDe(citar) }, de);
 }
 
 /**
@@ -325,7 +350,7 @@ export async function linhaDaConversa(sb: any, clienteId: string): Promise<strin
  */
 export async function sendMedia(
   to: string, arquivo: ArrayBuffer | Uint8Array, mime: string, nome: string, legenda?: string,
-  de?: string | null,
+  de?: string | null, citar?: string | null,
 ): Promise<EnvioOk> {
   // Aqui a guarda precisa vir antes do UPLOAD, nao so do post(): subir o
   // arquivo para a Meta ja e uma chamada de rede e ja consome cota.
@@ -363,7 +388,7 @@ export async function sendMedia(
   if (legenda && tipo !== "audio") conteudo.caption = legenda;
   if (tipo === "document") conteudo.filename = nome;
 
-  return post({ to, type: tipo, [tipo]: conteudo }, de);
+  return post({ to, type: tipo, [tipo]: conteudo, ...contextoDe(citar) }, de);
 }
 
 

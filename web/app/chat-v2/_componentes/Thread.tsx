@@ -47,6 +47,7 @@ export function Thread({
   aoCarregarAntigas,
   aoReenviar,
   aoEncaminhar,
+  aoResponder,
   aoApagarNota,
 }: {
   mensagens: Mensagem[];
@@ -59,6 +60,7 @@ export function Thread({
   aoCarregarAntigas: () => void;
   aoReenviar?: (m: Mensagem) => void;
   aoEncaminhar?: (m: Mensagem) => void;
+  aoResponder?: (m: Mensagem) => void;
   aoApagarNota?: (n: Nota) => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
@@ -248,6 +250,7 @@ export function Thread({
                   citada={i.m.resposta_a ? citadas[i.m.resposta_a] : undefined}
                   aoReenviar={aoReenviar}
                   aoEncaminhar={aoEncaminhar}
+                  aoResponder={aoResponder}
                 />
               )
             }

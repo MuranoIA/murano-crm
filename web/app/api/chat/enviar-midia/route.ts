@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { sendMedia, linhaDaConversa } from "../../../../lib/whatsapp";
+import { wamidParaCitar } from "../../../../lib/citacao";
 import { tipoDoMime, extensaoDoMime, limiteDe, recadoDeLimite, emMB } from "../../../../lib/midia";
 import { ehWebm, webmParaOgg, mp4ComOpus } from "../../../../lib/opusOgg";
 
@@ -108,9 +109,14 @@ export async function POST(req: Request) {
   }
 
   let wamid: string;
+  let citar: string | null = null;
   const t0 = Date.now();
   try {
-    ({ wamid } = await sendMedia(to, bytes, mime, nome, legenda, linha));
+    // citar vale para MÍDIA também: responder uma foto com outra foto é o
+    // gesto normal de quem atende salão. Conferido contra esta conversa; vira
+    // null quando não dá, e o arquivo sai sem citação em vez de falhar.
+    citar = await wamidParaCitar(sb, cli.id, b?.responder_a);
+    ({ wamid } = await sendMedia(to, bytes, mime, nome, legenda, linha, citar));
   } catch (e: any) {
     // o arquivo já está no bucket e a mensagem não saiu: sem apagar, cada
     // tentativa fora da janela deixaria um órfão que ninguém nunca vê.
@@ -145,6 +151,7 @@ export async function POST(req: Request) {
     midia_mime: mime,
     midia_nome: nome || null,
     linha_id: linha,
+    resposta_a: citar,
   }, { onConflict: "id" });
 
   return Response.json({ ok: true, wamid, tipo });

@@ -47,6 +47,10 @@ export async function enviarArquivos(
   arquivos: File[],
   legenda: string,
   aoProgresso: (p: Progresso | null) => void,
+  /** wamid que esta remessa está citando. Só no PRIMEIRO arquivo, pela mesma
+   *  razão da legenda: cinco fotos soltas de uma vez são uma remessa, e citar
+   *  a mesma mensagem cinco vezes encheria a conversa da cliente de repetição. */
+  citar?: string | null,
 ): Promise<{ enviados: number; falhas: { nome: string; razao: string }[]; pararTudo: string | null }> {
   const falhas: { nome: string; razao: string }[] = [];
   let enviados = 0;
@@ -97,6 +101,7 @@ export async function enviarArquivos(
           mime: a.mime,
           nome: a.nome,
           ...(i === 0 && legenda ? { legenda } : null),
+          ...(i === 0 && citar ? { responder_a: citar } : null),
         }),
       });
       const j = await r.json().catch(() => null);

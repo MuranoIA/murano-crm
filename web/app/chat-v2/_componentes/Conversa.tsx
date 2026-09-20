@@ -99,6 +99,9 @@ export function Conversa({
   presentes,
   aoRegistrarGesto,
   semVoltar,
+  citando,
+  aoResponder,
+  aoCancelarCitacao,
 }: {
   conversa: TConversa | null;
   mensagens: Mensagem[];
@@ -144,6 +147,9 @@ export function Conversa({
   aoRegistrarGesto?: (fn: Gesto | null) => void;
   /** na lupa não há lista para onde voltar */
   semVoltar?: boolean;
+  citando?: { id: string; trecho: string; minha: boolean } | null;
+  aoResponder?: (m: Mensagem) => void;
+  aoCancelarCitacao?: () => void;
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
 
@@ -359,6 +365,7 @@ export function Conversa({
           aoCarregarAntigas={aoCarregarAntigas}
           aoReenviar={aoReenviar}
           aoEncaminhar={aoEncaminhar}
+          aoResponder={aoResponder}
           aoApagarNota={aoApagarNota}
         />
       )}
@@ -406,6 +413,8 @@ export function Conversa({
         aoNota={aoNota}
         aoErro={aoErro}
         aoRegistrarGesto={registrar}
+        citando={citando}
+        aoCancelarCitacao={aoCancelarCitacao}
       />
     </section>
   );

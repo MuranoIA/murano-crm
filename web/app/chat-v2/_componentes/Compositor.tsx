@@ -34,6 +34,8 @@ export function Compositor({
   aoNota,
   aoErro,
   aoRegistrarGesto,
+  citando,
+  aoCancelarCitacao,
 }: {
   podeEnviar: boolean;
   janelaAberta: boolean;
@@ -53,6 +55,9 @@ export function Compositor({
    *  inteira sem que o texto suba de componente — quem manda continua sendo
    *  este componente, com a MESMA função do clipe e do colar. */
   aoRegistrarGesto?: (fn: Gesto | null) => void;
+  /** a mensagem que esta resposta está citando, e o trecho a mostrar */
+  citando?: { id: string; trecho: string; minha: boolean } | null;
+  aoCancelarCitacao?: () => void;
 }) {
   const [texto, setTexto] = useState("");
   const [nota, setNota] = useState(false);
@@ -121,6 +126,12 @@ export function Compositor({
     if (abriu && !menu) carregarRespostas();
     setMenu(abriu);
   }
+
+  // escolher "responder" precisa levar o cursor para a caixa: sem isso a
+  // pessoa vê o trecho aparecer e ainda tem de clicar no campo para escrever
+  useEffect(() => {
+    if (citando) campo.current?.focus();
+  }, [citando?.id]);
 
   function colar(r: Resposta) {
     setTexto(r.texto);
@@ -251,6 +262,36 @@ export function Compositor({
           mandar(fs);
         }}
       />
+
+      {/* ---- respondendo a uma mensagem ------------------------------------
+          Fica ACIMA da caixa, como no WhatsApp: o trecho tem de estar visível
+          enquanto se escreve, senão a pessoa esquece a que está respondendo e
+          a citação vira ruído em vez de contexto. */}
+      {citando && (
+        <div className="mb-2 flex items-start gap-2 rounded-xl border-l-[3px] border-v2-azul bg-v2-superficie-2 px-3 py-2">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-v2-azul">
+              respondendo {citando.minha ? "você" : "a cliente"}
+            </span>
+            <span className="line-clamp-2 break-words text-[12.5px] leading-4 text-v2-tinta-fraca">
+              {citando.trecho}
+            </span>
+          </span>
+          {aoCancelarCitacao && (
+            <button
+              data-ripple
+              onClick={aoCancelarCitacao}
+              title="Não responder a esta mensagem"
+              aria-label="Cancelar a citação"
+              className="grid size-7 shrink-0 place-items-center rounded-full text-v2-tinta-fraca hover:bg-v2-superficie"
+            >
+              <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="m6 6 12 12M18 6 6 18" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ---- o que está subindo ------------------------------------------- */}
       {progresso && (

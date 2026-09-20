@@ -57,6 +57,7 @@ function BolhaBase({
   citada,
   aoReenviar,
   aoEncaminhar,
+  aoResponder,
 }: {
   m: Mensagem;
   primeiraDoGrupo: boolean;
@@ -65,6 +66,10 @@ function BolhaBase({
   citada?: { conteudo: string | null; enviada_por: string | null };
   aoReenviar?: (m: Mensagem) => void;
   aoEncaminhar?: (m: Mensagem) => void;
+  /** responder CITANDO esta mensagem. Vale para a da cliente e para a nossa, e
+   *  para mídia — responder uma foto com outra foto é o gesto normal de quem
+   *  atende salão. Ausente quando a mensagem não pode ser citada (ver abaixo). */
+  aoResponder?: (m: Mensagem) => void;
 }) {
   const minha = m.enviada_por !== "customer";
   const falhou = m.status === "failed" || !!m.erro;
@@ -129,16 +134,37 @@ function BolhaBase({
         </span>
       </div>
 
-      {aoEncaminhar && !otimista && !falhou && (
-        <button
-          data-ripple
-          onClick={() => aoEncaminhar(m)}
-          title="Encaminhar para outra conversa"
-          aria-label="Encaminhar"
-          className="acao-msg mt-0.5 rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
-        >
-          ↪ encaminhar
-        </button>
+      {(aoResponder || aoEncaminhar) && !otimista && !falhou && (
+        <span className="mt-0.5 flex gap-1">
+          {/* ⚠️ Só dá para citar uma mensagem que a META conhece. Um id nosso
+              (a bolha otimista) ou herdado do RD faria o Graph recusar a
+              mensagem INTEIRA com 131009 — e o que a pessoa escreveu se
+              perderia por causa do enfeite. Aqui o botão simplesmente não
+              aparece; o servidor confere de novo, porque a tela pode estar
+              desatualizada e ele é quem fala com a Meta. */}
+          {aoResponder && m.id.startsWith("wamid.") && (
+            <button
+              data-ripple
+              onClick={() => aoResponder(m)}
+              title="Responder citando esta mensagem"
+              aria-label="Responder citando"
+              className="acao-msg rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
+            >
+              ↩ responder
+            </button>
+          )}
+          {aoEncaminhar && (
+            <button
+              data-ripple
+              onClick={() => aoEncaminhar(m)}
+              title="Encaminhar para outra conversa"
+              aria-label="Encaminhar"
+              className="acao-msg rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
+            >
+              ↪ encaminhar
+            </button>
+          )}
+        </span>
       )}
 
       {m.reacao && (
