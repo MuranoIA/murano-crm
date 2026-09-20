@@ -5862,8 +5862,8 @@ Material sobre a paleta Murano, mobile-first e primeira carga no servidor. A
 spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
 andamento em `prototipos/chat-v2/relatorio.md`.
 
-**Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · **3 completar ✅** ·
-4 ligação/push/embed · 5 paridade · 6 piloto por pessoa · 7 todos e aposentar.
+**Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
+**4 ligação/push/embed ✅** · 5 paridade · 6 piloto por pessoa · 7 todos e aposentar.
 
 **Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
 `feat/chat-v2`, e o `/chat` antigo segue intocado — ele é a volta segura.
@@ -5883,6 +5883,7 @@ cd web && SIMULACAO_ENVIO=1 DEV_LOGIN_CHAVE=$(cat ../.chave-dev) \
 node prototipos/chat-v2/abrir.mjs            # janela já logada, ancorada à direita
 node prototipos/chat-v2/ensaio.mjs criar     # conversa de ensaio, para testar envio
 node prototipos/chat-v2/medir.mjs --tela /chat-v2   # a régua (MSYS_NO_PATHCONV=1 no Git Bash)
+node prototipos/chat-v2/prova-fase4.mjs      # os 20 passos da fase 4, no navegador
 ```
 
 - **`SIMULACAO_ENVIO=1` é obrigatório enquanto se desenvolve:** o envio devolve
@@ -5919,6 +5920,11 @@ node prototipos/chat-v2/medir.mjs --tela /chat-v2   # a régua (MSYS_NO_PATHCONV
   enviada, foco, enviar, progresso), laranja é acento pontual (não lida, janela
   fechada, falha). O azul é a assinatura pedida pelo usuário (spec §3.0.1).
 - **Nenhuma migration** sem pedir: o v2 usa as views e tabelas que já existem.
+- **Recorte caro é opcional e vem depois da pintura.** `lerLista` aceita
+  `{ etapas, linhas }`: a etapa custa 2 consultas e nada em bytes; o número
+  custa a varredura de `vw_chat_linha_cliente` e **só é paga com 2+ linhas
+  ativas** (hoje há uma, com 4.144 conversas). Quem não abre os filtros não
+  paga por nenhum dos dois.
 
 ### 73.3 A régua, e o que ela já mostrou
 
@@ -5959,12 +5965,20 @@ internas (modo da mesma caixa, papel amarelo na thread), transferir / pegar /
 devolver, resolver com motivo e reabrir, favoritar, encaminhar, exibição da
 citação, ficha do contato (nome + CPF) e busca no conteúdo por trigrama.
 
-**Falta (fase 4):** ligação (WebRTC), push e notificações, `embed=1` para a lupa
-do board, presença anti-colisão, filtros por consultor/número e etapa do board.
-Depois: paridade (fase 5), piloto por pessoa (6) e global (7).
+**Fase 4 — delicado:** ligação (WebRTC) com campainha, desfecho e marco na
+thread; avisos em quatro degraus (título da aba, bipe, notificação, push);
+`embed=1` para a lupa do board, com a ponte do hub travada na origem; presença
+anti-colisão; e os três recortes que cruzam — consultor, número e coluna do
+board. **20/20 no `prova-fase4.mjs`.**
 
-⚠️ **Dois itens não foram exercitados:** o **gravador de áudio** (headless não
-tem microfone) e a **preservação da rolagem** ao carregar mensagens antigas.
+**Falta:** paridade (fase 5), piloto por pessoa (6) e global (7).
+
+⚠️ **Não exercitado — dito, não afirmado:** o **gravador de áudio** (headless
+não tem microfone), a **preservação da rolagem** ao carregar mensagens antigas,
+**uma chamada de voz de verdade** (o servidor de ensaio sobe sem token da Meta
+de propósito — o que está provado é a cadeia até o erro tratado), **o seletor
+por número com duas linhas** (hoje só há uma ativa) e **o push chegando com o
+navegador fechado** (depende da `VAPID_PUBLIC_KEY`, §72.7).
 
 ⚠️ **"Citar ao responder" não é paridade** — o chat antigo também não tem. O v2
 mostra a citação recebida; citar AO ENVIAR seria feature nova.
@@ -5996,3 +6010,20 @@ mostra a citação recebida; citar AO ENVIAR seria feature nova.
    Prefixe com `MSYS_NO_PATHCONV=1`.
 9. **Heredoc de python com aspas quebra neste ambiente** (§55): escreva o script
    com a ferramenta Write e rode `python <arquivo>`.
+10. **Coluna que não existe não devolve linha sem o campo — devolve ERRO.**
+   `lerThread` pedia `codcli` a `clientes` (que não tem essa coluna, ela é da
+   view) e o resultado era `cliente: null`: o `?cliente=` abria "Escolha uma
+   conversa" desde a fase 1, ou seja, o link do board, o push e o F5 dentro de
+   um atendimento caíam na tela vazia. Ninguém viu porque o caminho testado era
+   clicar na lista, que é outro código. É a mesma armadilha da §62.6.
+11. **Publicar o objeto inteiro de um hook para o componente pai é um laço de
+   render sem fim.** O objeto nasce novo a cada render; publique só o que muda
+   por evento (em `Ligacao.tsx`, `ligar`/`ocupado`/`emChamada`).
+12. **Dinâmico com `ssr: false` NÃO pode envolver a tela.** Um provider em volta
+   de tudo tiraria a lista do primeiro byte e desfaria a fase 1 — a camada
+   pesada tem de ser IRMÃ da tela, não mãe.
+13. **Abas do mesmo jarro de cookies dividem o cookie.** O teste acusou a lupa de
+   gravar o `crm_tela` que a aba anterior tinha gravado. Apague o cookie antes
+   de medir, ou use `novaAbaIsolada`.
+14. **Sem janela de 24h não há caixa de texto** — é o desenho (§33.1). Um teste
+   que exige `<textarea>` reprova a tela por estar certa.
