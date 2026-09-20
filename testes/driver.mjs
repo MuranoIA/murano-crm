@@ -65,7 +65,7 @@ async function portaLivre(inicio) {
 }
 
 /** Sobe um Chrome headless isolado e devolve o endereço do WebSocket. */
-export async function subirChrome({ porta: pedida = 9222, headless = true } = {}) {
+export async function subirChrome({ porta: pedida = 9222, headless = true, microfone = false } = {}) {
   const bin = acharChrome();
   if (!bin) throw new Error("Chrome não encontrado — driver de navegador indisponível");
   const porta = await portaLivre(pedida);
@@ -88,6 +88,18 @@ export async function subirChrome({ porta: pedida = 9222, headless = true } = {}
     "--disable-site-isolation-trials",
     "--disable-features=IsolateOrigins,site-per-process,Translate,MediaRouter",
   ];
+  // MICROFONE FALSO. Headless não tem entrada de áudio, e `getUserMedia`
+  // falha com NotFoundError — que é indistinguível, no nosso código, de
+  // "permissão negada". Estes dois flags dão um microfone sintético (um tom) e
+  // concedem a permissão sem prompt, que é o que permite exercitar a ligação
+  // ponta a ponta sem uma pessoa ao lado do computador.
+  //
+  // ⚠️ O áudio é um BIPE, não voz. Serve para provar a cadeia (SDP, conexão,
+  // recibo); não serve para julgar qualidade de som.
+  if (microfone) {
+    args.push("--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
+      "--autoplay-policy=no-user-gesture-required");
+  }
   if (headless) args.push("--headless=new", "--disable-gpu");
   const proc = spawn(bin, args, { stdio: "ignore", detached: false });
 
