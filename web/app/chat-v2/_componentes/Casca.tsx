@@ -670,6 +670,10 @@ export function Casca({
       setEnviando(false);
       if (r.pararTudo) avisar(r.pararTudo, { tom: "erro" });
       for (const f of r.falhas) avisar(`${f.nome}: ${f.razao}`, { tom: "erro" });
+      // o DESVIO de formato é dito: o arquivo chegou, mas como cartão de
+      // download em vez de foto. Neutro, não erro — não deu errado, deu
+      // diferente, e quem enviou precisa saber para não repetir o formato.
+      for (const d of r.desvios) avisar(d, { tom: "neutro" });
       if (r.enviados) {
         avisar(r.enviados === 1 ? "Arquivo enviado." : `${r.enviados} arquivos enviados.`, { tom: "ok" });
         apanharNovas();

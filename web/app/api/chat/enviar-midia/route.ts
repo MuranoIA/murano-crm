@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { sendMedia, linhaDaConversa } from "../../../../lib/whatsapp";
 import { wamidParaCitar } from "../../../../lib/citacao";
-import { tipoDoMime, extensaoDoMime, limiteDe, recadoDeLimite, emMB } from "../../../../lib/midia";
+import { tipoDoMime, extensaoDoMime, limiteDe, recadoDeLimite, emMB, viraDocumento } from "../../../../lib/midia";
 import { ehWebm, webmParaOgg, mp4ComOpus } from "../../../../lib/opusOgg";
 
 export const dynamic = "force-dynamic";
@@ -67,13 +67,16 @@ export async function POST(req: Request) {
   let mime = String(b?.mime || baixado.data.type || "application/octet-stream");
   let nome = String(b?.nome ?? "") || `arquivo.${extensaoDoMime(mime)}`;
   let bytes: ArrayBuffer | Uint8Array = await baixado.data.arrayBuffer();
-  const tipo = tipoDoMime(mime);
   let caminho = path;
 
   // o limite já foi conferido em `assinar`, mas o token de upload não amarra
   // tamanho: quem subiu pode ter mandado mais do que declarou.
   const tamanho = bytes.byteLength;
-  if (tamanho > limiteDe(mime)) {
+  // ⚠️ o tamanho vem ANTES do tipo: figurinha acima do teto vira documento, e
+  // sem ele a classificação diria `sticker` para um `.webp` de 2 MB — que o
+  // Graph recusa, e o arquivo não chegaria.
+  const tipo = tipoDoMime(mime, tamanho);
+  if (tamanho > limiteDe(mime, tamanho)) {
     await apagar(sb, caminho);
     return Response.json({ error: recadoDeLimite(mime, tamanho) }, { status: 413 });
   }
@@ -154,7 +157,12 @@ export async function POST(req: Request) {
     resposta_a: citar,
   }, { onConflict: "id" });
 
-  return Response.json({ ok: true, wamid, tipo });
+  // ⚠️ o DESVIO é dito, não escondido. Um `.gif` ou um `.webp` grande chega à
+  // cliente como cartão de download em vez de imagem: funciona, e é diferente
+  // do que quem enviou esperava. Dizer isso evita que a diferença seja lida
+  // como defeito — e é a mesma régua da faixa de 24h (avisar ANTES de a pessoa
+  // descobrir pelo resultado).
+  return Response.json({ ok: true, wamid, tipo, desvio: viraDocumento(mime, tamanho) });
 }
 
 /** Some com o arquivo quando a mensagem não saiu — o bucket não é lixeira. */
@@ -177,4 +185,5 @@ async function regravar(
 }
 
 const rotulo = (t: string) =>
-  ({ image: "📷 Foto", audio: "🎤 Áudio", video: "🎬 Vídeo", document: "📎 Documento" }[t] ?? "Arquivo");
+  ({ image: "📷 Foto", audio: "🎤 Áudio", video: "🎬 Vídeo", document: "📎 Documento",
+    sticker: "📷 Figurinha" }[t] ?? "Arquivo");

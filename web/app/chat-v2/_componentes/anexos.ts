@@ -51,8 +51,15 @@ export async function enviarArquivos(
    *  razão da legenda: cinco fotos soltas de uma vez são uma remessa, e citar
    *  a mesma mensagem cinco vezes encheria a conversa da cliente de repetição. */
   citar?: string | null,
-): Promise<{ enviados: number; falhas: { nome: string; razao: string }[]; pararTudo: string | null }> {
+): Promise<{
+  enviados: number;
+  falhas: { nome: string; razao: string }[];
+  pararTudo: string | null;
+  /** "print.webp: foi como documento" — o desvio de formato, dito e não escondido */
+  desvios: string[];
+}> {
   const falhas: { nome: string; razao: string }[] = [];
+  const desvios: string[] = [];
   let enviados = 0;
 
   for (let i = 0; i < arquivos.length; i++) {
@@ -77,7 +84,7 @@ export async function enviarArquivos(
       if (!ass.ok) {
         // 501 vale para a conversa inteira (canal errado): insistir nos
         // seguintes só repete o mesmo erro
-        if (ass.status === 501) return { enviados, falhas, pararTudo: a?.error ?? "canal não aceita mídia" };
+        if (ass.status === 501) return { enviados, falhas, desvios, pararTudo: a?.error ?? "canal não aceita mídia" };
         falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
         continue;
       }
@@ -110,6 +117,7 @@ export async function enviarArquivos(
           return {
             enviados,
             falhas,
+            desvios,
             pararTudo: j?.foraDaJanela
               ? "Fora da janela de 24h — mande um template para reabrir a conversa."
               : (j?.error ?? `erro ${r.status}`),
@@ -125,11 +133,12 @@ export async function enviarArquivos(
         continue;
       }
       enviados++;
+      if (j?.desvio) desvios.push(`${file.name}: ${j.desvio}`);
     } catch (e: any) {
       falhas.push({ nome: file.name, razao: String(e?.message ?? e) });
     }
   }
 
   aoProgresso(null);
-  return { enviados, falhas, pararTudo: null };
+  return { enviados, falhas, desvios, pararTudo: null };
 }

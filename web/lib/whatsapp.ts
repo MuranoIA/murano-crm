@@ -382,10 +382,13 @@ export async function sendMedia(
     throw new Error(`upload da mídia falhou: ${upBody?.error?.message ?? `HTTP ${up.status}`}`);
   }
 
-  const tipo = tipoDoMime(mime);
-  // legenda: só imagem, vídeo e documento aceitam; áudio não
+  // o tamanho entra na conta porque FIGURINHA tem teto próprio: acima dele o
+  // `.webp` vira documento, em vez de virar um erro do Graph
+  const tipo = tipoDoMime(mime, binario.byteLength);
+  // legenda: só imagem, vídeo e documento aceitam. Áudio e FIGURINHA não —
+  // mandar `caption` neles é erro do Graph, não um campo ignorado.
   const conteudo: Record<string, unknown> = { id: upBody.id };
-  if (legenda && tipo !== "audio") conteudo.caption = legenda;
+  if (legenda && tipo !== "audio" && tipo !== "sticker") conteudo.caption = legenda;
   if (tipo === "document") conteudo.filename = nome;
 
   return post({ to, type: tipo, [tipo]: conteudo, ...contextoDe(citar) }, de);
