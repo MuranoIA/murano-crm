@@ -211,39 +211,46 @@ inteira na variação da rede entre duas rodadas. Contra o `/chat` de hoje
 
 ### Pendências que dependem do usuário
 
-1. **Autorização para fazer UMA chamada real.** A cadeia está provada (botão →
-   rota → erro tratado; marco na thread; campainha inscrita no canal), mas
-   nenhuma chamada real foi feita. Para fazer uma:
+1. ~~**Autorização para fazer UMA chamada real.**~~ **FEITA em 20/09/2026**, com
+   autorização explícita, para o número do usuário. A cadeia inteira funcionou:
 
-   - **nada muda na Vercel** — a produção já liga; o que falta é o
-     `WHATSAPP_TOKEN` no `web/.env.local` (ele existe no `.env` da RAIZ, que o
-     Next não lê). O `phone_number_id` já vem do banco.
-   - ⚠️ **`SIMULACAO_ENVIO=1` NÃO cobre ligação.** Ele guarda só
-     `lib/whatsapp.ts` (mensagem, mídia, template). Com token de verdade, a
-     chamada **toca no aparelho e é cobrada** (~US$ 0,0108/min).
-   - ⚠️ **cota da Meta: 1 chamada por dia e 2 por semana** por par (número,
-     cliente), e o cliente precisa ter autorizado antes (§22.6).
-   - o microfone exige contexto seguro: dá para testar em
-     `localhost:3120` **no computador**, não pelo IP da rede em HTTP.
-2. ~~**`VAPID_PUBLIC_KEY` na Vercel do hub**~~ — **não era isso.** O push já
-   entrega (o time recebe). O que faltava era o DESTINO: o webhook mandava
-   `url: "/chat"` sem o cliente, então tocar na notificação abria o app na
-   lista. Corrigido no commit `259ecfe`, e **vale para a produção de hoje** —
-   pode sair como PR próprio, sem esperar o resto desta frente.
+   ```
+   Chamando… → Conectando o áudio… → Tocando no aparelho… → Em conversa
+   chat_ligacao #140  saída/em_curso com call_id  →  concluída, 20 s falados
+   ```
 
-   ⚠️ **Responder DE DENTRO da notificação não é possível na web.** Campo de
-   texto dentro de uma notificação é `RemoteInput` do Android nativo; a API de
-   notificação da web não tem equivalente. O mais perto é o botão "Responder"
-   levar à conversa com o cursor na caixa — que é o que passa a acontecer.
+   O **"Em conversa"** é a parte que não dava para provar de outro jeito: ele só
+   acontece quando o SDP da outra ponta volta pelo **webhook** e é anunciado
+   pelo Realtime (§22.2). Medido antes de discar, sem gastar cota: permissão
+   `permanent`, `start_call` 0 de 100 no dia, calling `ENABLED` na linha.
+   Prova em `prototipos/chat-v2/prova-ligacao-real.mjs` (9/9).
+
+   ⚠️ `SIMULACAO_ENVIO` **não cobre ligação** — ela guarda só `lib/whatsapp.ts`.
+   O telefone toca de verdade e a chamada é cobrada.
+
+2. ~~**`VAPID_PUBLIC_KEY` na Vercel do hub**~~ — **não era isso**, e o conserto
+   já está em produção pelo **PR #236**: o webhook mandava `url: "/chat"` sem o
+   cliente. O caminho do hub já estava certo.
+
 3. **Quando ir para produção** e **quem entra no piloto** (fase 6).
 4. **Quando eu posso encostar no `app/chat/page.tsx`** — a troca de tela no
    servidor exige isso, e o arquivo tem outras frentes trabalhando nele.
+
+### Dois bugs de PRODUÇÃO achados e corrigidos a partir desta frente
+
+| PR | O quê |
+|---|---|
+| **#235** | "resolvo a conversa e ela volta": **não é o banco**, é uma recarga velha da lista sobrescrevendo a tela. Provado com 15 casos em que o webhook não tocou em nada no intervalo |
+| **#236** | a notificação abria a lista em vez da conversa — uma linha, e o `cliente_id` já viajava no payload |
+
+⚠️ O #235 **não substitui o #229**: aquele é reentrega da Meta (minutos, banco
+volta atrás), este é resposta velha (segundos, banco nunca muda). Mesmo
+sintoma, causas opostas — os dois precisam entrar.
 
 ### Não exercitado (dito, não afirmado)
 
 - **Gravador de áudio**: headless não tem microfone.
 - **Preservação da rolagem** ao carregar mensagens antigas.
-- **Uma chamada de voz de verdade** (ver a pendência 1).
 - **O arrastar/colar em aparelho real**: o gesto é provado com `DataTransfer`
   sintético (`prova-soltar.mjs`, 10/10) e o upload de verdade foi exercitado na
   fase 3 — mas os dois nunca rodaram juntos num arquivo vindo do Explorador.
