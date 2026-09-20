@@ -2045,13 +2045,51 @@ export default function Chat() {
     if ((vendedores.length || atendentes.length) && vendFiltro && !conhecido(vendFiltro)) setVendFiltro(null);
   }, [vendedores, vendFiltro]);
 
+  /**
+   * A RECARGA VELHA NAO PODE DESFAZER O QUE EU ACABEI DE FAZER.
+   *
+   * Relato dos vendedores em 20/09/2026: "resolvo a conversa e alguns segundos
+   * depois ela volta para Meus atendimentos".
+   *
+   * ⚠️ NAO E O BANCO QUE VOLTA ATRAS. Medido: nas 15 vezes em que alguem
+   * resolveu a MESMA conversa de novo em menos de 30 s (5 s, 6 s, 7 s, 10 s...),
+   * o webhook nao tocou em nenhuma mensagem daquele cliente no intervalo -- nao
+   * houve reabertura no banco. Quem voltava era a TELA: uma resposta do
+   * `/api/chat` que SAIU antes do "resolver" chegava depois dele, e
+   * `aplicarLista` a escrevia por cima do estado otimista.
+   *
+   * O gatilho e a rotina normal: responder a cliente dispara uma recarga, e
+   * encerrar logo em seguida cai bem no meio dela. `/api/chat` e a rota mais
+   * pesada do sistema, entao essa janela e de segundos, nao de milissegundos.
+   *
+   * E a mesma familia da §70 (a thread da cliente A aparecendo na de B):
+   * resposta de rede que chega tarde e escreve por cima do presente. La a
+   * guarda pergunta "esta conversa ainda esta aberta?"; aqui pergunta "mudei
+   * alguma coisa desde que pedi isto?".
+   *
+   * ⚠️ NAO e o mesmo caso do PR #229 (reentrega da Meta reabrindo conversa
+   * resolvida). Aquele e real, acontece em MINUTOS e o banco volta atras de
+   * verdade. Este acontece em SEGUNDOS e o banco nunca muda. Mesmo sintoma,
+   * causas opostas -- corrigir so um deixa o outro de pe.
+   */
+  const mutacaoDaLista = useRef(0);
+
   const carregarLista = useCallback(async () => {
     if (carregandoLista.current) { pedidaDeNovo.current = true; return; }
     carregandoLista.current = true;
+    const selo = mutacaoDaLista.current;
     try {
       const r = await fetch("/api/chat", { cache: "no-store" });
       const j = await r.json().catch(() => null);
       if (r.ok) {
+        // mexi em alguma coisa enquanto isto viajava: esta foto e do passado.
+        // Aplica-la desfaz o resolver, o favoritar, a marca de lida -- o que a
+        // pessoa acabou de fazer, na frente dela. Descarta e pede de novo, para
+        // a tela convergir para o servidor em vez de ficar parada no otimismo.
+        if (mutacaoDaLista.current !== selo) {
+          pedidaDeNovo.current = true;
+          return;
+        }
         aplicarLista(j);
         fotoLista.guardar(j);
       }
@@ -2819,6 +2857,7 @@ export default function Chat() {
     // recarga seguinte da lista, que é pior que nunca tirar.
     if (souQuemAtende(c)) {
       if (c.nao_lida) {
+        mutacaoDaLista.current++;
         setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nao_lida: false } : x)));
       }
       fetch("/api/chat/lida", {
@@ -2831,6 +2870,7 @@ export default function Chat() {
     // leitura. Só chama quando há o que marcar: sem esta guarda, toda abertura
     // de conversa pagaria um round-trip para não escrever nada.
     if (c.nota_nova) {
+      mutacaoDaLista.current++;
       setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, nota_nova: 0 } : x)));
       fetch("/api/chat/notas", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -2912,6 +2952,7 @@ export default function Chat() {
   async function alternarFavorito(c: Conversa) {
     const novo = !c.favorita;
     const aplica = (v: boolean) => {
+      mutacaoDaLista.current++;
       setConversas((cs) => cs.map((x) => (x.cliente_id === c.cliente_id ? { ...x, favorita: v } : x)));
       setSel((atual) => (atual && atual.cliente_id === c.cliente_id ? { ...atual, favorita: v } : atual));
     };
@@ -2937,6 +2978,7 @@ export default function Chat() {
     if (!sel) return;
     const antes = sel.status ?? "aberta";
     setSel({ ...sel, status, motivo: motivo ?? null });
+    mutacaoDaLista.current++;
     setConversas((cs) => cs.map((x) => (x.cliente_id === sel.cliente_id ? { ...x, status, motivo: motivo ?? null } : x)));
     setResolvendo(false);
     try {
