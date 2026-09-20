@@ -5983,6 +5983,34 @@ navegador fechado** (depende da `VAPID_PUBLIC_KEY`, §72.7).
 ⚠️ **"Citar ao responder" não é paridade** — o chat antigo também não tem. O v2
 mostra a citação recebida; citar AO ENVIAR seria feature nova.
 
+### 73.6 Depois da fase 4 — o que veio do uso (20/09/2026)
+
+| O quê | Onde | Prova |
+|---|---|---|
+| arrastar e colar arquivo | `259ecfe` | `prova-soltar.mjs` 10/10 |
+| "resolvo e a conversa volta" | `280ce87` · **PR #235** | `prova-resolver-volta.mjs` 9/9 |
+| responder citando (inclusive mídia) | `be169bd` | `prova-citar.mjs` 14/14 |
+| tipos de mídia pela lista da Meta | `161261a` | `prova-midia-tipos.mjs` 15/15 |
+| ligação real ponta a ponta | `79f8285` | `prova-ligacao-real.mjs` 9/9 |
+| notificação abre a CONVERSA | **PR #236** | — |
+
+⚠️ **"Resolvo e volta" NÃO é o banco voltando atrás.** Medido: nas 15 vezes em
+que alguém resolveu a mesma conversa de novo em menos de 30 s, o webhook não
+tocou em nenhuma mensagem no intervalo. É uma recarga de lista que saiu antes
+do resolver e chegou depois. **Não confundir com o PR #229** (reentrega da
+Meta), que é real, acontece em minutos e aí sim o banco volta atrás — mesmo
+sintoma, causas opostas, e corrigir só um deixa o outro de pé.
+
+⚠️ **A classificação de mídia era `image/*` → foto.** Um `.gif`, `.webp`,
+`.heic` ou `.mov` era recusado pela Meta no upload, e a consultora via "não
+consegui enviar" num arquivo que o WhatsApp dela manda. A lista dela é curta
+(jpeg/png · aac/amr/mpeg/mp4/ogg · mp4/3gpp · webp como figurinha); o resto vai
+como documento, que chega.
+
+⚠️ **Citar mensagem só vale com `wamid.`**, e a validação é no SERVIDOR: sem
+conferir que a mensagem é DESTA conversa, dava para citar o wamid de outra
+cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
+
 ### 73.5 Armadilhas desta frente (todas custaram pelo menos uma rodada)
 
 1. **Rolar a thread para o fim uma vez não basta** — a virtualização mede as

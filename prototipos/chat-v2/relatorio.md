@@ -201,6 +201,59 @@ inteira na variação da rede entre duas rodadas. Contra o `/chat` de hoje
 
 ---
 
+## Depois da fase 4 — o que veio do uso (20/09/2026)
+
+Quatro pedidos e um bug, todos vindos de olhar a tela de verdade.
+
+### Arrastar e colar arquivo · `259ecfe`
+
+Lacuna real: o chat de hoje aceita arrastar, o v2 não aceitava. A zona é a
+**conversa inteira** — quem arrasta uma foto mira onde ela vai aparecer, não
+num campo de 36 px. Colar (Ctrl+V de um print) entrou pelo mesmo caminho.
+`prova-soltar.mjs` — **10/10**.
+
+### "Resolvo e a conversa volta" · `280ce87` · produção no **PR #235**
+
+⚠️ **Não é o banco que volta atrás — é a tela.** Nas 15 vezes em que alguém
+resolveu a mesma conversa de novo em menos de 30 s, o webhook não tocou em
+nenhuma mensagem daquele cliente no intervalo. Uma recarga da lista que saiu
+ANTES do resolver chegava depois e sobrescrevia com a foto antiga.
+`prova-resolver-volta.mjs` — antes `banco=resolvida, tela=aberta`; depois **9/9**.
+
+### Responder citando · `be169bd`
+
+Vale para a mensagem da cliente e para a nossa, e para mídia. Citar ao ENVIAR
+não existia em nenhum dos dois chats — o que havia era exibir a citação que a
+cliente manda. `prova-citar.mjs` — **14/14**.
+
+⚠️ Só dá para citar o que a Meta conhece (`wamid.`), e a validação é no
+SERVIDOR: `context.message_id` vai direto para o Graph, e sem conferir que a
+mensagem é DESTA conversa a tela poderia pedir para citar o wamid de outra
+cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai — o
+contrário perderia o que a pessoa escreveu por causa do enfeite.
+
+### Tipos de mídia · `161261a`
+
+Auditado contra a referência da Meta, e havia defeito: a regra era `image/*` →
+foto, então `.gif`, `.webp`, `.heic` (iPhone) e `.mov` (iPhone) entravam como
+foto/vídeo e **a Meta recusava o upload**. A consultora via "não consegui
+enviar" num arquivo que o WhatsApp dela manda sem reclamar — porque o
+aplicativo converte antes, e nós não.
+
+Agora vale a lista da Meta; o que não está nela vai como **documento** (chega,
+em vez de falhar) e o desvio é dito a quem enviou. **Figurinha** passou a
+existir. `prova-midia-tipos.mjs` — **15/15**.
+
+### A ligação de verdade · `79f8285`
+
+Ver a pendência 1.
+
+### Notificação abre a conversa · produção no **PR #236**
+
+Uma linha: o webhook mandava `url: "/chat"` sem o cliente.
+
+---
+
 ## O que falta
 
 | Fase | O quê |
