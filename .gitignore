@@ -32,3 +32,6 @@ prototipos/chat-v2/build-v2.log
 # entrada local para testar no celular — NUNCA versionar (ver o cabeçalho do arquivo)
 web/app/dev-entrar/
 .chave-dev
+
+# log do next start local desta frente
+prototipos/chat-v2/servidor.log
