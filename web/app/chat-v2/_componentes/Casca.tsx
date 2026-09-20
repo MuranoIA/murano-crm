@@ -230,19 +230,65 @@ export function Casca({
     };
   }, [completa, precisaCompleta, precisaExtras, comExtras]);
 
+  // ---- A RECARGA VELHA NÃO PODE DESFAZER O QUE ACABEI DE FAZER -----------
+  //
+  // Bug relatado pelos vendedores em 20/09/2026: "resolvo a conversa e alguns
+  // segundos depois ela volta para Meus atendimentos".
+  //
+  // Medido: nas 15 vezes em que alguém resolveu a MESMA conversa de novo em
+  // menos de 30 s, o webhook não tocou em nenhuma mensagem daquele cliente no
+  // intervalo — ou seja, o banco NUNCA voltou atrás. Quem voltava era a tela:
+  // uma recarga da lista que saiu ANTES do "resolver" chegava depois dele e
+  // sobrescrevia tudo com a foto antiga. Reproduzido no navegador
+  // (`prototipos/chat-v2/prova-resolver-volta.mjs`): banco=resolvida,
+  // tela=aberta.
+  //
+  // É a mesma família da §70 (a thread da cliente A aparecendo na de B): uma
+  // resposta de rede que chega tarde e escreve por cima do presente. Lá a
+  // guarda pergunta "esta conversa ainda está aberta?"; aqui pergunta "mudei
+  // alguma coisa desde que pedi isto?".
+  //
+  // O contador é bumped por toda ação que muda o que a LISTA mostra. Uma
+  // resposta com selo velho é descartada e um novo pedido é agendado — assim a
+  // tela converge para o servidor em vez de ficar parada no otimismo.
+  const mutacao = useRef(0);
+  const marcarMutacao = useCallback(() => { mutacao.current++; }, []);
+  const listaEmVoo = useRef(false);
+  const listaPedidaDeNovo = useRef(false);
+  const recarregarListaRef = useRef<() => void>(() => {});
+
   // recarrega a lista visível (só o que já temos: página ou completa)
   const recarregarLista = useCallback(() => {
     // a lupa não tem lista para recarregar (§41.3): buscar as ~4 mil conversas
     // para desenhar UMA seria o desperdício que a §15.1 corrigiu no board
     if (embutido) return;
+    // uma de cada vez: uma rajada de dez avisos não vira dez recargas
+    if (listaEmVoo.current) { listaPedidaDeNovo.current = true; return; }
+    listaEmVoo.current = true;
+    const selo = mutacao.current;
+
     const extras = comExtras ? "&etapas=1&linhas=1" : "";
     const url = completa ? `/api/chat-v2/lista?${extras.slice(1)}` : `/api/chat-v2/lista?limite=60${extras}`;
     fetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j: Lista) => setLista(j.conversas))
-      .catch(() => {});
+      .then((j: Lista) => {
+        // ⚠️ mexi em alguma coisa enquanto isto viajava: esta foto é do
+        // passado. Aplicá-la desfaz o resolver, o favoritar, a transferência —
+        // o que a pessoa acabou de fazer, na frente dela.
+        if (mutacao.current !== selo) { listaPedidaDeNovo.current = true; return; }
+        setLista(j.conversas);
+      })
+      .catch(() => {})
+      .finally(() => {
+        listaEmVoo.current = false;
+        if (listaPedidaDeNovo.current) {
+          listaPedidaDeNovo.current = false;
+          recarregarListaRef.current();
+        }
+      });
     recarregarContagens();
   }, [completa, comExtras, embutido, recarregarContagens]);
+  recarregarListaRef.current = recarregarLista;
 
   // ---- abrir uma conversa -------------------------------------------------
   const abrir = useCallback((id: string) => {
@@ -299,6 +345,7 @@ export function Casca({
     // recusa quem está apenas conferindo a conversa de outra pessoa. A tela
     // apaga o marcador na hora e não espera resposta: se o servidor recusar, o
     // próximo carregamento devolve o "não lida", que é o certo.
+    marcarMutacao();
     setLista((atual) => atual.map((c) => (c.cliente_id === id ? { ...c, nao_lida: false } : c)));
     fetch("/api/chat/lida", {
       method: "POST",
@@ -307,7 +354,7 @@ export function Casca({
     })
       .then(() => recarregarContagens())
       .catch(() => {});
-  }, [recarregarContagens]);
+  }, [recarregarContagens, marcarMutacao]);
 
   const fechar_ = useCallback(() => {
     setAberta(null);
@@ -666,6 +713,7 @@ export function Casca({
   const favoritar = useCallback(() => {
     const id = abertaRef.current;
     if (!id) return;
+    marcarMutacao();
     const atual = lista.find((c) => c.cliente_id === id)?.favorita ?? false;
     setLista((l) => l.map((c) => (c.cliente_id === id ? { ...c, favorita: !atual } : c)));
     fetch("/api/chat/favorito", {
@@ -681,13 +729,14 @@ export function Casca({
         setLista((l) => l.map((c) => (c.cliente_id === id ? { ...c, favorita: atual } : c)));
         avisar("Não consegui favoritar.", { tom: "erro" });
       });
-  }, [lista, recarregarContagens, avisar]);
+  }, [lista, recarregarContagens, avisar, marcarMutacao]);
 
   // ---- TRANSFERIR / PEGAR / DEVOLVER: tudo a mesma tabela append-only -----
   const transferir = useCallback(
     (para: string | null, observacao: string) => {
       const id = abertaRef.current;
       if (!id) return;
+      marcarMutacao();
       setOcupado(true);
       fetch("/api/chat/transferir", {
         method: "POST",
@@ -711,7 +760,7 @@ export function Casca({
         .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
         .finally(() => setOcupado(false));
     },
-    [recarregarLista, avisar],
+    [recarregarLista, avisar, marcarMutacao],
   );
 
   // pegar da fila = transferir de ninguém para mim, reusando a mesma tabela
@@ -729,6 +778,7 @@ export function Casca({
     (status: "aberta" | "resolvida", motivo?: string) => {
       const id = abertaRef.current;
       if (!id) return;
+      marcarMutacao();
       setOcupado(true);
       fetch("/api/chat/status", {
         method: "POST",
@@ -750,7 +800,7 @@ export function Casca({
         .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
         .finally(() => setOcupado(false));
     },
-    [recarregarContagens, avisar],
+    [recarregarContagens, avisar, marcarMutacao],
   );
 
   // ---- ENCAMINHAR ---------------------------------------------------------
