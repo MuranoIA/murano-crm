@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Thread, type Nota, type Transferencia } from "./Thread";
+import type { Gesto } from "./Compositor";
 import type { Ligacao } from "../../../lib/ligacaoDados";
 import { Compositor } from "./Compositor";
 import type { Conversa as TConversa, Mensagem } from "./tipos";
@@ -140,11 +141,36 @@ export function Conversa({
   presentes?: string[];
   /** o compositor devolve por aqui os dois gestos que moram dentro dele
    *  (gravar e anexar), para o `?acao=` da lupa do board poder disparar */
-  aoRegistrarGesto?: (fn: ((qual: "audio" | "anexo") => void) | null) => void;
+  aoRegistrarGesto?: (fn: Gesto | null) => void;
   /** na lupa não há lista para onde voltar */
   semVoltar?: boolean;
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
+
+  // ---- ARRASTAR E SOLTAR ------------------------------------------------
+  //
+  // A zona é a CONVERSA INTEIRA, não a caixa de texto: quem arrasta uma foto
+  // mira no lugar onde ela vai aparecer, não num campo de 36 px.
+  //
+  // Quem envia continua sendo o compositor, pela mesma função do clipe — daí a
+  // ponte: ele registra o gesto aqui e a thread só o dispara.
+  const gesto = useRef<Gesto | null>(null);
+  const registrar = useCallback(
+    (fn: Gesto | null) => {
+      gesto.current = fn;
+      aoRegistrarGesto?.(fn);
+    },
+    [aoRegistrarGesto],
+  );
+
+  // contador, e não um booleano: `dragleave` dispara ao entrar em cada filho, e
+  // com booleano o aviso pisca a cada bolha que o cursor atravessa
+  const profundidade = useRef(0);
+  const [sobre, setSobre] = useState(false);
+
+  /** Arrastar TEXTO ou um link não pode acender o aviso de soltar arquivo. */
+  const ehArquivo = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
   if (!conversa) {
     return (
@@ -161,7 +187,66 @@ export function Conversa({
   const resolvida = conversa.status === "resolvida";
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-v2-fundo">
+    <section
+      className="relative flex h-full min-h-0 flex-col bg-v2-fundo"
+      onDragEnter={(e) => {
+        if (!ehArquivo(e)) return;
+        e.preventDefault();
+        profundidade.current++;
+        setSobre(true);
+      }}
+      onDragOver={(e) => {
+        if (!ehArquivo(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!ehArquivo(e)) return;
+        profundidade.current = Math.max(0, profundidade.current - 1);
+        if (!profundidade.current) setSobre(false);
+      }}
+      onDrop={(e) => {
+        if (!ehArquivo(e)) return;
+        // ⚠️ sem o `preventDefault` o navegador ABRE o arquivo, trocando a aba
+        // do CRM pela foto — e o que estava sendo escrito se perde
+        e.preventDefault();
+        profundidade.current = 0;
+        setSobre(false);
+        const fs = Array.from(e.dataTransfer.files ?? []);
+        if (!fs.length) return;
+        // Janela fechada: o envio falharia na Meta com 131047 depois de o
+        // arquivo subir. Recusar antes é o mesmo remédio da faixa de 24h —
+        // descobrir tarde é o que custa caro (§29.2).
+        if (!j.aberta) {
+          aoErro("A janela de 24h está fechada: só um template reabre a conversa.");
+          return;
+        }
+        gesto.current?.("soltar", fs);
+      }}
+    >
+      {/* ⚠️ `pointer-events-none` é obrigatório: uma camada que captura o mouse
+          engoliria o próprio `drop` que ela anuncia. */}
+      {sobre && (
+        <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center bg-v2-superficie/85">
+          <div
+            className={[
+              "rounded-2xl border-2 border-dashed px-8 py-6 text-center",
+              j.aberta ? "border-v2-azul text-v2-azul" : "border-v2-laranja text-v2-laranja",
+            ].join(" ")}
+          >
+            <svg viewBox="0 0 24 24" className="mx-auto size-9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-6" />
+              <path d="M12 3v12m0-12 4 4m-4-4-4 4" />
+            </svg>
+            <p className="mt-2 text-[14.5px] font-semibold">
+              {j.aberta ? "Solte para anexar" : "Janela de 24h fechada"}
+            </p>
+            <p className="mt-0.5 text-[12px] opacity-80">
+              {j.aberta ? "o que estiver escrito vira a legenda" : "só um template reabre a conversa"}
+            </p>
+          </div>
+        </div>
+      )}
       {/* ---- cabeçalho ---------------------------------------------------- */}
       <header className="flex shrink-0 flex-wrap items-center gap-1 border-b border-v2-linha bg-v2-superficie px-2 py-2">
         <button
@@ -320,7 +405,7 @@ export function Conversa({
         aoLocal={aoLocal}
         aoNota={aoNota}
         aoErro={aoErro}
-        aoRegistrarGesto={aoRegistrarGesto}
+        aoRegistrarGesto={registrar}
       />
     </section>
   );

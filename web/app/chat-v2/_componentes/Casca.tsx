@@ -18,6 +18,7 @@ import {
 import { lembrarTelaAtual } from "../../lembrarTela";
 import type { Ligacao } from "../../../lib/ligacaoDados";
 import type { ApiLigacao } from "./Ligacao";
+import type { Gesto } from "./Compositor";
 import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
@@ -164,8 +165,8 @@ export function Casca({
   const [ligacao, setLigacao] = useState<ApiLigacao | null>(null);
   // ponte para os dois gestos que moram dentro do compositor (o texto não sobe,
   // e estes também não precisam subir — só o gatilho)
-  const gesto = useRef<((qual: "audio" | "anexo") => void) | null>(null);
-  const registrarGesto = useCallback((fn: ((qual: "audio" | "anexo") => void) | null) => {
+  const gesto = useRef<Gesto | null>(null);
+  const registrarGesto = useCallback((fn: Gesto | null) => {
     gesto.current = fn;
   }, []);
   const publicarLigacao = useCallback((api: ApiLigacao | null) => setLigacao(api), []);

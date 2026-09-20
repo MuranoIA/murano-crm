@@ -18,6 +18,9 @@ import { useGravador } from "./audio";
 
 export type Resposta = { id: number; atalho: string; texto: string; carteira: string | null };
 
+/** Os três gestos que o compositor expõe para fora. */
+export type Gesto = (qual: "audio" | "anexo" | "soltar", arquivos?: File[]) => void;
+
 export function Compositor({
   podeEnviar,
   janelaAberta,
@@ -44,10 +47,12 @@ export function Compositor({
   aoLocal: (indice: number) => void;
   aoNota: (texto: string) => void;
   aoErro: (msg: string) => void;
-  /** publica para cima os dois gestos que só existem aqui dentro — gravar e
-   *  anexar. É o que permite o `?acao=` da lupa do board disparar o microfone
-   *  ou o seletor de arquivo sem que o texto suba de componente (§50.1). */
-  aoRegistrarGesto?: (fn: ((qual: "audio" | "anexo") => void) | null) => void;
+  /** publica para cima os gestos que só existem aqui dentro: gravar, anexar e
+   *  receber arquivos soltos na conversa. É o que permite o `?acao=` da lupa do
+   *  board disparar o microfone (§50.1) e o arrasto acontecer sobre a THREAD
+   *  inteira sem que o texto suba de componente — quem manda continua sendo
+   *  este componente, com a MESMA função do clipe e do colar. */
+  aoRegistrarGesto?: (fn: Gesto | null) => void;
 }) {
   const [texto, setTexto] = useState("");
   const [nota, setNota] = useState(false);
@@ -59,14 +64,29 @@ export function Compositor({
   const arquivo = useRef<HTMLInputElement>(null);
   const { gravando, segundos, gravar, parar } = useGravador((f) => aoArquivos([f], ""), aoErro);
 
+  // ---- UM caminho só para todo arquivo que entra ------------------------
+  // Clipe, colar e arrastar terminam aqui. Três cópias divergiriam no primeiro
+  // ajuste — e a divergência apareceria como "pelo clipe vai com legenda, pelo
+  // arrasto vai sem".
+  const mandar = useCallback(
+    (fs: File[]) => {
+      if (!fs.length) return;
+      const legenda = texto.trim();
+      aoArquivos(fs, legenda);
+      if (legenda) setTexto("");
+    },
+    [aoArquivos, texto],
+  );
+
   useEffect(() => {
     if (!aoRegistrarGesto) return;
-    aoRegistrarGesto((qual) => {
+    aoRegistrarGesto((qual, fs) => {
       if (qual === "audio") void gravar();
+      else if (qual === "soltar") mandar(fs ?? []);
       else arquivo.current?.click();
     });
     return () => aoRegistrarGesto(null);
-  }, [aoRegistrarGesto, gravar]);
+  }, [aoRegistrarGesto, gravar, mandar]);
 
   // cresce até ~5 linhas e depois rola por dentro.
   // ⚠️ `height = "0px"` antes de ler o `scrollHeight`: com "auto" o navegador
@@ -228,9 +248,7 @@ export function Compositor({
         onChange={(e) => {
           const fs = Array.from(e.target.files ?? []);
           e.target.value = ""; // permite escolher o MESMO arquivo de novo
-          if (!fs.length) return;
-          aoArquivos(fs, texto.trim());
-          if (texto.trim()) setTexto("");
+          mandar(fs);
         }}
       />
 
@@ -344,6 +362,15 @@ export function Compositor({
             value={texto}
             onChange={(e) => mudou(e.target.value)}
             onKeyDown={tecla}
+            // COLAR ARQUIVO (Ctrl+V de um print, por exemplo). A guarda é
+            // obrigatória: sem ela, colar TEXTO — que é o uso comum do Ctrl+V
+            // aqui — pararia de funcionar.
+            onPaste={(e) => {
+              const fs = Array.from(e.clipboardData?.files ?? []);
+              if (!fs.length) return; // colagem de texto segue o caminho normal
+              e.preventDefault();
+              mandar(fs);
+            }}
             disabled={!podeEnviar}
             // ⚠️ nada de placeholder comprido: o `scrollHeight` de um textarea
             // VAZIO conta a altura do placeholder, e um texto de duas linhas faz
