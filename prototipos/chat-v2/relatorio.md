@@ -37,7 +37,7 @@ coisa pintada tem conteúdo.
 
 ---
 
-## Fase 1 — ler (19/09/2026) · commit `93b926b`
+## Fase 1 — ler (19/09/2026) · commit `9571733`
 
 Lista virtualizada com prévia e contadores sempre visíveis; recortes (todas, não
 lidas, favoritas, fila, resolvidas); busca por nome e telefone; thread com
