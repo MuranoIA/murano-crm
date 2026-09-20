@@ -141,6 +141,24 @@
   border-radius: 6px;
 }
 
+/* Ação por mensagem (encaminhar): discreta onde há mouse, SEMPRE visível onde
+   só há dedo. Esconder no toque tiraria o gesto de quem vai usar o app no
+   celular — é a lição do §60.7, e o motivo de esta ser a única regra de
+   `:hover` da tela (estilo inline não faz hover). */
+.v2 .acao-msg {
+  opacity: 0;
+  transition: opacity 120ms var(--ease-padrao);
+}
+.v2 [data-msg]:hover .acao-msg,
+.v2 .acao-msg:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .v2 .acao-msg {
+    opacity: 1;
+  }
+}
+
 /* rolagem fina, discreta, nas três colunas */
 .v2 .rolagem {
   scrollbar-width: thin;

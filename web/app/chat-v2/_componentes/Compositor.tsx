@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useGravador } from "./audio";
 
 // ---------------------------------------------------------------------------
 // A CAIXA DE TEXTO — e a razão principal de o chat ter sido reconstruído.
@@ -21,20 +22,37 @@ export function Compositor({
   podeEnviar,
   janelaAberta,
   enviando,
+  progresso,
+  locais,
   aoEnviar,
   aoTemplate,
+  aoArquivos,
+  aoLocal,
+  aoNota,
+  aoErro,
 }: {
   podeEnviar: boolean;
   janelaAberta: boolean;
   enviando: boolean;
+  /** "2 de 3 · 45%" enquanto sobe arquivo; null quando não há envio em curso */
+  progresso: string | null;
+  locais: { nome: string; endereco?: string }[];
   aoEnviar: (texto: string) => void;
   aoTemplate: () => void;
+  aoArquivos: (arquivos: File[], legenda: string) => void;
+  aoLocal: (indice: number) => void;
+  aoNota: (texto: string) => void;
+  aoErro: (msg: string) => void;
 }) {
   const [texto, setTexto] = useState("");
+  const [nota, setNota] = useState(false);
+  const [clipe, setClipe] = useState(false);
   const [respostas, setRespostas] = useState<Resposta[] | null>(null);
   const [menu, setMenu] = useState(false);
   const [marcado, setMarcado] = useState(0);
   const campo = useRef<HTMLTextAreaElement>(null);
+  const arquivo = useRef<HTMLInputElement>(null);
+  const { gravando, segundos, gravar, parar } = useGravador((f) => aoArquivos([f], ""), aoErro);
 
   // cresce até ~5 linhas e depois rola por dentro.
   // ⚠️ `height = "0px"` antes de ler o `scrollHeight`: com "auto" o navegador
@@ -79,7 +97,10 @@ export function Compositor({
   function enviar() {
     const t = texto.trim();
     if (!t || !podeEnviar || enviando) return;
-    aoEnviar(t);
+    // a NOTA não vai para a cliente. É o mesmo campo com outro destino — e a
+    // caixa muda de cor para isso ficar óbvio ANTES de alguém escrever.
+    if (nota) aoNota(t);
+    else aoEnviar(t);
     // a caixa esvazia NA HORA: quem manda já está pensando na próxima frase, e
     // esperar o servidor para limpar faria a mensagem parecer não enviada
     setTexto("");
@@ -103,6 +124,8 @@ export function Compositor({
     }
   }
 
+  const iconeBotao = "grid size-10 shrink-0 place-items-center rounded-full";
+
   return (
     <div className="relative shrink-0 border-t border-v2-linha bg-v2-superficie px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       {/* ---- respostas rápidas ------------------------------------------- */}
@@ -111,9 +134,7 @@ export function Compositor({
           {respostas === null ? (
             <p className="px-3 py-2 text-[13px] text-v2-tinta-fraca">carregando…</p>
           ) : sugestoes.length === 0 ? (
-            <p className="px-3 py-2 text-[13px] text-v2-tinta-fraca">
-              Nenhuma resposta rápida com esse atalho.
-            </p>
+            <p className="px-3 py-2 text-[13px] text-v2-tinta-fraca">Nenhuma resposta rápida com esse atalho.</p>
           ) : (
             sugestoes.map((r, i) => (
               <button
@@ -137,12 +158,112 @@ export function Compositor({
         </div>
       )}
 
-      {/* ---- a janela fechada troca a caixa pelo caminho que funciona ----- */}
-      {!janelaAberta ? (
-        <div className="flex items-center gap-3 rounded-2xl bg-v2-laranja-claro px-3 py-2.5">
+      {/* ---- menu do clipe ------------------------------------------------ */}
+      {clipe && (
+        <div className="absolute bottom-[calc(100%-4px)] left-3 z-10 w-72 overflow-hidden rounded-xl bg-v2-superficie p-1 shadow-e3 ring-1 ring-v2-linha">
+          <button
+            data-ripple
+            onClick={() => { setClipe(false); arquivo.current?.click(); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-v2-superficie-2"
+          >
+            <span aria-hidden className="text-v2-azul">
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 16V6a2 2 0 0 1 2-2h9l5 5v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" />
+                <path d="M14 4v6h6" />
+              </svg>
+            </span>
+            <span className="text-[14px]">Arquivo, foto ou vídeo</span>
+          </button>
+
+          {/* localização por ENDEREÇO SALVO, não pela posição do navegador: a
+              cliente pergunta onde fica a loja, e dentro de iframe a
+              geolocalização seria recusada sem prompt (§49.1) */}
+          {locais.length === 0 ? (
+            <p className="px-3 py-2 text-[12px] leading-4 text-v2-tinta-fraca">
+              Nenhum endereço cadastrado — o administrador cadastra em Administração → Mecanismos.
+            </p>
+          ) : (
+            locais.map((l, i) => (
+              <button
+                key={i}
+                data-ripple
+                onClick={() => { setClipe(false); aoLocal(i); }}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-v2-superficie-2"
+              >
+                <span aria-hidden className="text-v2-azul">
+                  <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
+                    <circle cx="12" cy="10" r="2.5" />
+                  </svg>
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[14px]">{l.nome}</span>
+                  {l.endereco && <span className="block truncate text-[12px] text-v2-tinta-fraca">{l.endereco}</span>}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
+      <input
+        ref={arquivo}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          const fs = Array.from(e.target.files ?? []);
+          e.target.value = ""; // permite escolher o MESMO arquivo de novo
+          if (!fs.length) return;
+          aoArquivos(fs, texto.trim());
+          if (texto.trim()) setTexto("");
+        }}
+      />
+
+      {/* ---- o que está subindo ------------------------------------------- */}
+      {progresso && (
+        <p className="mb-2 flex items-center gap-2 rounded-lg bg-v2-azul-claro px-3 py-1.5 text-[12.5px] text-v2-azul">
+          <span className="size-1.5 animate-pulse rounded-full bg-v2-azul" aria-hidden />
+          {progresso}
+        </p>
+      )}
+
+      {/* ---- gravando ------------------------------------------------------ */}
+      {gravando && (
+        <div className="mb-2 flex items-center gap-3 rounded-2xl bg-v2-erro-claro px-3 py-2">
+          <span className="size-2.5 animate-pulse rounded-full bg-v2-erro" aria-hidden />
+          <span className="flex-1 text-[13px] tabular-nums text-v2-erro">
+            Gravando… {String(Math.floor(segundos / 60)).padStart(2, "0")}:{String(segundos % 60).padStart(2, "0")}
+          </span>
+          <button data-ripple onClick={() => parar(true)} className="rounded-lg px-2 py-1 text-[13px] text-v2-tinta-fraca">
+            Cancelar
+          </button>
+          <button
+            data-ripple
+            onClick={() => parar(false)}
+            className="rounded-full bg-v2-azul px-3 py-1.5 text-[13px] font-semibold text-white"
+          >
+            Enviar áudio
+          </button>
+        </div>
+      )}
+
+      {/* ---- a janela fechada troca a caixa pelo caminho que funciona ------
+          ...mas a NOTA INTERNA continua possível: ela não vai para a cliente,
+          então a janela de 24h não tem nada a ver com ela. */}
+      {!janelaAberta && !nota ? (
+        <div className="flex items-center gap-2 rounded-2xl bg-v2-laranja-claro px-3 py-2.5">
           <p className="min-w-0 flex-1 text-[12.5px] leading-4 text-v2-laranja">
             Passaram-se mais de 24h desde a última mensagem dela. Só um template reabre a conversa.
           </p>
+          <button
+            data-ripple
+            onClick={() => setNota(true)}
+            title="Escrever uma nota interna (não vai para a cliente)"
+            className="shrink-0 rounded-full px-2 py-1.5 text-[13px] text-v2-laranja hover:bg-white/60"
+          >
+            Nota
+          </button>
           <button
             data-ripple
             onClick={aoTemplate}
@@ -152,18 +273,56 @@ export function Compositor({
           </button>
         </div>
       ) : (
-        <div className="flex items-end gap-2 rounded-2xl border border-v2-linha-forte bg-v2-superficie px-2 py-1.5 focus-within:border-v2-azul">
+        <div
+          className={[
+            "flex items-end gap-1 rounded-2xl border px-2 py-1.5",
+            nota
+              ? "border-amber-300 bg-amber-50 focus-within:border-amber-400"
+              : "border-v2-linha-forte bg-v2-superficie focus-within:border-v2-azul",
+          ].join(" ")}
+        >
           <button
             data-ripple
-            onClick={aoTemplate}
-            title="Enviar um template"
-            className="grid size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca hover:bg-v2-superficie-2"
-            aria-label="Template"
+            onClick={() => setNota((v) => !v)}
+            aria-pressed={nota}
+            title={nota ? "Voltar a escrever para a cliente" : "Nota interna — não vai para a cliente"}
+            className={[iconeBotao, nota ? "bg-amber-200 text-amber-900" : "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
+            aria-label="Nota interna"
           >
             <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 5h16v11H8l-4 4V5Z" />
+              <path d="M5 4h14v11l-5 5H5V4Z" />
+              <path d="M19 15h-5v5" />
             </svg>
           </button>
+
+          {!nota && (
+            <>
+              <button
+                data-ripple
+                onClick={() => setClipe((v) => !v)}
+                aria-pressed={clipe}
+                title="Anexar arquivo ou enviar um endereço"
+                className={[iconeBotao, "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
+                aria-label="Anexar"
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <path d="M21 11.5 12.5 20a5 5 0 1 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 1 1-3-3l7.5-7.5" />
+                </svg>
+              </button>
+
+              <button
+                data-ripple
+                onClick={aoTemplate}
+                title="Enviar um template"
+                className="hidden size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca hover:bg-v2-superficie-2 sm:grid"
+                aria-label="Template"
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 5h16v11H8l-4 4V5Z" />
+                </svg>
+              </button>
+            </>
+          )}
 
           <textarea
             ref={campo}
@@ -175,24 +334,53 @@ export function Compositor({
             // ⚠️ nada de placeholder comprido: o `scrollHeight` de um textarea
             // VAZIO conta a altura do placeholder, e um texto de duas linhas faz
             // a caixa nunca voltar ao tamanho de uma linha (§51).
-            placeholder="Mensagem"
+            placeholder={nota ? "Nota interna" : "Mensagem"}
             title="Enter envia · Shift+Enter quebra linha · / abre as respostas rápidas"
-            className="max-h-[120px] min-h-[36px] flex-1 resize-none bg-transparent py-1.5 leading-5 outline-none placeholder:text-v2-tinta-fraca disabled:opacity-60"
+            className="max-h-[120px] min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 leading-5 outline-none placeholder:text-v2-tinta-fraca disabled:opacity-60"
           />
 
-          <button
-            data-ripple
-            onClick={enviar}
-            disabled={!podeEnviar || !texto.trim() || enviando}
-            title="Enviar"
-            className="grid size-10 shrink-0 place-items-center rounded-full bg-v2-azul text-white transition-colors disabled:bg-v2-linha-forte disabled:text-white/70"
-            aria-label="Enviar"
-          >
-            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 12 20 4l-7 16-2.5-6.5L4 12Z" />
-            </svg>
-          </button>
+          {/* microfone quando não há texto, enviar quando há: é o gesto que todo
+              mundo já conhece, e economiza um botão numa barra que no celular
+              tem 360 px para dividir */}
+          {!nota && !texto.trim() ? (
+            <button
+              data-ripple
+              onClick={() => (gravando ? parar(false) : gravar())}
+              disabled={!podeEnviar}
+              title="Gravar áudio"
+              className={[iconeBotao, "text-v2-tinta-fraca hover:bg-v2-superficie-2 disabled:opacity-50"].join(" ")}
+              aria-label="Gravar áudio"
+            >
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              data-ripple
+              onClick={enviar}
+              disabled={!podeEnviar || !texto.trim() || enviando}
+              title={nota ? "Salvar nota" : "Enviar"}
+              className={[
+                iconeBotao,
+                "text-white transition-colors disabled:bg-v2-linha-forte disabled:text-white/70",
+                nota ? "bg-amber-600" : "bg-v2-azul",
+              ].join(" ")}
+              aria-label={nota ? "Salvar nota" : "Enviar"}
+            >
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 12 20 4l-7 16-2.5-6.5L4 12Z" />
+              </svg>
+            </button>
+          )}
         </div>
+      )}
+
+      {nota && (
+        <p className="mt-1.5 text-center text-[11.5px] text-amber-700">
+          Isto fica só para a equipe — a cliente não vê.
+        </p>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { ItemConversa } from "./ItemConversa";
 import { FILAS, type Conversa, type Fila } from "./tipos";
@@ -41,6 +41,35 @@ export function ListaConversas({
   aoChegarNoFim: () => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
+
+  // ---- busca NO CONTEÚDO das mensagens ------------------------------------
+  // A busca por nome e telefone é local e instantânea (a lista já está aqui).
+  // Esta é outra pergunta — "onde foi que eu falei sobre isso?" — e vai ao
+  // servidor, que usa trigrama (§18/0081). Mínimo de 3 letras porque abaixo
+  // disso o índice não é usado; debounce de 400 ms para não disparar por tecla.
+  const [achados, setAchados] = useState<{ conversas: any[]; truncado: boolean } | null>(null);
+  const [procurando, setProcurando] = useState(false);
+
+  useEffect(() => {
+    const t = busca.trim();
+    if (t.length < 3) {
+      setAchados(null);
+      return;
+    }
+    let vivo = true;
+    const atraso = setTimeout(() => {
+      setProcurando(true);
+      fetch(`/api/chat/buscar?q=${encodeURIComponent(t)}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((j) => vivo && setAchados({ conversas: j.conversas ?? [], truncado: !!j.truncado }))
+        .catch(() => vivo && setAchados(null))
+        .finally(() => vivo && setProcurando(false));
+    }, 400);
+    return () => {
+      vivo = false;
+      clearTimeout(atraso);
+    };
+  }, [busca]);
 
   // rolou até perto do fim da primeira página: é hora de buscar o resto
   const aoRolar = () => {
@@ -136,6 +165,35 @@ export function ListaConversas({
               <ItemConversa c={c} selecionada={c.cliente_id === selecionada} aoAbrir={aoAbrir} />
             )}
           />
+        )}
+
+        {/* ---- o que a busca achou DENTRO das mensagens ------------------ */}
+        {busca.trim().length >= 3 && (
+          <div className="border-t border-v2-linha bg-v2-superficie-2">
+            <p className="flex items-center gap-2 px-3 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
+              nas mensagens
+              {procurando && <span className="font-normal normal-case">procurando…</span>}
+              {achados?.truncado && (
+                <span className="font-normal normal-case text-v2-laranja">muitos resultados — refine a busca</span>
+              )}
+            </p>
+            {achados && achados.conversas.length === 0 && !procurando && (
+              <p className="px-3 pb-3 text-[13px] text-v2-tinta-fraca">Nada encontrado no conteúdo das conversas.</p>
+            )}
+            {(achados?.conversas ?? []).map((c: any) => (
+              <button
+                key={`busca-${c.cliente_id}`}
+                data-ripple
+                onClick={() => aoAbrir(c.cliente_id)}
+                className="block w-full px-3 py-2 text-left hover:bg-v2-superficie"
+              >
+                <span className="block truncate text-[13.5px] font-medium">{c.cliente}</span>
+                <span className="mt-0.5 block truncate text-[12.5px] text-v2-tinta-fraca">
+                  {c.trecho ?? c.ultima_mensagem}
+                </span>
+              </button>
+            ))}
+          </div>
         )}
 
         {carregando && conversas.length > 0 && (

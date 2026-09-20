@@ -7,11 +7,16 @@ import { Conversa as TelaConversa } from "./Conversa";
 import { PainelContato } from "./PainelContato";
 import { Ripple } from "./Ripple";
 import { Snackbars, useAvisos } from "./Avisos";
+import { enviarArquivos, type Progresso } from "./anexos";
+import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
 import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
 const Templates = dynamic(() => import("./Templates"), { ssr: false });
+const Transferir = dynamic(() => import("./Dialogos").then((m) => m.Transferir), { ssr: false });
+const Resolver = dynamic(() => import("./Dialogos").then((m) => m.Resolver), { ssr: false });
+const Encaminhar = dynamic(() => import("./Dialogos").then((m) => m.Encaminhar), { ssr: false });
 
 // ---------------------------------------------------------------------------
 // A casca: três regiões, uma escolha de fila, uma conversa aberta.
@@ -67,6 +72,15 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   const [painelAberto, setPainelAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [templates, setTemplates] = useState(false);
+  // o que veio junto da thread: notas, transferências e os trechos citados
+  const [notas, setNotas] = useState<Nota[]>([]);
+  const [transferencias, setTransferencias] = useState<Transferencia[]>([]);
+  const [citadas, setCitadas] = useState<Record<string, { conteudo: string | null; enviada_por: string | null }>>({});
+  const [progresso, setProgresso] = useState<Progresso | null>(null);
+  const [locais, setLocais] = useState<{ nome: string; endereco?: string }[]>([]);
+  const [dialogo, setDialogo] = useState<null | "transferir" | "resolver">(null);
+  const [encaminhando, setEncaminhando] = useState<Mensagem | null>(null);
+  const [ocupado, setOcupado] = useState(false);
   // A conversa aberta pode NÃO estar na lista: `vw_chat_conversa` é
   // materializada e só atualiza a cada 2 min (0139), então uma conversa que
   // acabou de nascer — ou um link do board para alguém fora do recorte — abriria
@@ -115,6 +129,15 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
   useEffect(() => {
     recarregarContagens();
   }, [recarregarContagens]);
+
+  // endereços salvos (crm_config.locais): uma consulta por sessão, e o menu do
+  // clipe já abre com eles
+  useEffect(() => {
+    fetch("/api/chat/localizacao")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setLocais(j.locais ?? []))
+      .catch(() => {});
+  }, []);
 
   // ---- o resto da lista, SÓ QUANDO PRECISA -------------------------------
   //
@@ -177,6 +200,9 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
         if (abertaRef.current !== id) return; // trocou de conversa no meio
         setMensagens(j.mensagens ?? []);
         setTemMais(!!j.tem_mais);
+        setNotas(j.notas ?? []);
+        setTransferencias(j.transferencias ?? []);
+        setCitadas(j.citadas ?? {});
         if (j.cliente) {
           setAvulsa({
             cliente_id: id,
@@ -233,6 +259,9 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
         if (abertaRef.current !== id) return;
         setMensagens((atual) => [...(j.mensagens ?? []), ...atual]);
         setTemMais(!!j.tem_mais);
+        // `continuacao: true` não recarrega notas nem transferências — elas já
+        // vieram inteiras no primeiro lote. As citadas, sim: são do lote.
+        setCitadas((c) => ({ ...c, ...(j.citadas ?? {}) }));
       })
       .catch(() => {})
       .finally(() => abertaRef.current === id && setCarregandoAntigas(false));
@@ -425,6 +454,209 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
     [apanharNovas, recarregarLista, avisar],
   );
 
+  // ---- ARQUIVOS: sobem direto para o Storage, não pelo nosso servidor -----
+  const mandarArquivos = useCallback(
+    async (arquivos: File[], legenda: string) => {
+      const id = abertaRef.current;
+      if (!id || !arquivos.length) return;
+      setEnviando(true);
+      const r = await enviarArquivos(id, arquivos, legenda, setProgresso);
+      setEnviando(false);
+      if (r.pararTudo) avisar(r.pararTudo, { tom: "erro" });
+      for (const f of r.falhas) avisar(`${f.nome}: ${f.razao}`, { tom: "erro" });
+      if (r.enviados) {
+        avisar(r.enviados === 1 ? "Arquivo enviado." : `${r.enviados} arquivos enviados.`, { tom: "ok" });
+        apanharNovas();
+        recarregarLista();
+      }
+    },
+    [apanharNovas, recarregarLista, avisar],
+  );
+
+  const mandarLocal = useCallback(
+    (indice: number) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setEnviando(true);
+      fetch("/api/chat/localizacao", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, local: indice }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => {
+          avisar("Endereço enviado.", { tom: "ok" });
+          apanharNovas();
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setEnviando(false));
+    },
+    [apanharNovas, avisar],
+  );
+
+  // ---- NOTA INTERNA: não vai para a cliente, e por isso não é `mensagens` --
+  const mandarNota = useCallback(
+    (texto: string) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      fetch("/api/chat/notas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, texto }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+          return j;
+        })
+        .then((j) => {
+          if (abertaRef.current !== id) return;
+          const nova = j?.nota ?? {
+            id: Date.now(),
+            cliente_id: id,
+            autor: inicial.meu_usuario,
+            texto,
+            criada_em: new Date().toISOString(),
+          };
+          setNotas((n) => [...n, nova]);
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }));
+    },
+    [avisar, inicial.meu_usuario],
+  );
+
+  const apagarNota = useCallback(
+    (n: Nota) => {
+      setNotas((atual) => atual.filter((x) => x.id !== n.id));
+      fetch("/api/chat/notas", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: n.id }),
+      }).catch(() => {});
+    },
+    [],
+  );
+
+  // ---- FAVORITAR: otimista, porque é uma marca pessoal e barata ------------
+  const favoritar = useCallback(() => {
+    const id = abertaRef.current;
+    if (!id) return;
+    const atual = lista.find((c) => c.cliente_id === id)?.favorita ?? false;
+    setLista((l) => l.map((c) => (c.cliente_id === id ? { ...c, favorita: !atual } : c)));
+    fetch("/api/chat/favorito", {
+      method: atual ? "DELETE" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cliente_id: id }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        recarregarContagens();
+      })
+      .catch(() => {
+        setLista((l) => l.map((c) => (c.cliente_id === id ? { ...c, favorita: atual } : c)));
+        avisar("Não consegui favoritar.", { tom: "erro" });
+      });
+  }, [lista, recarregarContagens, avisar]);
+
+  // ---- TRANSFERIR / PEGAR / DEVOLVER: tudo a mesma tabela append-only -----
+  const transferir = useCallback(
+    (para: string | null, observacao: string) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setOcupado(true);
+      fetch("/api/chat/transferir", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, ...(para ? { para } : { devolver: true }), observacao }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => {
+          setDialogo(null);
+          avisar(para ? `Conversa transferida para ${para}.` : "Conversa devolvida para a fila.", { tom: "ok" });
+          recarregarLista();
+          // a thread guarda o registro da passagem, no ponto em que aconteceu
+          fetch(`/api/chat/thread?cliente_id=${encodeURIComponent(id)}`)
+            .then((r) => r.json())
+            .then((j) => abertaRef.current === id && setTransferencias(j.transferencias ?? []))
+            .catch(() => {});
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setOcupado(false));
+    },
+    [recarregarLista, avisar],
+  );
+
+  // pegar da fila = transferir de ninguém para mim, reusando a mesma tabela
+  // (§21): o histórico de quem puxou sai de graça
+  const pegar = useCallback(() => {
+    if (!inicial.minha_carteira) {
+      avisar("Você não tem carteira — use Transferir para designar alguém.", { tom: "erro" });
+      return;
+    }
+    transferir(inicial.minha_carteira, "pegou da fila");
+  }, [inicial.minha_carteira, transferir, avisar]);
+
+  // ---- RESOLVER / REABRIR -------------------------------------------------
+  const mudarStatus = useCallback(
+    (status: "aberta" | "resolvida", motivo?: string) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setOcupado(true);
+      fetch("/api/chat/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, status, ...(motivo ? { motivo } : {}) }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => {
+          setDialogo(null);
+          setLista((l) =>
+            l.map((c) => (c.cliente_id === id ? { ...c, status, motivo: motivo ?? null } : c)),
+          );
+          avisar(status === "resolvida" ? "Conversa resolvida." : "Conversa reaberta.", { tom: "ok" });
+          recarregarContagens();
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setOcupado(false));
+    },
+    [recarregarContagens, avisar],
+  );
+
+  // ---- ENCAMINHAR ---------------------------------------------------------
+  const encaminhar = useCallback(
+    (para: string) => {
+      const m = encaminhando;
+      if (!m) return;
+      setOcupado(true);
+      fetch("/api/chat/encaminhar", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mensagem_id: m.id, para }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => {
+          setEncaminhando(null);
+          avisar("Mensagem encaminhada.", { tom: "ok" });
+          recarregarLista();
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setOcupado(false));
+    },
+    [encaminhando, recarregarLista, avisar],
+  );
+
   // ---- recortes e contadores ---------------------------------------------
   // Com a lista inteira em mãos, conta daqui (é de graça e fica exato mesmo
   // depois de a tela mexer em alguma conversa). Sem ela, valem os números que o
@@ -500,7 +732,7 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
           </a>
           <span className="text-[15px] font-semibold tracking-tight">Chat</span>
           <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-            v2 · fase 2
+            v2 · fase 3
           </span>
         </div>
         <span className="ml-auto truncate text-[12px] text-white/80">
@@ -543,6 +775,9 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
           <TelaConversa
             conversa={conversaAberta}
             mensagens={mensagens}
+            notas={notas}
+            transferencias={transferencias}
+            citadas={citadas}
             temMais={temMais}
             carregando={carregandoThread}
             carregandoAntigas={carregandoAntigas}
@@ -551,16 +786,37 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
             aoAbrirContato={() => setPainelAberto((v) => !v)}
             painelAberto={painelAberto}
             enviando={enviando}
+            progresso={
+              progresso
+                ? `enviando ${progresso.feito + 1} de ${progresso.total}${progresso.pct != null ? ` · ${progresso.pct}%` : ""} — ${progresso.nome}`
+                : null
+            }
+            locais={locais}
             aoEnviar={enviarTexto}
             aoTemplate={() => setTemplates(true)}
             aoReenviar={reenviar}
+            aoArquivos={mandarArquivos}
+            aoLocal={mandarLocal}
+            aoNota={mandarNota}
+            aoApagarNota={apagarNota}
+            aoEncaminhar={setEncaminhando}
+            aoFavoritar={favoritar}
+            aoTransferir={() => setDialogo("transferir")}
+            aoResolver={() => setDialogo("resolver")}
+            aoReabrir={() => mudarStatus("aberta")}
+            aoPegar={pegar}
+            aoErro={(msg) => avisar(msg, { tom: "erro" })}
           />
         </div>
 
         {/* desktop largo: o ERP é COLUNA, ao lado da conversa */}
         {conversaAberta && painelAberto && (
           <div className="hidden min-h-0 w-[330px] shrink-0 xl:block">
-            <PainelContato conversa={conversaAberta} aoFechar={() => setPainelAberto(false)} />
+            <PainelContato
+              conversa={conversaAberta}
+              aoFechar={() => setPainelAberto(false)}
+              aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
+            />
           </div>
         )}
       </div>
@@ -578,10 +834,38 @@ export function Casca({ inicial, threadInicial }: { inicial: Lista; threadInicia
               <span className="h-1 w-10 rounded-full bg-v2-linha-forte" />
             </div>
             <div className="h-[72vh]">
-              <PainelContato conversa={conversaAberta} aoFechar={() => setPainelAberto(false)} />
+              <PainelContato
+              conversa={conversaAberta}
+              aoFechar={() => setPainelAberto(false)}
+              aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
+            />
             </div>
           </div>
         </div>
+      )}
+
+      {dialogo === "transferir" && conversaAberta && (
+        <Transferir
+          conversa={conversaAberta}
+          vendedores={inicial.vendedores}
+          ocupado={ocupado}
+          aoFechar={() => setDialogo(null)}
+          aoConfirmar={transferir}
+        />
+      )}
+
+      {dialogo === "resolver" && (
+        <Resolver ocupado={ocupado} aoFechar={() => setDialogo(null)} aoConfirmar={(m) => mudarStatus("resolvida", m)} />
+      )}
+
+      {encaminhando && (
+        <Encaminhar
+          trecho={encaminhando.conteudo ?? ""}
+          conversas={lista.filter((c) => c.cliente_id !== aberta)}
+          ocupado={ocupado}
+          aoFechar={() => setEncaminhando(null)}
+          aoConfirmar={encaminhar}
+        />
       )}
 
       {templates && conversaAberta && (

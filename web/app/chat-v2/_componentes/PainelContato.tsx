@@ -21,9 +21,21 @@ type Dados = {
   ultimas_notas: { data_fat: string; valor: number; num_nota: number | null; filial: string | null }[];
 };
 
-export function PainelContato({ conversa, aoFechar }: { conversa: Conversa; aoFechar: () => void }) {
+export function PainelContato({
+  conversa,
+  aoFechar,
+  aoAviso,
+}: {
+  conversa: Conversa;
+  aoFechar: () => void;
+  aoAviso?: (texto: string, ok: boolean) => void;
+}) {
   const [d, setD] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -104,6 +116,96 @@ export function PainelContato({ conversa, aoFechar }: { conversa: Conversa; aoFe
               <Linha rotulo="Etapa no board" valor={d.funil?.etapa ?? "—"} />
               <Linha rotulo="Carteira" valor={conversa.vendedor ?? (conversa.na_fila ? "na fila" : "—")} />
             </dl>
+
+            {/* ---- dar nome (e CPF) a quem chegou pela fila ---------------
+                O contato que o webhook cria tem o nome do PERFIL do WhatsApp,
+                que às vezes é o próprio número. E o CPF é o que liga ao ERP: o
+                reconciliador casa CPF a cada 10 min e o histórico de compra
+                aparece sozinho (§43.3) — por isso a ficha aqui é só nome+CPF.
+
+                ⚠️ Cliente JÁ vinculado não tem formulário: o cadastro é do
+                WinThor e é ele que manda no nome (§46). */}
+            {conversa.cliente_id.startsWith("wa:") && !conversa.codcli && (
+              <div className="mt-4 rounded-2xl border border-v2-linha p-3">
+                {!editando ? (
+                  <button
+                    data-ripple
+                    onClick={() => {
+                      setNome(conversa.cliente ?? "");
+                      setCpf("");
+                      setEditando(true);
+                    }}
+                    className="w-full rounded-full bg-v2-azul-claro px-3 py-2 text-[13px] font-semibold text-v2-azul"
+                  >
+                    Salvar contato (nome e CPF)
+                  </button>
+                ) : (
+                  <>
+                    <label className="block">
+                      <span className="text-[11px] uppercase tracking-wide text-v2-tinta-fraca">Nome</span>
+                      <input
+                        value={nome}
+                        onChange={(e) => setNome(e.target.value)}
+                        className="mt-1 h-10 w-full rounded-xl border border-v2-linha-forte px-3 focus:border-v2-azul focus:outline-none"
+                      />
+                    </label>
+                    <label className="mt-2 block">
+                      <span className="text-[11px] uppercase tracking-wide text-v2-tinta-fraca">CPF ou CNPJ</span>
+                      <input
+                        value={cpf}
+                        onChange={(e) => setCpf(e.target.value)}
+                        inputMode="numeric"
+                        placeholder="só números"
+                        className="mt-1 h-10 w-full rounded-xl border border-v2-linha-forte px-3 focus:border-v2-azul focus:outline-none"
+                      />
+                    </label>
+                    <p className="mt-2 text-[11.5px] leading-4 text-v2-tinta-fraca">
+                      Com o CPF preenchido, o vínculo com o cadastro do WinThor aparece em até 10 minutos, junto com o
+                      histórico de compra.
+                    </p>
+                    <div className="mt-2 flex justify-end gap-2">
+                      <button
+                        data-ripple
+                        onClick={() => setEditando(false)}
+                        className="rounded-full px-3 py-1.5 text-[13px] text-v2-tinta-fraca"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        data-ripple
+                        disabled={salvando || nome.trim().length < 2}
+                        onClick={() => {
+                          setSalvando(true);
+                          fetch("/api/chat/contato", {
+                            method: "PATCH",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({
+                              cliente_id: conversa.cliente_id,
+                              nome: nome.trim(),
+                              ...(cpf.trim() ? { cpf: cpf.trim() } : {}),
+                            }),
+                          })
+                            .then(async (r) => {
+                              const j = await r.json().catch(() => ({}));
+                              if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+                              return j;
+                            })
+                            .then((j) => {
+                              setEditando(false);
+                              aoAviso?.(j?.aviso ?? "Contato salvo.", true);
+                            })
+                            .catch((e) => aoAviso?.(String(e?.message ?? e), false))
+                            .finally(() => setSalvando(false));
+                        }}
+                        className="rounded-full bg-v2-azul px-3 py-1.5 text-[13px] font-semibold text-white disabled:bg-v2-linha-forte"
+                      >
+                        {salvando ? "salvando…" : "Salvar"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {d.funil?.sem_cadastro && (
               <p className="mt-3 rounded-lg bg-v2-laranja-claro px-3 py-2 text-[12px] leading-4 text-v2-laranja">

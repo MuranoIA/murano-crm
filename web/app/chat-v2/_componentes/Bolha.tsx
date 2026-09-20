@@ -54,12 +54,17 @@ function BolhaBase({
   m,
   primeiraDoGrupo,
   ultimaDoGrupo,
+  citada,
   aoReenviar,
+  aoEncaminhar,
 }: {
   m: Mensagem;
   primeiraDoGrupo: boolean;
   ultimaDoGrupo: boolean;
+  /** o trecho citado, quando esta mensagem responde a outra (0086) */
+  citada?: { conteudo: string | null; enviada_por: string | null };
   aoReenviar?: (m: Mensagem) => void;
+  aoEncaminhar?: (m: Mensagem) => void;
 }) {
   const minha = m.enviada_por !== "customer";
   const falhou = m.status === "failed" || !!m.erro;
@@ -88,6 +93,17 @@ function BolhaBase({
           ultimaDoGrupo ? (minha ? "rounded-br-md" : "rounded-bl-md") : "",
         ].join(" ")}
       >
+        {citada && (
+          // o trecho citado vem do servidor (`citadas`), porque a mensagem
+          // original pode estar centenas de bolhas atrás — ou fora do lote
+          <span className="mb-1 block border-l-[3px] border-v2-azul bg-black/[0.035] px-2 py-1 text-[12.5px] leading-4 text-v2-tinta-fraca">
+            <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-v2-azul">
+              {citada.enviada_por === "customer" ? "cliente" : "você"}
+            </span>
+            <span className="line-clamp-2 break-words">{citada.conteudo || "mídia"}</span>
+          </span>
+        )}
+
         {m.tipo === "template" && (
           <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-v2-vinho-texto">
             template
@@ -112,6 +128,18 @@ function BolhaBase({
           )}
         </span>
       </div>
+
+      {aoEncaminhar && !otimista && !falhou && (
+        <button
+          data-ripple
+          onClick={() => aoEncaminhar(m)}
+          title="Encaminhar para outra conversa"
+          aria-label="Encaminhar"
+          className="acao-msg mt-0.5 rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
+        >
+          ↪ encaminhar
+        </button>
+      )}
 
       {m.reacao && (
         <span className="-mt-1.5 rounded-full bg-v2-superficie px-1.5 py-px text-[12px] shadow-e1">{m.reacao}</span>
