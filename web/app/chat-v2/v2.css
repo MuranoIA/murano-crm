@@ -1,0 +1,184 @@
+/* ---------------------------------------------------------------------------
+   Estilos do /chat-v2. Ficam SÓ aqui: importados pelo layout desta rota.
+
+   ⚠️ Sem o preflight do Tailwind. O preflight reseta margem, tipografia e
+   botões no documento inteiro, e o resto do CRM é estilo inline construído em
+   cima do padrão do navegador — resetar quebraria as telas antigas.
+   Por isso importamos `theme` e `utilities` à mão, nunca `tailwindcss` inteiro.
+
+   ⚠️ E os tokens são PREFIXADOS (`--color-v2-*`). Em navegação no cliente, a
+   folha desta rota continua no documento depois que a pessoa sai do /chat-v2:
+   um `--color-primary` solto no `:root` passaria a valer em /, /chat e /admin.
+   Com prefixo, o que vaza é inerte.
+--------------------------------------------------------------------------- */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  /* --- marca: o vinho é a moldura, nunca a ação ------------------------- */
+  --color-v2-vinho: #621244;
+  --color-v2-vinho-forte: #4d0e35;
+  --color-v2-vinho-claro: #f5edf4;
+  --color-v2-vinho-texto: #8a2a63; /* vinho legível sobre branco: 8,10:1 */
+
+  /* --- azul: AÇÃO. É a assinatura do desenvolvedor, e aqui ela tem regra:
+         tudo que o vendedor faz acontecer é azul. Ticks, links, foco,
+         conversa selecionada, bolha enviada, progresso.
+         #1a5fa8 sobre branco = 6,47:1 (serve de fundo com texto branco).
+         #2f7fd4 = 4,11:1 (NÃO serve de fundo; só contorno de foco, 3:1). */
+  --color-v2-azul: #1a5fa8;
+  --color-v2-azul-forte: #134b86;
+  --color-v2-azul-claro: #eaf2fb;
+  --color-v2-azul-foco: #2f7fd4;
+
+  /* --- laranja: acento pontual. Um por região, e só para o que precisa de
+         resposta: não lida, fora da janela, falha. */
+  --color-v2-laranja: #dd4222;
+  --color-v2-laranja-claro: #fdeee9;
+
+  /* --- superfícies e texto --------------------------------------------- */
+  --color-v2-fundo: #f4f1f4;
+  --color-v2-superficie: #ffffff;
+  --color-v2-superficie-2: #faf7fa;
+  --color-v2-tinta: #1c0e1b;
+  --color-v2-tinta-fraca: #6b6577; /* 5,60:1 sobre branco — passa como texto */
+  --color-v2-linha: #e7dfe6;
+  --color-v2-linha-forte: #cfc5cf; /* borda de controle: 3:1 */
+
+  --color-v2-ok: #1d6b45;
+  --color-v2-ok-claro: #e6f3ec;
+  --color-v2-erro: #b3261e;
+  --color-v2-erro-claro: #fdecea;
+
+  /* --- elevação Material, sombra tingida pelo escuro da marca ----------- */
+  --shadow-e1: 0 1px 2px rgb(28 14 27 / 0.10), 0 1px 3px 1px rgb(28 14 27 / 0.06);
+  --shadow-e2: 0 1px 2px rgb(28 14 27 / 0.12), 0 2px 6px 2px rgb(28 14 27 / 0.08);
+  --shadow-e3: 0 4px 8px 3px rgb(28 14 27 / 0.08), 0 1px 3px rgb(28 14 27 / 0.14);
+
+  --ease-padrao: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enfatico: cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+
+/* --- base mínima, SÓ dentro de .v2 ---------------------------------------
+   É o que o preflight faria, reduzido ao necessário e preso ao escopo. */
+@layer base {
+  .v2 {
+    color: var(--color-v2-tinta);
+    background: var(--color-v2-fundo);
+    -webkit-tap-highlight-color: transparent;
+    font-feature-settings: "cv11", "ss01";
+  }
+  .v2 *,
+  .v2 *::before,
+  .v2 *::after {
+    box-sizing: border-box;
+  }
+  .v2 button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .v2 input,
+  .v2 textarea {
+    font: inherit;
+    color: inherit;
+  }
+  .v2 p,
+  .v2 h1,
+  .v2 h2,
+  .v2 h3 {
+    margin: 0;
+  }
+  /* o iOS dá zoom em campo com fonte < 16px. Vale para os dois campos da tela. */
+  .v2 input,
+  .v2 textarea {
+    font-size: 16px;
+  }
+}
+
+/* --- ripple Material: o <Ripple/> injeta o span em qualquer [data-ripple] -- */
+.v2 [data-ripple] {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.v2 .ripple-onda {
+  position: absolute;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.14;
+  transform: scale(0);
+  pointer-events: none;
+  z-index: 0;
+  animation: v2-ripple 520ms var(--ease-padrao) forwards;
+}
+@keyframes v2-ripple {
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* bolha nova: entra de baixo, curto. Movimento que explica o que aconteceu. */
+@keyframes v2-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.v2 .entrar {
+  animation: v2-entrar 200ms var(--ease-enfatico) both;
+}
+
+/* foco visível: azul de CONTORNO (3:1). Nunca o azul de fundo. */
+.v2 :focus-visible {
+  outline: 2px solid var(--color-v2-azul-foco);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* rolagem fina, discreta, nas três colunas */
+.v2 .rolagem {
+  scrollbar-width: thin;
+  scrollbar-color: #d6cdd6 transparent;
+  overscroll-behavior: contain;
+}
+.v2 .rolagem::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.v2 .rolagem::-webkit-scrollbar-thumb {
+  background: #d6cdd6;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+.v2 .rolagem::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* esqueleto: pulso discreto, sem brilho correndo (que chama mais atenção que
+   o conteúdo que está chegando) */
+@keyframes v2-pulso {
+  50% {
+    opacity: 0.45;
+  }
+}
+.v2 .esqueleto {
+  background: #e9e2e9;
+  border-radius: 8px;
+  animation: v2-pulso 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2 *,
+  .v2 *::before,
+  .v2 *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -5854,3 +5854,64 @@ curto que existe: a conversa certa, com o cursor na caixa. Em Safari/iOS
    sem policy — que barra select/insert/update/delete e não isso. Corrigir é
    `revoke` em massa, com o mesmo risco de rollback silencioso que a §12.5 e a
    §71.5 já nomeiam. **Decisão pendente do usuário.**
+
+## 73. chat-v2 — a reconstrução do chat (19/09/2026)
+
+O `/chat` está sendo **reconstruído do zero** em `web/app/chat-v2/`, com Google
+Material sobre a paleta Murano, mobile-first e primeira carga no servidor. A
+spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
+andamento em `prototipos/chat-v2/relatorio.md`.
+
+**Fases:** 0 medir ✅ · **1 ler ✅** · 2 escrever · 3 completar · 4 ligação/push/
+embed · 5 paridade · 6 piloto por pessoa · 7 todos.
+
+### 73.1 As regras que não podem ser afrouxadas
+
+- **O chat antigo não é editado.** `app/chat/page.tsx` é a volta segura e segue
+  atendendo o time. **O v2 não importa nada de `app/chat/`** — o que estiver
+  preso lá se move para `lib/` (foi o caso de `useVirtualizacao`, agora em
+  `lib/virtualizacao.tsx`, com `app/chat/virtual.tsx` só reexportando).
+- **Regra de negócio não se reimplementa**: janela de 24h, escopo por carteira,
+  dono efetivo, erros da Meta, mídia e templates continuam vindo de `lib/`.
+- **Tailwind v4 sem preflight**, importado só em `app/chat-v2/layout.tsx`, com
+  tokens **prefixados** (`--color-v2-*`). O preflight resetaria as telas antigas,
+  e um `--color-primary` solto no `:root` passaria a valer em `/`, `/chat` e
+  `/admin` — a folha da rota continua no documento depois que a pessoa sai dela.
+- **Layout é CSS, não `window.innerWidth`.** É o que faz o v2 se ajustar sozinho
+  dentro do iframe do hub (§17) e da lupa do board (§41).
+- **O texto do compositor não sobe de componente.** Era a causa provável do peso
+  ao digitar: no chat antigo ele mora no componente de 5.400 linhas, e cada
+  tecla redesenha lista, conversa e painel.
+- **Nenhuma migration** sem pedir: o v2 usa as views e tabelas que já existem.
+
+### 73.2 A régua, e o que ela mede
+
+`prototipos/chat-v2/instrument.cjs` (preload que atribui cada ida ao banco à
+requisição que a provocou — o arquivo que o laudo de performance descrevia e
+que nunca tinha sido commitado) e `prototipos/chat-v2/medir.mjs`.
+
+Medido em 19/09, mesmo build, mesmo banco, 3 rodadas:
+
+| | `/chat` | `/chat-v2` |
+|---|---|---|
+| lista visível | 7.395 ms | **1.120 ms** |
+| bytes de API por sessão | 2.969 kB | **1 kB** |
+| abrir conversa (até a thread) | 1.680 ms | **724 ms** |
+| long tasks ao digitar 20 teclas | 1 (até 136 ms) | **0** |
+| First Load JS | 156 kB | **97,9 kB** |
+
+⚠️ **Compare contagem, bytes e long task, não o tempo absoluto**: a máquina de
+medição fala com o Supabase pela internet, e em produção as funções passaram a
+rodar em `gru1`, do lado do banco (PR #234).
+
+### 73.3 Três armadilhas desta frente
+
+1. **Rolar a thread para o fim uma vez não basta** — a virtualização mede as
+   alturas depois do primeiro render e as imagens chegam segundos depois. Quem
+   cola no fim é um `ResizeObserver`, e ele para de colar se a pessoa subiu.
+2. **Contar as filas dentro da carga da página** levou a primeira pintura de
+   994 ms para 3.816 ms. Contador caro sai para rota própria, pedida **depois**
+   da pintura; enquanto não chega, o chip fica **sem número** — nunca com zero.
+3. **`console.log` num preload de `--require`** derruba o `next start` com
+   "Cannot find module": o stdout do preload vira argumento do processo que o
+   Next levanta.
