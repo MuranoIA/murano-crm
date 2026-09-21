@@ -6042,7 +6042,21 @@ cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
    ter sido causadas pela minha parametrização** (origem do iframe e do
    `postMessage` via `api.BASE`): rodar o ciclo11 no `master` para decidir.
 
-**Para continuar:** buildar e conferir (no navegador, 360 px e desktop) a barra e
+**Produção (21/09/2026, fora da branch):** #236 (notificação abre a conversa),
+#229 (reentrega da Meta não reabre conversa) e #235 (recarga velha não desfaz o
+resolver) estão MERGEADOS e no ar. ⚠️ **A branch `feat/chat-v2` está 4 commits
+atrás do `master`** — trazer o master antes de seguir. Espere conflito em
+`web/app/api/whatsapp/webhook/route.ts` e `web/public/sw.js`: o #236 é a MESMA
+mudança que a branch já tem (commit `259ecfe`), então o conflito se resolve
+ficando com a versão do master. Pendência aberta com o usuário: a mensagem do
+commit `4cab918` no master cita uma cliente pelo nome (o código está limpo);
+reescrever exige force-push — decisão dele, não repropor sozinho.
+
+Observação da revisão do #229, não corrigida: na reentrega da Meta, o push de
+notificação e a resposta de fora do horário ainda rodam (só a reabertura ganhou
+a trava). A correção é a mesma trava `jaExistia` aplicada a eles.
+
+**Para continuar:** trazer o master; buildar e conferir (no navegador, 360 px e desktop) a barra e
 o "devolver"; depois a sequência do fim de `paridade.md` §4; depois as lacunas
 1 a 10, na ordem da tabela. Só então a fase 6.
 
