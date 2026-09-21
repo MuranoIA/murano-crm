@@ -5863,7 +5863,7 @@ spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
 andamento em `prototipos/chat-v2/relatorio.md`.
 
 **Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
-4 ligação/push/embed ✅ · **5 paridade — EM CURSO (ver 73.7)** · 6 piloto por
+4 ligação/push/embed ✅ · **5 paridade — lacunas fechadas, falta a suíte (ver 73.7)** · 6 piloto por
 pessoa · 7 todos e aposentar.
 
 **Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
@@ -6012,53 +6012,64 @@ como documento, que chega.
 conferir que a mensagem é DESTA conversa, dava para citar o wamid de outra
 cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
 
-### 73.7 ⚠️ ONDE A FASE 5 PAROU (21/09/2026) — leia antes de continuar
+### 73.7 ⚠️ ONDE A FASE 5 ESTÁ (21/09/2026, noite) — leia antes de continuar
 
-**O relatório vivo é `prototipos/chat-v2/paridade.md`.** Resumo do que ele diz:
+**O relatório vivo é `prototipos/chat-v2/paridade.md`** — a tabela da seção 0
+diz o estado de cada lacuna e com que prova.
 
-1. **A fase 4 dizia "41 de 41 (100%)" — e estava errado.** Contava o que foi
-   PLANEJADO, não o que o chat de hoje FAZ. Um diff de funções entre
-   `app/chat/page.tsx` e `app/chat-v2/` achou **13 lacunas**, duas delas filas
-   de trabalho diárias: **"Esperando"** (`vw_chat_espera`) e **"Minha carteira"**
-   (§38). As outras: novo contato (+), Recados da supervisão (0129), ficha
-   WinThor/"Pedir os dados" (§47), vincular ao ERP, Pausa (0106), pedir
-   localização da cliente, PDF, navegação do produto, ordenação, criar resposta
-   rápida, e "devolver" aparecendo onde o servidor recusa.
-   **Todas usam rotas que já existem — é tela, não sistema.**
-   **Recomendação registrada: não levar ao piloto antes de fechar as 10 primeiras.**
-2. **Os 96 itens do checklist**, contados por script: 34 ✅ · 7 ⚠️ · 3 ❌ ·
-   35 ➖ (não são da tela de chat) · 15 ⛔ (nenhum dos dois tem) · 2 cancelados.
-   ⚠️ O checklist está **desatualizado**: a 0114 FOI aplicada, e os 4 itens que
-   ele marca "pendente da 0114" têm as views no banco.
-3. **Já fechadas nesta sessão, NÃO BUILDADAS NEM TESTADAS** (só `tsc` limpo):
-   lacuna 13 (devolver só sem dono comercial) e lacuna 10 (barra do produto,
-   reusando `app/MenuSecundario.tsx` e `app/OrcamentoFlutuante.tsx`; lista nova
-   em `app/navegacao.ts` — o chat antigo e o funil ainda têm a sua cópia inline).
-4. **A suíte `testes/` foi parametrizada** (`CHAT_TELA=/chat-v2`, ver
-   `testes/api.mjs`). Só a linha de base contra `/chat` rodou, e **incompleta**:
-   71 ✅ · 14 ❌ · 10 pulados, parando no ciclo 9 por um erro meu (corrigido).
-   ⚠️ **A suíte NÃO está verde nem no chat de hoje** — separar suíte envelhecida
-   de regressão do v2 antes de acusar o v2. ⚠️ **As 5 falhas do ciclo 11 podem
-   ter sido causadas pela minha parametrização** (origem do iframe e do
-   `postMessage` via `api.BASE`): rodar o ciclo11 no `master` para decidir.
+**As 13 lacunas estão fechadas em código** (commits `c774c75` e `be84a17`,
+mais o merge do master `d0d2f03`), e as de tela foram medidas no navegador:
+`prova-paridade.mjs` 17/17 e `prova-paridade-b.mjs` (ver o fim desta seção).
+Nenhuma migration, nenhuma rota nova — só tela sobre rotas que já existiam.
 
-**Produção (21/09/2026, fora da branch):** #236 (notificação abre a conversa),
-#229 (reentrega da Meta não reabre conversa) e #235 (recarga velha não desfaz o
-resolver) estão MERGEADOS e no ar. ⚠️ **A branch `feat/chat-v2` está 4 commits
-atrás do `master`** — trazer o master antes de seguir. Espere conflito em
-`web/app/api/whatsapp/webhook/route.ts` e `web/public/sw.js`: o #236 é a MESMA
-mudança que a branch já tem (commit `259ecfe`), então o conflito se resolve
-ficando com a versão do master. Pendência aberta com o usuário: a mensagem do
-commit `4cab918` no master cita uma cliente pelo nome (o código está limpo);
-reescrever exige force-push — decisão dele, não repropor sozinho.
+| | Onde ficou |
+|---|---|
+| 1 "Esperando" | **não era lacuna**: é a régua do "Não lidas" do v2. O `sla` do `/api/chat` não é lido pela tela antiga |
+| 2 Minha carteira · 3 Novo contato | recorte "Carteira" na sidebar (`Carteira.tsx`) + botão **+** ao lado da busca |
+| 4 Recados | chip + selo + marca de visto ao abrir; contado em `contarFilas` |
+| 5 Ficha · 6 Vincular | `FichaCadastro.tsx` no painel; substituiu o editor nome+CPF. "Pedir os dados" usa o gesto `escrever` do compositor |
+| 7 Pausa · 8 Pedir localização · 9 PDF | "⋯" no cabeçalho da conversa (`MaisAcoes` em `Conversa.tsx`) |
+| 10 Barra do produto · 13 Devolver | da sessão anterior — agora medidas |
+| 11 Ordenação · 12 Criar resposta rápida | botão na fileira de chips · rodapé do menu do "/" |
 
-Observação da revisão do #229, não corrigida: na reentrega da Meta, o push de
-notificação e a resposta de fora do horário ainda rodam (só a reabertura ganhou
-a trava). A correção é a mesma trava `jaExistia` aplicada a eles.
+⚠️ **A ÚLTIMA RODADA (depois do conserto do menu a 360 px) NÃO ficou verde e
+não foi diagnosticada:** `prova-paridade-b` 23/24 → ainda falha "o menu cabe na
+tela" a 360 px, e numa segunda rodada caíram também ficha / "pedir os dados" /
+"nova resposta" a 360 px; `prova-paridade` caiu de 17/17 para 9/15 (o "+" do
+novo contato não abriu). As rodadas anteriores dos MESMOS passos passaram, então
+pode ser instabilidade do ambiente ou efeito do `min-w` no nome — **primeiro
+passo da próxima sessão: rodar as duas provas e olhar os screenshots em
+`testes/saidas/paridade-*`.**
 
-**Para continuar:** trazer o master; buildar e conferir (no navegador, 360 px e desktop) a barra e
-o "devolver"; depois a sequência do fim de `paridade.md` §4; depois as lacunas
-1 a 10, na ordem da tabela. Só então a fase 6.
+**Três achados de passagem, todos corrigidos:**
+- `/api/chat/respostas` devolve `corpo` e o compositor lia `texto`: colar punha
+  "undefined" e filtrar por um trecho sem atalho **derrubava a tela** (desde a
+  fase 2). Mapa na leitura (`emResposta`).
+- o selo "sem conversa" da agenda marcava TODO mundo com a lista em primeira
+  página; agora só aparece com a lista completa.
+- a 360 px o "⋯" abria para fora da tela e a fileira de ícones espremia o nome
+  até "E…" em conversa da fila; o nome ganhou `min-w` e o menu escolhe o lado.
+
+⚠️ **Não exercitado de propósito** (escrevem em dado real do time): "É a mesma
+pessoa" (cria vínculo), salvar resposta rápida (tabela da casa), baixar PDF
+(Storage) e avisar pausa. Estão presentes e usam as mesmas rotas do chat de
+hoje. Pedir localização FOI clicado (simulado).
+
+**Ainda falta para fechar a fase 5:**
+1. **A suíte `testes/` contra as duas telas** (paridade.md §4). Nada disso rodou
+   nesta sessão. Ordem: ciclo11 no `master` (decide se as 5 falhas são da
+   parametrização), suíte inteira contra `/chat`, depois contra `/chat-v2`.
+2. Limpar o ensaio no fim (`ensaio.mjs limpar`) — ele está criado agora, com
+   uma mensagem `sim.` de localização.
+3. Depois: fase 6 (piloto por pessoa) — é a primeira ida desta frente a
+   produção, **decisão do usuário**.
+
+**Produção:** a branch recebeu o master em 21/09 (#229, #234, #235, #236). O
+conflito no webhook era só comentário; ficou a versão do master. Pendência
+aberta com o usuário, não repropor sozinho: a mensagem do commit `4cab918` no
+master cita uma cliente pelo nome. Observação da revisão do #229, não
+corrigida: na reentrega da Meta o push e a resposta de fora do horário ainda
+rodam (a trava `jaExistia` só pegou a reabertura).
 
 **Ambiente para a suíte** (é diferente do dev da 73.1 — ela exige porta 3100):
 
@@ -6069,8 +6080,11 @@ CHAT_TELA=/chat    node testes/run.mjs     # linha de base
 CHAT_TELA=/chat-v2 node testes/run.mjs     # o v2
 ```
 
-⚠️ **Máquina:** disco C: a 99% (≈2 GB livres) e há OUTRA sessão buildando o
-`hub-v2` ao mesmo tempo — o build leva >10 min. Não matar processo alheio (§0).
+⚠️ **Máquina (21/09 noite):** ~14 GB livres. O build leva 10–15 min. Nesta
+sessão o `next start` e um `npm run build` em segundo plano morreram duas vezes
+com **exit 127 sem erro no log** — não era o código (o mesmo build passou na
+tentativa seguinte). Se acontecer, só repetir. `/login` responde 404 no build
+de produção: esperar pelo "Ready" no log, não por `/login`.
 
 ### 73.5 Armadilhas desta frente (todas custaram pelo menos uma rodada)
 
