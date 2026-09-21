@@ -203,6 +203,14 @@ async function gravarMensagemRecebida(
     ...(await processarMidia(sb, msg, wamid, cliente.id)),
     ...extrairLocalizacao(msg),
   };
+  // A Meta pode REENTREGAR o mesmo evento (rede, timeout do nosso lado, retry
+  // dela) — o upsert por `wamid` é idempotente por natureza, então a MENSAGEM
+  // não duplica. Mas o efeito colateral abaixo (reabrir a conversa) não tinha
+  // a mesma trava: reentrega de uma mensagem de DIAS atrás reabria uma
+  // conversa resolvida sem nenhuma atividade nova de verdade — sintoma
+  // relatado como "fechar não persiste" (cliente M.B., atendimento do Thiago, 18/09).
+  const jaExistia = !!(await sb.from("mensagens").select("id").eq("id", wamid).maybeSingle()).data;
+
   let { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });
 
   // ⚠️ A coluna `localizacao` nasce na 0115. Se o deploy chegar antes da
@@ -223,10 +231,14 @@ async function gravarMensagemRecebida(
   if (error) throw new FalhaAoGravar(`upsert mensagens: ${error.message}`);
 
   // conversa volta pra fila: cliente falou => reabre (status aberta/resolvida, §18 item 4)
-  await sb.from("chat_conversa").upsert(
-    { cliente_id: cliente.id, status: "aberta", atualizado_em: new Date().toISOString() },
-    { onConflict: "cliente_id" },
-  );
+  // Só quando a mensagem é GENUINAMENTE nova — reentrega não pode reabrir o
+  // que já foi encerrado sem nenhuma fala nova de verdade.
+  if (!jaExistia) {
+    await sb.from("chat_conversa").upsert(
+      { cliente_id: cliente.id, status: "aberta", atualizado_em: new Date().toISOString() },
+      { onConflict: "cliente_id" },
+    );
+  }
 
   // aviso de fora do horário (nasce desligado; não repete na mesma rajada).
   // Depois do upsert de propósito: se falhar, a mensagem da cliente já está salva.
@@ -273,8 +285,12 @@ async function gravarMensagemRecebida(
         //
         // O `cliente_id` já viajava neste payload (é ele que agrupa a rajada
         // pela `tag`); faltava só usá-lo aqui. As duas pontas já sabiam abrir:
-        // o service worker navega para esta url (`public/sw.js`) e as duas
-        // telas do chat leem `?cliente=` (§40.1). O elo que faltava era este.
+        // o service worker navega para esta url (`public/sw.js`) e o chat lê
+        // `?cliente=` desde o #182. O elo que faltava era este.
+        //
+        // O caminho do HUB já estava certo e não muda: o service worker de lá
+        // usa o `cliente_id` e IGNORA a `url`, de propósito — `/chat` é um
+        // caminho que não existe naquele domínio.
         url: `/chat?cliente=${encodeURIComponent(cliente.id)}`,
       });
     }
