@@ -65,6 +65,9 @@ export type Conversa = {
   etapa_board?: EtapaBoard | null;
   /** por qual número esta conversa corre. Só vem com `opts.linhas`. */
   linha_id?: string | null;
+  /** recados da supervisão que EU ainda não vi (0129); 0 = nenhum */
+  nota_nova: number;
+  nota_autor: string | null;
 };
 
 export type Contagens = {
@@ -73,6 +76,7 @@ export type Contagens = {
   favoritas: number;
   fila: number;
   resolvidas: number;
+  recados: number;
 };
 
 export type Lista = {
@@ -103,6 +107,34 @@ export type Lista = {
 /** O que a lista traz ALÉM do essencial. Nada disto entra na primeira carga. */
 export type Extras = { etapas?: boolean; linhas?: boolean };
 
+// ---------------------------------------------------------------------------
+// RECADOS (0129): nota interna de OUTRA pessoa que este usuário ainda não viu.
+//
+// A mesma régua do `/api/chat`, e pelo mesmo motivo sem segunda régua de dono:
+// quem recebe o aviso é quem tem a conversa na LISTA, e a lista já saiu do
+// escopo. `neq(autor)` impede o supervisor de ser avisado do próprio bilhete;
+// o coringa '*' marca as notas anteriores ao recurso (ver a migration).
+// Duas tabelas de dezenas de linhas: o cruzamento é em memória.
+// ---------------------------------------------------------------------------
+async function recadosNaoVistos(sb: any, usuario: string) {
+  const [notas, vistas] = await Promise.all([
+    sb.from("chat_nota").select("id,cliente_id,autor,criada_em")
+      .neq("autor", usuario).order("criada_em", { ascending: false }).limit(1000),
+    sb.from("chat_nota_vista").select("nota_id").in("usuario", [usuario, "*"]),
+  ]);
+  const visto = new Set((vistas.data ?? []).map((v: any) => Number(v.nota_id)));
+  const m = new Map<string, { n: number; autor: string }>();
+  for (const n of (notas.data ?? []) as any[]) {
+    if (visto.has(Number(n.id))) continue;
+    const j = m.get(n.cliente_id);
+    // da mais nova para a mais velha: a primeira de cada cliente é a que a
+    // tela mostra; as seguintes só somam
+    if (j) j.n += 1;
+    else m.set(n.cliente_id, { n: 1, autor: String(n.autor ?? "") });
+  }
+  return m;
+}
+
 const semSinteticos = (q: any) =>
   semEnsaio(q.not("cliente_id", "like", "venda:%").not("cliente_id", "like", "winthor:%"));
 
@@ -125,11 +157,12 @@ const semSinteticos = (q: any) =>
 // os contadores depois que já apareceu (`/api/chat-v2/contagens`).
 export async function contarFilas(s: Sessao): Promise<Contagens> {
   const sb = banco();
-  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib] = await Promise.all([
+  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados] = await Promise.all([
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
     sb.from("chat_conversa").select("cliente_id,status"),
     carregarAtribuicoes(sb),
+    recadosNaoVistos(sb, s.usuario),
   ]);
   const PAGE = 1000;
   const MAGRAS = "cliente_id,vendedor,ultima_atividade,ultima_enviada_por";
@@ -151,7 +184,7 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
   const favs = new Set((favoritos ?? []).map((f: any) => f.cliente_id));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e.status]));
 
-  const c: Contagens = { todas: 0, nao_lidas: 0, favoritas: 0, fila: 0, resolvidas: 0 };
+  const c: Contagens = { todas: 0, nao_lidas: 0, favoritas: 0, fila: 0, resolvidas: 0, recados: 0 };
   for (const l of linhas) {
     const dono = donoEfetivo(l.cliente_id, l.vendedor ?? null, atrib);
     const naFila = dono === null;
@@ -169,6 +202,10 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
       if (naoLida) c.nao_lidas++;
     }
     if (favs.has(l.cliente_id)) c.favoritas++;
+    // recado ATRAVESSA dono e status, como favorito: é um bilhete para mim,
+    // não um estado da conversa — escondê-lo numa resolvida faria o contador
+    // prometer o que a lista não mostra
+    if (recados.has(l.cliente_id)) c.recados++;
   }
   return c;
 }
@@ -181,7 +218,7 @@ export async function lerLista(
   const sb = banco();
   const PAGE = 1000;
 
-  const [atrib, favoritosRes, leiturasRes, estadosRes, vendedoresRes, atendemRes, linhasRes, meuEndereco] =
+  const [atrib, favoritosRes, leiturasRes, estadosRes, vendedoresRes, atendemRes, linhasRes, meuEndereco, recados] =
     await Promise.all([
     carregarAtribuicoes(sb),
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
@@ -200,6 +237,7 @@ export async function lerLista(
     // como admin pode ter carteira (o caso do Romulo) e o papel ativo não
     // muda de quem é a conversa.
     enderecoDeAtendimento(sb, s.sessao, s.usuario),
+    recadosNaoVistos(sb, s.usuario),
   ]);
 
   const linhasAtivas = (linhasRes.data ?? []).map((l: any) => ({
@@ -296,6 +334,8 @@ export async function lerLista(
         nao_lida:
           c.ultima_enviada_por === "customer" && (!marca || new Date(c.ultima_atividade) > new Date(marca)),
         favorita: favoritas.has(c.cliente_id),
+        nota_nova: recados.get(c.cliente_id)?.n ?? 0,
+        nota_autor: recados.get(c.cliente_id)?.autor ?? null,
         status: e?.status ?? "aberta",
         motivo: e?.motivo ?? null,
         ...(etapaDe ? { etapa_board: etapaDe(c) } : {}),

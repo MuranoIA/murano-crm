@@ -42,6 +42,8 @@ export function ListaConversas({
   comConversa,
   aoAbrirDaCarteira,
   aoNovoContato,
+  antigasPrimeiro,
+  aoInverterOrdem,
 }: {
   conversas: Conversa[];
   selecionada: string | null;
@@ -72,6 +74,8 @@ export function ListaConversas({
   comConversa: Set<string> | null;
   aoAbrirDaCarteira: (k: ItemCarteira) => void;
   aoNovoContato: () => void;
+  antigasPrimeiro: boolean;
+  aoInverterOrdem: () => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
 
@@ -219,6 +223,24 @@ export function ListaConversas({
               </span>
             )}
           </button>
+
+          {/* ordenação (lacuna 11). Na agenda não vale: ela é alfabética. */}
+          {fila !== "carteira" && (
+            <button
+              data-ripple
+              onClick={aoInverterOrdem}
+              aria-pressed={antigasPrimeiro}
+              title={antigasPrimeiro ? "Mostrando as mais antigas primeiro" : "Mostrando as mais recentes primeiro"}
+              className={[
+                "flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-[13px] transition-colors duration-150",
+                antigasPrimeiro
+                  ? "bg-v2-azul text-white"
+                  : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
+              ].join(" ")}
+            >
+              {antigasPrimeiro ? "↑ Mais antigas" : "↓ Mais recentes"}
+            </button>
+          )}
         </div>
       </div>
 

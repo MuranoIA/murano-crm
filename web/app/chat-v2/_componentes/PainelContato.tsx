@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { dinheiro, telefoneBonito } from "./formato";
 import type { Conversa } from "./tipos";
+import { FichaCadastro, MesmaPessoa, type CandidatoErp } from "./FichaCadastro";
 
 // O ERP ao lado da conversa. É a vantagem que o RD Conversas não tem — e no
 // chat antigo ela **some no celular** (`!isMobile`, achado 3 do laudo), que é
@@ -19,24 +20,26 @@ type Dados = {
   compras: { compras: number; ultima_compra: string | null; dias_sem_comprar: number | null; total_liquido: number | null; cidade: string | null; rca_oficial: string | null } | null;
   funil: { etapa: string | null; venda_valor: number | null; sem_cadastro: boolean | null } | null;
   ultimas_notas: { data_fat: string; valor: number; num_nota: number | null; filial: string | null }[];
+  /** mesmo NOME no WinThor com outro telefone, quando este número não tem vínculo */
+  erp_candidatos?: CandidatoErp[];
 };
 
 export function PainelContato({
   conversa,
   aoFechar,
   aoAviso,
+  aoPedirDados,
 }: {
   conversa: Conversa;
   aoFechar: () => void;
   aoAviso?: (texto: string, ok: boolean) => void;
+  /** põe o pedido de dados da ficha na caixa de mensagem (não envia) */
+  aoPedirDados?: (texto: string) => void;
 }) {
   const [d, setD] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [editando, setEditando] = useState(false);
-  const [nome, setNome] = useState("");
-  const [cpf, setCpf] = useState("");
-  const [salvando, setSalvando] = useState(false);
 
+  const [versao, setVersao] = useState(0);
   useEffect(() => {
     let vivo = true;
     setD(null);
@@ -51,9 +54,13 @@ export function PainelContato({
       // (§70 do CLAUDE.md, onde isso custou produção)
       vivo = false;
     };
-  }, [conversa.cliente_id]);
+  }, [conversa.cliente_id, versao]);
 
   const c = d?.compras;
+  // Tem ERP = o cadastro do WinThor manda (§46/0108): não há ficha a preencher,
+  // há o caminho para corrigir por lá. Card sintético do ERP não é contato.
+  const temErp = !!c;
+  const ehContato = !/^(winthor|venda):/.test(conversa.cliente_id);
   return (
     <aside className="flex h-full min-h-0 flex-col border-l border-v2-linha bg-v2-superficie">
       <header className="flex shrink-0 items-center gap-2 border-b border-v2-linha px-3 py-2.5">
@@ -117,99 +124,31 @@ export function PainelContato({
               <Linha rotulo="Carteira" valor={conversa.vendedor ?? (conversa.na_fila ? "na fila" : "—")} />
             </dl>
 
-            {/* ---- dar nome (e CPF) a quem chegou pela fila ---------------
-                O contato que o webhook cria tem o nome do PERFIL do WhatsApp,
-                que às vezes é o próprio número. E o CPF é o que liga ao ERP: o
-                reconciliador casa CPF a cada 10 min e o histórico de compra
-                aparece sozinho (§43.3) — por isso a ficha aqui é só nome+CPF.
-
-                ⚠️ Cliente JÁ vinculado não tem formulário: o cadastro é do
-                WinThor e é ele que manda no nome (§46). */}
-            {conversa.cliente_id.startsWith("wa:") && !conversa.codcli && (
-              <div className="mt-4 rounded-2xl border border-v2-linha p-3">
-                {!editando ? (
-                  <button
-                    data-ripple
-                    onClick={() => {
-                      setNome(conversa.cliente ?? "");
-                      setCpf("");
-                      setEditando(true);
-                    }}
-                    className="w-full rounded-full bg-v2-azul-claro px-3 py-2 text-[13px] font-semibold text-v2-azul"
-                  >
-                    Salvar contato (nome e CPF)
-                  </button>
-                ) : (
-                  <>
-                    <label className="block">
-                      <span className="text-[11px] uppercase tracking-wide text-v2-tinta-fraca">Nome</span>
-                      <input
-                        value={nome}
-                        onChange={(e) => setNome(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-xl border border-v2-linha-forte px-3 focus:border-v2-azul focus:outline-none"
-                      />
-                    </label>
-                    <label className="mt-2 block">
-                      <span className="text-[11px] uppercase tracking-wide text-v2-tinta-fraca">CPF ou CNPJ</span>
-                      <input
-                        value={cpf}
-                        onChange={(e) => setCpf(e.target.value)}
-                        inputMode="numeric"
-                        placeholder="só números"
-                        className="mt-1 h-10 w-full rounded-xl border border-v2-linha-forte px-3 focus:border-v2-azul focus:outline-none"
-                      />
-                    </label>
-                    <p className="mt-2 text-[11.5px] leading-4 text-v2-tinta-fraca">
-                      Com o CPF preenchido, o vínculo com o cadastro do WinThor aparece em até 10 minutos, junto com o
-                      histórico de compra.
-                    </p>
-                    <div className="mt-2 flex justify-end gap-2">
-                      <button
-                        data-ripple
-                        onClick={() => setEditando(false)}
-                        className="rounded-full px-3 py-1.5 text-[13px] text-v2-tinta-fraca"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        data-ripple
-                        disabled={salvando || nome.trim().length < 2}
-                        onClick={() => {
-                          setSalvando(true);
-                          fetch("/api/chat/contato", {
-                            method: "PATCH",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({
-                              cliente_id: conversa.cliente_id,
-                              nome: nome.trim(),
-                              ...(cpf.trim() ? { cpf: cpf.trim() } : {}),
-                            }),
-                          })
-                            .then(async (r) => {
-                              const j = await r.json().catch(() => ({}));
-                              if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
-                              return j;
-                            })
-                            .then((j) => {
-                              setEditando(false);
-                              aoAviso?.(j?.aviso ?? "Contato salvo.", true);
-                            })
-                            .catch((e) => aoAviso?.(String(e?.message ?? e), false))
-                            .finally(() => setSalvando(false));
-                        }}
-                        className="rounded-full bg-v2-azul px-3 py-1.5 text-[13px] font-semibold text-white disabled:bg-v2-linha-forte"
-                      >
-                        {salvando ? "salvando…" : "Salvar"}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+            {/* ---- cadastro: ERP manda, ou ficha para o ERP (paridade 5 e 6) ---
+                Substitui o "salvar nome e CPF": a ficha grava os dois e mais o
+                que o WinThor exige. Cliente vinculado não tem formulário — o
+                cadastro é do ERP e é ele que manda no nome (§46). */}
+            {ehContato && temErp && (
+              <p className="mt-4 rounded-xl bg-v2-superficie-2 px-3 py-2 text-[12px] leading-4 text-v2-tinta-fraca">
+                <b className="text-v2-tinta">Cadastro do WinThor.</b> Nome, CPF e endereço vêm do ERP e não são
+                editados aqui — corrigir por lá vale para todo mundo, e chega em até 10 minutos.
+              </p>
+            )}
+            {ehContato && !temErp && (
+              <>
+                <MesmaPessoa
+                  clienteId={conversa.cliente_id}
+                  candidatos={d.erp_candidatos ?? []}
+                  aoAviso={aoAviso}
+                  aoVinculado={() => setVersao((v) => v + 1)}
+                />
+                <FichaCadastro clienteId={conversa.cliente_id} aoPedirDados={aoPedirDados} aoAviso={aoAviso} />
+              </>
             )}
 
             {d.funil?.sem_cadastro && (
               <p className="mt-3 rounded-lg bg-v2-laranja-claro px-3 py-2 text-[12px] leading-4 text-v2-laranja">
-                Não encontrei este contato no WinThor. Com o CPF preenchido, o vínculo aparece em até 10 minutos.
+                Não encontrei este contato no WinThor. Com o CPF/CNPJ na ficha, o vínculo aparece em até 10 minutos.
               </p>
             )}
 

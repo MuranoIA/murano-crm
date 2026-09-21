@@ -101,10 +101,16 @@ export function Casca({
   embutido: boolean;
 }) {
   const [lista, setLista] = useState<Conversa[]>(inicial.conversas);
+  // lido dentro de callbacks estáveis (o `abrir`), sem torná-los instáveis
+  const listaRef = useRef(lista);
+  listaRef.current = lista;
   const [completa, setCompleta] = useState(!inicial.tem_mais);
   const [carregandoLista, setCarregandoLista] = useState(false);
 
   const [fila, setFila] = useState<Fila>("todas");
+  // ordenação (paridade, lacuna 11): "mais antiga" é o jeito de atacar a fila
+  // por quem espera há mais tempo. Só reordena o que já está na tela.
+  const [antigasPrimeiro, setAntigasPrimeiro] = useState(false);
   const [busca, setBusca] = useState("");
 
   const [aberta, setAberta] = useState<string | null>(threadInicial?.cliente_id ?? null);
@@ -145,6 +151,7 @@ export function Casca({
           vendedor: null, carteira_dona: null, transferida_de: null, etapa: null,
           ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
           nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
+          nota_nova: 0, nota_autor: null,
         }
       : null,
   );
@@ -197,6 +204,13 @@ export function Casca({
     gesto.current = fn;
   }, []);
   const publicarLigacao = useCallback((api: ApiLigacao | null) => setLigacao(api), []);
+  // "Pedir os dados" da ficha: o texto vai para a CAIXA, pelo compositor. No
+  // celular o painel é uma folha por cima da conversa — fechá-la é o que deixa
+  // a pessoa ver o texto que acabou de entrar.
+  const pedirDados = useCallback((t: string) => {
+    setPainelAberto((aberto) => (window.matchMedia("(min-width: 1280px)").matches ? aberto : false));
+    gesto.current?.("escrever", undefined, t);
+  }, []);
 
   // os contadores dos chips: pedidos DEPOIS da pintura, porque contar varre as
   // ~4 mil conversas. Enquanto não chegam, o chip aparece sem número — nunca
@@ -392,6 +406,7 @@ export function Casca({
             transferida_de: null, etapa: null,
             ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
             nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
+          nota_nova: 0, nota_autor: null,
           });
         }
       })
@@ -404,7 +419,26 @@ export function Casca({
     // apaga o marcador na hora e não espera resposta: se o servidor recusar, o
     // próximo carregamento devolve o "não lida", que é o certo.
     marcarMutacao();
-    setLista((atual) => atual.map((c) => (c.cliente_id === id ? { ...c, nao_lida: false } : c)));
+    // Recado: o aviso some porque a pessoa chegou onde o bilhete estava, sem
+    // um "ok, dispensar". Só chama quando HÁ recado — sem a guarda, toda
+    // abertura pagaria um round-trip para não escrever nada.
+    if (listaRef.current.find((c) => c.cliente_id === id)?.nota_nova) {
+      fetch("/api/chat/notas", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id }),
+      }).catch(() => {});
+    }
+    // ⚠️ o OTIMISMO do "lida" também só vale para quem atende. Para quem está
+    // conferindo, o servidor recusa a marca, e apagar a bolinha aqui a faria
+    // voltar na recarga seguinte — pior que nunca tirar (é a régua do chat de
+    // hoje, `souQuemAtende`).
+    const souQuemAtende = (c: Conversa) => !!inicial.meu_endereco && c.vendedor === inicial.meu_endereco;
+    setLista((atual) =>
+      atual.map((c) =>
+        c.cliente_id === id ? { ...c, nao_lida: souQuemAtende(c) ? false : c.nao_lida, nota_nova: 0 } : c,
+      ),
+    );
     fetch("/api/chat/lida", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -412,7 +446,7 @@ export function Casca({
     })
       .then(() => recarregarContagens())
       .catch(() => {});
-  }, [recarregarContagens, marcarMutacao]);
+  }, [recarregarContagens, marcarMutacao, inicial.meu_endereco]);
 
   const fechar_ = useCallback(() => {
     setAberta(null);
@@ -824,6 +858,68 @@ export function Casca({
     [apanharNovas, avisar],
   );
 
+  // ---- PAUSA, PEDIR LOCALIZAÇÃO e PDF (paridade, lacunas 7, 8 e 9) --------
+  // As três rotas já existem e já carregam as travas (janela de 24h, não
+  // repetir o aviso, o PDF pelo Storage). A tela só faz o gesto e diz o
+  // desfecho.
+  const postarNaConversa = useCallback(
+    (rota: string, corpo: Record<string, unknown>, ok: string) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setEnviando(true);
+      fetch(rota, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, ...corpo }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => {
+          avisar(ok, { tom: "ok" });
+          apanharNovas();
+          recarregarLista();
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setEnviando(false));
+    },
+    [apanharNovas, recarregarLista, avisar],
+  );
+  const avisarPausa = useCallback(
+    () => postarNaConversa("/api/chat/pausa", {}, "Aviso de pausa enviado."),
+    [postarNaConversa],
+  );
+  const pedirLocal = useCallback(
+    () => postarNaConversa("/api/chat/localizacao", { pedir: true }, "Pedido de localização enviado."),
+    [postarNaConversa],
+  );
+  // ⚠️ A rota devolve o ENDEREÇO, não os bytes: um PDF com fotos passa dos
+  // 4,5 MB que a Vercel corta, então o arquivo vem do Storage. `fetch` e não um
+  // `<a href>` direto para dar "gerando…" e o erro na tela — dentro do iframe do
+  // hub, uma aba que falha falha em silêncio.
+  const baixarPdf = useCallback(() => {
+    const id = abertaRef.current;
+    if (!id) return;
+    const aviso = avisar("Gerando o PDF…", { tom: "neutro", ms: 60_000 });
+    fetch(`/api/chat/pdf?cliente_id=${encodeURIComponent(id)}`)
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j?.error ?? `falha ao gerar (${r.status})`);
+        return j.url as string;
+      })
+      .then((url) => {
+        const a = document.createElement("a");
+        a.href = url;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      })
+      .catch((e) => avisar(`Não consegui gerar o PDF: ${e?.message ?? e}`, { tom: "erro" }))
+      .finally(() => fechar(aviso));
+  }, [avisar, fechar]);
+
   // ---- NOTA INTERNA: não vai para a cliente, e por isso não é `mensagens` --
   const mandarNota = useCallback(
     (texto: string) => {
@@ -1001,6 +1097,7 @@ export function Casca({
         favoritas: s ? s.favoritas : null,
         fila: s ? s.fila : null,
         resolvidas: s ? s.resolvidas : null,
+        recados: s ? s.recados ?? null : null,
         carteira: null,
       };
     }
@@ -1010,6 +1107,7 @@ export function Casca({
       favoritas: lista.filter((c) => c.favorita).length,
       fila: lista.filter((c) => c.na_fila).length,
       resolvidas: lista.filter((c) => c.status === "resolvida").length,
+      recados: lista.filter((c) => c.nota_nova > 0).length,
       // agenda, não fila: o número dela mora no cabeçalho da própria lista
       carteira: null,
     };
@@ -1040,7 +1138,7 @@ export function Casca({
     const t = busca.trim().toLowerCase();
     const so = t.replace(/\D/g, "");
     if (fila === "carteira") return [];
-    return lista.filter((c) => {
+    const filtradas = lista.filter((c) => {
       if (!passaVend(c) || !passaLinha(c) || !passaEtapa(c)) return false;
       const passaFila =
         fila === "todas"
@@ -1051,7 +1149,9 @@ export function Casca({
               ? c.favorita
               : fila === "fila"
                 ? c.na_fila
-                : fila === "resolvidas"
+                : fila === "recados"
+                  ? c.nota_nova > 0
+                  : fila === "resolvidas"
                   ? c.status === "resolvida"
                   : false;
       if (!passaFila) return false;
@@ -1060,7 +1160,9 @@ export function Casca({
       const tel = String(c.telefone ?? "").replace(/\D/g, "");
       return nome.includes(t) || (so.length >= 3 && tel.includes(so));
     });
-  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa]);
+    // a lista chega da mais recente para a mais antiga: inverter é de graça
+    return antigasPrimeiro ? filtradas.slice().reverse() : filtradas;
+  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro]);
 
   // ---- quem aparece no seletor de consultor -------------------------------
   //
@@ -1095,6 +1197,7 @@ export function Casca({
       : fila === "nao_lidas" ? c.nao_lida && !c.na_fila && c.status !== "resolvida"
       : fila === "favoritas" ? c.favorita
       : fila === "fila" ? c.na_fila
+      : fila === "recados" ? c.nota_nova > 0
       : fila === "resolvidas" ? c.status === "resolvida"
       : false;
 
@@ -1318,6 +1421,13 @@ export function Casca({
             comConversa={comConversa}
             aoAbrirDaCarteira={abrirDaCarteira}
             aoNovoContato={() => setNovoContato({ doErp: null })}
+            antigasPrimeiro={antigasPrimeiro}
+            aoInverterOrdem={() => {
+              setAntigasPrimeiro((v) => !v);
+              // "mais antiga" é o FIM da lista: sem ela inteira, a primeira
+              // página invertida mostraria a 60ª, não a mais antiga de fato
+              setPrecisaCompleta(true);
+            }}
           />
         </div>
         )}
@@ -1379,6 +1489,9 @@ export function Casca({
             }
             aoResponder={setCitando}
             aoCancelarCitacao={() => setCitando(null)}
+            aoPausa={avisarPausa}
+            aoPedirLocal={pedirLocal}
+            aoPdf={baixarPdf}
           />
         </div>
 
@@ -1389,6 +1502,7 @@ export function Casca({
               conversa={conversaAberta}
               aoFechar={() => setPainelAberto(false)}
               aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
+              aoPedirDados={pedirDados}
             />
           </div>
         )}
@@ -1411,6 +1525,7 @@ export function Casca({
               conversa={conversaAberta}
               aoFechar={() => setPainelAberto(false)}
               aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
+              aoPedirDados={pedirDados}
             />
             </div>
           </div>

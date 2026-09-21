@@ -6,11 +6,15 @@ export type { Mensagem, Thread } from "../_dados/thread";
 
 /** Os recortes da sidebar. Um estado só: dois controles para a mesma escolha
  *  acabam se contradizendo (CLAUDE.md §32 e §68.2). */
-export type Fila = "todas" | "nao_lidas" | "favoritas" | "fila" | "resolvidas" | "carteira";
+export type Fila = "todas" | "nao_lidas" | "recados" | "favoritas" | "fila" | "resolvidas" | "carteira";
 
 export const FILAS: { id: Fila; rotulo: string; curto: string }[] = [
   { id: "todas", rotulo: "Todas", curto: "Todas" },
   { id: "nao_lidas", rotulo: "Não lidas", curto: "Não lidas" },
+  // Recados da supervisão (0129): nota interna de OUTRA pessoa que eu ainda não
+  // vi. Ao lado de "Não lidas" porque as duas respondem "tem alguma coisa
+  // esperando por MIM?" — uma da cliente, a outra da supervisão.
+  { id: "recados", rotulo: "Recados", curto: "Recados" },
   { id: "favoritas", rotulo: "Favoritas", curto: "Favoritas" },
   { id: "fila", rotulo: "Fila de espera", curto: "Fila" },
   { id: "resolvidas", rotulo: "Resolvidas", curto: "Resolvidas" },

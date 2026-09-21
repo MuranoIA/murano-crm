@@ -78,8 +78,17 @@ function Linha({
           )}
         </span>
 
-        {(c.na_fila || resolvida || c.transferida_de || (presentes && presentes.length > 0)) && (
+        {(c.na_fila || resolvida || c.transferida_de || c.nota_nova > 0 || (presentes && presentes.length > 0)) && (
           <span className="mt-1 flex flex-wrap items-center gap-1">
+            {/* o recado é da supervisão PARA mim: pede ação, por isso laranja */}
+            {c.nota_nova > 0 && (
+              <span
+                title={c.nota_autor ? `recado de ${c.nota_autor}` : "recado da supervisão"}
+                className="rounded-full bg-v2-laranja-claro px-1.5 py-px text-[10px] font-medium text-v2-laranja"
+              >
+                🗒 {c.nota_nova > 1 ? `${c.nota_nova} recados` : "recado"}
+              </span>
+            )}
             {c.na_fila && (
               <span className="rounded-full bg-v2-laranja-claro px-1.5 py-px text-[10px] font-medium text-v2-laranja">
                 na fila

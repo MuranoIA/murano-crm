@@ -28,6 +28,83 @@ const horasEMinutos = (ms: number) => {
   return h >= 1 ? `${h}h${String(min % 60).padStart(2, "0")}` : `${min} min`;
 };
 
+// ---------------------------------------------------------------------------
+// MAIS AÇÕES — os gestos raros da conversa (paridade, lacunas 7, 8 e 9).
+//
+// Atrás de um "⋯" e não na fileira de ícones: a 360 px o cabeçalho já leva
+// voltar, avatar, nome, ligar, favoritar, transferir, resolver e ficha. Mais
+// três ícones empurrariam o nome para fora, e o nome é o que responde "com
+// quem estou falando?".
+//
+// Pausa e pedir localização são mensagens LIVRES: só existem com a janela de
+// 24h aberta. Fora dela o item aparece desligado e DIZ o porquê — o servidor
+// recusaria de qualquer forma (422), e um item que falha ao clicar ensina que
+// o sistema não funciona.
+// ---------------------------------------------------------------------------
+function MaisAcoes({
+  janelaAberta,
+  aoPausa,
+  aoPedirLocal,
+  aoPdf,
+}: {
+  janelaAberta: boolean;
+  aoPausa?: () => void;
+  aoPedirLocal?: () => void;
+  aoPdf?: () => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  // De que lado o menu abre. O cabeçalho QUEBRA LINHA no celular, e o "⋯" pode
+  // cair na ponta esquerda da segunda linha: ancorado à direita, o menu saía da
+  // tela (medido a 360 px). Decide na hora do clique, pela posição real.
+  const [paraDireita, setParaDireita] = useState(false);
+  const ancora = useRef<HTMLSpanElement>(null);
+  if (!aoPausa && !aoPedirLocal && !aoPdf) return null;
+  const item = (rotulo: string, dica: string, fn: (() => void) | undefined, livre: boolean) =>
+    fn && (
+      <button
+        data-ripple
+        role="menuitem"
+        disabled={livre && !janelaAberta}
+        onClick={() => { setAberto(false); fn(); }}
+        className="block w-full px-4 py-2.5 text-left hover:bg-v2-superficie-2 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      >
+        <span className={["block text-[14px] font-medium", livre && !janelaAberta ? "text-v2-tinta-fraca" : "text-v2-tinta"].join(" ")}>
+          {rotulo}
+        </span>
+        <span className="block text-[12px] text-v2-tinta-fraca">
+          {livre && !janelaAberta ? "só com a janela de 24h aberta" : dica}
+        </span>
+      </button>
+    );
+  return (
+    <span ref={ancora} className="relative shrink-0">
+      <Acao
+        rotulo="Mais ações"
+        ativo={aberto}
+        onClick={() => {
+          const r = ancora.current?.getBoundingClientRect();
+          setParaDireita(!!r && r.right < 270);
+          setAberto((v) => !v);
+        }}
+      >
+        <svg viewBox="0 0 24 24" className="size-5" fill="currentColor">
+          <circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" />
+        </svg>
+      </Acao>
+      {aberto && (
+        <>
+          <span className="fixed inset-0 z-30" onClick={() => setAberto(false)} aria-hidden />
+          <div role="menu" className={["entrar absolute top-11 z-40", paraDireita ? "left-0" : "right-0"].join(" ") + "  w-[260px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl bg-v2-superficie py-1 shadow-e3 ring-1 ring-v2-linha"}>
+            {item("Avisar pausa", "manda à cliente o aviso de ausência", aoPausa, true)}
+            {item("Pedir a localização", "abre no aparelho dela o compartilhar localização", aoPedirLocal, true)}
+            {item("Baixar conversa em PDF", "o histórico inteiro, com as fotos", aoPdf, false)}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
 function Acao({
   rotulo,
   ativo,
@@ -102,6 +179,9 @@ export function Conversa({
   citando,
   aoResponder,
   aoCancelarCitacao,
+  aoPausa,
+  aoPedirLocal,
+  aoPdf,
 }: {
   conversa: TConversa | null;
   mensagens: Mensagem[];
@@ -150,6 +230,9 @@ export function Conversa({
   citando?: { id: string; trecho: string; minha: boolean } | null;
   aoResponder?: (m: Mensagem) => void;
   aoCancelarCitacao?: () => void;
+  aoPausa?: () => void;
+  aoPedirLocal?: () => void;
+  aoPdf?: () => void;
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
 
@@ -274,7 +357,10 @@ export function Conversa({
           {iniciais(conversa.cliente)}
         </span>
 
-        <div className="min-w-0 flex-1 px-1">
+        {/* `min-w` e não só `flex-1`: com "✋ Pegar" a fileira de ícones espremia
+            o nome até "E…" a 360 px. O nome responde "com quem estou falando?"
+            — quem cede é a fileira, que quebra para a linha de baixo. */}
+        <div className="min-w-[128px] flex-1 px-1">
           <p className="truncate text-[15px] font-semibold leading-5">{nomeLimpo(conversa.cliente)}</p>
           <p className="truncate text-[12px] leading-4 text-v2-tinta-fraca">
             {conversa.codcli ? `cód. ${conversa.codcli} · ` : ""}
@@ -332,6 +418,8 @@ export function Conversa({
             <path d="M4 19V9m5 10V5m5 14v-7m5 7V8" />
           </svg>
         </Acao>
+
+        <MaisAcoes janelaAberta={j.aberta} aoPausa={aoPausa} aoPedirLocal={aoPedirLocal} aoPdf={aoPdf} />
       </header>
 
       {/* ---- anti-colisão: alguém mais está aqui --------------------------

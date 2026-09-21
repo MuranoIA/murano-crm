@@ -17,9 +17,19 @@ import { useGravador } from "./audio";
 // ---------------------------------------------------------------------------
 
 export type Resposta = { id: number; atalho: string; texto: string; carteira: string | null };
+/** a rota (a mesma do chat de hoje) chama o texto de `corpo` */
+const emResposta = (r: any): Resposta => ({
+  id: Number(r?.id),
+  atalho: String(r?.atalho ?? ""),
+  texto: String(r?.corpo ?? r?.texto ?? ""),
+  carteira: r?.carteira ?? null,
+});
 
 /** Os três gestos que o compositor expõe para fora. */
-export type Gesto = (qual: "audio" | "anexo" | "soltar", arquivos?: File[]) => void;
+/** Os gestos que vêm de FORA do compositor. `escrever` põe um texto na caixa
+ *  sem enviar (o "Pedir os dados" da ficha): o texto continua morando aqui e
+ *  não sobe de componente — quem chama só entrega a frase. */
+export type Gesto = (qual: "audio" | "anexo" | "soltar" | "escrever", arquivos?: File[], texto?: string) => void;
 
 export function Compositor({
   podeEnviar,
@@ -85,13 +95,28 @@ export function Compositor({
 
   useEffect(() => {
     if (!aoRegistrarGesto) return;
-    aoRegistrarGesto((qual, fs) => {
+    aoRegistrarGesto((qual, fs, t) => {
       if (qual === "audio") void gravar();
       else if (qual === "soltar") mandar(fs ?? []);
+      else if (qual === "escrever") {
+        // sem janela não há mensagem livre: escrever na caixa um texto que não
+        // pode sair seria convidar a um envio que falha
+        if (!janelaAberta) {
+          aoErro("A janela de 24h está fechada — só um template reabre a conversa.");
+          return;
+        }
+        setNota(false);
+        setTexto(t ?? "");
+        // depois do render, para o cursor ir ao FIM do texto que acabou de entrar
+        setTimeout(() => {
+          const el = campo.current;
+          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+        }, 20);
+      }
       else arquivo.current?.click();
     });
     return () => aoRegistrarGesto(null);
-  }, [aoRegistrarGesto, gravar, mandar]);
+  }, [aoRegistrarGesto, gravar, mandar, janelaAberta, aoErro]);
 
   // cresce até ~5 linhas e depois rola por dentro.
   // ⚠️ `height = "0px"` antes de ler o `scrollHeight`: com "auto" o navegador
@@ -109,11 +134,53 @@ export function Compositor({
     if (respostas) return;
     fetch("/api/chat/respostas")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j) => setRespostas(j.respostas ?? []))
+      // ⚠️ A rota devolve `corpo`, não `texto` (é a mesma do chat de hoje, que
+      // lê `corpo`). Sem este mapa, colar uma resposta punha `undefined` na
+      // caixa, e filtrar por um trecho que não batesse no atalho chamava
+      // `.toLowerCase()` em `undefined` — a tela inteira caía.
+      .then((j) => setRespostas((j.respostas ?? []).map(emResposta)))
       .catch(() => setRespostas([]));
   }, [respostas]);
 
+  // ---- CRIAR resposta rápida (paridade, lacuna 12) ------------------------
+  // O chat de hoje salva o texto da caixa como resposta nova. Aqui o mesmo
+  // gesto mora no rodapé do menu do "/": quem procurou um atalho e não achou
+  // está exatamente no momento de criá-lo. Vendedor cria a PESSOAL; admin e
+  // home, a da casa — quem decide é o servidor, pela sessão.
+  const [criando, setCriando] = useState<{ atalho: string; texto: string } | null>(null);
+  const [salvandoResp, setSalvandoResp] = useState(false);
+  function salvarResposta() {
+    if (!criando || salvandoResp) return;
+    const atalho = criando.atalho.replace(/^\//, "").trim();
+    const corpo = criando.texto.trim();
+    if (!atalho || !corpo) return;
+    setSalvandoResp(true);
+    fetch("/api/chat/respostas", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ atalho, corpo, titulo: corpo.slice(0, 40) }),
+    })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        return j;
+      })
+      .then((j) => {
+        const nova = emResposta(j.resposta);
+        setRespostas((rs) => [...(rs ?? []), nova].sort((a, b) => a.atalho.localeCompare(b.atalho)));
+        setCriando(null);
+        // a resposta recém-criada já vai para a caixa: foi para usar que ela nasceu
+        setTexto(nova.texto);
+        setMenu(false);
+        campo.current?.focus();
+      })
+      .catch((e) => aoErro(`Não consegui salvar a resposta: ${e?.message ?? e}`))
+      .finally(() => setSalvandoResp(false));
+  }
+
   const filtro = menu ? texto.slice(1).toLowerCase() : "";
+  // fechar o menu desfaz um formulário de criação pela metade
+  useEffect(() => { if (!menu) setCriando(null); }, [menu]);
   const sugestoes = (respostas ?? []).filter(
     (r) => !filtro || r.atalho.toLowerCase().includes(filtro) || r.texto.toLowerCase().includes(filtro),
   );
@@ -181,7 +248,7 @@ export function Compositor({
           ) : sugestoes.length === 0 ? (
             <p className="px-3 py-2 text-[13px] text-v2-tinta-fraca">Nenhuma resposta rápida com esse atalho.</p>
           ) : (
-            sugestoes.map((r, i) => (
+            !criando && sugestoes.map((r, i) => (
               <button
                 key={r.id}
                 data-ripple
@@ -199,6 +266,49 @@ export function Compositor({
                 <span className="mt-0.5 block truncate text-[13px] text-v2-tinta-fraca">{r.texto}</span>
               </button>
             ))
+          )}
+          {respostas !== null && (
+            criando ? (
+              <div className="border-t border-v2-linha p-2">
+                <input
+                  autoFocus
+                  value={criando.atalho}
+                  onChange={(e) => setCriando({ ...criando, atalho: e.target.value.replace(/[^a-zA-Z0-9/]/g, "") })}
+                  placeholder="atalho (ex.: pix)"
+                  aria-label="Atalho da resposta"
+                  className="h-9 w-full rounded-lg border border-v2-linha-forte px-2.5 text-[13.5px] focus:border-v2-azul focus:outline-none"
+                />
+                <textarea
+                  value={criando.texto}
+                  onChange={(e) => setCriando({ ...criando, texto: e.target.value })}
+                  rows={3}
+                  placeholder="O texto que vai para a caixa"
+                  aria-label="Texto da resposta"
+                  className="mt-1.5 w-full resize-none rounded-lg border border-v2-linha-forte px-2.5 py-1.5 text-[13.5px] focus:border-v2-azul focus:outline-none"
+                />
+                <div className="mt-1 flex justify-end gap-2">
+                  <button data-ripple onClick={() => setCriando(null)} className="rounded-full px-3 py-1 text-[13px] text-v2-tinta-fraca">
+                    Cancelar
+                  </button>
+                  <button
+                    data-ripple
+                    disabled={salvandoResp || !criando.atalho.replace("/", "").trim() || !criando.texto.trim()}
+                    onClick={salvarResposta}
+                    className="rounded-full bg-v2-azul px-3 py-1 text-[13px] font-semibold text-white disabled:bg-v2-linha-forte"
+                  >
+                    {salvandoResp ? "salvando…" : "Salvar"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                data-ripple
+                onClick={() => setCriando({ atalho: texto.slice(1).trim(), texto: "" })}
+                className="mt-1 block w-full rounded-lg border-t border-v2-linha px-3 py-2 text-left text-[13px] font-medium text-v2-azul hover:bg-v2-superficie-2"
+              >
+                ＋ Nova resposta rápida{filtro ? ` /${texto.slice(1).trim()}` : ""}
+              </button>
+            )
           )}
         </div>
       )}

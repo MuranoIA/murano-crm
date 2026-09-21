@@ -24,6 +24,42 @@ detalhe — duas são filas de trabalho que a equipe usa o dia inteiro.
 
 ---
 
+## 0. ESTADO EM 21/09/2026 (noite) — as 13 lacunas, uma a uma
+
+| # | Lacuna | Estado | Prova |
+|---|---|---|---|
+| 1 | Fila "Esperando" | **não era lacuna** — ver abaixo | leitura dos dois códigos |
+| 2 | Minha carteira | ✅ fechada (`c774c75`) | `prova-paridade.mjs` |
+| 3 | Novo contato (+) | ✅ fechada (`c774c75`) | `prova-paridade.mjs` |
+| 4 | Recados da supervisão | ✅ chip + selo + marca de visto ao abrir | `prova-paridade-b.mjs` (chip) |
+| 5 | Ficha WinThor + "Pedir os dados" | ✅ no painel; substitui o editor nome+CPF | `prova-paridade-b.mjs` |
+| 6 | Vincular ("É a mesma pessoa") | ✅ no painel, com confirmação | ⚠️ **não exercitado** (escreve vínculo real) |
+| 7 | Pausa | ✅ no "⋯" da conversa | item presente; **não clicado** |
+| 8 | Pedir localização | ✅ no "⋯" | clicado (simulado) |
+| 9 | PDF | ✅ no "⋯" | item presente; **não clicado** (grava no Storage) |
+| 10 | Navegação do produto | ✅ (sessão anterior) — agora medida | `prova-paridade.mjs` |
+| 11 | Ordenação | ✅ "↓ Mais recentes / ↑ Mais antigas" | `prova-paridade-b.mjs` |
+| 12 | Criar resposta rápida | ✅ rodapé do menu do "/" | formulário aberto; **não salvo** (tabela do time) |
+| 13 | "Devolver" só sem dono | ✅ (sessão anterior) — agora medida nos dois sentidos | `prova-paridade.mjs` |
+
+**A lacuna 1 era um erro deste relatório.** O chip "Esperando" do chat de hoje
+é a fila `pendentes`: `aberta && nao_lida && !na_fila` (`app/chat/page.tsx`,
+`contaPendentes`). É exatamente a régua do "Não lidas" do v2. O `sla` com
+`vw_chat_espera` que o `/api/chat` devolve **não é lido pela tela antiga** —
+`grep` por `sla` em `app/chat/` não acha consumidor. Não há o que portar. O
+único detalhe de régua que faltava — o otimismo do "lida" valer só para quem
+ATENDE a conversa (`souQuemAtende`) — foi portado.
+
+**Bug achado de passagem (já estava no v2 desde a fase 2):** `/api/chat/respostas`
+devolve o texto em `corpo`, e o compositor lia `r.texto`. Colar uma resposta
+rápida punha `undefined` na caixa, e digitar `/` seguido de um trecho que não
+batesse em nenhum atalho chamava `.toLowerCase()` em `undefined` — **a tela
+inteira caía**. Corrigido com um mapa na leitura; a prova b cobre os dois casos.
+
+**Selo "sem conversa" na agenda:** com a primeira página da lista (60) ele
+marcava TODA a carteira, inclusive quem conversa todo dia — visto no screenshot.
+Agora só aparece com a lista completa.
+
 ## 1. As lacunas — o que bloqueia o piloto
 
 Ordenadas pelo que a equipe mais sentiria falta.
