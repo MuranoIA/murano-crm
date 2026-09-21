@@ -13,7 +13,9 @@ export const ciclo = "Telas — navegador real (board, chat, admin, indicadores)
 
 const TELAS = [
   { rota: "/", nome: "board (Negociações)", sessoes: ["romulo", "admin"] },
-  { rota: "/chat", nome: "chat", sessoes: ["romulo", "admin"] },
+  // mesma regra de `api.TELA_CHAT` — aqui lida direto porque esta lista é de
+  // topo de módulo, e o `api` só chega aos casos pelo contexto `t`
+  { rota: process.env.CHAT_TELA ?? "/chat", nome: "chat", sessoes: ["romulo", "admin"] },
   { rota: "/chat/indicadores", nome: "indicadores", sessoes: ["romulo", "admin"] },
   { rota: "/admin", nome: "admin", sessoes: ["admin"] },
   { rota: "/templates", nome: "templates (consultor)", sessoes: ["romulo", "admin"] },
@@ -74,7 +76,7 @@ export default async function (t) {
     const aba = await t.aba();
     try {
       await aba.cookies(api.SESSOES.romulo);
-      await aba.ir(api.BASE + "/chat", { esperar: 4000 });
+      await aba.ir(api.BASE + api.TELA_CHAT, { esperar: 4000 });
       const ok = await aba.ate(
         `![...document.querySelectorAll('*')].some(e=>e.children.length===0 && /Reconectando/i.test(e.textContent||''))`,
         { ms: 25_000 },

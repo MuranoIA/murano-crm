@@ -105,9 +105,15 @@ export function Transferir({
         <span className="text-[12px] font-medium uppercase tracking-wide text-v2-tinta-fraca">Para quem</span>
         <select value={para} onChange={(e) => setPara(e.target.value)} className={campo}>
           <option value="">escolha…</option>
-          {/* devolver é uma linha a mais, não um botão escondido: quem pegou por
-              engano precisa de uma saída óbvia (§56) */}
-          <option value="__fila">↩ devolver para a fila de espera</option>
+          {/* Devolver é uma linha a mais, não um botão escondido: quem pegou por
+              engano precisa de uma saída óbvia (§56).
+
+              ⚠️ SÓ quando o cliente NÃO tem dono comercial. Com carteira, o
+              servidor recusa — devolvê-lo criaria um órfão, e o dono natural
+              dele já existe. Oferecer a opção aqui seria o anti-padrão exato da
+              §56: o botão aparece, a pessoa clica, e o servidor diz não. A
+              paridade (fase 5) achou isto: o chat de hoje já escondia. */}
+          {!conversa.carteira_dona && <option value="__fila">↩ devolver para a fila de espera</option>}
           {vendedores
             .filter((v) => v.slug !== conversa.vendedor)
             .map((v) => (

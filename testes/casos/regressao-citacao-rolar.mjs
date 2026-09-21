@@ -49,7 +49,7 @@ export default async function (t) {
     await aba.cookies(api.SESSOES.admin, api.BASE);
     // viewport curta: ver o segundo cuidado no cabeçalho
     try { await aba.enviar("Emulation.setDeviceMetricsOverride", { width: 1000, height: 520, deviceScaleFactor: 1, mobile: false }); } catch {}
-    await aba.ir(`${api.BASE}/chat?cliente=${encodeURIComponent(ID)}`, { esperar: 2000 });
+    await aba.ir(`${api.BASE}${api.TELA_CHAT}?cliente=${encodeURIComponent(ID)}`, { esperar: 2000 });
     const pronto = await aba.ate("document.querySelectorAll('[data-msg]').length > 0", { ms: 90_000, passo: 500 });
     api.ok(pronto, "a conversa não chegou a desenhar nenhuma bolha em 90s");
     return aba;

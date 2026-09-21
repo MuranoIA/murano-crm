@@ -44,7 +44,7 @@ export default async function (t) {
 
     const aba = await t.aba();
     await aba.cookies(api.SESSOES.admin, api.BASE);
-    await aba.ir(`${api.BASE}/chat?cliente=${encodeURIComponent(IDA)}`, { esperar: 2000 });
+    await aba.ir(`${api.BASE}${api.TELA_CHAT}?cliente=${encodeURIComponent(IDA)}`, { esperar: 2000 });
     api.ok(await aba.ate("!!document.querySelector('textarea')", { ms: 90_000, passo: 500 }),
       "a conversa A não abriu");
 

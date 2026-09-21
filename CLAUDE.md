@@ -5863,7 +5863,8 @@ spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
 andamento em `prototipos/chat-v2/relatorio.md`.
 
 **Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
-**4 ligação/push/embed ✅** · 5 paridade · 6 piloto por pessoa · 7 todos e aposentar.
+4 ligação/push/embed ✅ · **5 paridade — EM CURSO (ver 73.7)** · 6 piloto por
+pessoa · 7 todos e aposentar.
 
 **Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
 `feat/chat-v2`, e o `/chat` antigo segue intocado — ele é a volta segura.
@@ -6010,6 +6011,52 @@ como documento, que chega.
 ⚠️ **Citar mensagem só vale com `wamid.`**, e a validação é no SERVIDOR: sem
 conferir que a mensagem é DESTA conversa, dava para citar o wamid de outra
 cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
+
+### 73.7 ⚠️ ONDE A FASE 5 PAROU (21/09/2026) — leia antes de continuar
+
+**O relatório vivo é `prototipos/chat-v2/paridade.md`.** Resumo do que ele diz:
+
+1. **A fase 4 dizia "41 de 41 (100%)" — e estava errado.** Contava o que foi
+   PLANEJADO, não o que o chat de hoje FAZ. Um diff de funções entre
+   `app/chat/page.tsx` e `app/chat-v2/` achou **13 lacunas**, duas delas filas
+   de trabalho diárias: **"Esperando"** (`vw_chat_espera`) e **"Minha carteira"**
+   (§38). As outras: novo contato (+), Recados da supervisão (0129), ficha
+   WinThor/"Pedir os dados" (§47), vincular ao ERP, Pausa (0106), pedir
+   localização da cliente, PDF, navegação do produto, ordenação, criar resposta
+   rápida, e "devolver" aparecendo onde o servidor recusa.
+   **Todas usam rotas que já existem — é tela, não sistema.**
+   **Recomendação registrada: não levar ao piloto antes de fechar as 10 primeiras.**
+2. **Os 96 itens do checklist**, contados por script: 34 ✅ · 7 ⚠️ · 3 ❌ ·
+   35 ➖ (não são da tela de chat) · 15 ⛔ (nenhum dos dois tem) · 2 cancelados.
+   ⚠️ O checklist está **desatualizado**: a 0114 FOI aplicada, e os 4 itens que
+   ele marca "pendente da 0114" têm as views no banco.
+3. **Já fechadas nesta sessão, NÃO BUILDADAS NEM TESTADAS** (só `tsc` limpo):
+   lacuna 13 (devolver só sem dono comercial) e lacuna 10 (barra do produto,
+   reusando `app/MenuSecundario.tsx` e `app/OrcamentoFlutuante.tsx`; lista nova
+   em `app/navegacao.ts` — o chat antigo e o funil ainda têm a sua cópia inline).
+4. **A suíte `testes/` foi parametrizada** (`CHAT_TELA=/chat-v2`, ver
+   `testes/api.mjs`). Só a linha de base contra `/chat` rodou, e **incompleta**:
+   71 ✅ · 14 ❌ · 10 pulados, parando no ciclo 9 por um erro meu (corrigido).
+   ⚠️ **A suíte NÃO está verde nem no chat de hoje** — separar suíte envelhecida
+   de regressão do v2 antes de acusar o v2. ⚠️ **As 5 falhas do ciclo 11 podem
+   ter sido causadas pela minha parametrização** (origem do iframe e do
+   `postMessage` via `api.BASE`): rodar o ciclo11 no `master` para decidir.
+
+**Para continuar:** buildar e conferir (no navegador, 360 px e desktop) a barra e
+o "devolver"; depois a sequência do fim de `paridade.md` §4; depois as lacunas
+1 a 10, na ordem da tabela. Só então a fase 6.
+
+**Ambiente para a suíte** (é diferente do dev da 73.1 — ela exige porta 3100):
+
+```bash
+cd web && NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 npm run build
+cd web && SIMULACAO_ENVIO=1 ENSAIO_VISIVEL=1 WHATSAPP_TOKEN= npx next start -p 3100
+CHAT_TELA=/chat    node testes/run.mjs     # linha de base
+CHAT_TELA=/chat-v2 node testes/run.mjs     # o v2
+```
+
+⚠️ **Máquina:** disco C: a 99% (≈2 GB livres) e há OUTRA sessão buildando o
+`hub-v2` ao mesmo tempo — o build leva >10 min. Não matar processo alheio (§0).
 
 ### 73.5 Armadilhas desta frente (todas custaram pelo menos uma rodada)
 

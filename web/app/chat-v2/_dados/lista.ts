@@ -94,6 +94,8 @@ export type Lista = {
   /** como eu apareço para os outros na presença. Nunca o e-mail: o canal é
    *  público (§15.4), então nada de identificável entra nele. */
   meu_rotulo: string;
+  /** papel ativo — decide quais itens da barra do produto aparecem */
+  papel: string | null;
   minha_carteira: string | null;
   em: string;
 };
@@ -318,6 +320,7 @@ export async function lerLista(
     meu_usuario: s.usuario,
     meu_endereco: meuEndereco,
     meu_rotulo: rotuloDePresenca(s),
+    papel: s.papel,
     minha_carteira: s.carteira,
     em: new Date().toISOString(),
   };

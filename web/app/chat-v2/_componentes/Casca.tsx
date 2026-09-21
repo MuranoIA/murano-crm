@@ -19,6 +19,7 @@ import { lembrarTelaAtual } from "../../lembrarTela";
 import type { Ligacao } from "../../../lib/ligacaoDados";
 import type { ApiLigacao } from "./Ligacao";
 import type { Gesto } from "./Compositor";
+import { INDICADORES, itensDoPapel } from "../../navegacao";
 import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
@@ -34,6 +35,14 @@ const Encaminhar = dynamic(() => import("./Dialogos").then((m) => m.Encaminhar),
 // tela já de pé — e não envolve nada, para não arrastar a lista para fora do
 // SSR (ver o cabeçalho de Ligacao.tsx).
 const CamadaLigacao = dynamic(() => import("./Ligacao"), { ssr: false });
+
+// A barra do produto REUSA os dois componentes que o funil e o chat antigo já
+// usam — `MenuSecundario` (o "⋯") e `OrcamentoFlutuante`. Copiá-los criaria a
+// terceira versão do mesmo menu, e a divergência apareceria como "no chat tem,
+// no funil não". Os dois são dinâmicos: são raros, e não entram no JS da
+// primeira pintura.
+const MenuSecundario = dynamic(() => import("../../MenuSecundario").then((m) => m.MenuSecundario), { ssr: false });
+const OrcamentoFlutuante = dynamic(() => import("../../OrcamentoFlutuante"), { ssr: false });
 
 // ---------------------------------------------------------------------------
 // A casca: três regiões, uma escolha de fila, uma conversa aberta.
@@ -173,6 +182,7 @@ export function Casca({
   // ponte para os dois gestos que moram dentro do compositor (o texto não sobe,
   // e estes também não precisam subir — só o gatilho)
   const gesto = useRef<Gesto | null>(null);
+  const [orcamentoAberto, setOrcamentoAberto] = useState(false);
   const registrarGesto = useCallback((fn: Gesto | null) => {
     gesto.current = fn;
   }, []);
@@ -1025,9 +1035,49 @@ export function Casca({
             </a>
             <span className="text-[15px] font-semibold tracking-tight">Chat</span>
             <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-              v2 · fase 4
+              v2
             </span>
           </div>
+
+          {/* ---- a navegação do PRODUTO ------------------------------------
+              A paridade (fase 5) achou a falta: o v2 só tinha "voltar ao
+              board", e quem estava no chat não chegava ao Orçamento, aos
+              Templates nem aos Indicadores sem sair da conversa. No celular os
+              itens vão para dentro do "⋯" — a barra de 360 px não os comporta,
+              e rolagem horizontal escondendo o menu é pior que um menu. */}
+          <nav aria-label="Telas do CRM" className="hidden min-w-0 items-center gap-0.5 md:flex">
+            {itensDoPapel(inicial.papel).map((n) =>
+              n.acao === "orcamento" ? (
+                <button
+                  key={n.href}
+                  data-ripple
+                  onClick={() => setOrcamentoAberto(true)}
+                  className="rounded-full px-2.5 py-1 text-[12.5px] font-medium text-white/85 hover:bg-white/10"
+                >
+                  {n.rotulo}
+                </button>
+              ) : (
+                <a
+                  key={n.href}
+                  href={n.href}
+                  aria-current={n.href === "/chat" ? "page" : undefined}
+                  className={[
+                    "whitespace-nowrap rounded-full px-2.5 py-1 text-[12.5px] font-medium",
+                    n.href === "/chat" ? "bg-white/20 text-white" : "text-white/85 hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  {n.rotulo}
+                </a>
+              ),
+            )}
+            <a
+              href={INDICADORES.href}
+              title={INDICADORES.dica}
+              className="whitespace-nowrap rounded-full px-2.5 py-1 text-[12.5px] font-medium text-white/85 hover:bg-white/10"
+            >
+              {INDICADORES.rotulo}
+            </a>
+          </nav>
 
           <span className="ml-auto flex items-center gap-2">
             {/* `null` = ainda não sabemos se há push, e nesse estado nada é
@@ -1052,9 +1102,39 @@ export function Casca({
                 </svg>
               </button>
             )}
-            <span className="truncate text-[12px] text-white/80">
+            <span className="hidden truncate text-[12px] text-white/80 sm:inline">
               {inicial.minha_carteira ? `carteira ${inicial.minha_carteira}` : inicial.meu_usuario}
             </span>
+            <MenuSecundario
+              cores={{
+                texto: "rgba(255,255,255,0.85)", ink: "#1c0e1b", surface: "#ffffff",
+                border: "rgba(255,255,255,0.35)", sombra: "0 8px 24px rgba(28,14,27,0.22)",
+              }}
+            >
+              {/* no celular a barra não comporta a navegação: ela entra aqui */}
+              <div className="border-t border-v2-linha md:hidden">
+                {itensDoPapel(inicial.papel).map((n) =>
+                  n.acao === "orcamento" ? (
+                    <button
+                      key={n.href}
+                      onClick={() => setOrcamentoAberto(true)}
+                      className="block w-full px-3 py-2.5 text-left text-[13px] font-semibold text-v2-tinta hover:bg-v2-superficie-2"
+                    >
+                      {n.rotulo}
+                    </button>
+                  ) : (
+                    <a key={n.href} href={n.href}
+                       className="block px-3 py-2.5 text-[13px] font-semibold text-v2-tinta hover:bg-v2-superficie-2">
+                      {n.rotulo}
+                    </a>
+                  ),
+                )}
+                <a href={INDICADORES.href}
+                   className="block px-3 py-2.5 text-[13px] font-semibold text-v2-tinta hover:bg-v2-superficie-2">
+                  {INDICADORES.rotulo}
+                </a>
+              </div>
+            </MenuSecundario>
           </span>
         </header>
       )}
@@ -1234,6 +1314,8 @@ export function Casca({
 
       {/* A camada de ligação fica montada SEMPRE (é ela que faz a campainha
           tocar quando a cliente liga), mas chega depois da primeira pintura. */}
+      {orcamentoAberto && <OrcamentoFlutuante onClose={() => setOrcamentoAberto(false)} />}
+
       <CamadaLigacao
         sessao={{ role: inicial.minha_carteira ? "vendedor" : "admin", carteira: inicial.minha_carteira }}
         aoMudar={() => {
