@@ -208,7 +208,7 @@ async function gravarMensagemRecebida(
   // não duplica. Mas o efeito colateral abaixo (reabrir a conversa) não tinha
   // a mesma trava: reentrega de uma mensagem de DIAS atrás reabria uma
   // conversa resolvida sem nenhuma atividade nova de verdade — sintoma
-  // relatado como "fechar não persiste" (Marlice Brazão/Thiago, 18/09).
+  // relatado como "fechar não persiste" (cliente M.B., atendimento do Thiago, 18/09).
   const jaExistia = !!(await sb.from("mensagens").select("id").eq("id", wamid).maybeSingle()).data;
 
   let { error } = await sb.from("mensagens").upsert(row, { onConflict: "id" });
