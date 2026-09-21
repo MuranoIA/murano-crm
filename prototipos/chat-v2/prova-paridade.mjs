@@ -33,8 +33,16 @@ const conferir = (cond, n, d = "") => (cond ? ok(n, d) : falha(n, d));
 
 const semTransbordo = `document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1`;
 
+// ⚠️ Cada passo abre uma aba NOVA — e a primeira versão nunca as fechava: no
+// fim havia sete abas do chat vivas, cada uma com o seu Realtime, e numa
+// máquina com pouca memória os últimos passos estouravam o tempo (o "+" do novo
+// contato "falhou" assim; sozinho ele abre em 345 ms). A aba anterior é
+// fechada antes de abrir a próxima.
+let abaAnterior = null;
 async function abrirTela(chrome, largura, url) {
+  if (abaAnterior) { try { await abaAnterior.enviar("Page.close"); } catch {} }
   const aba = await novaAba(chrome);
+  abaAnterior = aba;
   await aba.cookies({ crm_sessao: "admin", crm_email: "ia@muranoprofessional.com.br" }, BASE);
   await aba.enviar("Emulation.setDeviceMetricsOverride", {
     width: largura, height: largura < 500 ? 780 : 860, deviceScaleFactor: 1, mobile: largura < 500,

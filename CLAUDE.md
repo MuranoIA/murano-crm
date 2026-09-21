@@ -6032,23 +6032,27 @@ Nenhuma migration, nenhuma rota nova — só tela sobre rotas que já existiam.
 | 10 Barra do produto · 13 Devolver | da sessão anterior — agora medidas |
 | 11 Ordenação · 12 Criar resposta rápida | botão na fileira de chips · rodapé do menu do "/" |
 
-⚠️ **A ÚLTIMA RODADA (depois do conserto do menu a 360 px) NÃO ficou verde e
-não foi diagnosticada:** `prova-paridade-b` 23/24 → ainda falha "o menu cabe na
-tela" a 360 px, e numa segunda rodada caíram também ficha / "pedir os dados" /
-"nova resposta" a 360 px; `prova-paridade` caiu de 17/17 para 9/15 (o "+" do
-novo contato não abriu). As rodadas anteriores dos MESMOS passos passaram, então
-pode ser instabilidade do ambiente ou efeito do `min-w` no nome — **primeiro
-passo da próxima sessão: rodar as duas provas e olhar os screenshots em
-`testes/saidas/paridade-*`.**
+**As duas provas estão verdes no mesmo build:** `prova-paridade` 17/17 e
+`prova-paridade-b` 26/26. A rodada vermelha da madrugada tinha duas causas,
+nenhuma do "+": (1) a prova abria uma aba nova por passo e **nunca fechava
+nenhuma** — sete abas do chat vivas, com a máquina em 0,4 GB de RAM livre, e os
+últimos passos estouravam o tempo (sozinho, o "+" abre em 345 ms); (2) um defeito
+real, o painel do cliente montado DUAS vezes (ver abaixo).
 
-**Três achados de passagem, todos corrigidos:**
+**Quatro achados de passagem, todos corrigidos:**
+- **o painel do cliente era montado duas vezes** — a coluna `xl` escondida por
+  CSS e a folha do celular. Cada abertura buscava contato e ficha em dobro, e a
+  360 px a folha visível ficava no esqueleto enquanto a invisível carregava. A
+  prova antiga passava porque achava o texto na INVISÍVEL. Agora uma media query
+  decide qual monta (`a83e5ca`).
 - `/api/chat/respostas` devolve `corpo` e o compositor lia `texto`: colar punha
   "undefined" e filtrar por um trecho sem atalho **derrubava a tela** (desde a
   fase 2). Mapa na leitura (`emResposta`).
 - o selo "sem conversa" da agenda marcava TODO mundo com a lista em primeira
   página; agora só aparece com a lista completa.
 - a 360 px o "⋯" abria para fora da tela e a fileira de ícones espremia o nome
-  até "E…" em conversa da fila; o nome ganhou `min-w` e o menu escolhe o lado.
+  até "E…" em conversa da fila; o nome ganhou `min-w` e o menu vira fixo, com a
+  largura da tela, abaixo do botão.
 
 ⚠️ **Não exercitado de propósito** (escrevem em dado real do time): "É a mesma
 pessoa" (cria vínculo), salvar resposta rápida (tabela da casa), baixar PDF
