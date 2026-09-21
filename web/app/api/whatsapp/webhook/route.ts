@@ -266,7 +266,20 @@ async function gravarMensagemRecebida(
           texto.length > 120 ? `${texto.slice(0, 117)}…` : (texto || "enviou uma mensagem"),
         ),
         cliente_id: cliente.id,
-        url: "/chat",
+        // ⚠️ COM `?cliente=`. Era só "/chat", e o efeito era o relato de
+        // 20/09/2026: tocar na notificação abria o app na LISTA, e o vendedor
+        // tinha de procurar a cliente que acabara de escrever — justamente
+        // quem ele já sabia que era, porque o nome estava na notificação.
+        //
+        // O `cliente_id` já viajava neste payload (é ele que agrupa a rajada
+        // pela `tag`); faltava só usá-lo aqui. As duas pontas já sabiam abrir:
+        // o service worker navega para esta url (`public/sw.js`) e o chat lê
+        // `?cliente=` desde o #182. O elo que faltava era este.
+        //
+        // O caminho do HUB já estava certo e não muda: o service worker de lá
+        // usa o `cliente_id` e IGNORA a `url`, de propósito — `/chat` é um
+        // caminho que não existe naquele domínio.
+        url: `/chat?cliente=${encodeURIComponent(cliente.id)}`,
       });
     }
   } catch { /* nunca derruba o webhook */ }

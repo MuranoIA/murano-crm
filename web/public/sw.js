@@ -39,6 +39,11 @@ self.addEventListener("push", (event) => {
     // notificação que se atualiza, não cinco empilhadas
     tag: d.cliente_id ? `chat:${d.cliente_id}` : "chat",
     renotify: true,
+    // Botão explícito, igual ao do hub. Ele NÃO abre campo de texto: campo
+    // dentro da notificação é `RemoteInput` do Android nativo, e a API de
+    // notificação da web não tem equivalente (§72.5). O que ele faz é o
+    // caminho mais curto que existe — a conversa certa, já aberta.
+    actions: [{ action: "responder", title: "Responder" }],
     timestamp: Date.now(),
     data: { url: d.url || "/chat" },
   };
