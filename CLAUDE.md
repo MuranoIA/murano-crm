@@ -5863,7 +5863,7 @@ spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
 andamento em `prototipos/chat-v2/relatorio.md`.
 
 **Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
-4 ligação/push/embed ✅ · **5 paridade — lacunas fechadas, falta a suíte (ver 73.7)** · 6 piloto por
+4 ligação/push/embed ✅ · **5 paridade — fechada; falta só limpar o ensaio (ver 73.7)** · 6 piloto por
 pessoa · 7 todos e aposentar.
 
 **Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
@@ -6059,14 +6059,16 @@ pessoa" (cria vínculo), salvar resposta rápida (tabela da casa), baixar PDF
 (Storage) e avisar pausa. Estão presentes e usam as mesmas rotas do chat de
 hoje. Pedir localização FOI clicado (simulado).
 
-**Ainda falta para fechar a fase 5:**
-1. **A suíte `testes/` contra as duas telas** (paridade.md §4). Nada disso rodou
-   nesta sessão. Ordem: ciclo11 no `master` (decide se as 5 falhas são da
-   parametrização), suíte inteira contra `/chat`, depois contra `/chat-v2`.
-2. Limpar o ensaio no fim (`ensaio.mjs limpar`) — ele está criado agora, com
-   uma mensagem `sim.` de localização.
-3. Depois: fase 6 (piloto por pessoa) — é a primeira ida desta frente a
-   produção, **decisão do usuário**.
+**A suíte `testes/` rodou inteira nas duas telas (22/09):** chat de hoje
+152/22/14, chat-v2 153/22/13 — **nenhuma regressão do v2** (análise caso a caso
+em `paridade.md` §4.1; as 22 falhas existem no código de produção). O ciclo 11
+(iframe) falha até com o build certo — não era a parametrização.
+
+**Falta para fechar a fase 5:** só limpar o ensaio (`ensaio.mjs limpar`). Ele
+foi mantido porque o usuário está testando nele pela rede local.
+
+**Depois:** fase 6 (piloto por pessoa) — a primeira ida desta frente a
+produção, **decisão do usuário**.
 
 **Produção:** a branch recebeu o master em 21/09 (#229, #234, #235, #236). O
 conflito no webhook era só comentário; ficou a versão do master. Pendência

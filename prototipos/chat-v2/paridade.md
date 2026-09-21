@@ -196,6 +196,64 @@ velha por outra não verificada.
 
 ## 4. A suíte `testes/` contra as duas telas
 
+### 4.0 Linha de base COMPLETA contra o chat de hoje (22/09/2026)
+
+`CHAT_TELA=/chat`, build de `feat/chat-v2` com `NEXT_PUBLIC_HUB_ORIGIN`,
+servidor na 3100 com `SIMULACAO_ENVIO=1 ENSAIO_VISIVEL=1`:
+
+**188 passos · 152 passaram · 22 falharam · 14 pulados · nada ficou no banco.**
+
+A suíte **não é verde no código de produção** — estas 22 são o piso. Uma falha
+do v2 só é regressão do v2 se NÃO estiver nesta lista:
+
+| Caso | Passos que falham no chat de hoje |
+|---|---|
+| ciclo10 (equipe simultânea) | as 24 caem na fila · p90 < 3 s · dois números (2 passos) |
+| ciclo11 (iframe do hub) | carrega no iframe · microfone com e sem `allow` · duas sessões · tempo real (5) |
+| ciclo2 | alarme de canal mudo (o documento diz ⛔) |
+| ciclo3 | status de aprovação dos templates |
+| ciclo4 | presença "👀 fulano está aqui" |
+| ciclo8 | trocar número de envio em /admin (a chave saiu com o fim do RD, §69) |
+| ciclo9 | chat abre sem exceção (romulo e admin) · sair de "Reconectando…" |
+| regressões | board mantém estado · chat mantém estado · citação rola (2) · planilha 5.000 · envio por conversa |
+
+⚠️ **O ciclo 11 continua falhando com o build certo** (com
+`NEXT_PUBLIC_HUB_ORIGIN`) e com as URLs idênticas às do master — então não era
+a parametrização, como se suspeitava. A causa segue aberta; é da suíte ou do
+ambiente, não do v2.
+
+Log: `suite-chat.log` no scratchpad da sessão; `testes/saidas/resultado.json`.
+
+### 4.1 A MESMA suíte contra o /chat-v2 (22/09/2026) — nenhuma regressão
+
+`CHAT_TELA=/chat-v2`, mesmo build, mesmo servidor:
+
+**188 passos · 153 passaram · 22 falharam · 13 pulados** — o mesmo placar do
+chat de hoje (152/22/14).
+
+Comparado caso a caso, 20 das 22 falhas são **as mesmas** nas duas telas. As
+diferenças, nos dois sentidos:
+
+| Passo | /chat | /chat-v2 | Leitura |
+|---|---|---|---|
+| ciclo10 — marca de leitura por usuário | ✅ | ❌ | só API (`/api/chat` + `/api/chat/lida`) |
+| prévia do card sob demanda | ✅ | ❌ | só o **board** (`/api/funil/previas`) |
+| ciclo10 — as 24 caem na fila | ❌ | ✅ | só API |
+| planilha de 5.000 | ❌ | ✅ | só `/admin` |
+
+Nenhum desses quatro passos toca a tela do chat-v2, e **a branch não mexeu em
+nenhuma das rotas envolvidas** (`git diff origin/master` vazio para
+`api/chat/route.ts`, `api/chat/lida`, `api/funil`, `page.tsx`,
+`lib/chatEscopo.ts`). O servidor é o mesmo código nas duas rodadas: a
+diferença é o dado ao vivo. `/api/chat` lê a `vw_chat_conversa`, que é
+materializada e atualiza a cada 2 min (0139); a prévia do card depende de
+mensagens que chegam durante a rodada. Por isso aparecem trocando de lado.
+
+**Conclusão: a suíte não aponta regressão do v2.** As 22 falhas são dívida da
+suíte (ou do ambiente), a tratar numa frente própria — não bloqueiam o piloto.
+
+### 4.2 O que dizia a rodada anterior (incompleta)
+
 **Estado em 21/09/2026: só a LINHA DE BASE rodou, e incompleta.**
 
 A suíte foi parametrizada para dirigir qualquer uma das telas
