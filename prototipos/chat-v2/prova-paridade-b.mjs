@@ -86,7 +86,10 @@ try {
 
     // ---- painel: ficha e "pedir os dados" ----
     await a.js(`document.querySelector('button[aria-label="Dados do cliente"]').click(); return true;`);
-    const ficha = await a.ate(`document.body.textContent.includes('Ficha para o WinThor')`, { ms: 15_000 });
+    // ⚠️ só o painel VISÍVEL conta: a primeira versão desta prova achava o
+    // texto no painel escondido de desktop e passava com a folha em esqueleto
+    const ficha = await a.ate(`[...document.querySelectorAll('aside')].some(e=>e.getBoundingClientRect().width>0 && e.textContent.includes('Ficha para o WinThor'))`, { ms: 30_000 });
+    conferir(await a.js(`return document.querySelectorAll('aside').length;`) === 1, `${largura} px: um painel montado, não dois`);
     conferir(ficha, `${largura} px: contato sem ERP mostra a ficha do WinThor`);
     conferir(!(await a.js(`return document.body.textContent.includes('Salvar contato (nome e CPF)');`)),
       `${largura} px: o editor antigo nome+CPF saiu (a ficha o substitui)`);

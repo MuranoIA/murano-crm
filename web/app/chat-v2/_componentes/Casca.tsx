@@ -119,6 +119,20 @@ export function Casca({
   const [carregandoThread, setCarregandoThread] = useState(false);
   const [carregandoAntigas, setCarregandoAntigas] = useState(false);
   const [painelAberto, setPainelAberto] = useState(false);
+  // ⚠️ UM painel montado, não dois. A coluna (xl) e a folha (celular) eram
+  // montadas JUNTAS, uma escondida por CSS: cada abertura buscava contato e
+  // ficha em dobro, e a folha visível perdia a corrida — a 360 px ela ficava no
+  // esqueleto enquanto a coluna invisível já tinha carregado (medido). A regra
+  // "layout é CSS" continua valendo para o que é desenho; isto aqui decide o
+  // que é BUSCADO, e para isso a media query é a pergunta certa.
+  const [painelLargo, setPainelLargo] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1280px)");
+    const ver = () => setPainelLargo(mq.matches);
+    ver();
+    mq.addEventListener("change", ver);
+    return () => mq.removeEventListener("change", ver);
+  }, []);
   const [enviando, setEnviando] = useState(false);
   const [templates, setTemplates] = useState(false);
   // o que veio junto da thread: notas, transferências e os trechos citados
@@ -1496,7 +1510,7 @@ export function Casca({
         </div>
 
         {/* desktop largo: o ERP é COLUNA, ao lado da conversa */}
-        {conversaAberta && painelAberto && (
+        {conversaAberta && painelAberto && painelLargo && (
           <div className="hidden min-h-0 w-[330px] shrink-0 xl:block">
             <PainelContato
               conversa={conversaAberta}
@@ -1511,7 +1525,7 @@ export function Casca({
       {/* celular e telas médias: o mesmo painel sobe de baixo. No chat antigo
           ele simplesmente não existe abaixo de 768 px — e é o diferencial
           contra o RD (achado 3 do laudo de UX). */}
-      {conversaAberta && painelAberto && (
+      {conversaAberta && painelAberto && !painelLargo && (
         <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/30 xl:hidden" onClick={() => setPainelAberto(false)}>
           <div
             className="entrar max-h-[82%] overflow-hidden rounded-t-3xl bg-v2-superficie shadow-e3"

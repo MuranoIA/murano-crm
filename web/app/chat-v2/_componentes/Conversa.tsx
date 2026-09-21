@@ -53,10 +53,12 @@ function MaisAcoes({
   aoPdf?: () => void;
 }) {
   const [aberto, setAberto] = useState(false);
-  // De que lado o menu abre. O cabeçalho QUEBRA LINHA no celular, e o "⋯" pode
-  // cair na ponta esquerda da segunda linha: ancorado à direita, o menu saía da
-  // tela (medido a 360 px). Decide na hora do clique, pela posição real.
-  const [paraDireita, setParaDireita] = useState(false);
+  // ONDE o menu abre. O cabeçalho QUEBRA LINHA no celular e o "⋯" cai no meio
+  // da segunda linha — a 360 px nenhum dos dois lados do botão comporta os
+  // 260 px do menu (medido: ancorar à direita ou à esquerda, os dois vazavam).
+  // Em tela estreita o menu vira FIXO, com a largura da tela, logo abaixo do
+  // botão; em tela larga, fica ancorado à direita do botão como antes.
+  const [fixo, setFixo] = useState<null | { top: number }>(null);
   const ancora = useRef<HTMLSpanElement>(null);
   if (!aoPausa && !aoPedirLocal && !aoPdf) return null;
   const item = (rotulo: string, dica: string, fn: (() => void) | undefined, livre: boolean) =>
@@ -83,7 +85,7 @@ function MaisAcoes({
         ativo={aberto}
         onClick={() => {
           const r = ancora.current?.getBoundingClientRect();
-          setParaDireita(!!r && r.right < 270);
+          setFixo(r && window.innerWidth < 560 ? { top: r.bottom + 4 } : null);
           setAberto((v) => !v);
         }}
       >
@@ -94,7 +96,14 @@ function MaisAcoes({
       {aberto && (
         <>
           <span className="fixed inset-0 z-30" onClick={() => setAberto(false)} aria-hidden />
-          <div role="menu" className={["entrar absolute top-11 z-40", paraDireita ? "left-0" : "right-0"].join(" ") + "  w-[260px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl bg-v2-superficie py-1 shadow-e3 ring-1 ring-v2-linha"}>
+          <div
+            role="menu"
+            style={fixo ? { top: fixo.top } : undefined}
+            className={[
+              "entrar z-40 overflow-hidden rounded-2xl bg-v2-superficie py-1 shadow-e3 ring-1 ring-v2-linha",
+              fixo ? "fixed inset-x-3" : "absolute right-0 top-11 w-[260px]",
+            ].join(" ")}
+          >
             {item("Avisar pausa", "manda à cliente o aviso de ausência", aoPausa, true)}
             {item("Pedir a localização", "abre no aparelho dela o compartilhar localização", aoPedirLocal, true)}
             {item("Baixar conversa em PDF", "o histórico inteiro, com as fotos", aoPdf, false)}
