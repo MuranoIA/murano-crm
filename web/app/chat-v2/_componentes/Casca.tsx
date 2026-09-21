@@ -20,13 +20,14 @@ import type { Ligacao } from "../../../lib/ligacaoDados";
 import type { ApiLigacao } from "./Ligacao";
 import type { Gesto } from "./Compositor";
 import { INDICADORES, itensDoPapel } from "../../navegacao";
-import type { Conversa, Fila, Lista, Mensagem, Thread } from "./tipos";
+import type { Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
 const Templates = dynamic(() => import("./Templates"), { ssr: false });
 const Transferir = dynamic(() => import("./Dialogos").then((m) => m.Transferir), { ssr: false });
 const Resolver = dynamic(() => import("./Dialogos").then((m) => m.Resolver), { ssr: false });
 const Encaminhar = dynamic(() => import("./Dialogos").then((m) => m.Encaminhar), { ssr: false });
+const NovoContato = dynamic(() => import("./Dialogos").then((m) => m.NovoContato), { ssr: false });
 
 // ⚠️ A camada de ligação é dinâmica pela ORDEM, não pela condição: ela precisa
 // estar montada SEMPRE (é ela que faz a campainha tocar quando a cliente liga),
@@ -150,6 +151,15 @@ export function Casca({
 
   const { avisos, avisar, fechar } = useAvisos();
 
+  // ---- MINHA CARTEIRA e NOVO CONTATO (paridade, lacunas 2 e 3) -------------
+  // A agenda vem de `/api/chat/carteira`, a MESMA rota do chat de hoje (§38).
+  // null = ainda não chegou; a lista diz "carregando" em vez de "vazia".
+  const [carteira, setCarteira] = useState<ItemCarteira[] | null>(null);
+  const carteiraPedida = useRef(false);
+  // o diálogo do "+": `doErp` preenchido quando vem da agenda sem telefone
+  const [novoContato, setNovoContato] = useState<null | { doErp: { codcli: number; nome: string | null } | null }>(null);
+  const [criandoContato, setCriandoContato] = useState(false);
+
   // qual conversa está na tela AGORA, lido no momento em que a resposta chega.
   // É a guarda da §70: sem ela, a thread da cliente A aparece dentro da B.
   const abertaRef = useRef<string | null>(aberta);
@@ -211,6 +221,32 @@ export function Casca({
       .then((j) => setLocais(j.locais ?? []))
       .catch(() => {});
   }, []);
+
+  // ---- a agenda: uma vez por sessão ---------------------------------------
+  const carregarCarteira = useCallback((forcar = false) => {
+    if (carteiraPedida.current && !forcar) return;
+    carteiraPedida.current = true;
+    fetch("/api/chat/carteira")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => setCarteira(j.carteira ?? []))
+      .catch(() => {
+        // falhou: libera para o próximo clique tentar de novo, e a lista para
+        // de dizer "carregando" para sempre
+        carteiraPedida.current = false;
+        setCarteira((c) => c ?? []);
+        avisar("Não consegui carregar a carteira.", { tom: "erro" });
+      });
+  }, [avisar]);
+
+  // PRÉ-CARGA (§71.4): a aba abre pronta. Duas condições para não virar o
+  // vício da §15.1 — só DEPOIS de a tela estar de pé (a primeira página já veio
+  // no HTML; 3 s deixam passar contagens e o complemento da thread), e uma vez
+  // por sessão. Na lupa não há agenda para mostrar.
+  useEffect(() => {
+    if (embutido) return;
+    const t = setTimeout(() => carregarCarteira(), 3000);
+    return () => clearTimeout(t);
+  }, [embutido, carregarCarteira]);
 
   // ---- o resto da lista, SÓ QUANDO PRECISA -------------------------------
   //
@@ -548,6 +584,77 @@ export function Casca({
     return () => clearTimeout(t);
   }, [embutido, aberta, ligacao, lista, avulsa]);
 
+
+  // ---- NOVO CONTATO -------------------------------------------------------
+  // Cria (ou acha) o contato e abre a conversa. A rota NÃO envia nada (§35.2).
+  // O contato novo ainda não tem mensagem, então a view da lista não o devolve:
+  // quem o mostra é a conversa "avulsa", montada a partir da própria thread
+  // (73.5 item 4) — o mesmo caminho do link do board.
+  const criarContato = useCallback(
+    (dados: { telefone?: string; nome?: string; codcli?: number }) => {
+      if (criandoContato) return;
+      setCriandoContato(true);
+      fetch("/api/chat/novo-contato", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          telefone: dados.telefone?.trim() || undefined,
+          nome: dados.nome?.trim() || undefined,
+          codcli: dados.codcli ?? undefined,
+        }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            // 422 da agenda = o telefone do cadastro não serve: em vez de um
+            // erro solto, abre o campo para digitar, já com o cliente do ERP
+            if (r.status === 422 && dados.codcli && !dados.telefone) {
+              const k = carteira?.find((x) => x.codcli === dados.codcli);
+              setNovoContato({ doErp: { codcli: dados.codcli, nome: k?.cliente ?? null } });
+              return null;
+            }
+            throw new Error(j?.error ?? `erro ${r.status}`);
+          }
+          return j;
+        })
+        .then((j) => {
+          if (!j?.cliente_id) return;
+          setNovoContato(null);
+          // a agenda guardava `cliente_id: null` para este cliente; sem
+          // atualizar, a linha continuaria pedindo o número que acabou de vir
+          if (dados.codcli || j.codcli) {
+            const cod = dados.codcli ?? j.codcli;
+            setCarteira((c) =>
+              c && c.map((x) => (x.codcli === cod
+                ? { ...x, cliente_id: j.cliente_id, impedimento: null, criar_no_clique: false,
+                    precisa_telefone: false, telefone: j.telefone ?? x.telefone }
+                : x)),
+            );
+          }
+          if (j.pedido_cadastro) {
+            avisar("Conversa aberta. O número novo foi enviado para correção no cadastro do WinThor.", { tom: "ok" });
+          } else if (j.ja_existia) {
+            avisar(`Esse número já estava na base como “${nomeLimpo(j.nome)}”.`, { tom: "neutro" });
+          }
+          abrir(j.cliente_id);
+        })
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setCriandoContato(false));
+    },
+    [criandoContato, carteira, abrir, avisar],
+  );
+
+  // Abrir da agenda. Com contato, é abrir a conversa (esteja ela na lista ou
+  // não — a avulsa cobre). Sem contato: cria no clique se o telefone do
+  // cadastro serve; senão pede o número.
+  const abrirDaCarteira = useCallback(
+    (k: ItemCarteira) => {
+      if (k.cliente_id) { abrir(k.cliente_id); return; }
+      if (k.criar_no_clique) { criarContato({ codcli: k.codcli }); return; }
+      setNovoContato({ doErp: { codcli: k.codcli, nome: k.cliente } });
+    },
+    [abrir, criarContato],
+  );
 
   // ---- ENVIAR -------------------------------------------------------------
   //
@@ -894,6 +1001,7 @@ export function Casca({
         favoritas: s ? s.favoritas : null,
         fila: s ? s.fila : null,
         resolvidas: s ? s.resolvidas : null,
+        carteira: null,
       };
     }
     return {
@@ -902,6 +1010,8 @@ export function Casca({
       favoritas: lista.filter((c) => c.favorita).length,
       fila: lista.filter((c) => c.na_fila).length,
       resolvidas: lista.filter((c) => c.status === "resolvida").length,
+      // agenda, não fila: o número dela mora no cabeçalho da própria lista
+      carteira: null,
     };
   }, [lista, completa, contagensServidor]);
 
@@ -929,6 +1039,7 @@ export function Casca({
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const so = t.replace(/\D/g, "");
+    if (fila === "carteira") return [];
     return lista.filter((c) => {
       if (!passaVend(c) || !passaLinha(c) || !passaEtapa(c)) return false;
       const passaFila =
@@ -940,7 +1051,9 @@ export function Casca({
               ? c.favorita
               : fila === "fila"
                 ? c.na_fila
-                : c.status === "resolvida";
+                : fila === "resolvidas"
+                  ? c.status === "resolvida"
+                  : false;
       if (!passaFila) return false;
       if (!t) return true;
       const nome = String(c.cliente ?? "").toLowerCase();
@@ -982,7 +1095,8 @@ export function Casca({
       : fila === "nao_lidas" ? c.nao_lida && !c.na_fila && c.status !== "resolvida"
       : fila === "favoritas" ? c.favorita
       : fila === "fila" ? c.na_fila
-      : c.status === "resolvida";
+      : fila === "resolvidas" ? c.status === "resolvida"
+      : false;
 
     const porConsultor = new Map<string, number>();
     const porLinha = new Map<string, number>();
@@ -1001,6 +1115,15 @@ export function Casca({
     }
     return { porConsultor, porLinha, porEtapa };
   }, [lista, fila, passaVend, passaLinha, passaEtapa]);
+
+  // Quem da agenda já tem conversa. ⚠️ SÓ com a lista COMPLETA: com a primeira
+  // página (60) toda a agenda aparecia "sem conversa", inclusive quem conversa
+  // todo dia — medido no navegador. Selo falso é pior que selo nenhum, e baixar
+  // os ~2,7 MB da lista inteira só para um selo seria o desperdício da fase 1.
+  const comConversa = useMemo(
+    () => (completa ? new Set(lista.map((c) => c.cliente_id)) : null),
+    [lista, completa],
+  );
 
   // a da lista ganha (tem dono, não lida, status); a avulsa é a rede de
   // proteção para quem ainda não entrou na view materializada
@@ -1166,7 +1289,9 @@ export function Casca({
             // custa a primeira página e mais nada.
             aoTrocarFila={(f) => {
               setFila(f);
-              if (f !== "todas") setPrecisaCompleta(true);
+              // a agenda é outra rota; as conversas inteiras não servem a ela
+              if (f === "carteira") carregarCarteira();
+              else if (f !== "todas") setPrecisaCompleta(true);
             }}
             aoBuscar={(t) => {
               setBusca(t);
@@ -1189,6 +1314,10 @@ export function Casca({
             contaPorConsultor={contagensDosRecortes.porConsultor}
             contaPorLinha={contagensDosRecortes.porLinha}
             contaPorEtapa={contagensDosRecortes.porEtapa}
+            carteira={carteira}
+            comConversa={comConversa}
+            aoAbrirDaCarteira={abrirDaCarteira}
+            aoNovoContato={() => setNovoContato({ doErp: null })}
           />
         </div>
         )}
@@ -1295,6 +1424,17 @@ export function Casca({
           ocupado={ocupado}
           aoFechar={() => setDialogo(null)}
           aoConfirmar={transferir}
+        />
+      )}
+
+      {novoContato && (
+        <NovoContato
+          doErp={novoContato.doErp}
+          ocupado={criandoContato}
+          aoFechar={() => setNovoContato(null)}
+          aoConfirmar={(telefone, nome) =>
+            criarContato({ telefone, nome, codcli: novoContato.doErp?.codcli })
+          }
         />
       )}
 

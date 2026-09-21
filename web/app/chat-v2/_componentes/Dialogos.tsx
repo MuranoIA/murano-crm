@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { nomeLimpo } from "./formato";
 import type { Conversa } from "./tipos";
 
-// Os três diálogos de atendimento: transferir, resolver e encaminhar.
+// Os diálogos de atendimento: transferir, resolver, encaminhar e novo contato.
 // Carregados por `next/dynamic` — quem só lê e responde não baixa nada disto.
 
 function Moldura({
@@ -268,6 +268,85 @@ export function Encaminhar({
         ))}
         {lista.length === 0 && <p className="px-3 py-3 text-[13px] text-v2-tinta-fraca">Nenhuma conversa com esse nome.</p>}
       </div>
+    </Moldura>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NOVO CONTATO (§35.2). Telefone e, opcional, nome.
+//
+// Não ENVIA nada: cadastrar e mandar mensagem são gestos separados de
+// propósito — um clique em "abrir conversa" nunca deve disparar mensagem para
+// um número digitado errado. Fora da janela de 24h o primeiro contato sai por
+// template, e a faixa da conversa já diz isso.
+//
+// O mesmo diálogo serve à agenda quando o cadastro do WinThor não tem telefone
+// utilizável: aí ele chega com o `codcli` e o nome do ERP, e o número digitado
+// vira pedido de correção do cadastro. Uma tela de digitar número, não duas —
+// elas divergiriam na primeira mudança.
+// ---------------------------------------------------------------------------
+export function NovoContato({
+  doErp,
+  ocupado,
+  aoFechar,
+  aoConfirmar,
+}: {
+  /** vindo da agenda: o cliente do ERP a quem o número pertence */
+  doErp: { codcli: number; nome: string | null } | null;
+  ocupado: boolean;
+  aoFechar: () => void;
+  aoConfirmar: (telefone: string, nome: string) => void;
+}) {
+  const [tel, setTel] = useState("");
+  const [nome, setNome] = useState(doErp?.nome ?? "");
+  const digitos = tel.replace(/\D/g, "");
+  // a validação de verdade é do servidor (lib/telefone.ts); aqui só evita o
+  // clique que certamente falha — DDD + 8 dígitos no mínimo
+  const podeIr = digitos.length >= 10 && !ocupado;
+
+  return (
+    <Moldura
+      titulo={doErp ? "Informar o número" : "Novo contato"}
+      aoFechar={aoFechar}
+      rodape={
+        <>
+          <button data-ripple onClick={aoFechar} className="rounded-full px-4 py-2 text-[14px] font-medium text-v2-tinta-fraca hover:bg-v2-superficie-2">
+            Cancelar
+          </button>
+          <button data-ripple disabled={!podeIr} onClick={() => aoConfirmar(tel, nome)} className={primario}>
+            {ocupado ? "Abrindo…" : "Abrir conversa"}
+          </button>
+        </>
+      }
+    >
+      {doErp && (
+        <p className="mb-3 rounded-xl bg-v2-laranja-claro px-3 py-2 text-[13px] text-v2-tinta">
+          O cadastro do WinThor não tem um telefone utilizável para este cliente. O número que você
+          informar abre a conversa e segue como pedido de correção do cadastro.
+        </p>
+      )}
+      <label className="block text-[13px] font-medium text-v2-tinta-fraca">
+        Telefone (com DDD)
+        <input
+          autoFocus
+          inputMode="tel"
+          value={tel}
+          onChange={(e) => setTel(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && podeIr && aoConfirmar(tel, nome)}
+          placeholder="(91) 98166-0019"
+          className={campo}
+        />
+      </label>
+      {!doErp && (
+        <label className="mt-3 block text-[13px] font-medium text-v2-tinta-fraca">
+          Nome <span className="font-normal">(opcional)</span>
+          <input value={nome} onChange={(e) => setNome(e.target.value)} className={campo} />
+        </label>
+      )}
+      <p className="mt-3 text-[12.5px] text-v2-tinta-fraca">
+        Se o número já estiver na base, abre a conversa que existe — não duplica. Nada é enviado à
+        cliente até você escrever.
+      </p>
     </Moldura>
   );
 }

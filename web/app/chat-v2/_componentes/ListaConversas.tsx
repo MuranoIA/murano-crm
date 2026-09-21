@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { ItemConversa } from "./ItemConversa";
 import { Filtros, quantosRecortes, type Recortes } from "./Filtros";
-import { FILAS, type Conversa, type Fila } from "./tipos";
+import { ListaCarteira } from "./Carteira";
+import { FILAS, type Conversa, type Fila, type ItemCarteira } from "./tipos";
 
 // A coluna da esquerda: busca, recortes e a lista.
 //
@@ -37,6 +38,10 @@ export function ListaConversas({
   contaPorConsultor,
   contaPorLinha,
   contaPorEtapa,
+  carteira,
+  comConversa,
+  aoAbrirDaCarteira,
+  aoNovoContato,
 }: {
   conversas: Conversa[];
   selecionada: string | null;
@@ -61,6 +66,12 @@ export function ListaConversas({
   contaPorConsultor: Map<string, number>;
   contaPorLinha: Map<string, number>;
   contaPorEtapa: Map<string, number>;
+  /** a agenda (§38); null = ainda não chegou */
+  carteira: ItemCarteira[] | null;
+  /** null = a lista inteira ainda não veio: não dá para afirmar "sem conversa" */
+  comConversa: Set<string> | null;
+  aoAbrirDaCarteira: (k: ItemCarteira) => void;
+  aoNovoContato: () => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
 
@@ -74,7 +85,9 @@ export function ListaConversas({
 
   useEffect(() => {
     const t = busca.trim();
-    if (t.length < 3) {
+    // na agenda a busca é por nome/telefone/código, local: procurar no
+    // conteúdo das mensagens responderia outra pergunta
+    if (t.length < 3 || fila === "carteira") {
       setAchados(null);
       return;
     }
@@ -91,12 +104,12 @@ export function ListaConversas({
       vivo = false;
       clearTimeout(atraso);
     };
-  }, [busca]);
+  }, [busca, fila]);
 
   // rolou até perto do fim da primeira página: é hora de buscar o resto
   const aoRolar = () => {
     const el = raiz.current;
-    if (!el || completa || carregando) return;
+    if (!el || completa || carregando || fila === "carteira") return;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 400) aoChegarNoFim();
   };
 
@@ -106,7 +119,8 @@ export function ListaConversas({
     <div className="flex h-full min-h-0 flex-col bg-v2-superficie">
       {/* ---- cabeçalho: busca + recortes ---------------------------------- */}
       <div className="shrink-0 border-b border-v2-linha px-3 pb-2 pt-3">
-        <label className="relative block">
+        <div className="flex items-center gap-2">
+        <label className="relative block min-w-0 flex-1">
           <span className="sr-only">Buscar conversa</span>
           <svg
             aria-hidden
@@ -123,11 +137,25 @@ export function ListaConversas({
           <input
             value={busca}
             onChange={(e) => aoBuscar(e.target.value)}
-            placeholder="Buscar por nome ou telefone"
+            placeholder={fila === "carteira" ? "Buscar na carteira" : "Buscar por nome ou telefone"}
             className="h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
             style={{ transition: "border-color 120ms var(--ease-padrao)" }}
           />
         </label>
+        {/* NOVO CONTATO (§35.2): sem isto não há como falar com um número que
+            ainda não está na base */}
+        <button
+          data-ripple
+          onClick={aoNovoContato}
+          aria-label="Novo contato"
+          title="Novo contato — conversar com um número"
+          className="grid size-11 shrink-0 place-items-center rounded-xl text-v2-azul ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
+        >
+          <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+        </div>
 
         {/* chips: rolam até a borda no celular; no desktop quebram em duas
             linhas em vez de esconder "Fila" e "Resolvidas" atrás da borda —
@@ -208,7 +236,16 @@ export function ListaConversas({
 
       {/* ---- a lista ------------------------------------------------------ */}
       <div ref={raiz} onScroll={aoRolar} className="rolagem min-h-0 flex-1 overflow-y-auto">
-        {conversas.length === 0 ? (
+        {fila === "carteira" ? (
+          <ListaCarteira
+            carteira={carteira}
+            busca={busca}
+            selecionada={selecionada}
+            comConversa={comConversa}
+            aoAbrir={aoAbrirDaCarteira}
+            raizRef={raiz}
+          />
+        ) : conversas.length === 0 ? (
           <p className="px-4 py-10 text-center text-[13px] text-v2-tinta-fraca">
             {carregando
               ? "Carregando o resto das conversas…"
@@ -235,7 +272,7 @@ export function ListaConversas({
         )}
 
         {/* ---- o que a busca achou DENTRO das mensagens ------------------ */}
-        {busca.trim().length >= 3 && (
+        {busca.trim().length >= 3 && fila !== "carteira" && (
           <div className="border-t border-v2-linha bg-v2-superficie-2">
             <p className="flex items-center gap-2 px-3 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
               nas mensagens
@@ -263,7 +300,7 @@ export function ListaConversas({
           </div>
         )}
 
-        {carregando && conversas.length > 0 && (
+        {carregando && conversas.length > 0 && fila !== "carteira" && (
           <p className="px-4 py-3 text-center text-[12px] text-v2-tinta-fraca">
             carregando o resto da lista…
           </p>
