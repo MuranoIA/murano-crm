@@ -64,16 +64,66 @@ export const dynamic = "force-dynamic";
 
 const PAGE = 1000;
 
-export async function GET() {
+// ---------------------------------------------------------------------------
+// A PRÉVIA DA ÚLTIMA MENSAGEM (pedido do piloto, 22/09/2026) — só com `?previa=1`
+//
+// A agenda passa a mostrar o começo da última mensagem de quem já conversou,
+// como a lista de conversas. MEDIDO antes de fazer (daqui, pela internet):
+//   vendedor (640 clientes): +1,5–2,4 s e +60 KB  sobre ~2 s e 148 KB
+//   admin (a base toda):     +1–2 s   e +430 KB sobre ~5 s e 1 MB
+// Duas decisões que tiram esse custo da frente de quem usa:
+//   · a consulta NÃO depende das outras (vem da lista de conversas, pela
+//     carteira), então roda EM PARALELO — o tempo não soma, porque o resto da
+//     rota já é mais demorado;
+//   · só quem PEDE paga. O chat de hoje usa esta mesma rota e não mostra
+//     prévia: ele segue recebendo exatamente o que recebia.
+// O texto vai cortado: a linha da agenda mostra ~40 caracteres, e mandar a
+// mensagem inteira de 4 mil clientes seria pagar por bytes que ninguém lê.
+// ---------------------------------------------------------------------------
+const CORTE_PREVIA = 80;
+
+async function lerPrevias(sb: any, carteira: string | null) {
+  const m = new Map<string, { texto: string | null; por: string | null }>();
+  const pagina = (from: number) => {
+    let q = sb.from("vw_chat_conversa").select("cliente_id,ultima_mensagem,ultima_enviada_por")
+      .not("ultima_atividade", "is", null)
+      .order("cliente_id", { ascending: true })   // ordem total: sem ela as páginas repetem e pulam
+      .range(from, from + PAGE - 1);
+    if (carteira) q = q.eq("vendedor", carteira);
+    return q;
+  };
+  // em ondas de 5 páginas paralelas: a base inteira cabe numa onda hoje (~4.200)
+  for (let onda = 0; ; onda += 5) {
+    const rs = await Promise.all([0, 1, 2, 3, 4].map((i) => pagina((onda + i) * PAGE)));
+    let cheia = false;
+    for (const r of rs) {
+      for (const l of (r as any).data ?? []) {
+        const t = (l as any).ultima_mensagem;
+        m.set((l as any).cliente_id, {
+          texto: t == null ? null : String(t).slice(0, CORTE_PREVIA),
+          por: (l as any).ultima_enviada_por ?? null,
+        });
+      }
+      if (((r as any).data ?? []).length === PAGE) cheia = true;
+    }
+    if (!cheia || ((rs[4] as any).data ?? []).length < PAGE) break;
+  }
+  return m;
+}
+
+export async function GET(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
   // vendedor vê a própria carteira; admin/home veem todas e usam os chips de
   // vendedor que a sidebar já tem
   const minha = escopoCarteira();
+  const querPrevia = new URL(req.url).searchParams.get("previa") === "1";
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
   const sb = createClient(url, key, { auth: { persistSession: false } });
+  // disparada AGORA, sem esperar nada: corre junto com o resto da rota
+  const previasP = querPrevia ? lerPrevias(sb, minha).catch(() => null) : Promise.resolve(null);
 
   const { data: cfg } = await sb.from("carteira_config").select("slug,rca_num").eq("ativo", true);
   const rcas = (cfg ?? []).filter((c: any) => !minha || c.slug === minha).map((c: any) => c.rca_num);
@@ -156,8 +206,12 @@ export async function GET() {
     }
   }
 
+  // falhou a prévia? a agenda sai sem ela — a prévia é enfeite, a agenda não
+  const previas = await previasP;
+
   const carteira = clientes.map((c) => {
     const cliente_id = porCodcli.get(Number(c.codcli)) ?? (c.tel8 ? porTel8.get(c.tel8) ?? null : null);
+    const pv = cliente_id && previas ? previas.get(cliente_id) : undefined;
     const sit = situacaoDoTelefone(c.telefone);
     return {
       codcli: c.codcli,
@@ -173,6 +227,8 @@ export async function GET() {
       // cliente na frente tem. A linha continua clicável: ela abre o campo.
       precisa_telefone: !cliente_id && !sit.pode,
       impedimento: cliente_id ? null : impedimentoDe(sit),
+      // só com `?previa=1`, e só de quem já conversou
+      ...(pv ? { ultima_mensagem: pv.texto, ultima_enviada_por: pv.por } : {}),
     };
   });
 

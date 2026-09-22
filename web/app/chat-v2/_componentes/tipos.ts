@@ -38,4 +38,7 @@ export type ItemCarteira = {
   /** sem contato e sem telefone utilizável: alguém precisa digitar o número */
   precisa_telefone?: boolean;
   impedimento?: string | null;
+  /** o começo da última mensagem (só de quem já conversou; `?previa=1`) */
+  ultima_mensagem?: string | null;
+  ultima_enviada_por?: string | null;
 };
