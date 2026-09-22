@@ -161,45 +161,21 @@ export function ListaConversas({
         </button>
         </div>
 
-        {/* chips: rolam até a borda no celular; no desktop quebram em duas
-            linhas em vez de esconder "Fila" e "Resolvidas" atrás da borda —
-            contador escondido é o achado 1 do laudo, e seria ele de novo */}
-        <div className="-mx-3 mt-2 flex gap-1.5 overflow-x-auto px-3 pb-1 md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {FILAS.map((f) => {
-            const ativo = fila === f.id;
-            const n = contagens[f.id];
-            return (
-              <button
-                key={f.id}
-                data-ripple
-                onClick={() => aoTrocarFila(f.id)}
-                aria-pressed={ativo}
-                className={[
-                  "flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-colors duration-150",
-                  ativo
-                    ? "bg-v2-azul text-white"
-                    : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
-                ].join(" ")}
-              >
-                {f.curto}
-                {n != null && n > 0 && (
-                  <span
-                    className={[
-                      "min-w-4 rounded-full px-1 text-[11px] tabular-nums",
-                      ativo ? "bg-white/20" : "bg-v2-superficie-2 text-v2-tinta-fraca",
-                    ].join(" ")}
-                  >
-                    {n}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* A FILA num botão só, que abre as opções — pedido do piloto
+            (22/09/2026): sete chips ocupavam três linhas da coluna. O botão
+            não tem nome fixo: ele MOSTRA a fila escolhida e o contador dela,
+            que é a pergunta de quem olha ("o que estou vendo?").
 
-          {/* Os RECORTES ficam atrás de um botão, e os chips de fila não: a
-              fila é a primeira pergunta do dia (achado 1 do laudo de UX) e o
-              recorte é ocasional. Esconder o recorte não esconde contador
-              nenhum — ele nasce sem filtro. */}
+            ⚠️ O que isso custa: os contadores das OUTRAS filas deixam de ficar
+            sempre à vista, que era o achado 1 do laudo de UX. O que pede ação
+            não pode sumir, então o botão ganha um PONTO LARANJA quando há não
+            lidas ou recados numa fila que não está aberta. */}
+        <div className="-mx-3 mt-2 flex flex-wrap gap-1.5 px-3 pb-1">
+          <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
+
+          {/* Os RECORTES (consultor, número, coluna do board) — ocasionais,
+              e por isso atrás de um botão desde o início. Esconder o recorte
+              não esconde contador nenhum: ele nasce sem filtro. */}
           <button
             data-ripple
             onClick={aoAbrirFiltros}
@@ -329,5 +305,121 @@ export function ListaConversas({
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// O botão das filas e o menu dele.
+//
+// O menu é FIXO na tela, posicionado pelo botão na hora do clique: dentro da
+// fileira de chips (que rola na horizontal no celular) um menu absoluto seria
+// cortado — foi o que aconteceu com o "⋯" da conversa a 360 px.
+// ---------------------------------------------------------------------------
+function MenuFilas({
+  fila,
+  contagens,
+  aoTrocar,
+}: {
+  fila: Fila;
+  contagens: Record<Fila, number | null>;
+  aoTrocar: (f: Fila) => void;
+}) {
+  const [pos, setPos] = useState<null | { top: number; left: number; largura: number }>(null);
+  const botao = useRef<HTMLButtonElement>(null);
+  const atual = FILAS.find((f) => f.id === fila) ?? FILAS[0];
+  const n = contagens[fila];
+
+  // Esc fecha, como qualquer menu
+  useEffect(() => {
+    if (!pos) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPos(null);
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [pos]);
+
+  // o que pede ação e está FORA da fila aberta — é o que o ponto avisa
+  const pendente = (["nao_lidas", "recados"] as Fila[]).filter((f) => f !== fila && (contagens[f] ?? 0) > 0);
+  const dica = pendente
+    .map((f) => `${contagens[f]} em ${FILAS.find((x) => x.id === f)?.rotulo}`)
+    .join(" · ");
+
+  return (
+    <>
+      <button
+        ref={botao}
+        data-ripple
+        aria-haspopup="menu"
+        aria-expanded={!!pos}
+        title={dica ? `Fila: ${atual.rotulo} — ${dica}` : `Fila: ${atual.rotulo}`}
+        onClick={() => {
+          if (pos) return setPos(null);
+          const r = botao.current?.getBoundingClientRect();
+          if (!r) return;
+          const largura = Math.min(280, window.innerWidth - 24);
+          setPos({ top: r.bottom + 4, left: Math.max(12, Math.min(r.left, window.innerWidth - largura - 12)), largura });
+        }}
+        className="relative flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-v2-azul pl-3 pr-2 text-[13px] text-white"
+      >
+        {atual.rotulo}
+        {n != null && n > 0 && <span className="min-w-4 rounded-full bg-white/20 px-1 text-[11px] tabular-nums">{n}</span>}
+        <svg aria-hidden viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m7 10 5 5 5-5" />
+        </svg>
+        {pendente.length > 0 && (
+          <span aria-label={dica} className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-v2-laranja ring-2 ring-v2-superficie" />
+        )}
+      </button>
+
+      {pos && (
+        <>
+          <span className="fixed inset-0 z-30" onClick={() => setPos(null)} aria-hidden />
+          <div
+            role="menu"
+            style={{ top: pos.top, left: pos.left, width: pos.largura }}
+            className="entrar fixed z-40 max-h-[70vh] overflow-y-auto rounded-2xl bg-v2-superficie py-1 shadow-e3 ring-1 ring-v2-linha"
+          >
+            {FILAS.map((f) => {
+              const ativo = f.id === fila;
+              const c = contagens[f.id];
+              const pede = (f.id === "nao_lidas" || f.id === "recados") && (c ?? 0) > 0;
+              return (
+                <button
+                  key={f.id}
+                  data-ripple
+                  role="menuitemradio"
+                  aria-checked={ativo}
+                  onClick={() => {
+                    setPos(null);
+                    aoTrocar(f.id);
+                  }}
+                  className={[
+                    "flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px]",
+                    ativo ? "bg-v2-azul-claro font-semibold text-v2-azul" : "text-v2-tinta hover:bg-v2-superficie-2",
+                  ].join(" ")}
+                >
+                  <span className="flex-1">{f.rotulo}</span>
+                  {/* sem número (carteira, ou ainda contando) = nada, nunca zero */}
+                  {c != null && c > 0 && (
+                    <span
+                      className={[
+                        "min-w-5 rounded-full px-1.5 text-center text-[12px] tabular-nums",
+                        pede && !ativo ? "bg-v2-laranja text-white" : "bg-v2-superficie-2 text-v2-tinta-fraca",
+                      ].join(" ")}
+                    >
+                      {c}
+                    </span>
+                  )}
+                  {ativo && (
+                    <svg aria-hidden viewBox="0 0 24 24" className="size-4 text-v2-azul" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m5 12 5 5 9-10" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </>
   );
 }

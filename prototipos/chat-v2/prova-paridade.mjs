@@ -107,7 +107,10 @@ try {
   // ======================= lacuna 2 — Minha carteira ========================
   for (const largura of [1280, 360]) {
     const a = await abrirTela(chrome, largura, "/chat-v2");
-    await a.clicarTexto("button", "Carteira");
+    // desde 22/09 as filas moram num menu (o botão mostra a fila escolhida)
+    await a.js(`document.querySelector('button[aria-haspopup="menu"]').click(); return true;`);
+    await a.ate(`document.querySelector('[role=menuitemradio]')`, { ms: 5000 });
+    await a.clicarTexto("[role=menuitemradio]", "Minha carteira");
     const veio = await a.ate(`/\\d+ clientes?/.test(document.body.textContent)`, { ms: 45_000 });
     const n = await a.js(`const m=document.body.textContent.match(/(\\d+) clientes?/); return m?Number(m[1]):0;`);
     conferir(veio && n > 0, `${largura} px: a agenda abre e conta os clientes`, `${n} clientes`);
