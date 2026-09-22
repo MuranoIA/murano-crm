@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendText, linhaDaConversa } from "../../../lib/whatsapp";
+import { wamidParaCitar } from "../../../lib/citacao";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -20,9 +21,9 @@ export async function POST(req: Request) {
       return Response.json({ error: `Config ausente na Vercel: ${faltando.join(", ")}` }, { status: 500 });
     }
 
-    let cliente_id: string, texto: string;
+    let cliente_id: string, texto: string, responder_a: unknown;
     try {
-      ({ cliente_id, texto } = await req.json());
+      ({ cliente_id, texto, responder_a } = await req.json());
     } catch {
       return Response.json({ error: "body inválido" }, { status: 400 });
     }
@@ -53,13 +54,19 @@ export async function POST(req: Request) {
       // Um valor global aqui responderia pelo numero errado e cairia em 131047,
       // porque a janela de 24h e por par (numero, cliente).
       const linha = await linhaDaConversa(sb, cliente_id);
-      const { wamid } = await sendText(to, texto, linha);
+      // A citação é conferida AQUI, contra esta conversa — ver lib/citacao.ts.
+      // Vale null quando não dá para citar, e a mensagem sai assim mesmo.
+      const citar = await wamidParaCitar(sb, cliente_id, responder_a);
+      const { wamid } = await sendText(to, texto, linha, citar);
       // espelha no banco (mesma linha que o webhook atualiza com sent/delivered/read)
       await sb.from("mensagens").upsert({
         id: wamid, cliente_id: cli.id, vendedor_carteira: cli.carteira ?? null,
         enviada_por: "operator", tipo: "mensagem", conteudo: texto,
         status: "wait", criada_em: new Date().toISOString(),
         linha_id: linha,
+        // é o que faz a thread desenhar o trecho citado na NOSSA bolha também —
+        // a mesma coluna que o webhook preenche quando a cliente cita
+        resposta_a: citar,
       }, { onConflict: "id" });
       return Response.json({ ok: true, cliente: cli.nome_completo, canal: "whatsapp" });
     } catch (e: any) {

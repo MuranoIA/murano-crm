@@ -5854,3 +5854,285 @@ curto que existe: a conversa certa, com o cursor na caixa. Em Safari/iOS
    sem policy — que barra select/insert/update/delete e não isso. Corrigir é
    `revoke` em massa, com o mesmo risco de rollback silencioso que a §12.5 e a
    §71.5 já nomeiam. **Decisão pendente do usuário.**
+
+## 73. chat-v2 — a reconstrução do chat (19–20/09/2026)
+
+O `/chat` está sendo **reconstruído do zero** em `web/app/chat-v2/`, com Google
+Material sobre a paleta Murano, mobile-first e primeira carga no servidor. A
+spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
+andamento em `prototipos/chat-v2/relatorio.md`.
+
+**Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
+4 ligação/push/embed ✅ · **5 paridade — fechada; falta só limpar o ensaio (ver 73.7)** · 6 piloto por
+pessoa · 7 todos e aposentar.
+
+**Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
+`feat/chat-v2`, e o `/chat` antigo segue intocado — ele é a volta segura.
+
+### 73.1 Como RETOMAR (uma sessão nova faz isto e está pronta)
+
+```bash
+cd C:/murano-projetos/crm-chat-v2            # a worktree desta frente
+node ../crm/scripts/abertura.mjs             # quem mais está mexendo no repo
+
+cd web && npm run build                      # ESPERE terminar (ver 73.5)
+cd web && SIMULACAO_ENVIO=1 DEV_LOGIN_CHAVE=$(cat ../.chave-dev) \
+  WHATSAPP_TOKEN= \
+  NODE_OPTIONS="--require C:/murano-projetos/crm-chat-v2/prototipos/chat-v2/instrument.cjs" \
+  npx next start -p 3120 -H 0.0.0.0
+
+node prototipos/chat-v2/abrir.mjs            # janela já logada, ancorada à direita
+node prototipos/chat-v2/ensaio.mjs criar     # conversa de ensaio, para testar envio
+node prototipos/chat-v2/medir.mjs --tela /chat-v2   # a régua (MSYS_NO_PATHCONV=1 no Git Bash)
+node prototipos/chat-v2/prova-fase4.mjs      # os 20 passos da fase 4, no navegador
+```
+
+- **`SIMULACAO_ENVIO=1` é obrigatório enquanto se desenvolve:** o envio devolve
+  um wamid falso `sim.` e **nada chega a cliente nenhum** (`lib/simulacaoEnvio.ts`).
+  Limpar depois: apagar as mensagens com id `sim.` (ou `ensaio.mjs limpar`, que
+  leva junto a conversa de ensaio inteira).
+- **Testar só na conversa de ENSAIO** (`wa:559190000077`, faixa reservada
+  55 91 9 0000-00NN). Escrever numa conversa real não envia nada, mas deixa uma
+  linha no banco que aparece no chat antigo dos consultores.
+- **Celular na rede local:** `http://<ip>:3120/dev-entrar?chave=<.chave-dev>`.
+  `web/app/dev-entrar/` é **local e gitignored** — só existe com a env
+  `DEV_LOGIN_CHAVE` e só responde a host da rede local. Apagar ao fim da frente.
+
+### 73.2 As regras que não podem ser afrouxadas
+
+- **O chat antigo não é editado.** `app/chat/page.tsx` é a volta segura e segue
+  atendendo o time. **O v2 não importa nada de `app/chat/`** — o que estiver
+  preso lá se move para `lib/` (foi o caso de `useVirtualizacao`, agora em
+  `lib/virtualizacao.tsx`, com `app/chat/virtual.tsx` só reexportando).
+- **Regra de negócio não se reimplementa**: janela de 24h, escopo por carteira,
+  dono efetivo, erros da Meta, mídia, limites e templates vêm de `lib/` e das
+  rotas `/api/chat/*` que já existem. O v2 tem rotas próprias só para o que era
+  caro demais (`/api/chat-v2/lista` e `/api/chat-v2/contagens`).
+- **Tailwind v4 sem preflight**, importado só em `app/chat-v2/layout.tsx`, com
+  tokens **prefixados** (`--color-v2-*`). O preflight resetaria as telas antigas,
+  e um `--color-primary` solto no `:root` passaria a valer em `/`, `/chat` e
+  `/admin` — a folha da rota continua no documento depois que a pessoa sai dela.
+- **Layout é CSS, não `window.innerWidth`.** É o que faz o v2 se ajustar sozinho
+  dentro do iframe do hub (§17) e da lupa do board (§41).
+- **O texto do compositor não sobe de componente.** Era a causa do peso ao
+  digitar: no chat antigo ele mora no componente de 5.400 linhas, e cada tecla
+  redesenha lista, conversa e painel.
+- **Cor com papel:** vinho é marca, **azul é ação** (ticks, selecionada, bolha
+  enviada, foco, enviar, progresso), laranja é acento pontual (não lida, janela
+  fechada, falha). O azul é a assinatura pedida pelo usuário (spec §3.0.1).
+- **Nenhuma migration** sem pedir: o v2 usa as views e tabelas que já existem.
+- **Recorte caro é opcional e vem depois da pintura.** `lerLista` aceita
+  `{ etapas, linhas }`: a etapa custa 2 consultas e nada em bytes; o número
+  custa a varredura de `vw_chat_linha_cliente` e **só é paga com 2+ linhas
+  ativas** (hoje há uma, com 4.144 conversas). Quem não abre os filtros não
+  paga por nenhum dos dois.
+
+### 73.3 A régua, e o que ela já mostrou
+
+`prototipos/chat-v2/instrument.cjs` (preload que atribui cada ida ao banco à
+requisição que a provocou — o arquivo que o laudo de performance descrevia e
+que nunca tinha sido commitado) e `prototipos/chat-v2/medir.mjs`.
+
+| | `/chat` | `/chat-v2` |
+|---|---|---|
+| lista visível | 7.395 ms | **1.120 ms** |
+| bytes de API por sessão | 2.969 kB | **1 kB** |
+| abrir conversa (até a thread) | 1.680 ms | **724 ms** |
+| long tasks ao digitar 20 teclas | 1 (até 136 ms) | **0** |
+| do clique em enviar até a bolha | — | **19 ms** |
+| First Load JS | 156 kB | 110 kB (com as fases 2 e 3) |
+
+⚠️ **Compare contagem, bytes e long task, não o tempo absoluto**: a máquina de
+medição fala com o Supabase pela internet, e em produção as funções passaram a
+rodar em `gru1`, do lado do banco (PR #234).
+
+### 73.4 O que já existe na tela (e o que falta)
+
+**Fase 1 — ler:** lista virtualizada com prévia, contadores sempre visíveis
+(chips), recortes (todas/não lidas/favoritas/fila/resolvidas), busca por nome e
+telefone, thread com separador de dia e agrupamento, ticks, selo de template,
+mídia recebida, carregar anteriores, **faixa da janela de 24h antes de
+escrever**, painel do ERP com número herói **inclusive no celular**, primeira
+carga no servidor e `?cliente=` na URL.
+
+**Fase 2 — escrever:** envio otimista (19 ms), marca de leitura ao abrir,
+template pelo chat com os campos e a prévia, respostas rápidas por `/`, **fila
+de snackbars** (o chat antigo tem 18 `setAviso` num slot só), Enter/Shift+Enter,
+reenviar o que falhou, Realtime + `?desde=` incremental + poll de 60 s.
+
+**Fase 3 — completar:** anexos (3 passos, upload direto no Storage, progresso
+acima de 2 MB), gravador de áudio, localização por endereço salvo, notas
+internas (modo da mesma caixa, papel amarelo na thread), transferir / pegar /
+devolver, resolver com motivo e reabrir, favoritar, encaminhar, exibição da
+citação, ficha do contato (nome + CPF) e busca no conteúdo por trigrama.
+
+**Fase 4 — delicado:** ligação (WebRTC) com campainha, desfecho e marco na
+thread; avisos em quatro degraus (título da aba, bipe, notificação, push);
+`embed=1` para a lupa do board, com a ponte do hub travada na origem; presença
+anti-colisão; e os três recortes que cruzam — consultor, número e coluna do
+board. **20/20 no `prova-fase4.mjs`.**
+
+**Falta:** paridade (fase 5), piloto por pessoa (6) e global (7).
+
+⚠️ **Não exercitado — dito, não afirmado:** o **gravador de áudio** (headless
+não tem microfone), a **preservação da rolagem** ao carregar mensagens antigas,
+**uma chamada de voz de verdade** (o servidor de ensaio sobe sem token da Meta
+de propósito — o que está provado é a cadeia até o erro tratado), **o seletor
+por número com duas linhas** (hoje só há uma ativa) e **o push chegando com o
+navegador fechado** (depende da `VAPID_PUBLIC_KEY`, §72.7).
+
+⚠️ **"Citar ao responder" não é paridade** — o chat antigo também não tem. O v2
+mostra a citação recebida; citar AO ENVIAR seria feature nova.
+
+### 73.6 Depois da fase 4 — o que veio do uso (20/09/2026)
+
+| O quê | Onde | Prova |
+|---|---|---|
+| arrastar e colar arquivo | `259ecfe` | `prova-soltar.mjs` 10/10 |
+| "resolvo e a conversa volta" | `280ce87` · **PR #235** | `prova-resolver-volta.mjs` 9/9 |
+| responder citando (inclusive mídia) | `be169bd` | `prova-citar.mjs` 14/14 |
+| tipos de mídia pela lista da Meta | `161261a` | `prova-midia-tipos.mjs` 15/15 |
+| ligação real ponta a ponta | `79f8285` | `prova-ligacao-real.mjs` 9/9 |
+| notificação abre a CONVERSA | **PR #236** | — |
+
+⚠️ **"Resolvo e volta" NÃO é o banco voltando atrás.** Medido: nas 15 vezes em
+que alguém resolveu a mesma conversa de novo em menos de 30 s, o webhook não
+tocou em nenhuma mensagem no intervalo. É uma recarga de lista que saiu antes
+do resolver e chegou depois. **Não confundir com o PR #229** (reentrega da
+Meta), que é real, acontece em minutos e aí sim o banco volta atrás — mesmo
+sintoma, causas opostas, e corrigir só um deixa o outro de pé.
+
+⚠️ **A classificação de mídia era `image/*` → foto.** Um `.gif`, `.webp`,
+`.heic` ou `.mov` era recusado pela Meta no upload, e a consultora via "não
+consegui enviar" num arquivo que o WhatsApp dela manda. A lista dela é curta
+(jpeg/png · aac/amr/mpeg/mp4/ogg · mp4/3gpp · webp como figurinha); o resto vai
+como documento, que chega.
+
+⚠️ **Citar mensagem só vale com `wamid.`**, e a validação é no SERVIDOR: sem
+conferir que a mensagem é DESTA conversa, dava para citar o wamid de outra
+cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
+
+### 73.7 ⚠️ ONDE A FASE 5 ESTÁ (21/09/2026, noite) — leia antes de continuar
+
+**O relatório vivo é `prototipos/chat-v2/paridade.md`** — a tabela da seção 0
+diz o estado de cada lacuna e com que prova.
+
+**As 13 lacunas estão fechadas em código** (commits `c774c75` e `be84a17`,
+mais o merge do master `d0d2f03`), e as de tela foram medidas no navegador:
+`prova-paridade.mjs` 17/17 e `prova-paridade-b.mjs` (ver o fim desta seção).
+Nenhuma migration, nenhuma rota nova — só tela sobre rotas que já existiam.
+
+| | Onde ficou |
+|---|---|
+| 1 "Esperando" | **não era lacuna**: é a régua do "Não lidas" do v2. O `sla` do `/api/chat` não é lido pela tela antiga |
+| 2 Minha carteira · 3 Novo contato | recorte "Carteira" na sidebar (`Carteira.tsx`) + botão **+** ao lado da busca |
+| 4 Recados | chip + selo + marca de visto ao abrir; contado em `contarFilas` |
+| 5 Ficha · 6 Vincular | `FichaCadastro.tsx` no painel; substituiu o editor nome+CPF. "Pedir os dados" usa o gesto `escrever` do compositor |
+| 7 Pausa · 8 Pedir localização · 9 PDF | "⋯" no cabeçalho da conversa (`MaisAcoes` em `Conversa.tsx`) |
+| 10 Barra do produto · 13 Devolver | da sessão anterior — agora medidas |
+| 11 Ordenação · 12 Criar resposta rápida | botão na fileira de chips · rodapé do menu do "/" |
+
+**As duas provas estão verdes no mesmo build:** `prova-paridade` 17/17 e
+`prova-paridade-b` 26/26. A rodada vermelha da madrugada tinha duas causas,
+nenhuma do "+": (1) a prova abria uma aba nova por passo e **nunca fechava
+nenhuma** — sete abas do chat vivas, com a máquina em 0,4 GB de RAM livre, e os
+últimos passos estouravam o tempo (sozinho, o "+" abre em 345 ms); (2) um defeito
+real, o painel do cliente montado DUAS vezes (ver abaixo).
+
+**Quatro achados de passagem, todos corrigidos:**
+- **o painel do cliente era montado duas vezes** — a coluna `xl` escondida por
+  CSS e a folha do celular. Cada abertura buscava contato e ficha em dobro, e a
+  360 px a folha visível ficava no esqueleto enquanto a invisível carregava. A
+  prova antiga passava porque achava o texto na INVISÍVEL. Agora uma media query
+  decide qual monta (`a83e5ca`).
+- `/api/chat/respostas` devolve `corpo` e o compositor lia `texto`: colar punha
+  "undefined" e filtrar por um trecho sem atalho **derrubava a tela** (desde a
+  fase 2). Mapa na leitura (`emResposta`).
+- o selo "sem conversa" da agenda marcava TODO mundo com a lista em primeira
+  página; agora só aparece com a lista completa.
+- a 360 px o "⋯" abria para fora da tela e a fileira de ícones espremia o nome
+  até "E…" em conversa da fila; o nome ganhou `min-w` e o menu vira fixo, com a
+  largura da tela, abaixo do botão.
+
+⚠️ **Não exercitado de propósito** (escrevem em dado real do time): "É a mesma
+pessoa" (cria vínculo), salvar resposta rápida (tabela da casa), baixar PDF
+(Storage) e avisar pausa. Estão presentes e usam as mesmas rotas do chat de
+hoje. Pedir localização FOI clicado (simulado).
+
+**A suíte `testes/` rodou inteira nas duas telas (22/09):** chat de hoje
+152/22/14, chat-v2 153/22/13 — **nenhuma regressão do v2** (análise caso a caso
+em `paridade.md` §4.1; as 22 falhas existem no código de produção). O ciclo 11
+(iframe) falha até com o build certo — não era a parametrização.
+
+**Falta para fechar a fase 5:** só limpar o ensaio (`ensaio.mjs limpar`). Ele
+foi mantido porque o usuário está testando nele pela rede local.
+
+**Depois:** fase 6 (piloto por pessoa) — a primeira ida desta frente a
+produção, **decisão do usuário**.
+
+**Produção:** a branch recebeu o master em 21/09 (#229, #234, #235, #236). O
+conflito no webhook era só comentário; ficou a versão do master. Pendência
+aberta com o usuário, não repropor sozinho: a mensagem do commit `4cab918` no
+master cita uma cliente pelo nome. Observação da revisão do #229, não
+corrigida: na reentrega da Meta o push e a resposta de fora do horário ainda
+rodam (a trava `jaExistia` só pegou a reabertura).
+
+**Ambiente para a suíte** (é diferente do dev da 73.1 — ela exige porta 3100):
+
+```bash
+cd web && NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 npm run build
+cd web && SIMULACAO_ENVIO=1 ENSAIO_VISIVEL=1 WHATSAPP_TOKEN= npx next start -p 3100
+CHAT_TELA=/chat    node testes/run.mjs     # linha de base
+CHAT_TELA=/chat-v2 node testes/run.mjs     # o v2
+```
+
+⚠️ **Máquina (21/09 noite):** ~14 GB livres. O build leva 10–15 min. Nesta
+sessão o `next start` e um `npm run build` em segundo plano morreram duas vezes
+com **exit 127 sem erro no log** — não era o código (o mesmo build passou na
+tentativa seguinte). Se acontecer, só repetir. `/login` responde 404 no build
+de produção: esperar pelo "Ready" no log, não por `/login`.
+
+### 73.5 Armadilhas desta frente (todas custaram pelo menos uma rodada)
+
+1. **Rolar a thread para o fim uma vez não basta** — a virtualização mede as
+   alturas depois do primeiro render e as imagens chegam segundos depois. Quem
+   cola no fim é um `ResizeObserver`, e ele para de colar se a pessoa subiu.
+2. **Contar as filas dentro da carga da página** levou a primeira pintura de
+   994 ms para 3.816 ms. Contador caro sai para rota própria, pedida **depois**
+   da pintura; enquanto não chega, o chip fica **sem número** — nunca com zero.
+3. **O incremental (`?desde=`) não pode descartar o passado.** A primeira versão
+   jogava fora o que fosse mais antigo que o lote, e ao enviar uma mensagem a
+   fala da CLIENTE sumia da tela. Aquela regra é da recarga completa.
+4. **Conversa fora da lista abre vazia** se a tela depender só dela:
+   `vw_chat_conversa` é materializada e atualiza a cada 2 min (0139). A conversa
+   é montada a partir da própria thread quando não está na lista.
+5. **Navegar para a MESMA URL de uma janela aberta não recarrega nada** — duas
+   rodadas foram medidas no build anterior. O `abrir.mjs` recarrega ignorando
+   cache.
+6. **Subir o `next start` no mesmo comando do `npm run build`** pega o `.next`
+   pela metade: o servidor morre com "Could not find a production build". Espere
+   o build terminar (o `BUILD_ID` aparece ANTES do fim — §60.5).
+7. **`console.log` num preload de `--require`** derruba o `next start` com
+   "Cannot find module": o stdout do preload vira argumento do processo que o
+   Next levanta.
+8. **O Git Bash converte `--tela /chat-v2`** em `C:/Program Files/Git/chat-v2`.
+   Prefixe com `MSYS_NO_PATHCONV=1`.
+9. **Heredoc de python com aspas quebra neste ambiente** (§55): escreva o script
+   com a ferramenta Write e rode `python <arquivo>`.
+10. **Coluna que não existe não devolve linha sem o campo — devolve ERRO.**
+   `lerThread` pedia `codcli` a `clientes` (que não tem essa coluna, ela é da
+   view) e o resultado era `cliente: null`: o `?cliente=` abria "Escolha uma
+   conversa" desde a fase 1, ou seja, o link do board, o push e o F5 dentro de
+   um atendimento caíam na tela vazia. Ninguém viu porque o caminho testado era
+   clicar na lista, que é outro código. É a mesma armadilha da §62.6.
+11. **Publicar o objeto inteiro de um hook para o componente pai é um laço de
+   render sem fim.** O objeto nasce novo a cada render; publique só o que muda
+   por evento (em `Ligacao.tsx`, `ligar`/`ocupado`/`emChamada`).
+12. **Dinâmico com `ssr: false` NÃO pode envolver a tela.** Um provider em volta
+   de tudo tiraria a lista do primeiro byte e desfaria a fase 1 — a camada
+   pesada tem de ser IRMÃ da tela, não mãe.
+13. **Abas do mesmo jarro de cookies dividem o cookie.** O teste acusou a lupa de
+   gravar o `crm_tela` que a aba anterior tinha gravado. Apague o cookie antes
+   de medir, ou use `novaAbaIsolada`.
+14. **Sem janela de 24h não há caixa de texto** — é o desenho (§33.1). Um teste
+   que exige `<textarea>` reprova a tela por estar certa.

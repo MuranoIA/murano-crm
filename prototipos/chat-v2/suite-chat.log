@@ -1,0 +1,263 @@
+servidor em http://localhost:3100: no ar
+linha do ensaio: 1267537293116190
+
+=== Ciclo 0 — fundação (plataforma, config e sessões)  (ciclo0-fundacao.mjs)
+  PASSOU  ✅ banco responde e as tabelas centrais existem
+            clientes 5217 · mensagens 202314 · disparos 11221
+  PASSOU  ✅ `contar` não devolve zero silencioso para relação inexistente
+            confirmado: relação inexistente lança, não devolve 0
+  PASSOU  ✅ estado dos interruptores (crm_config) registrado
+            ciclo_ativo=false · numero_envio=cloud · historico_rd=false
+            carteira_rd_ativa=true · linhas_visiveis=["1267537293116190"]
+            sla_minutos=1
+            MODO MIGRAÇÃO: desligado
+  PASSOU  ✅ migration 0114 — objetos no banco batem com o código em disco
+            0114 aplicada
+  PASSOU  ✅ linhas de WhatsApp cadastradas (chat_linha)
+            inativa 1264458800091787 · Murano 2 · +559181660019
+            inativa rd · Murano Pro (numero antigo — encerrado em 09/09/2026) · +55 91 2018-2357
+            ativa  1267537293116190 · Murano Professional · +559120182357
+            inativa 973434089176828 · Murano Shop (piloto) · +5591980600032
+            inativa 1221847701011584 · Número de teste · +15556716653
+  PASSOU  ✅ carteiras ativas (carteira_config é a fonte única, §14.1)
+            anne (RCA 27, IS) · kamilly (RCA 51, ISR) · luana (RCA 46, ISR) · milene (RCA 28, IS) · romulo (RCA 45, ISR) · thamires (RCA 10, IS) · thiago (RCA 29, IS)
+  PASSOU  ✅ servidor no ar e /api/chat responde ao consultor
+            535 conversas · 2671 ms · layout=bancada · modo_migracao=undefined
+  PASSOU  ✅ sem cookie de sessão a rota do chat NÃO entrega dado
+            HTTP 401
+  PASSOU  ✅ escopo por carteira: o consultor não vê a lista do admin
+            romulo 535 · admin 4146 · carteiras na lista do consultor: (fila), romulo
+  PASSOU  ✅ as 4 features restritas exigem admin (podeAdmin)
+            consultor 403 · home 403 · admin 200
+
+=== Ciclo 1 — conversa nova, do zero ao encerramento  (ciclo1-conversa-nova.mjs)
+  PASSOU  ✅ 1. cliente manda mensagem — o webhook grava e casa pelo telefone
+            gravada em 6a66af9224e3f7ae2f1e99a7, linha 1267537293116190, sem criar contato duplicado
+  PULADO  ✅ 2-3. fila de não atribuídos · devolver (0112) e ✋ Pegar de volta
+            nenhuma conversa sem carteira comercial atribuída a romulo para fazer o round trip (fila hoje: 2)
+  PASSOU  ✅ 4. responder com texto — decisão de canal, janela e guardas
+            recusa texto vazio (400), card do ERP (400) e cliente inexistente (404)
+  PULADO  ✅ 5-6. enviar imagem / 3 imagens juntas
+            não executado: exigiria upload real pela Graph API. O caminho de recusa é coberto no ciclo1b; o envio de mídia de verdade a um número real não foi feito para não gastar a única autorização em anexo.
+  PASSOU  ⚠️ 7. reação do cliente vira ATRIBUTO da bolha, não mensagem nova
+            reação gravada como atributo; nenhuma linha nova em `mensagens` (§21.2 continua corrigida)
+  PASSOU  ⚠️ 8. citação: a recebida aparece; enviar citando não existe
+            coluna resposta_a existe (citação recebida ok). Enviar citando segue sem caminho nas rotas send-message, chat/enviar-midia — limitação confirmada, como o documento diz
+  PASSOU  ✅ 9. nota interna — grava, aparece na thread, e só o autor apaga
+            nota #259 na thread, fora de `mensagens`, e protegida de outro vendedor (403)
+  PASSOU  ✅ 10. encerrar com motivo — e o motivo vira dado utilizável
+            motivo=venda_realizada por ia@muranoprofessional.com.br; lista do chat acompanhou
+  PASSOU  ✅ 10b. o encerramento alimenta o histórico de resolução (0114)
+            21 linha(s) de resolução para o alvo
+  PASSOU  ✅ 11. cliente responde depois — a conversa REABRE sozinha
+            status voltou a "aberta" (motivo anterior guardado: venda_realizada)
+
+=== ciclo10 — seis consultores simultâneos  (ciclo10-equipe-simultanea.mjs)
+  PASSOU  ✅ o interceptor de envio está ligado (nada sai para a faixa fictícia)
+            wamid simulado — a faixa fictícia está isolada da Meta
+  PASSOU  ✅ a linha do ensaio é a que está ATIVA no cadastro
+            1267537293116190 (Murano Professional)
+  PASSOU  ✅ a faixa fictícia não colide com cliente real
+            34 números conferidos, nenhum bate com cliente real
+  PASSOU  ✅ 24 clientes novos escrevem e viram conversa
+            24 conversas criadas em 3862 ms (webhook simultâneo)
+  FALHOU  ✅ as 24 caem na FILA DE ESPERA (sem dono) e todo mundo as vê
+            a consultora enxerga só 1 das 24 conversas da fila
+  PASSOU  ✅ cada consultor pega 4 conversas da fila (✋ Pegar simultâneo)
+            24 conversas atribuídas de uma vez
+  PASSOU  ✅ volume: 6 consultores × 6 rodadas + 2 supervisores + clientes respondendo
+            193 chamadas em 46s · pico 24/s · 0 com erro
+  PASSOU  ✅ nenhuma mensagem de cliente foi PERDIDA (webhook pede reenvio quando falha)
+            nenhum reenvio foi preciso
+  PASSOU  ✅ nenhuma chamada do volume falhou
+            193 chamadas, 0 erro
+  FALHOU  ✅ latência sob carga: p90 abaixo de 3s em toda rota
+            rotas acima de 3s no p90:
+              GET /api/chat (supervisor): n=6 p50=6733ms p90=10429ms max=11391ms
+              GET /api/funil (supervisor): n=6 p50=7246ms p90=7340ms max=7395ms
+              GET /api/chat/thread: n=36 p50=2130ms p90=3445ms max=4066ms
+              POST /api/chat/enviar-midia (imagem): n=12 p50=2513ms p90=3290ms max=5704ms
+              POST /api/chat/enviar-midia (audio): n=12 p50=2093ms p90=2860ms max=3226ms
+              GET /api/chat: n=1 p50=2818ms p90=2818ms max=2818ms
+              POST /api/chat/transferir: n=24 p50=2245ms p90=2521ms max=2531ms
+              POST /api/chat/enviar-midia (documento): n=12 p50=1683ms p90=2258ms max=2766ms
+              POST /api/send-message: n=36 p50=1192ms p90=1510ms max=2035ms
+              POST /api/chat/lida: n=36 p50=784ms p90=1333ms max=3312ms
+              POST /api/chat/notas: n=12 p50=316ms p90=487ms max=537ms
+  PASSOU  ⚠️ CORRIDA: dois consultores pegam a MESMA conversa no mesmo instante
+            uma levou (thiago), a outra recebeu 409 dizendo quem levou
+  PASSOU  ✅ CORRIDA: dois envios simultâneos para o mesmo cliente não se sobrescrevem
+            as duas viraram linhas distintas — o wamid simulado é único por envio
+  FALHOU  ✅ CORRIDA: marca de leitura é POR USUÁRIO (um lendo não zera o outro)
+            o segundo supervisor não enxerga a conversa
+  PASSOU  ✅ ESCOPO: consultor não alcança a conversa de outro
+            403 no transferir; a conversa da anne não aparece na lista do thiago
+  PASSOU  ✅ conversa resolvida REABRE quando a cliente responde
+            resolvida -> cliente responde -> aberta
+  FALHOU  ✅ DOIS NÚMEROS: a resposta sai pelo número em que a cliente escreveu
+            quem escreveu para a SEGUNDA linha foi respondida por 1267537293116190 — no aparelho dela isso é outra conversa, e a janela de 24h daquele número não vale para este
+  PASSOU  ✅ DOIS NÚMEROS: linha DESATIVADA no cadastro não é usada para enviar
+            linha inativa ignorada; respondeu pelo padrão (1267537293116190)
+  FALHOU  ✅ DOIS NÚMEROS: a thread diz por qual número vai responder
+            thread diz linha_envio=1267537293116190, esperava 999000111222333
+  PASSOU  ✅ envio real: cadastrar os 4 números autorizados como contato
+            5591984719702: HTTP 200 -> 6a66af9224e3f7ae2f1e99a7
+            5591981568774: HTTP 200 -> wa:559181568774
+            5591998186976: HTTP 200 -> 6a67ece607b89e6ed9351cfc
+            5591981086442: HTTP 200 -> wa:559181086442
+  PASSOU  ✅ envio real: TEMPLATE de verdade para os autorizados (teto 20)
+            4 template(s) real(is) · boa_noite, recontato_de_clientes, lucratividadehome, ola_tudo_bem, captar, o_segredo_do_loiro_saudavel_28_setembro, link_do_grupo, prospectar, a_lizz_agora, a_lizz, cronograma_capilar, cronograma_capilar_2, dia_do_cliente, o_segredo_do_loiro_saudavel_28_setembro_imagem, pedidos, semana_do_cliente_comecou, finalizar_o_pedido, nao_quero_ficar_de_fora, amiga
+            5591984719702: enviado (wamid sim.7f931e7e355d4e…)
+            5591981568774: enviado (wamid sim.2650cc7e9f7144…)
+            5591998186976: enviado (wamid sim.1a3458e8d0b346…)
+            5591981086442: enviado (wamid sim.b8eea4a177104b…)
+  PULADO  ✅ envio real: recibo da Meta volta e promove wait -> success/read
+            nenhum envio real aconteceu
+  PASSOU  ✅ envio real: mensagem livre é recusada fora da janela de 24h
+            a janela estava ABERTA para 5591984719702 (alguém respondeu) — texto livre entregue
+  PASSOU  ✅ envio real: mídia para quem respondeu (se alguém respondeu)
+            5591984719702 imagem: ok
+            5591984719702 audio: ok
+            5591984719702 documento: ok
+  PASSOU  ✅ o espelho no banco bate com o que foi enviado
+            155 mensagens (77 nossas, 78 delas), 36 com arquivo no bucket
+  PASSOU  ✅ a mídia enviada foi mesmo parar no bucket wa-midia
+            5 amostras com caminho; a primeira baixou 160 bytes
+  PASSOU  ✅ limpeza: nada do ensaio fica no banco
+            clientes fictícios encontrados: 30
+            arquivos removidos do bucket wa-midia: 37
+            chat_nota: 13
+            chat_transferencia: 27
+            chat_leitura: 24
+            chat_resolucao: 8
+            chat_conversa: 30
+            cadastro_cliente: 0
+            mensagens: 171
+            clientes: 30
+            mensagens com wamid simulado fora da faixa: 16
+
+=== ciclo11 — chat embutido no iframe do hub  (ciclo11-iframe-hub.mjs)
+  PASSOU  ✅ preparação: hub falso no ar e uma conversa para olhar
+            host em 127.0.0.1:3199, conversa wa:5591900000700 criada
+  FALHOU  ✅ o chat CARREGA dentro do iframe, com a sessão valendo
+            não achei o contexto do iframe (o quadro carregou?)
+  FALHOU  ✅ MICROFONE: com o `allow` do hub, a permissão é delegada ao quadro
+            não achei o contexto do iframe (o quadro carregou?)
+  FALHOU  ✅ MICROFONE: sem o `allow`, o quadro fica mudo — e é assim que se reconhece o sintoma
+            não achei o contexto do iframe (o quadro carregou?)
+  FALHOU  ✅ DUAS pessoas em quadros separados: cada uma com a sua sessão
+            não achei o contexto do iframe (o quadro carregou?)
+  FALHOU  ⚠️ TEMPO REAL: mensagem nova aparece na CONVERSA ABERTA sem recarregar
+            não achei o contexto do iframe (o quadro carregou?)
+  PULADO  ⚠️ o hub manda "abra esta conversa" e o quadro abre, com o cursor na caixa
+            o build precisa de NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 (hoje: ausente)
+  PULADO  ⚠️ uma página de OUTRA origem manda o mesmo recado e não acontece nada
+            o build precisa de NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 (hoje: ausente)
+  PASSOU  ✅ nenhuma exceção de JavaScript em nenhum dos quadros
+            0 exceção, 0 erro de console
+
+=== Ciclo 2 — canal caído, e quem avisa  (ciclo2-canal-caido.mjs)
+  PULADO  — 1. simular queda do canal (revogar token / desconectar número)
+            RECUSADO por segurança: revogar o token ou desconectar o número derruba o atendimento real de 15 pessoas e o recebimento de clientes. Testo o detector no passo 2, que é o que interessa saber.
+  FALHOU  ⛔ (o doc diz que não há alerta) 2. mensagem presa em `wait` acende o alarme de canal mudo
+            o alarme não acendeu: estado=suspeito, presas=3: esperado "mudo", obtido "suspeito"
+  PASSOU  ✅ 3. o alarme apaga quando as presas somem (não fica travado aceso)
+            voltou a estado="ok" — o alarme segue o estado, não fica preso
+  PASSOU  ⚠️ 4. o diagnóstico profundo existe e é de admin (rota /api/admin/saude-canal)
+            consultor 403 · admin 200 · chaves: banco, meta
+  PULADO  ⛔ 5. notificação automática do problema (fora da tela)
+            confirmado como lacuna real, sem execução: o alarme é de TELA (faixa no board e /admin). Não há push nem e-mail — se o canal cair de madrugada, ninguém sabe até alguém abrir o sistema. Está descrito assim na §52 e continua verdade no código.
+
+=== Ciclo 3 — disparo em massa (SÓ PRÉVIA — enviar é proibido)  (ciclo3-disparo.mjs)
+  FALHOU  ✅ 1-2. consultar templates e o status de aprovação de cada um
+            a opção sintética `Padrão do sistema` (id 0) sumiu — §26.3
+  PASSOU  ✅ 3. montar o público por segmento (carteira, etapa, tempo parado)
+            20 selecionados de 574 · cortes: {"sem_contato":19,"sem_telefone":0,"descartado":0,"disparo_recente":12,"ativo_demais":0,"numero_morto":62,"comprou_no_periodo":0,"conversa_aberta":0,"sem_dados_do_erp":0,"localizacao":0,"produto":0,"financeiro":0,"recencia":0,"ramo":0,"ciclo":0,"conjunto":0,"telefone_repetido":0}
+  PASSOU  ✅ 4. o sistema corta quem já está em conversa ativa
+            sem_contato 128 · sem_telefone 0 · descartado 0 · disparo_recente 842 · ativo_demais 3012 · numero_morto 293 · comprou_no_periodo 0 · conversa_aberta 0 · sem_dados_do_erp 0 · localizacao 0 · produto 0 · financeiro 0 · recencia 0 · ramo 0 · ciclo 0 · conjunto 0 · telefone_repetido 2
+  PASSOU  ⛔ (o doc diz que não existe) 5. o sistema corta quem falhou em disparo anterior
+            corte `numero_morto` presente (valor 293). Códigos de falha no banco: 131026×56, 131042×3, 131047×43, 131049×80, 131053×6. ⚠️ O documento marca este passo como ⛔ e ele FUNCIONA — desatualizado (§61).
+  PASSOU  ✅ 6. variável de texto livre da campanha
+            templates que pedem campo da campanha: Recontato de clientes (2), ola_tudo_bem (1), boa_noite (2), lucratividadehome (1), a lizz agora (1), FINALIZAR O PEDIDO (1), nao quero ficar de fora (1)
+  PULADO  ✅ 7-8. rodar o disparo / fechar a aba no meio
+            RECUSADO por segurança (§0): enviar é proibido. Cada template é cobrado e vai para clientes reais. Parei na prévia, que é onde mora toda a decisão de público.
+  PASSOU  ⛔ 9. agendar o disparo para amanhã
+            confirmado ⛔: a rota só aceita `previa` (HTTP 400 para `agendar`). O laço de envio roda no navegador (§26.2), então agendar exige mover o envio para o servidor.
+  PASSOU  ⛔ 10-11. taxa de resposta e entregue/lido por campanha
+            campanhas: 14 template(s) · enviados 1000 · entregues 839 · lidos 639 · responderam 163 · taxa 19%
+
+=== Ciclo 4 — transferência e trabalho em equipe  (ciclo4-equipe.mjs)
+  PASSOU  ✅ 1. atendente A assume a conversa
+            ROMULO ALBUQUERQUE está com romulo
+  FALHOU  ✅ 2. atendente B abre a mesma conversa — aparece '👀 fulano está aqui'
+            Cannot navigate to invalid URL
+  PASSOU  ✅ 3. A transfere para C, com motivo, e a passagem fica na thread
+            romulo -> luana (#739) com motivo na thread; 403 ao tentar puxar de volta; restaurado (#740)
+  PASSOU  ⛔ 4. transferir para um TIME (GC), não para uma pessoa
+            confirmado ⛔: destino tem de ser carteira de `carteira_config` (HTTP 400: “gc” não é uma carteira ativa). `carteira_config.time` existe (IS/ISR/GC) mas não é destino de transferência.
+  PASSOU  ⛔ (o doc diz que não existe) 5. devolver a conversa para a fila, sem escolher ninguém
+            ⚠️ o documento marca ⛔ e o recurso EXISTE (0112). Aqui devolveu 422 com o recado certo — este cliente tem dono comercial (carteira romulo), e devolver criaria um órfão. A devolução de verdade está exercitada no Ciclo 1, passo 2-3.
+  PASSOU  ✅ 6. histórico de transferências é append-only, com motivo
+            22 passagens registradas; vigente = última (romulo) — nada foi apagado
+
+=== Ciclo 5 — atendimento fora do horário  (ciclo5-fora-horario.mjs)
+  PASSOU  ✅ 1. a config existe e está DESLIGADA (estado de origem)
+            1 configuração(ões); ligadas: 0. [ativo=false ?–? dias=null]
+  PULADO  ✅ 2. mensagem chegando fora do horário dispara o aviso
+            NÃO EXECUTADO por segurança (§0): ligar o interruptor faz o WEBHOOK DE PRODUÇÃO responder automaticamente a QUALQUER cliente que escreva para a linha enquanto estiver ligado — não só ao número autorizado, porque o gatilho não passa pela minha máquina. O risco é mandar aviso de ausência a clientes reais em horário comercial. A regra pura está exercitada no passo 2b.
+  PULADO  ✅ 2b. a regra de horário decide certo (função pura, sem enviar nada)
+            `web/lib/foraDeHorario.ts` é TypeScript e este runner é Node puro — importar exigiria um transpilador. A regra não foi exercitada isoladamente; o que garante o comportamento hoje é o interruptor estar desligado.
+(node:18248) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/murano-projetos/crm-chat-v2/web/lib/foraDeHorario.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\murano-projetos\crm-chat-v2\web\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  PASSOU  ⛔ 3-4. árvore de opções e roteamento por palavra-chave
+            confirmado ⛔: não há bot, árvore de opções nem roteamento por palavra-chave. O 'fora do horário' é uma mensagem estática (0085) e nada além disso.
+
+=== Ciclo 6 — cadastro e vínculo de contato  (ciclo6-cadastro-vinculo.mjs)
+  PASSOU  ✅ 1. número novo sem cadastro: o webhook cria contato `wa:` sem carteira
+            318 contatos `wa:` · 148 sem carteira (vão para a fila de não atribuídos)
+  PASSOU  ✅ 2. criar contato pelo chat — normaliza, e NÃO duplica quem já existe
+            número incompleto recusado (HTTP 400); número existente reaproveitado (6a66af9224e3f7ae2f1e99a7) sem criar linha nova
+  PASSOU  ✅ 3. vínculo automático com o ERP (CPF/telefone) — mecanismo e cobertura
+            5073 vínculos para 5217 contatos. O casamento roda no pg_cron a cada 10 min (wth_reconciliar_vinculos), então cadastro novo NÃO vincula na hora — não é defeito, é cadência. ⚠️ BORDA REAL: o número autorizado tem 3 cadastros em `clientes` (6a66af9224e3f7ae2f1e99a7/romulo, 6a698d76b4abf83fa996cc8b/kamilly, 6a6990525d6b2676d3c56393/romulo). O webhook escolhe "o primeiro que tiver carteira" SEM `order by` — ou seja, a mesma mensagem pode cair em cadastros diferentes entre chamadas.
+  PASSOU  ✅ 4. editar um dado do contato dentro da conversa
+            nome alterado e persistido (restaurado no fim para "romulo")
+  PASSOU  ⛔ 5-6. tag livre no contato e bloquear número
+            confirmado ⛔: não existem tags livres nem bloqueio de número. O checklist (seção 9) sugere decidir se tag é mesmo necessária — carteira, etapa, status e motivo de encerramento já classificam.
+  PASSOU  ✅ 7. histórico de TODAS as conversas do contato, não só a atual
+            200 mensagens em 9 dia(s) distintos, numa thread só — é por cliente, não por atendimento. Histórico oculto em outra linha: 0
+
+=== Ciclo 7 — relatório de fim de mês  (ciclo7-relatorio.mjs)
+  PASSOU  ✅ 1. volume de conversas do período
+            7 vendedores · 19859 recebidas · 53118 enviadas · janela 30 dias (desde 2026-08-22)
+  PASSOU  ✅ 2. tempo de primeira resposta (mediana e p90) e a régua que o sustenta
+            thamires: mediana 2.1min · p90 428.7min · 2624 respostas (71% ≤5min) · milene: mediana 1.3min · p90 289.4min · 2253 respostas (76% ≤5min) · anne: mediana 2.3min · p90 670.6min · 1838 respostas (62% ≤5min) · thiago: mediana 2.5min · p90 1435.5min · 1696 respostas (71% ≤5min) · kamilly: mediana 2.9min · p90 1263.7min · 1335 respostas (61% ≤5min) · luana: mediana 3.6min · p90 442.9min · 1034 respostas (61% ≤5min) · romulo: mediana 3.9min · p90 1297.3min · 815 respostas (59% ≤5min)
+  PASSOU  ⛔ (o doc diz que não existe) 3. tempo médio de RESOLUÇÃO (abertura -> encerramento)
+            resolvidas 342 · com tempo 283 · até 1h 43 · até 24h 112 · mediana típica 5235.9 min
+  PASSOU  ✅ 4. conversas por atendente — e o número BATE com o banco
+            consultor vê só a própria carteira; os 7 vendedores batem com `vw_chat_volume_diario` em recebidas e enviadas
+  PASSOU  ⚠️ 5. abertas × fechadas × sem resposta do mês inteiro (série histórica)
+            há série diária de tempo de resposta (30 dias na janela), mas o trio abertas/fechadas/sem-resposta continua sendo o retrato de AGORA (as três filas do chat), não uma série — limitação confirmada, como o documento diz
+  PASSOU  ✅ 6. exportação (Excel/CSV)
+            POST com 5 clientes -> HTTP 200, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 9938 bytes · sem filtro devolve 400 (não exporta a base inteira por engano)
+  PASSOU  ⛔ 7. alerta de estouro de SLA (item 3 do checklist)
+            ⚠️ MUDANÇA DE ESTADO: o código já devolve `sla` (minutos=1, esperando=13), mas — a 0114 não está aplicada, então o alerta nunca acende. Limite 0 também significa desligado.
+
+=== Ciclo 8 — multi-número (recebe por vários, envia por um)  (ciclo8-multi-numero.mjs)
+  PASSOU  ✅ 1-2. o webhook carimba a linha de origem em cada mensagem
+            Linha de ensaio (999000111222333): 0 · Murano 2 (1264458800091787, inativa): 641 · Murano Pro (numero antigo — encerrado em 09/09/2026) (rd, inativa): 159944 · Murano Professional (1267537293116190): 41635 · Murano Shop (piloto) (973434089176828, inativa): 57 · Número de teste (1221847701011584, inativa): 18
+  PASSOU  ⚠️ 3. a resposta sai pelo número GLOBAL, não pelo que recebeu
+            `crm_config.numero_envio` = "cloud" (global, do admin). 19 conversa(s) chegaram por uma linha Cloud diferente da linha de envio — essas seriam respondidas pelo número atual, e na tela da cliente isso é uma CONVERSA NOVA (a janela de 24h é por número, §28.6). Limitação confirmada: a escolha é global, não por conversa.
+  FALHOU  ✅ 4. trocar o número de envio em /admin — e ele vale para todo mundo
+            PUT numero_envio=rd: esperado HTTP 200, obtido 400 — {"error":"mecanismo desconhecido"}
+  PASSOU  ✅ 5. o seletor de linhas visíveis não cega o disparo em massa
+            linhas visíveis = ["1267537293116190"] · a prévia partiu de 4160 candidatos contra 4583 na view da tela — o disparo enxerga o mesmo universo que o board (§26 reverteu a §31.2)
+runner morreu: ReferenceError: api is not defined
+    at file:///C:/murano-projetos/crm-chat-v2/testes/casos/ciclo9-telas-navegador.mjs:16:11
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async node:internal/modules/esm/loader:643:26
+    at async main (file:///C:/murano-projetos/crm-chat-v2/testes/run.mjs:197:17)
+
+o runner morreu — limpei antes de sair.

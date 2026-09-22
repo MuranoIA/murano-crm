@@ -6,15 +6,78 @@
 // de ajudar. `lib/whatsapp.ts` reexporta as duas funções, então quem já
 // importava de lá continua funcionando.
 
-export type TipoMidia = "image" | "audio" | "video" | "document";
+export type TipoMidia = "image" | "audio" | "video" | "document" | "sticker";
 
-/** Classifica o mime no tipo que a Cloud API entende. O que não é foto, áudio nem vídeo é documento. */
-export function tipoDoMime(mime: string): TipoMidia {
+/**
+ * O QUE A CLOUD API ACEITA, tipo por tipo. Conferido na referência da Meta em
+ * 20/09/2026 — não é a lista "de todo mundo", é a dela.
+ *
+ * ⚠️ A lista é CURTA de propósito, e é aí que estava o defeito. A regra antiga
+ * era `image/*` → foto, `video/*` → vídeo: um `.gif`, um `.webp`, um `.heic` do
+ * iPhone ou um `.mov` da câmera entravam como foto/vídeo e a Meta recusava o
+ * upload — a consultora via "não consegui enviar" num arquivo que o WhatsApp
+ * dela manda sem reclamar (porque o aplicativo converte antes, e nós não).
+ *
+ * Agora o que não está na lista cai em DOCUMENTO. Chega à cliente do mesmo
+ * jeito, num cartão em vez de na foto — que é infinitamente melhor que não
+ * chegar. Quem envia é avisado do desvio (`viraDocumento`).
+ */
+export const MIMES_META: Record<Exclude<TipoMidia, "document">, readonly string[]> = {
+  image: ["image/jpeg", "image/png"],
+  audio: ["audio/aac", "audio/amr", "audio/mpeg", "audio/mp4", "audio/ogg"],
+  video: ["video/mp4", "video/3gpp"],
+  // figurinha é outro tipo para a Meta, não uma imagem: `image/webp`, e com
+  // teto próprio (100 KB parada, 500 KB animada)
+  sticker: ["image/webp"],
+};
+
+/** Normaliza as grafias que aparecem no mundo real mas não na tabela da Meta. */
+function limpo(mime: string): string {
   const m = mime.split(";")[0].trim().toLowerCase();
-  if (m.startsWith("image/")) return "image";
-  if (m.startsWith("audio/")) return "audio";
-  if (m.startsWith("video/")) return "video";
+  // `image/jpg` não existe no padrão, mas é o que vários aparelhos mandam
+  if (m === "image/jpg" || m === "image/pjpeg") return "image/jpeg";
+  if (m === "audio/mp3") return "audio/mpeg";
+  if (m === "audio/x-m4a" || m === "audio/m4a") return "audio/mp4";
+  if (m === "video/3gp") return "video/3gpp";
+  return m;
+}
+
+/**
+ * Classifica o mime no tipo que a Cloud API entende.
+ *
+ * ⚠️ Figurinha só sai como figurinha se COUBER no teto dela; acima disso vira
+ * documento. Mandar um `.webp` de 2 MB como `sticker` é um erro garantido do
+ * Graph, e o arquivo não chegaria — o desvio é o que faz ele chegar.
+ */
+export function tipoDoMime(mime: string, tamanho?: number): TipoMidia {
+  const m = limpo(mime);
+  if (MIMES_META.image.includes(m)) return "image";
+  if (MIMES_META.audio.includes(m)) return "audio";
+  if (MIMES_META.video.includes(m)) return "video";
+  if (MIMES_META.sticker.includes(m)) {
+    return tamanho != null && tamanho > LIMITE_META.sticker ? "document" : "sticker";
+  }
   return "document";
+}
+
+/**
+ * Este arquivo vai como DOCUMENTO por causa do formato (e não por escolha)?
+ *
+ * Serve para avisar quem envia, com a frase certa: "o WhatsApp não aceita GIF
+ * como foto" é acionável; "enviado" e a cliente recebendo um cartão de
+ * download no lugar da imagem, não.
+ */
+export function viraDocumento(mime: string, tamanho?: number): string | null {
+  const m = limpo(mime);
+  if (tipoDoMime(m, tamanho) !== "document") return null;
+  if (m.startsWith("image/")) {
+    return m === "image/webp"
+      ? "figurinha acima do limite — foi como documento"
+      : "o WhatsApp só aceita JPEG e PNG como foto — foi como documento";
+  }
+  if (m.startsWith("video/")) return "o WhatsApp só aceita MP4 e 3GP como vídeo — foi como documento";
+  if (m.startsWith("audio/")) return "formato de áudio não aceito — foi como documento";
+  return null;
 }
 
 /** Extensão de arquivo a partir do mime — só para o nome no Storage ficar legível. */
@@ -22,7 +85,11 @@ export function extensaoDoMime(mime: string): string {
   const mapa: Record<string, string> = {
     "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
     "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/amr": "amr", "audio/aac": "aac",
-    "video/mp4": "mp4", "video/3gpp": "3gp",
+    "image/heic": "heic", "image/heif": "heif",
+    "video/mp4": "mp4", "video/3gpp": "3gp", "video/quicktime": "mov",
+    "text/plain": "txt", "text/csv": "csv", "application/zip": "zip",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
     "application/pdf": "pdf",
     "application/msword": "doc",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -47,6 +114,10 @@ export const LIMITE_META: Record<TipoMidia, number> = {
   audio: 16 * MB,
   video: 16 * MB,
   document: 100 * MB,
+  // 500 KB é o teto da animada; a parada é 100 KB. Vale o maior: acima disso
+  // não há figurinha possível, e `tipoDoMime` já manda para documento. Entre os
+  // dois, quem recusa é a Meta — e o recado dela é específico o bastante.
+  sticker: 500 * 1024,
 };
 
 /**
@@ -68,8 +139,8 @@ export const LIMITE_NOSSO: Record<TipoMidia, number> = {
   document: 50 * MB,
 };
 
-export function limiteDe(mime: string): number {
-  return LIMITE_NOSSO[tipoDoMime(mime)];
+export function limiteDe(mime: string, tamanho?: number): number {
+  return LIMITE_NOSSO[tipoDoMime(mime, tamanho)];
 }
 
 /** "12,3 MB" — para o recado de limite dizer o tamanho, não um número de bytes. */
@@ -79,7 +150,7 @@ export function emMB(bytes: number, casas?: number): string {
 }
 
 const NOME_TIPO: Record<TipoMidia, string> = {
-  image: "Foto", audio: "Áudio", video: "Vídeo", document: "Documento",
+  image: "Foto", audio: "Áudio", video: "Vídeo", document: "Documento", sticker: "Figurinha",
 };
 
 /**

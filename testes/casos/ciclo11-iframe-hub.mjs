@@ -19,6 +19,7 @@
 import { createServer } from "node:http";
 import * as sim from "../simulacao.mjs";
 import { espera } from "../ajuda.mjs";
+import * as api from "../api.mjs";
 
 export const ciclo = "ciclo11 — chat embutido no iframe do hub";
 
@@ -35,7 +36,10 @@ const PORTA_IMPOSTOR = 3198;
 const ALLOW_DO_HUB = "clipboard-write; microphone; autoplay";
 
 function paginaHost(allow, cliente) {
-  const src = `http://localhost:3100/chat?embed=1${cliente ? `&cliente=${encodeURIComponent(cliente)}` : ""}`;
+  // ⚠️ A ORIGEM aqui tem de bater com a que o build conhece (`ORIGEM_HUB`) e
+  // com a que o CRM serve — por isso sai de `api.BASE`, e a TELA de
+  // `api.TELA_CHAT`: a paridade roda este mesmo caso contra o /chat-v2.
+  const src = `${api.BASE}${api.TELA_CHAT}?embed=1${cliente ? `&cliente=${encodeURIComponent(cliente)}` : ""}`;
   return `<!doctype html><meta charset="utf-8"><title>hub de ensaio</title>
 <style>html,body{margin:0;height:100%}iframe{width:100%;height:100%;border:0}</style>
 <iframe id="q" src="${src}"${allow ? ` allow="${allow}"` : ""}></iframe>
@@ -47,7 +51,7 @@ function paginaHost(allow, cliente) {
 window.mandarRecado = function (id) {
   document.getElementById('q').contentWindow.postMessage(
     { tipo: 'hub:abrir-conversa', cliente_id: id, acao: 'responder' },
-    'http://localhost:3100');
+    api.BASE);
 };
 </script>`;
 }

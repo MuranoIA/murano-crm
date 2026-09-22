@@ -32,7 +32,7 @@ export async function POST(req: Request) {
   const tamanho = Number(b?.tamanho ?? 0);
   if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
   if (!(tamanho > 0)) return Response.json({ error: "arquivo vazio" }, { status: 400 });
-  if (tamanho > limiteDe(mime)) {
+  if (tamanho > limiteDe(mime, tamanho)) {
     return Response.json({ error: recadoDeLimite(mime, tamanho) }, { status: 413 });
   }
 

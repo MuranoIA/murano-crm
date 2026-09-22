@@ -10,6 +10,21 @@
 
 export const BASE = process.env.CRM_BASE ?? "http://localhost:3100";
 
+/**
+ * QUAL tela de chat a suíte dirige.
+ *
+ * O `/chat-v2` é a reconstrução (CLAUDE.md §73), e a fase de paridade precisa
+ * rodar a MESMA suíte contra as duas telas — duplicar os casos daria duas
+ * verdades que divergiriam no primeiro ajuste.
+ *
+ *   node testes/run.mjs                       o chat de hoje
+ *   CHAT_TELA=/chat-v2 node testes/run.mjs    a reconstrução
+ *
+ * ⚠️ Quem usa isto são os casos que NAVEGAM na tela. As rotas `/api/chat*` são
+ * as mesmas para as duas e não mudam aqui.
+ */
+export const TELA_CHAT = process.env.CHAT_TELA ?? "/chat";
+
 /** Sessão de teste. `romulo` é a carteira do próprio usuário (§2 da definição). */
 export const SESSOES = {
   romulo: { crm_sessao: "romulo", crm_email: "ia@muranoprofessional.com.br" },

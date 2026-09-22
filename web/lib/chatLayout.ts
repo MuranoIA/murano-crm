@@ -15,7 +15,7 @@
 // Ao implementar uma direção: virar `implementado: true` aqui é o último passo,
 // depois de a tela existir. É o gesto que a torna selecionável no /admin.
 
-export type LayoutId = "original" | "continuidade" | "bancada" | "fila" | "balcao";
+export type LayoutId = "original" | "continuidade" | "bancada" | "fila" | "balcao" | "v2";
 
 export const LAYOUT_PADRAO: LayoutId = "original";
 
@@ -189,6 +189,39 @@ export const LAYOUTS: Layout[] = [
     implementado: false,
   },
 ];
+
+// O chat-v2 NÃO é um tema do /chat: é outra tela (`app/chat-v2/`). Quem o tem
+// como desenho efetivo é mandado para lá pelo `middleware.ts`, no servidor,
+// antes de qualquer JS — os outros desenhos continuam sendo paletas aplicadas
+// dentro do /chat antigo. Por isso a lista ganha o valor por fora do array de
+// cima, e a regra "qual desenho é outra tela" mora numa função só.
+LAYOUTS.push({
+  id: "v2",
+  rotulo: "Chat novo (v2)",
+  resumo: "A reconstrução: rápido, mobile-first, com o ERP também no celular.",
+  tese:
+    "O /chat reconstruído do zero (CLAUDE.md §73). Mesmas regras e rotas do chat de hoje, " +
+    "outra tela: a lista chega pronta do servidor, só a conversa aberta é baixada, e digitar " +
+    "não redesenha a tela inteira. Passou na paridade com o chat de hoje (fase 5) — o piloto " +
+    "por pessoa é para confirmar isso no uso.",
+  ganhos: [
+    "A lista aparece em ~1 s, não 7 s, e a sessão baixa ~1 kB em vez de 3 MB",
+    "Contadores de fila sempre à vista; a janela de 24h avisa ANTES de escrever",
+    "O painel do ERP também no celular",
+    "Citar mensagem ao responder, arrastar e colar arquivo",
+  ],
+  sacrificios: [
+    "Tela diferente — a pessoa reaprende onde fica cada coisa",
+    "Ainda não rodou com a equipe: é para isto que existe o piloto",
+  ],
+  risco: "baixo",
+  prazo: "—",
+  prototipo: null,
+  implementado: true,
+});
+
+/** O desenho é OUTRA TELA (não um tema do /chat)? Hoje só o v2. */
+export const ehOutraTela = (id: LayoutId): boolean => id === "v2";
 
 const PORID = new Map(LAYOUTS.map((l) => [l.id, l]));
 

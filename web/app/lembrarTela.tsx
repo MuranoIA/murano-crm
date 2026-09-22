@@ -46,7 +46,11 @@ export function lembrarTelaAtual() {
   // rotas que nao sao "onde eu estava trabalhando"
   if (/^\/(auth|api|privacidade|termos)(\/|$)/.test(window.location.pathname)) return;
 
-  const tela = window.location.pathname + window.location.search;
+  // ⚠️ O chat-v2 é gravado como `/chat`. A porta de entrada é sempre `/chat`,
+  // e quem decide qual tela a pessoa vê é o `middleware.ts`, pelo piloto dela.
+  // Gravar `/chat-v2` faria a volta do SSO (§64) levar ao v2 mesmo depois de o
+  // admin desligar o piloto — o rollback deixaria gente para trás.
+  const tela = window.location.pathname.replace(/^\/chat-v2(?=\/|$)/, "/chat") + window.location.search;
   const seguro = window.location.protocol === "https:";
   try {
     document.cookie =

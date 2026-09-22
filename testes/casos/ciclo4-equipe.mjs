@@ -63,7 +63,7 @@ export default async function (t) {
     try {
       await abaA.cookies(api.SESSOES.romulo);
       await abaB.cookies({ crm_sessao: "admin", crm_email: "outra.pessoa@muranoprofessional.com.br" });
-      const url = `${api.BASE}/chat?cliente=${encodeURIComponent(alvo.cliente_id)}`;
+      const url = `${api.BASE}${api.TELA_CHAT}?cliente=${encodeURIComponent(alvo.cliente_id)}`;
       await abaA.ir(url, { esperar: 9000 });
       await abaB.ir(url, { esperar: 9000 });
 
