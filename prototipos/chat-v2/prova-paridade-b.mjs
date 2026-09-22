@@ -53,7 +53,7 @@ try {
     const a = await abrirTela(chrome, 1280, "/chat-v2");
     // ---- as filas num botão só (22/09): o botão mostra a escolhida ----
     const botaoFila = `document.querySelector('button[aria-haspopup="menu"]')`;
-    conferir(await a.ate(`${botaoFila} && ${botaoFila}.textContent.includes('Todas')`), "o botão de fila mostra a fila escolhida (Todas)");
+    conferir(await a.ate(`${botaoFila} && ${botaoFila}.textContent.includes('Meus atendimentos')`), "o botão de fila mostra a fila escolhida (Meus atendimentos)");
     await a.js(`${botaoFila}.click(); return true;`);
     await a.ate(`document.querySelector('[role=menuitemradio]')`, { ms: 5000 });
     const itensFila = await a.js(`return [...document.querySelectorAll('[role=menuitemradio]')].map(b=>b.textContent.replace(/\\d+/g,'').trim());`);
@@ -65,8 +65,8 @@ try {
     conferir(await a.ate(`${botaoFila}.textContent.includes('Não lidas')`, { ms: 5000 }), "escolher no menu troca o botão para a fila escolhida");
     await a.js(`${botaoFila}.click(); return true;`);
     await a.ate(`document.querySelector('[role=menuitemradio]')`, { ms: 5000 });
-    await a.clicarTexto("[role=menuitemradio]", "Todas");
-    await a.ate(`${botaoFila}.textContent.includes('Todas')`, { ms: 5000 });
+    await a.clicarTexto("[role=menuitemradio]", "Meus atendimentos");
+    await a.ate(`${botaoFila}.textContent.includes('Meus atendimentos')`, { ms: 5000 });
     const primeiro = () => a.js(`const b=[...document.querySelectorAll('.rolagem [aria-current], .rolagem button')].find(x=>x.querySelector('span[aria-hidden]')); return b? b.textContent.slice(0,40):'';`);
     await a.ate(`document.querySelectorAll('.rolagem button').length>5`);
     const antes = await primeiro();
@@ -85,7 +85,7 @@ try {
     conferir(await a.js(`return ${umaLinha};`), "fila, Filtros e ordenação numa linha só (1280 px)");
 
     // ---- BUG DO PILOTO: o contador tem de contar DENTRO do filtro --------
-    // Com só um consultor no recorte, o número do botão "Todas" é o mesmo do
+    // Com só um consultor no recorte, o número do botão "Meus atendimentos" é o mesmo do
     // chip dele em Filtros (que conta dentro da fila aberta). Antes o botão
     // seguia mostrando a base inteira.
     const totalGeral = await a.js(`return Number((${botaoFila}.textContent.match(/\\d+/)||[])[0]||0);`);

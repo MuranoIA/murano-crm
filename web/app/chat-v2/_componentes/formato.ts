@@ -38,15 +38,28 @@ export const chaveDoDia = (iso: string) => dia.format(new Date(iso)) + "/" + new
 export function iniciais(nome: string | null | undefined): string {
   // ⚠️ só letras: a base tem nomes com parêntese e emoji, e sem isto o avatar
   // saía "L(" — visto na primeira foto do v2
+  //
+  // ⚠️ E LETRA INTEIRA, nunca meio caractere (22/09/2026). Uma cliente escreve
+  // o nome em letras decorativas do Unicode ("𝔇𝔞𝔫𝔲tta"), e cada uma delas ocupa
+  // DUAS unidades de string. Pegar `[0]` cortava a letra ao meio: o servidor não
+  // consegue escrever meia letra no HTML e manda "�", o navegador mantém a
+  // metade — o texto não batia na hidratação (React #425) e o React jogava fora
+  // a página inteira que veio pronta do servidor (#422), para todo mundo que
+  // tinha essa conversa na primeira página.
+  //   · NFKC transforma as letras decorativas nas comuns ("𝔇" → "D"), então a
+  //     inicial sai legível em vez de um símbolo;
+  //   · `Array.from` separa por letra, não por unidade de string.
   const limpo = String(nome ?? "")
+    .normalize("NFKC")
     .replace(/^[A-Z]?\d+\s*-\s*/i, "")
     .replace(/[^\p{L}\s]/gu, " ")
     .trim();
   if (!limpo) return "·";
-  const partes = limpo.split(/\s+/).filter((p) => p.length > 1);
-  if (!partes.length) return limpo.slice(0, 1).toUpperCase();
-  const a = partes[0][0];
-  const b = partes.length > 1 ? partes[partes.length - 1][0] : "";
+  const letras = (p: string) => Array.from(p);
+  const partes = limpo.split(/\s+/).filter((p) => letras(p).length > 1);
+  if (!partes.length) return (letras(limpo)[0] ?? "·").toUpperCase();
+  const a = letras(partes[0])[0];
+  const b = partes.length > 1 ? letras(partes[partes.length - 1])[0] : "";
   return (a + b).toUpperCase();
 }
 

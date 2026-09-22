@@ -9,7 +9,10 @@ export type { Mensagem, Thread } from "../_dados/thread";
 export type Fila = "todas" | "nao_lidas" | "recados" | "favoritas" | "fila" | "resolvidas" | "carteira";
 
 export const FILAS: { id: Fila; rotulo: string; curto: string }[] = [
-  { id: "todas", rotulo: "Todas", curto: "Todas" },
+  // "Meus atendimentos", como no chat de hoje: são as conversas abertas que
+  // estão COM A PESSOA (sem a fila de espera e sem as encerradas). "Todas"
+  // sugeria a base inteira e confundiu no piloto (22/09) — o id segue "todas".
+  { id: "todas", rotulo: "Meus atendimentos", curto: "Meus atendimentos" },
   { id: "nao_lidas", rotulo: "Não lidas", curto: "Não lidas" },
   // Recados da supervisão (0129): nota interna de OUTRA pessoa que eu ainda não
   // vi. Ao lado de "Não lidas" porque as duas respondem "tem alguma coisa

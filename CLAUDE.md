@@ -5855,7 +5855,7 @@ curto que existe: a conversa certa, com o cursor na caixa. Em Safari/iOS
    `revoke` em massa, com o mesmo risco de rollback silencioso que a §12.5 e a
    §71.5 já nomeiam. **Decisão pendente do usuário.**
 
-## 73. chat-v2 — a reconstrução do chat (19–20/09/2026)
+## 73. chat-v2 — a reconstrução do chat (19–22/09/2026)
 
 O `/chat` está sendo **reconstruído do zero** em `web/app/chat-v2/`, com Google
 Material sobre a paleta Murano, mobile-first e primeira carga no servidor. A
@@ -5863,11 +5863,14 @@ spec conferida mora em **`prototipos/chat-v2/spec.md`** (cópia canônica) e o
 andamento em `prototipos/chat-v2/relatorio.md`.
 
 **Fases:** 0 medir ✅ · 1 ler ✅ · 2 escrever ✅ · 3 completar ✅ ·
-4 ligação/push/embed ✅ · **5 paridade — fechada; falta só limpar o ensaio (ver 73.7)** · 6 piloto por
-pessoa · 7 todos e aposentar.
+4 ligação/push/embed ✅ · 5 paridade ✅ · **6 piloto por pessoa — NO AR (ver 73.7)** ·
+7 todos e aposentar.
 
-**Nada foi para produção.** Tudo vive na worktree `crm-chat-v2`, branch
-`feat/chat-v2`, e o `/chat` antigo segue intocado — ele é a volta segura.
+**Está em PRODUÇÃO desde 22/09/2026** (PR #237), mas só para quem está em
+piloto: o `/chat` decide no servidor quem vai para o `/chat-v2`
+(`web/middleware.ts`). Em 22/09 eram **8 pessoas em piloto**. O `/chat` de sempre
+segue intocado e é a volta segura — desligar o piloto em /admin devolve a
+pessoa a ele em até 1 minuto.
 
 ### 73.1 Como RETOMAR (uma sessão nova faz isto e está pronta)
 
@@ -6012,85 +6015,82 @@ como documento, que chega.
 conferir que a mensagem é DESTA conversa, dava para citar o wamid de outra
 cliente. Quando o alvo não serve, a citação é descartada e a mensagem sai.
 
-### 73.7 ⚠️ ONDE A FASE 5 ESTÁ (21/09/2026, noite) — leia antes de continuar
+### 73.7 ⚠️ ONDE A FRENTE ESTÁ (22/09/2026) — leia antes de continuar
 
-**O relatório vivo é `prototipos/chat-v2/paridade.md`** — a tabela da seção 0
-diz o estado de cada lacuna e com que prova.
+**Fase 5 fechada, fase 6 no ar.** O relatório da paridade é
+`prototipos/chat-v2/paridade.md`; a tabela da seção 0 diz o estado de cada uma
+das 13 lacunas e com que prova.
 
-**As 13 lacunas estão fechadas em código** (commits `c774c75` e `be84a17`,
-mais o merge do master `d0d2f03`), e as de tela foram medidas no navegador:
-`prova-paridade.mjs` 17/17 e `prova-paridade-b.mjs` (ver o fim desta seção).
-Nenhuma migration, nenhuma rota nova — só tela sobre rotas que já existiam.
+#### O piloto (fase 6)
 
-| | Onde ficou |
-|---|---|
-| 1 "Esperando" | **não era lacuna**: é a régua do "Não lidas" do v2. O `sla` do `/api/chat` não é lido pela tela antiga |
-| 2 Minha carteira · 3 Novo contato | recorte "Carteira" na sidebar (`Carteira.tsx`) + botão **+** ao lado da busca |
-| 4 Recados | chip + selo + marca de visto ao abrir; contado em `contarFilas` |
-| 5 Ficha · 6 Vincular | `FichaCadastro.tsx` no painel; substituiu o editor nome+CPF. "Pedir os dados" usa o gesto `escrever` do compositor |
-| 7 Pausa · 8 Pedir localização · 9 PDF | "⋯" no cabeçalho da conversa (`MaisAcoes` em `Conversa.tsx`) |
-| 10 Barra do produto · 13 Devolver | da sessão anterior — agora medidas |
-| 11 Ordenação · 12 Criar resposta rápida | botão na fileira de chips · rodapé do menu do "/" |
+- `lib/chatLayout.ts` tem o desenho `v2` (`implementado: true`) e `ehOutraTela`
+  — o v2 não é um tema do `/chat`, é outra tela.
+- `web/middleware.ts`, restrito ao `/chat` EXATO: quem tem `v2` como desenho
+  efetivo (piloto em `acesso.chat_layout` ou global) vai para `/chat-v2` com
+  307, levando `?cliente=` e `embed=1`. Cai no chat de hoje se o banco falhar
+  ou passar de 2,5 s. A decisão fica 60 s num cookie httpOnly amarrado ao
+  usuário (`crm_chat_desenho`): a 1ª abertura custou ~1,2 s daqui, a seguinte
+  30 ms. O cabeçalho `x-chat-desenho` diz o que foi decidido — é como se
+  confere de fora.
+- `lembrarTela` grava `/chat-v2` como `/chat`: sem isso a volta do SSO do hub
+  prenderia a pessoa no v2 depois de o piloto ser desligado.
+- **Migration 0142 APLICADA** — só alarga os CHECKs de `chat_layout` e
+  `acesso.chat_layout` para aceitar `'v2'`.
+- Ligar/desligar: /admin → 🎨 Desenho do chat. Em 22/09: **8 pessoas** com
+  `v2` (medido em `acesso.chat_layout`); global `bancada`. A lista de quem é
+  mora no banco — não copiar nomes para cá, ela muda.
 
-**As duas provas estão verdes no mesmo build:** `prova-paridade` 17/17 e
-`prova-paridade-b` 26/26. A rodada vermelha da madrugada tinha duas causas,
-nenhuma do "+": (1) a prova abria uma aba nova por passo e **nunca fechava
-nenhuma** — sete abas do chat vivas, com a máquina em 0,4 GB de RAM livre, e os
-últimos passos estouravam o tempo (sozinho, o "+" abre em 345 ms); (2) um defeito
-real, o painel do cliente montado DUAS vezes (ver abaixo).
+#### O que foi para produção em 22/09 (todos com prova no navegador)
 
-**Quatro achados de passagem, todos corrigidos:**
-- **o painel do cliente era montado duas vezes** — a coluna `xl` escondida por
-  CSS e a folha do celular. Cada abertura buscava contato e ficha em dobro, e a
-  360 px a folha visível ficava no esqueleto enquanto a invisível carregava. A
-  prova antiga passava porque achava o texto na INVISÍVEL. Agora uma media query
-  decide qual monta (`a83e5ca`).
-- `/api/chat/respostas` devolve `corpo` e o compositor lia `texto`: colar punha
-  "undefined" e filtrar por um trecho sem atalho **derrubava a tela** (desde a
-  fase 2). Mapa na leitura (`emResposta`).
-- o selo "sem conversa" da agenda marcava TODO mundo com a lista em primeira
-  página; agora só aparece com a lista completa.
-- a 360 px o "⋯" abria para fora da tela e a fileira de ícones espremia o nome
-  até "E…" em conversa da fila; o nome ganhou `min-w` e o menu vira fixo, com a
-  largura da tela, abaixo do botão.
+| PR | O quê | Prova |
+|---|---|---|
+| #237 | o chat-v2 + piloto (fase 6) | `prova-piloto` 10/10, `prova-paridade` 17/17, `-b` 26/26 |
+| #238 | as filas num botão só, que mostra a escolhida | `prova-paridade-b` |
+| #239 | anexos aparecem na conversa NA HORA (prévia local, andamento, ✓✓) | `prova-anexos-na-hora` 30/30 |
+| #240 | contadores das filas respeitam o filtro; controles numa linha | `prova-paridade-b` 33/33 |
+| #241 | **chat de HOJE**: áudio gravado no Chrome voltou a sair como áudio | `prova-audio-webm` 3/3 |
+| #242 | template com vários campos mostra o campo 1 e envia | `prova-template-campos` 0/5 → 5/5 |
+| #243 | prévia da última mensagem na Minha carteira (`?previa=1`) | `prova-paridade` 17/17 |
+| #244 | tocar na foto a abre ampliada | `prova-imagem-ampliar` 18/18 |
+| (este) | a fila "Todas" volta a se chamar "Meus atendimentos" | `prova-paridade-b` |
 
-⚠️ **Não exercitado de propósito** (escrevem em dado real do time): "É a mesma
-pessoa" (cria vínculo), salvar resposta rápida (tabela da casa), baixar PDF
-(Storage) e avisar pausa. Estão presentes e usam as mesmas rotas do chat de
-hoje. Pedir localização FOI clicado (simulado).
+⚠️ **O #241 foi um bug que O #237 CRIOU no chat de hoje.** O #237 fez
+`tipoDoMime` seguir a lista da Meta — onde `audio/webm` não existe —, e a
+conversão WebM→Ogg da rota `enviar-midia`, que estava atrás de
+`if (tipo === "audio")`, parou de rodar: o áudio gravado no Chrome saía como
+DOCUMENTO. O v2 escapou porque converte no navegador. **Regra que fica: mudar
+código compartilhado (`lib/`, `/api/chat/*`) é mudar o chat que a equipe usa —
+a paridade não pega isso, porque ela olha o v2.** Os áudios mandados entre o
+#237 e o #241 chegaram como arquivo.
 
-**A suíte `testes/` rodou inteira nas duas telas (22/09):** chat de hoje
-152/22/14, chat-v2 153/22/13 — **nenhuma regressão do v2** (análise caso a caso
-em `paridade.md` §4.1; as 22 falhas existem no código de produção). O ciclo 11
-(iframe) falha até com o build certo — não era a parametrização.
+#### A suíte `testes/` nas duas telas (22/09)
 
-**Falta para fechar a fase 5:** só limpar o ensaio (`ensaio.mjs limpar`). Ele
-foi mantido porque o usuário está testando nele pela rede local.
+`/chat` 152/22/14 e `/chat-v2` 153/22/13 — **nenhuma regressão do v2** (análise
+em `paridade.md` §4.1). As 22 falhas existem no código de produção: são dívida
+da suíte, frente própria. O ciclo 11 (iframe) falha até com o build certo.
 
-**Depois:** fase 6 (piloto por pessoa) — a primeira ida desta frente a
-produção, **decisão do usuário**.
+#### O que falta
 
-**Produção:** a branch recebeu o master em 21/09 (#229, #234, #235, #236). O
-conflito no webhook era só comentário; ficou a versão do master. Pendência
-aberta com o usuário, não repropor sozinho: a mensagem do commit `4cab918` no
-master cita uma cliente pelo nome. Observação da revisão do #229, não
-corrigida: na reentrega da Meta o push e a resposta de fora do horário ainda
-rodam (a trava `jaExistia` só pegou a reabertura).
+1. **Fase 7** — decisão do usuário: v2 como desenho global, período estável com
+   a equipe inteira, remover o chat antigo (~6.700 linhas), e só então Next 14→16.
+2. Mais consultores no piloto, quando o usuário quiser (é só marcar em /admin).
+3. Observação antiga, não corrigida: na reentrega da Meta (#229) o push e a
+   resposta de fora do horário ainda rodam.
+4. Pendência com o usuário, não repropor sozinho: a mensagem do commit
+   `4cab918` no master cita uma cliente pelo nome (reescrever = force-push).
 
-**Ambiente para a suíte** (é diferente do dev da 73.1 — ela exige porta 3100):
+#### Ambiente
 
-```bash
-cd web && NEXT_PUBLIC_HUB_ORIGIN=http://127.0.0.1:3199 npm run build
-cd web && SIMULACAO_ENVIO=1 ENSAIO_VISIVEL=1 WHATSAPP_TOKEN= npx next start -p 3100
-CHAT_TELA=/chat    node testes/run.mjs     # linha de base
-CHAT_TELA=/chat-v2 node testes/run.mjs     # o v2
-```
+A máquina anda com **pouca RAM livre** (0,4 GB de 7,8 medidos): provas que
+abrem muitas abas estouram tempo — as provas fecham a aba de cada passo desde
+`918b31c`. O build leva 10–15 min. `next start` em segundo plano às vezes
+"falha com 127" quando é derrubado — é o `Stop-Process`, não o código.
+`/login` responde 404 no build de produção: esperar pelo "Ready" no log.
 
-⚠️ **Máquina (21/09 noite):** ~14 GB livres. O build leva 10–15 min. Nesta
-sessão o `next start` e um `npm run build` em segundo plano morreram duas vezes
-com **exit 127 sem erro no log** — não era o código (o mesmo build passou na
-tentativa seguinte). Se acontecer, só repetir. `/login` responde 404 no build
-de produção: esperar pelo "Ready" no log, não por `/login`.
+A conversa de ensaio foi LIMPA no fim de 22/09 (`ensaio.mjs limpar`); recriar
+com `ensaio.mjs criar` antes de rodar as provas que a usam. A janela de 24h
+dela fecha um dia depois da criação — prova que exige caixa de texto falha por
+isso, e o certo é recriar, não afrouxar a prova.
 
 ### 73.5 Armadilhas desta frente (todas custaram pelo menos uma rodada)
 
