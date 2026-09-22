@@ -1,14 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { aplicarVariaveis, conferirVariaveis, variaveisDe } from "../../../lib/templateVars";
 
 // Escolher um template e ver O QUE A CLIENTE VAI LER antes de mandar.
 //
 // Carregado por `next/dynamic`: quem não manda template não baixa este código.
 //
-// ⚠️ Os campos ({{2}} em diante) são pedidos AQUI, e não depois do erro: a rota
-// recusa quem chama sem `variaveis` quando o template tem mais de um campo, e
-// no chat antigo esse aviso chega como falha depois do clique.
+// ⚠️ TODOS os campos aparecem, o `{{1}}` inclusive, já preenchido com o
+// primeiro nome e editável — como no chat de hoje. A primeira versão escondia o
+// `{{1}}` e mandava só os outros; a rota exige o valor de CADA campo e recusava
+// com "este template tem 2 campos para preencher" (bug do piloto, 22/09).
+//
+// A régua de campos é a de `lib/templateVars`, a MESMA do servidor e do chat de
+// hoje. Uma cópia local divergiria dela na primeira mudança — e o sintoma seria
+// exatamente este erro de novo.
 
 type Template = {
   id: number;
@@ -21,11 +27,10 @@ type Template = {
   status: string | null;
 };
 
-const camposDe = (corpo: string | null | undefined): number[] => {
-  const achados = new Set<number>();
-  for (const m of String(corpo ?? "").matchAll(/\{\{\s*(\d+)\s*\}\}/g)) achados.add(Number(m[1]));
-  return [...achados].sort((a, b) => a - b);
-};
+/** Os campos do template. Sem corpo (cadastro antigo) é o `{{1}}` do nome,
+ *  quando o template o usa — a mesma conta da rota de envio. */
+const camposDe = (t: Template | null): number[] =>
+  !t ? [] : t.corpo ? variaveisDe(t.corpo) : t.usa_nome ? [1] : [];
 
 export default function Templates({
   primeiroNome,
@@ -54,19 +59,25 @@ export default function Templates({
       .catch((e) => setErro(String(e.message ?? e)));
   }, []);
 
-  const campos = useMemo(() => camposDe(escolhido?.corpo), [escolhido]);
-  // {{1}} é sempre o primeiro nome, preenchido pelo servidor — os outros são
-  // do consultor
-  const pedidos = campos.filter((n) => n !== 1);
+  const campos = useMemo(() => camposDe(escolhido), [escolhido]);
 
-  const previa = useMemo(() => {
-    let t = String(escolhido?.corpo ?? "");
-    t = t.replace(/\{\{\s*1\s*\}\}/g, primeiroNome || "cliente");
-    for (const n of pedidos) t = t.replace(new RegExp(`\\{\\{\\s*${n}\\s*\\}\\}`, "g"), valores[n] || `⟨campo ${n}⟩`);
-    return t;
-  }, [escolhido, valores, pedidos, primeiroNome]);
+  // o `{{1}}` chega com o primeiro nome da cliente — o ponto de partida, não
+  // um valor fixo: dá para trocar (um apelido, o nome do salão)
+  useEffect(() => {
+    setValores(campos.includes(1) && primeiroNome ? { 1: primeiroNome } : {});
+  }, [campos, primeiroNome]);
 
-  const faltando = pedidos.filter((n) => !String(valores[n] ?? "").trim());
+  // na ordem dos campos: é o formato que a rota espera, um valor por `{{n}}`
+  const lista_ = campos.map((n) => String(valores[n] ?? ""));
+  const previa = useMemo(
+    () => aplicarVariaveis(String(escolhido?.corpo ?? ""), campos.map((n) => valores[n] || `⟨campo ${n}⟩`)),
+    [escolhido, valores, campos],
+  );
+
+  const faltando = campos.filter((n) => !String(valores[n] ?? "").trim());
+  // a mesma conferência do servidor (vazio, contagem, limite de 1024 da Meta),
+  // dita ANTES do clique
+  const problema = !escolhido || faltando.length ? null : conferirVariaveis(escolhido.corpo, lista_);
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4" onClick={aoFechar}>
@@ -105,10 +116,7 @@ export default function Templates({
               </label>
               <select
                 value={escolhido?.id ?? ""}
-                onChange={(e) => {
-                  setEscolhido(lista.find((t) => String(t.id) === e.target.value) ?? null);
-                  setValores({});
-                }}
+                onChange={(e) => setEscolhido(lista.find((t) => String(t.id) === e.target.value) ?? null)}
                 className="mt-1 h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-3"
               >
                 {lista.map((t) => (
@@ -119,10 +127,11 @@ export default function Templates({
                 ))}
               </select>
 
-              {pedidos.map((n) => (
+              {campos.map((n) => (
                 <label key={n} className="mt-3 block">
                   <span className="text-[12px] font-medium uppercase tracking-wide text-v2-tinta-fraca">
                     Campo {n}
+                    {n === 1 && <span className="font-normal normal-case"> · o nome da cliente</span>}
                   </span>
                   <input
                     value={valores[n] ?? ""}
@@ -139,6 +148,7 @@ export default function Templates({
                 <p className="mt-1 whitespace-pre-wrap rounded-2xl bg-v2-azul-claro px-3 py-2 text-[14px] leading-5">
                   {previa || "—"}
                 </p>
+                {problema && <p className="mt-2 text-[12.5px] text-v2-erro">{problema}</p>}
               </div>
             </>
           )}
@@ -150,13 +160,13 @@ export default function Templates({
           </p>
           <button
             data-ripple
-            disabled={!escolhido || faltando.length > 0 || enviando}
+            disabled={!escolhido || faltando.length > 0 || !!problema || enviando}
             onClick={() =>
               escolhido &&
               aoEnviar({
                 template_id: escolhido.meta_nome || escolhido.nome,
                 nome: escolhido.nome,
-                variaveis: pedidos.map((n) => valores[n] ?? ""),
+                variaveis: lista_,
                 texto: previa,
               })
             }
