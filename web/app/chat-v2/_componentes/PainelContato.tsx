@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { dinheiro, telefoneBonito } from "./formato";
 import type { Conversa } from "./tipos";
 import { FichaCadastro, MesmaPessoa, type CandidatoErp } from "./FichaCadastro";
+import { TrocarNumero } from "./TrocarNumero";
 
 // O ERP ao lado da conversa. É a vantagem que o RD Conversas não tem — e no
 // chat antigo ela **some no celular** (`!isMobile`, achado 3 do laudo), que é
@@ -29,12 +30,17 @@ export function PainelContato({
   aoFechar,
   aoAviso,
   aoPedirDados,
+  aoTrocouNumero,
+  aoAbrirConversa,
 }: {
   conversa: Conversa;
   aoFechar: () => void;
   aoAviso?: (texto: string, ok: boolean) => void;
   /** põe o pedido de dados da ficha na caixa de mensagem (não envia) */
   aoPedirDados?: (texto: string) => void;
+  /** trocar o número (22/09): a conversa passa a usar o novo na hora */
+  aoTrocouNumero?: (novo: string) => void;
+  aoAbrirConversa?: (id: string) => void;
 }) {
   const [d, setD] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -118,6 +124,17 @@ export function PainelContato({
 
             <dl className="mt-3 space-y-1.5 text-[12.5px]">
               <Linha rotulo="Telefone" valor={telefoneBonito(conversa.telefone)} />
+              {aoTrocouNumero && aoAbrirConversa && !/^(winthor|venda):/.test(conversa.cliente_id) && (
+                <div className="pl-[104px]">
+                  <TrocarNumero
+                    clienteId={conversa.cliente_id}
+                    atual={conversa.telefone}
+                    aoTrocou={aoTrocouNumero}
+                    aoAbrirConversa={aoAbrirConversa}
+                    aoAviso={aoAviso}
+                  />
+                </div>
+              )}
               <Linha rotulo="Código" valor={conversa.codcli ? String(conversa.codcli) : "—"} />
               <Linha rotulo="RCA oficial" valor={c?.rca_oficial ?? "—"} />
               <Linha rotulo="Etapa no board" valor={d.funil?.etapa ?? "—"} />

@@ -210,6 +210,14 @@ export async function GET(req: Request) {
   // falhou a prévia? a agenda sai sem ela — a prévia é enfeite, a agenda não
   const previas = await previasP;
 
+  // TROCA DE NÚMERO PENDENTE (22/09): o consultor trocou o número pelo chat e a
+  // correção ainda espera o supervisor no WinThor. Enquanto isso o número do
+  // ERP está ERRADO — mostrá-lo aqui levaria alguém a ligar ou criar contato
+  // no número velho. A agenda mostra o novo, dizendo que é o do chat.
+  const { data: pend } = await sb.from("cadastro_atualizacao")
+    .select("cliente_id,valor_novo").eq("campo", "telefone").eq("status", "pendente");
+  const novoDe = new Map((pend ?? []).map((p: any) => [p.cliente_id as string, String(p.valor_novo)]));
+
   const carteira = clientes.map((c) => {
     const cliente_id = porCodcli.get(Number(c.codcli)) ?? (c.tel8 ? porTel8.get(c.tel8) ?? null : null);
     const pv = cliente_id && previas ? previas.get(cliente_id) : undefined;
@@ -218,7 +226,9 @@ export async function GET(req: Request) {
       codcli: c.codcli,
       cliente_id,
       cliente: c.nome,
-      telefone: c.telefone ?? null,
+      telefone: (cliente_id && novoDe.get(cliente_id)) || c.telefone || null,
+      // o número acima veio de uma troca pelo chat, ainda não aplicada no WinThor
+      ...(cliente_id && novoDe.has(cliente_id) ? { telefone_trocado: true } : {}),
       cidade: c.cidade ?? null,
       vendedor: slugPorRca.get(c.rca_num) ?? null,
       // sem contato ainda, mas o número do cadastro serve: o clique cria o

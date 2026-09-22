@@ -483,6 +483,24 @@ export function Casca({
       .catch(() => {});
   }, [recarregarContagens, marcarMutacao, inicial.meu_endereco, liberarPrevias]);
 
+  // ---- trocar o número (22/09) --------------------------------------------
+  // O servidor já gravou; a tela atualiza o telefone da conversa aberta na
+  // lista e na avulsa, sem esperar a recarga (a view da lista é materializada e
+  // leva até 2 min para trazer o número novo).
+  const trocouNumero = useCallback((novo: string) => {
+    const id = abertaRef.current;
+    if (!id) return;
+    marcarMutacao();
+    setLista((l) => l.map((c) => (c.cliente_id === id ? { ...c, telefone: novo } : c)));
+    setAvulsa((a) => (a && a.cliente_id === id ? { ...a, telefone: novo } : a));
+  }, [marcarMutacao]);
+  // "o número já é de outra conversa": abrir aquela, fechando a folha do celular
+  const abrirOutra = useCallback((id: string) => {
+    setPainelAberto((aberto) => (window.matchMedia("(min-width: 1280px)").matches ? aberto : false));
+    abrir(id);
+  }, [abrir]);
+
+
   const fechar_ = useCallback(() => {
     setAberta(null);
     abertaRef.current = null;
@@ -1365,10 +1383,19 @@ export function Casca({
 
   // a da lista ganha (tem dono, não lida, status); a avulsa é a rede de
   // proteção para quem ainda não entrou na view materializada
-  const conversaAberta = useMemo(
-    () => lista.find((c) => c.cliente_id === aberta) ?? (avulsa?.cliente_id === aberta ? avulsa : null),
-    [lista, aberta, avulsa],
-  );
+  //
+  // ⚠️ O TELEFONE é a exceção: a thread o lê de `clientes` agora, e a view
+  // pode estar até 2 min atrasada. Sem isto, logo depois de trocar o número
+  // (TrocarNumero) um F5 mostraria o número ANTIGO — e o consultor acharia que
+  // a troca não pegou, embora o envio já use o novo.
+  const conversaAberta = useMemo(() => {
+    const daAvulsa = avulsa?.cliente_id === aberta ? avulsa : null;
+    const daLista = lista.find((c) => c.cliente_id === aberta);
+    if (!daLista) return daAvulsa;
+    return daAvulsa?.telefone && daAvulsa.telefone !== daLista.telefone
+      ? { ...daLista, telefone: daAvulsa.telefone }
+      : daLista;
+  }, [lista, aberta, avulsa]);
 
   return (
     <div className="v2 flex h-dvh min-h-0 flex-col overflow-hidden">
@@ -1637,6 +1664,8 @@ export function Casca({
               aoFechar={() => setPainelAberto(false)}
               aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
               aoPedirDados={pedirDados}
+              aoTrocouNumero={trocouNumero}
+              aoAbrirConversa={abrirOutra}
             />
           </div>
         )}
@@ -1660,6 +1689,8 @@ export function Casca({
               aoFechar={() => setPainelAberto(false)}
               aoAviso={(t, ok) => { avisar(t, { tom: ok ? "ok" : "erro" }); if (ok) recarregarLista(); }}
               aoPedirDados={pedirDados}
+              aoTrocouNumero={trocouNumero}
+              aoAbrirConversa={abrirOutra}
             />
             </div>
           </div>
