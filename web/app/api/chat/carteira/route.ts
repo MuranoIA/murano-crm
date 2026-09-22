@@ -100,7 +100,8 @@ async function lerPrevias(sb: any, carteira: string | null) {
       for (const l of (r as any).data ?? []) {
         const t = (l as any).ultima_mensagem;
         m.set((l as any).cliente_id, {
-          texto: t == null ? null : String(t).slice(0, CORTE_PREVIA),
+          // por LETRA, não por unidade de string: `slice` cortava um emoji ao meio
+          texto: t == null ? null : Array.from(String(t)).slice(0, CORTE_PREVIA).join(""),
           por: (l as any).ultima_enviada_por ?? null,
         });
       }
