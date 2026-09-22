@@ -1,6 +1,7 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Mensagem } from "./tipos";
 import { hora } from "./formato";
 import { traduzErroMeta } from "../../../lib/erroMeta";
@@ -36,6 +37,95 @@ function Subindo({ pct }: { pct: number | null }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// A IMAGEM AMPLIADA (pedido do piloto, 22/09/2026): tocar na foto a abre na
+// própria tela, sobre um fundo escuro — como no WhatsApp.
+//
+// O chat de hoje abre a foto numa ABA NOVA. Dentro do iframe do hub isso tira a
+// pessoa do CRM; aqui ela fica, e fecha no ✕, no Esc ou tocando fora. "Abrir
+// em nova aba" e "Baixar" continuam à mão, para quem precisa do arquivo.
+//
+// Vai por PORTAL no `body`: dentro da bolha, um `fixed` ficaria preso ao
+// contexto de empilhamento dela (a bolha tem sombra e animação de entrada), e
+// o visualizador sairia por baixo da lista virtualizada.
+// ---------------------------------------------------------------------------
+function ImagemAmpliavel({
+  src,
+  nome,
+  desligado,
+  children,
+}: {
+  src: string;
+  nome: string | null;
+  desligado: boolean;
+  children: React.ReactNode;
+}) {
+  const [aberta, setAberta] = useState(false);
+
+  useEffect(() => {
+    if (!aberta) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setAberta(false);
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [aberta]);
+
+  if (desligado) return <>{children}</>;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAberta(true)}
+        aria-label="Ampliar a imagem"
+        title="Ampliar"
+        className="block w-full cursor-zoom-in"
+      >
+        {children}
+      </button>
+      {aberta &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Imagem ampliada"
+            onClick={() => setAberta(false)}
+            className="v2 fixed inset-0 z-[60] flex flex-col bg-black/90 text-white"
+          >
+            <div className="flex shrink-0 items-center gap-2 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]" onClick={(e) => e.stopPropagation()}>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-white/80">{nome ?? "imagem"}</span>
+              <a href={src} target="_blank" rel="noopener noreferrer" className="rounded-full px-3 py-1.5 text-[13px] text-white/90 hover:bg-white/10">
+                Abrir em nova aba
+              </a>
+              <a href={src} download={nome ?? "imagem"} className="rounded-full px-3 py-1.5 text-[13px] text-white/90 hover:bg-white/10">
+                Baixar
+              </a>
+              <button
+                type="button"
+                onClick={() => setAberta(false)}
+                aria-label="Fechar"
+                className="grid size-10 place-items-center rounded-full hover:bg-white/10"
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="m6 6 12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {/* tocar na FOTO não fecha — só fora dela: quem quer olhar de
+                  perto não pode perder a imagem por encostar nela */}
+              <img
+                src={src}
+                alt={nome ?? "imagem"}
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-full max-w-full rounded-md object-contain"
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 function Conteudo({ m }: { m: Mensagem }) {
   // Anexo que ainda está SUBINDO: a prévia é o próprio arquivo, que já está no
   // navegador. Pedir a mídia ao servidor aqui daria 404 — ela ainda não existe
@@ -50,14 +140,18 @@ function Conteudo({ m }: { m: Mensagem }) {
       // largura e altura reservadas: sem isso a bolha pula quando a imagem
       // termina de carregar, e o CLS estoura (meta da spec: < 0,1)
       <span className="relative block w-[260px] max-w-full">
-        <img
-          src={src}
-          alt={m.midia_nome ?? "imagem"}
-          loading="lazy"
-          width={260}
-          height={195}
-          className="max-h-[300px] w-[260px] max-w-full rounded-lg bg-v2-superficie-2 object-cover"
-        />
+        {/* Tocar AMPLIA (pedido do piloto, 22/09). Subindo não amplia: a
+            prévia ainda não é a foto que a cliente recebeu. */}
+        <ImagemAmpliavel src={src} nome={m.midia_nome} desligado={!!subindo}>
+          <img
+            src={src}
+            alt={m.midia_nome ?? "imagem"}
+            loading="lazy"
+            width={260}
+            height={195}
+            className="max-h-[300px] w-[260px] max-w-full rounded-lg bg-v2-superficie-2 object-cover"
+          />
+        </ImagemAmpliavel>
         {subindo && <Subindo pct={m.local?.pct ?? null} />}
       </span>
     );
