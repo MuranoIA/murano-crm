@@ -7,7 +7,8 @@ import { Conversa as TelaConversa } from "./Conversa";
 import { PainelContato } from "./PainelContato";
 import { Ripple } from "./Ripple";
 import { Snackbars, useAvisos } from "./Avisos";
-import { enviarArquivos, type Progresso } from "./anexos";
+import { enviarArquivos, type EventoArquivo, type Progresso } from "./anexos";
+import { tipoDoMime } from "../../../lib/midia";
 import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
 import { SEM_RECORTE, quantosRecortes, type Recortes } from "./Filtros";
@@ -72,9 +73,18 @@ const OrcamentoFlutuante = dynamic(() => import("../../OrcamentoFlutuante"), { s
 function juntarNovas(atual: Mensagem[], chegou: Mensagem[]): Mensagem[] {
   if (!chegou.length) return atual;
   const porId = new Set(chegou.map((m) => m.id));
+  // a PRÉVIA LOCAL de um anexo atravessa a troca pela linha de verdade: sem
+  // isto a foto recém-enviada sumia e voltava, baixada do servidor
+  const localDe = new Map(atual.filter((m) => m.local).map((m) => [m.id, m.local]));
+  chegou = chegou.map((c) => (localDe.has(c.id) ? { ...c, local: localDe.get(c.id) } : c));
   const sobrevive = atual.filter((m) => {
     if (porId.has(m.id)) return false;
     if (!m.id.startsWith("tmp:")) return true;
+    // ⚠️ a bolha de ANEXO não tem "gêmea" por texto: ela é resolvida pelo id
+    // que o envio devolve. Sem isto, qualquer mensagem nossa sem texto que
+    // chegasse (outra foto já enviada) apagaria as fotos que ainda estão
+    // subindo — e a conversa pareceria ter perdido arquivo.
+    if (m.midia_tipo) return true;
     const gemea = chegou.find(
       (c) => c.enviada_por !== "customer" && (c.conteudo ?? "") === (m.conteudo ?? ""),
     );
@@ -171,6 +181,16 @@ export function Casca({
   );
 
   const { avisos, avisar, fechar } = useAvisos();
+
+  // As prévias dos anexos enviados nesta conversa (`URL.createObjectURL`).
+  // Cada uma segura o arquivo inteiro na memória do navegador: são liberadas
+  // ao trocar de conversa — nove fotos de celular somam dezenas de MB.
+  const urlsLocais = useRef<string[]>([]);
+  const liberarPrevias = useCallback(() => {
+    for (const u of urlsLocais.current) URL.revokeObjectURL(u);
+    urlsLocais.current = [];
+  }, []);
+  useEffect(() => liberarPrevias, [liberarPrevias]);
 
   // ---- MINHA CARTEIRA e NOVO CONTATO (paridade, lacunas 2 e 3) -------------
   // A agenda vem de `/api/chat/carteira`, a MESMA rota do chat de hoje (§38).
@@ -373,6 +393,7 @@ export function Casca({
 
   // ---- abrir uma conversa -------------------------------------------------
   const abrir = useCallback((id: string) => {
+    liberarPrevias();
     setAberta(id);
     abertaRef.current = id; // antes do render: a guarda precisa valer já
     setMensagens([]);
@@ -460,7 +481,7 @@ export function Casca({
     })
       .then(() => recarregarContagens())
       .catch(() => {});
-  }, [recarregarContagens, marcarMutacao, inicial.meu_endereco]);
+  }, [recarregarContagens, marcarMutacao, inicial.meu_endereco, liberarPrevias]);
 
   const fechar_ = useCallback(() => {
     setAberta(null);
@@ -831,16 +852,97 @@ export function Casca({
       const citar = citando?.id ?? null;
       setCitando(null);
       setEnviando(true);
-      const r = await enviarArquivos(id, arquivos, legenda, setProgresso, citar);
+
+      // ---- AS BOLHAS NASCEM ANTES DO ENVIO (pedido do piloto, 22/09) --------
+      // Nove fotos = nove bolhas NA HORA, com a prévia do próprio arquivo e o
+      // andamento por cima, como o texto já fazia. Antes a conversa mostrava só
+      // "enviando 3 de 9" e as fotos iam aparecendo uma a uma, quando saíam.
+      //
+      // O tipo vem de `tipoDoMime`, a MESMA régua que o servidor usa para
+      // decidir como a Meta recebe o arquivo: o `.heic` que vai sair como
+      // documento já nasce documento, em vez de trocar de cara no meio.
+      const lote = Date.now();
+      const tmpIds = arquivos.map((_, i) => `tmp:m:${lote}:${i}`);
+      const bolhas: Mensagem[] = arquivos.map((file, i) => {
+        const mime = file.type || "application/octet-stream";
+        const tipo = tipoDoMime(mime, file.size);
+        const previa = tipo === "document" ? null : URL.createObjectURL(file);
+        if (previa) urlsLocais.current.push(previa);
+        return {
+          id: tmpIds[i],
+          // a legenda sai só com o primeiro arquivo (anexos.ts)
+          conteudo: i === 0 && legenda ? legenda : null,
+          enviada_por: "operator",
+          tipo: "mensagem",
+          status: "wait",
+          // um milissegundo entre elas: a ordem na tela é a ordem de envio
+          criada_em: new Date(lote + i).toISOString(),
+          midia_tipo: tipo,
+          midia_mime: mime,
+          midia_nome: file.name,
+          reacao: null,
+          resposta_a: i === 0 ? citar : null,
+          erro: null,
+          local: { url: previa, pct: null },
+        };
+      });
+      setMensagens((atual) => [...atual, ...bolhas]);
+
+      const aoArquivo = (i: number, e: EventoArquivo) => {
+        // §70: a resposta pode chegar depois de a pessoa trocar de conversa
+        if (abertaRef.current !== id) return;
+        const tid = tmpIds[i];
+        setMensagens((atual) => {
+          if (e.tipo === "ok") {
+            const provisoria = atual.find((m) => m.id === tid);
+            // o Realtime pode ter trazido a linha de verdade ANTES da resposta
+            // do envio: aí a provisória só sai, e a de verdade herda a prévia
+            if (atual.some((m) => m.id === e.wamid)) {
+              return atual
+                .filter((m) => m.id !== tid)
+                .map((m) => (m.id === e.wamid && provisoria?.local ? { ...m, local: { ...provisoria.local, pct: null } } : m));
+            }
+            // senão, a mesma bolha troca de identidade: sai o relógio, entra o
+            // tique — e daqui para a frente é o recibo da Meta que a move
+            return atual.map((m) =>
+              m.id === tid ? { ...m, id: e.wamid, status: "wait", local: m.local ? { ...m.local, pct: null } : m.local } : m,
+            );
+          }
+          return atual.map((m) => {
+            if (m.id !== tid) return m;
+            if (e.tipo === "pct") return { ...m, local: { url: m.local?.url ?? null, pct: e.pct } };
+            return { ...m, status: "failed", erro: e.razao, local: m.local ? { ...m.local, pct: null } : m.local };
+          });
+        });
+      };
+
+      const r = await enviarArquivos(id, arquivos, legenda, setProgresso, citar, aoArquivo);
       setEnviando(false);
+      // Parou no meio (janela fechou, canal sem mídia): o que não saiu fica na
+      // conversa COM o motivo, em vez de sumir — sumir é a pessoa achar que
+      // mandou.
+      if (r.pararTudo && abertaRef.current === id) {
+        const motivo = r.pararTudo;
+        setMensagens((atual) =>
+          atual.map((m) => (tmpIds.includes(m.id) && m.status !== "failed" ? { ...m, status: "failed", erro: motivo } : m)),
+        );
+      }
       if (r.pararTudo) avisar(r.pararTudo, { tom: "erro" });
-      for (const f of r.falhas) avisar(`${f.nome}: ${f.razao}`, { tom: "erro" });
+      // o motivo de cada falha está NA BOLHA do arquivo; nove avisos empilhados
+      // repetiriam o que já está na tela
+      if (r.falhas.length) {
+        avisar(
+          r.falhas.length === 1
+            ? `${r.falhas[0].nome} não saiu — o motivo está na conversa.`
+            : `${r.falhas.length} arquivos não saíram — o motivo está em cada um.`,
+          { tom: "erro" },
+        );
+      }
       // o DESVIO de formato é dito: o arquivo chegou, mas como cartão de
       // download em vez de foto. Neutro, não erro — não deu errado, deu
       // diferente, e quem enviou precisa saber para não repetir o formato.
       for (const d of r.desvios) avisar(d, { tom: "neutro" });
       if (r.enviados) {
-        avisar(r.enviados === 1 ? "Arquivo enviado." : `${r.enviados} arquivos enviados.`, { tom: "ok" });
         apanharNovas();
         recarregarLista();
       }
@@ -1480,11 +1582,10 @@ export function Casca({
             aoAbrirContato={() => setPainelAberto((v) => !v)}
             painelAberto={painelAberto}
             enviando={enviando}
-            progresso={
-              progresso
-                ? `enviando ${progresso.feito + 1} de ${progresso.total}${progresso.pct != null ? ` · ${progresso.pct}%` : ""} — ${progresso.nome}`
-                : null
-            }
+            // o "enviando 3 de 9" saiu: cada arquivo tem a sua bolha, com o
+            // andamento por cima (22/09). Fica só o total, discreto, para quem
+            // mandou muitos e rolou a conversa para longe das bolhas.
+            progresso={progresso && progresso.total > 1 ? `enviando ${progresso.feito + 1} de ${progresso.total}` : null}
             locais={locais}
             aoEnviar={enviarTexto}
             aoTemplate={() => setTemplates(true)}
