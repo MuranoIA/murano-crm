@@ -46,6 +46,14 @@ try {
   const mesmo = await trocar("(91) 9000-0077");
   conferir(mesmo.status === 400, "o mesmo número é recusado", `${mesmo.status}`);
 
+  // ---- 4b. só o DDD muda: é uma TROCA, não o mesmo número ----
+  // (22/09: a 1ª versão comparava só os 8 últimos dígitos e recusava a
+  // correção de DDD errado — o caso mais comum no WinThor)
+  const soDdd = await trocar("(94) 9000-0077");
+  conferir(soDdd.status === 200 && (await telDoEnsaio())?.slice(2, 4) === "94",
+    "trocar só o DDD é aceito", `${soDdd.status} ${soDdd.j?.error ?? ""}`);
+  await sb.from("clientes").update({ telefone: original }).eq("id", ENSAIO);
+
   // ---- 2. número de OUTRA conversa ----
   const { data: outra } = await sb.from("clientes").select("id,telefone").like("id", "wa:%").neq("id", ENSAIO)
     .not("telefone", "is", null).limit(1).maybeSingle();
