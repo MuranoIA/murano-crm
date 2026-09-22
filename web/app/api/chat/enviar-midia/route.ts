@@ -72,10 +72,6 @@ export async function POST(req: Request) {
   // o limite já foi conferido em `assinar`, mas o token de upload não amarra
   // tamanho: quem subiu pode ter mandado mais do que declarou.
   const tamanho = bytes.byteLength;
-  // ⚠️ o tamanho vem ANTES do tipo: figurinha acima do teto vira documento, e
-  // sem ele a classificação diria `sticker` para um `.webp` de 2 MB — que o
-  // Graph recusa, e o arquivo não chegaria.
-  const tipo = tipoDoMime(mime, tamanho);
   if (tamanho > limiteDe(mime, tamanho)) {
     await apagar(sb, caminho);
     return Response.json({ error: recadoDeLimite(mime, tamanho) }, { status: 413 });
@@ -87,7 +83,16 @@ export async function POST(req: Request) {
   // depois na entrega, com wamid válido e `status: failed` chegando pelo
   // webhook. Foi o que derrubou o primeiro teste de áudio (16/08). Aqui o
   // container é reescrito antes de sair; o áudio em si não é tocado.
-  if (tipo === "audio") {
+  //
+  // ⚠️ A CONDIÇÃO É O MIME `audio/*`, NÃO O TIPO CLASSIFICADO (bug de 22/09).
+  // Desde que `tipoDoMime` passou a seguir a lista da Meta (PR #237),
+  // `audio/webm` não está nela e é classificado como DOCUMENTO — então um
+  // `if (tipo === "audio")` aqui pulava a conversão, e o áudio gravado no
+  // Chrome pelo chat de hoje deixou de sair. O chat-v2 escapou porque converte
+  // no navegador e já manda `audio/ogg`. A classificação vem DEPOIS, sobre o
+  // mime final.
+  const ehAudio = mime.split(";")[0].trim().toLowerCase().startsWith("audio/");
+  if (ehAudio) {
     if (ehWebm(bytes)) {
       const ogg = webmParaOgg(bytes);
       if (!ogg) {
@@ -110,6 +115,11 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
   }
+
+  // O tipo sai do mime FINAL (o WebM convertido já é `audio/ogg`), e o tamanho
+  // vem junto: figurinha acima do teto vira documento — sem ele a
+  // classificação diria `sticker` para um `.webp` de 2 MB, que o Graph recusa.
+  const tipo = tipoDoMime(mime, bytes.byteLength);
 
   let wamid: string;
   let citar: string | null = null;
