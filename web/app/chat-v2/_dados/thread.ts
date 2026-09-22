@@ -28,6 +28,10 @@ export type Mensagem = {
   reacao: string | null;
   resposta_a: string | null;
   erro: string | null;
+  /** SÓ DO NAVEGADOR — nunca vem do servidor. A bolha de um anexo que ainda
+   *  está subindo: a prévia é o próprio arquivo (`URL.createObjectURL`) e `pct`
+   *  é o andamento do upload. Some quando a linha de verdade chega. */
+  local?: { url: string | null; pct: number | null };
 };
 
 export type Thread = {

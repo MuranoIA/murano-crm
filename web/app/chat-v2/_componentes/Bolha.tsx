@@ -17,29 +17,90 @@ const TICK: Record<string, { txt: string; azul: boolean; rotulo: string }> = {
   checked: { txt: "✓✓", azul: true, rotulo: "lida" },
 };
 
+/** O andamento do upload, por cima da prévia: um anel e o número. */
+function Subindo({ pct }: { pct: number | null }) {
+  return (
+    <span className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-white">
+      <span className="grid place-items-center">
+        <svg viewBox="0 0 36 36" className="size-11 -rotate-90" aria-hidden>
+          <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeOpacity=".35" strokeWidth="3" />
+          <circle
+            cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+            strokeDasharray={`${((pct ?? 8) / 100) * 94.2} 94.2`}
+            className={pct == null ? "origin-center animate-spin" : ""}
+          />
+        </svg>
+        {pct != null && <span className="-mt-7 text-[11px] font-semibold tabular-nums">{pct}%</span>}
+      </span>
+    </span>
+  );
+}
+
 function Conteudo({ m }: { m: Mensagem }) {
-  const src = `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
+  // Anexo que ainda está SUBINDO: a prévia é o próprio arquivo, que já está no
+  // navegador. Pedir a mídia ao servidor aqui daria 404 — ela ainda não existe
+  // lá. Quando a linha de verdade chega, a prévia local continua valendo (ela
+  // é carregada junto em `juntarNovas`), então a bolha não pisca.
+  // ⚠️ o que FALHOU não está subindo: sem esta condição a bolha seguia com o
+  // anel girando e parecia que ainda ia sair (visto na foto da prova)
+  const subindo = m.local && m.id.startsWith("tmp:") && m.status !== "failed" && !m.erro;
+  const src = m.local?.url ?? `/api/chat/midia?id=${encodeURIComponent(m.id)}`;
   if (m.midia_tipo === "image" || m.midia_tipo === "sticker") {
     return (
       // largura e altura reservadas: sem isso a bolha pula quando a imagem
       // termina de carregar, e o CLS estoura (meta da spec: < 0,1)
-      <img
-        src={src}
-        alt={m.midia_nome ?? "imagem"}
-        loading="lazy"
-        width={260}
-        height={195}
-        className="max-h-[300px] w-[260px] rounded-lg bg-v2-superficie-2 object-cover"
-      />
+      <span className="relative block w-[260px] max-w-full">
+        <img
+          src={src}
+          alt={m.midia_nome ?? "imagem"}
+          loading="lazy"
+          width={260}
+          height={195}
+          className="max-h-[300px] w-[260px] max-w-full rounded-lg bg-v2-superficie-2 object-cover"
+        />
+        {subindo && <Subindo pct={m.local?.pct ?? null} />}
+      </span>
     );
   }
   if (m.midia_tipo === "audio" || m.midia_tipo === "voice") {
-    return <audio controls preload="none" src={src} className="h-10 w-[260px] max-w-full" />;
+    return (
+      <span className="relative block">
+        <audio controls preload="none" src={src} className="h-10 w-[260px] max-w-full" />
+        {subindo && m.local?.pct != null && (
+          <span className="mt-1 block text-[11px] tabular-nums text-v2-tinta-fraca">enviando… {m.local.pct}%</span>
+        )}
+      </span>
+    );
   }
   if (m.midia_tipo === "video") {
-    return <video controls preload="none" src={src} className="w-[260px] max-w-full rounded-lg" />;
+    return (
+      <span className="relative block w-[260px] max-w-full">
+        {/* a prévia local sem controles enquanto sobe: dar play num vídeo que
+            ainda não saiu confundiria "estou vendo" com "ela recebeu" */}
+        <video
+          controls={!subindo}
+          muted={!!subindo}
+          preload={subindo ? "metadata" : "none"}
+          src={src}
+          className="w-[260px] max-w-full rounded-lg bg-v2-superficie-2"
+        />
+        {subindo && <Subindo pct={m.local?.pct ?? null} />}
+      </span>
+    );
   }
   if (m.midia_tipo === "document") {
+    // ainda subindo não há o que abrir: o nome, sem link, e o andamento
+    if (subindo) {
+      return (
+        <span className="flex items-center gap-2 text-v2-tinta">
+          <span aria-hidden>📄</span>
+          <span className="min-w-0 flex-1 truncate">{m.midia_nome ?? "documento"}</span>
+          <span className="shrink-0 text-[11px] tabular-nums text-v2-tinta-fraca">
+            {m.local?.pct != null ? `${m.local.pct}%` : "enviando…"}
+          </span>
+        </span>
+      );
+    }
     return (
       <a href={src} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-v2-azul underline">
         <span aria-hidden>📄</span>
@@ -118,7 +179,7 @@ function BolhaBase({
 
         <span className="mt-1 flex items-center justify-end gap-1 text-[11px] tabular-nums text-v2-tinta-fraca">
           {hora(m.criada_em)}
-          {otimista && (
+          {otimista && !falhou && (
             <span aria-label="enviando" title="enviando" className="leading-none">
               <svg viewBox="0 0 24 24" className="size-3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
                 <circle cx="12" cy="12" r="9" />

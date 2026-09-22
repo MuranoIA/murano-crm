@@ -22,6 +22,12 @@ import { recadoDeLimite, limiteDe } from "../../../lib/midia";
 
 export type Progresso = { feito: number; total: number; pct: number | null; nome: string };
 
+/** O que aconteceu com UM arquivo da remessa — é o que move a bolha dele. */
+export type EventoArquivo =
+  | { tipo: "pct"; pct: number }
+  | { tipo: "ok"; wamid: string }
+  | { tipo: "falha"; razao: string };
+
 function subirParaStorage(file: Blob, path: string, token: string, aoAndar: (pct: number) => void) {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!base) return Promise.reject(new Error("Storage não configurado (NEXT_PUBLIC_SUPABASE_URL)"));
@@ -51,6 +57,9 @@ export async function enviarArquivos(
    *  razão da legenda: cinco fotos soltas de uma vez são uma remessa, e citar
    *  a mesma mensagem cinco vezes encheria a conversa da cliente de repetição. */
   citar?: string | null,
+  /** arquivo a arquivo, pelo ÍNDICE na lista recebida: é o que liga o evento
+   *  à bolha provisória daquele arquivo na conversa */
+  aoArquivo?: (i: number, e: EventoArquivo) => void,
 ): Promise<{
   enviados: number;
   falhas: { nome: string; razao: string }[];
@@ -71,6 +80,7 @@ export async function enviarArquivos(
     // subir 40 MB é a diferença entre um aviso imediato e um minuto perdido
     if (file.size > limiteDe(mime)) {
       falhas.push({ nome: file.name, razao: recadoDeLimite(mime, file.size) });
+      aoArquivo?.(i, { tipo: "falha", razao: recadoDeLimite(mime, file.size) });
       continue;
     }
 
@@ -86,6 +96,7 @@ export async function enviarArquivos(
         // seguintes só repete o mesmo erro
         if (ass.status === 501) return { enviados, falhas, desvios, pararTudo: a?.error ?? "canal não aceita mídia" };
         falhas.push({ nome: file.name, razao: a?.error ?? `erro ${ass.status}` });
+        aoArquivo?.(i, { tipo: "falha", razao: a?.error ?? `erro ${ass.status}` });
         continue;
       }
 
@@ -94,6 +105,8 @@ export async function enviarArquivos(
       const mostraPct = file.size > 2 * 1024 * 1024;
       await subirParaStorage(file, a.path, a.token, (pct) => {
         if (mostraPct) aoProgresso({ feito: i, total: arquivos.length, pct, nome: file.name });
+        // a bolha mostra o andamento de QUALQUER tamanho: é ela que a pessoa olha
+        aoArquivo?.(i, { tipo: "pct", pct });
       });
       // 100% aqui seria mentira: o arquivo subiu para o NOSSO bucket, a cliente
       // ainda não recebeu nada
@@ -123,19 +136,20 @@ export async function enviarArquivos(
               : (j?.error ?? `erro ${r.status}`),
           };
         }
-        falhas.push({
-          nome: file.name,
-          razao:
-            r.status === 504
-              ? "o arquivo subiu, mas o envio demorou demais e foi cortado — tente de novo"
-              : (j?.error ?? `erro ${r.status}`),
-        });
+        const razao =
+          r.status === 504
+            ? "o arquivo subiu, mas o envio demorou demais e foi cortado — tente de novo"
+            : (j?.error ?? `erro ${r.status}`);
+        falhas.push({ nome: file.name, razao });
+        aoArquivo?.(i, { tipo: "falha", razao });
         continue;
       }
       enviados++;
+      if (j?.wamid) aoArquivo?.(i, { tipo: "ok", wamid: String(j.wamid) });
       if (j?.desvio) desvios.push(`${file.name}: ${j.desvio}`);
     } catch (e: any) {
       falhas.push({ nome: file.name, razao: String(e?.message ?? e) });
+      aoArquivo?.(i, { tipo: "falha", razao: String(e?.message ?? e) });
     }
   }
 
