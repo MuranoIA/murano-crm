@@ -70,7 +70,7 @@ function Linha({
         >
           {inerte
             ? k.impedimento ?? "sem telefone no cadastro"
-            : [telefoneBonito(k.telefone), k.cidade].filter(Boolean).join(" · ")}
+            : [telefoneBonito(k.telefone) + (k.telefone_trocado ? " (novo)" : ""), k.cidade].filter(Boolean).join(" · ")}
         </span>
         {/* a TERCEIRA linha, só de quem já conversou: o começo da última
             mensagem, no mesmo formato da lista de conversas ("Você: …",
