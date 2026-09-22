@@ -70,13 +70,50 @@ try {
     const primeiro = () => a.js(`const b=[...document.querySelectorAll('.rolagem [aria-current], .rolagem button')].find(x=>x.querySelector('span[aria-hidden]')); return b? b.textContent.slice(0,40):'';`);
     await a.ate(`document.querySelectorAll('.rolagem button').length>5`);
     const antes = await primeiro();
-    await a.clicarTexto("button", "Mais recentes");
-    await a.ate(`[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Mais antigas'))`, { ms: 30_000 });
+    await a.clicarTexto("button", "Recentes");
+    await a.ate(`[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Antigas'))`, { ms: 30_000 });
     await espera(1500);
     const depois = await primeiro();
     conferir(antes && depois && antes !== depois, "a ordenação inverte a lista", `${antes.slice(0, 18)} → ${depois.slice(0, 18)}`);
+    await a.clicarTexto("button", "Antigas"); // volta ao normal
+
+    // ---- os três controles numa linha (pedido do piloto) -----------------
+    const umaLinha = `(() => { const f = ${botaoFila};
+      const outros = [...document.querySelectorAll('button')].filter(b => /Filtros|Recentes|Antigas/.test(b.textContent));
+      const tops = [f, ...outros].map(b => Math.round(b.getBoundingClientRect().top));
+      return tops.length >= 3 && tops.every(t => t === tops[0]); })()`;
+    conferir(await a.js(`return ${umaLinha};`), "fila, Filtros e ordenação numa linha só (1280 px)");
+
+    // ---- BUG DO PILOTO: o contador tem de contar DENTRO do filtro --------
+    // Com só um consultor no recorte, o número do botão "Todas" é o mesmo do
+    // chip dele em Filtros (que conta dentro da fila aberta). Antes o botão
+    // seguia mostrando a base inteira.
+    const totalGeral = await a.js(`return Number((${botaoFila}.textContent.match(/\\d+/)||[])[0]||0);`);
+    await a.clicarTexto("button", "Filtros");
+    await a.ate(`[...document.querySelectorAll('button[aria-pressed]')].some(b=>/Romulo\\s*\\d+/.test(b.textContent))`, { ms: 30_000 });
+    const noChip = await a.js(`const b=[...document.querySelectorAll('button[aria-pressed]')].find(b=>/Romulo\\s*\\d+/.test(b.textContent)); b.click(); return Number(b.textContent.match(/\\d+/)[0]);`);
+    const bateu = await a.ate(`Number((${botaoFila}.textContent.match(/\\d+/)||[])[0]||0) === ${noChip}`, { ms: 10_000 });
+    const noBotao = await a.js(`return Number((${botaoFila}.textContent.match(/\\d+/)||[])[0]||0);`);
+    conferir(bateu && noBotao < totalGeral, "com só um consultor no filtro, o contador da fila conta só ele",
+      `botão ${noBotao} · chip ${noChip} · base toda ${totalGeral}`);
+    await a.js(`[...document.querySelectorAll('button[aria-pressed="true"]')].find(b=>/Romulo/.test(b.textContent))?.click(); return true;`);
     const exc = a.excecoes.filter((e) => !/ResizeObserver/.test(e));
     conferir(!exc.length, "lista: sem exceção", exc.slice(0, 1).join(""));
+  }
+
+  // ======================= a linha única no celular ===========================
+  {
+    const a = await abrirTela(chrome, 360, "/chat-v2");
+    const f = `document.querySelector('button[aria-haspopup="menu"]')`;
+    await a.ate(`${f}`, { ms: 20_000 });
+    const umaLinha = await a.js(`const f = ${f};
+      const outros = [...document.querySelectorAll('button')].filter(b => /Filtros|Recentes|Antigas/.test(b.textContent));
+      const tops = [f, ...outros].map(b => Math.round(b.getBoundingClientRect().top));
+      return tops.length >= 3 && tops.every(t => t === tops[0]);`);
+    conferir(umaLinha, "fila, Filtros e ordenação numa linha só (360 px)");
+    conferir(await a.js(`return document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1;`),
+      "360 px: sem rolagem horizontal com a linha única");
+    await a.foto("linha-unica-360");
   }
 
   // ======================= a conversa de ensaio =============================

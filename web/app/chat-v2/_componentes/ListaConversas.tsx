@@ -170,7 +170,10 @@ export function ListaConversas({
             sempre à vista, que era o achado 1 do laudo de UX. O que pede ação
             não pode sumir, então o botão ganha um PONTO LARANJA quando há não
             lidas ou recados numa fila que não está aberta. */}
-        <div className="-mx-3 mt-2 flex flex-wrap gap-1.5 px-3 pb-1">
+        {/* UMA LINHA (pedido do piloto): o botão de fila é quem cede — o
+            nome dele trunca antes de a linha quebrar; Filtros e a ordenação
+            não encolhem, porque ícone sem rótulo ali seria adivinhação. */}
+        <div className="-mx-3 mt-2 flex flex-nowrap items-center gap-1 px-3 pb-1">
           <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
 
           {/* Os RECORTES (consultor, número, coluna do board) — ocasionais,
@@ -214,7 +217,7 @@ export function ListaConversas({
                   : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
               ].join(" ")}
             >
-              {antigasPrimeiro ? "↑ Mais antigas" : "↓ Mais recentes"}
+              {antigasPrimeiro ? "↑ Antigas" : "↓ Recentes"}
             </button>
           )}
         </div>
@@ -358,9 +361,9 @@ function MenuFilas({
           const largura = Math.min(280, window.innerWidth - 24);
           setPos({ top: r.bottom + 4, left: Math.max(12, Math.min(r.left, window.innerWidth - largura - 12)), largura });
         }}
-        className="relative flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-v2-azul pl-3 pr-2 text-[13px] text-white"
+        className="relative flex h-8 min-w-0 items-center gap-1.5 rounded-full bg-v2-azul pl-3 pr-2 text-[13px] text-white"
       >
-        {atual.rotulo}
+        <span className="min-w-0 truncate">{atual.rotulo}</span>
         {n != null && n > 0 && <span className="min-w-4 rounded-full bg-white/20 px-1 text-[11px] tabular-nums">{n}</span>}
         <svg aria-hidden viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="m7 10 5 5 5-5" />

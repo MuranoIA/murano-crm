@@ -11,7 +11,7 @@ import { enviarArquivos, type EventoArquivo, type Progresso } from "./anexos";
 import { tipoDoMime } from "../../../lib/midia";
 import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
-import { SEM_RECORTE, type Recortes } from "./Filtros";
+import { SEM_RECORTE, quantosRecortes, type Recortes } from "./Filtros";
 import { useRealtimeDoChat } from "./realtime";
 import {
   useAvisoDeChegada, usePermissaoDeNotificacao, usePonteDoHub, usePush, useTituloDaAba,
@@ -1204,30 +1204,6 @@ export function Casca({
   // depois de a tela mexer em alguma conversa). Sem ela, valem os números que o
   // servidor calculou sobre tudo — nunca os da primeira página, que diriam
   // "3 não lidas" quando há 17.
-  const contagens = useMemo<Record<Fila, number | null>>(() => {
-    if (!completa) {
-      const s = contagensServidor;
-      return {
-        todas: s ? s.todas : null,
-        nao_lidas: s ? s.nao_lidas : null,
-        favoritas: s ? s.favoritas : null,
-        fila: s ? s.fila : null,
-        resolvidas: s ? s.resolvidas : null,
-        recados: s ? s.recados ?? null : null,
-        carteira: null,
-      };
-    }
-    return {
-      todas: lista.filter((c) => !c.na_fila && c.status !== "resolvida").length,
-      nao_lidas: lista.filter((c) => c.nao_lida && !c.na_fila && c.status !== "resolvida").length,
-      favoritas: lista.filter((c) => c.favorita).length,
-      fila: lista.filter((c) => c.na_fila).length,
-      resolvidas: lista.filter((c) => c.status === "resolvida").length,
-      recados: lista.filter((c) => c.nota_nova > 0).length,
-      // agenda, não fila: o número dela mora no cabeçalho da própria lista
-      carteira: null,
-    };
-  }, [lista, completa, contagensServidor]);
 
   // ---- os três recortes que cruzam (§23.5) --------------------------------
   //
@@ -1249,6 +1225,49 @@ export function Casca({
     (c: Conversa) => !recortes.etapa || c.etapa_board === recortes.etapa,
     [recortes.etapa],
   );
+
+  // ⚠️ OS CONTADORES DAS FILAS CONTAM DENTRO DOS RECORTES (bug do piloto,
+  // 22/09/2026): com só o Romulo no filtro de consultor, "Todas" dizia 4081 —
+  // a base inteira — enquanto a lista mostrava ~500. É a regra da §23.5, que o
+  // chat de hoje segue: cada contador conta dentro do que os outros seletores
+  // já escolheram, senão o número na tela vira folclore. O ponto laranja do
+  // botão de fila lê estes mesmos números, então herdava o erro.
+  //
+  // A régua é a MESMA da lista (`passaVend`/`passaLinha`/`passaEtapa`): uma
+  // segunda régua para contar divergiria da que filtra na primeira mudança.
+  //
+  // Com recorte ligado e a lista inteira ainda a caminho, o número fica AUSENTE
+  // (chip sem número), nunca o total do servidor: ele não conhece os recortes.
+  //
+  // O título da aba (`naoLidas`) continua GLOBAL de propósito: ele avisa que
+  // chegou mensagem e não pode calar por causa de um filtro na tela.
+  const comRecorte = quantosRecortes(recortes) > 0;
+  const contagens = useMemo<Record<Fila, number | null>>(() => {
+    if (!completa) {
+      const s = comRecorte ? null : contagensServidor;
+      return {
+        todas: s ? s.todas : null,
+        nao_lidas: s ? s.nao_lidas : null,
+        favoritas: s ? s.favoritas : null,
+        fila: s ? s.fila : null,
+        resolvidas: s ? s.resolvidas : null,
+        recados: s ? s.recados ?? null : null,
+        carteira: null,
+      };
+    }
+    const base = comRecorte ? lista.filter((c) => passaVend(c) && passaLinha(c) && passaEtapa(c)) : lista;
+    return {
+      todas: base.filter((c) => !c.na_fila && c.status !== "resolvida").length,
+      nao_lidas: base.filter((c) => c.nao_lida && !c.na_fila && c.status !== "resolvida").length,
+      favoritas: base.filter((c) => c.favorita).length,
+      fila: base.filter((c) => c.na_fila).length,
+      resolvidas: base.filter((c) => c.status === "resolvida").length,
+      recados: base.filter((c) => c.nota_nova > 0).length,
+      // agenda, não fila: o número dela mora no cabeçalho da própria lista
+      carteira: null,
+    };
+  }, [lista, completa, contagensServidor, comRecorte, passaVend, passaLinha, passaEtapa]);
+
 
   const visiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
