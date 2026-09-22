@@ -66,8 +66,13 @@ export async function POST(req: Request) {
   const { data: cli } = await sb.from("clientes").select("id,telefone,nome_completo").eq("id", cliente_id).maybeSingle();
   if (!cli) return Response.json({ error: "conversa não encontrada" }, { status: 404 });
 
+  // ⚠️ "O MESMO NÚMERO" é DDD + 8 últimos dígitos, não só os 8 (22/09/2026).
+  // Comparar só o tel8 recusava justamente a correção mais comum: o número
+  // certo com o DDD errado — (94) 8938-1821 → (91) 8938-1821. O nono dígito e
+  // o 55 continuam fora da conta: com ou sem eles é o mesmo telefone.
   const t8 = tel8De(novo);
-  if (tel8De(String(cli.telefone ?? "")) === t8) {
+  const dddDe = (t: string | null) => normalizarTelefone(String(t ?? ""))?.slice(2, 4) ?? null;
+  if (tel8De(String(cli.telefone ?? "")) === t8 && dddDe(cli.telefone) === dddDe(novo)) {
     return Response.json({ error: "Esse já é o número desta conversa." }, { status: 400 });
   }
 
