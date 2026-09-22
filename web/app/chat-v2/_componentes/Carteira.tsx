@@ -3,7 +3,7 @@
 import { memo, useMemo, useRef } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { nomeComCodigo } from "../../../lib/nomeCliente";
-import { iniciais, telefoneBonito, tomDoAvatar } from "./formato";
+import { iniciais, previa, telefoneBonito, tomDoAvatar } from "./formato";
 import type { ItemCarteira } from "./tipos";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +72,14 @@ function Linha({
             ? k.impedimento ?? "sem telefone no cadastro"
             : [telefoneBonito(k.telefone), k.cidade].filter(Boolean).join(" · ")}
         </span>
+        {/* a TERCEIRA linha, só de quem já conversou: o começo da última
+            mensagem, no mesmo formato da lista de conversas ("Você: …",
+            "🎤 Áudio") — mesma função, para as duas não contarem diferente */}
+        {k.ultima_mensagem != null && (
+          <span className="mt-0.5 block truncate text-[13px] leading-[18px] text-v2-tinta-fraca">
+            {previa({ ultima_mensagem: k.ultima_mensagem, ultima_enviada_por: k.ultima_enviada_por ?? null })}
+          </span>
+        )}
       </span>
       {/* laranja só para o que PEDE ação; "sem conversa" é informação, cinza */}
       {inerte ? (
@@ -147,7 +155,7 @@ export function ListaCarteira({
         itens={visiveis}
         chave={chave}
         raizRef={raizRef}
-        alturaEstimada={64}
+        alturaEstimada={72}
         ativo={visiveis.length > 40}
         renderItem={(k) => (
           <ItemDaCarteira

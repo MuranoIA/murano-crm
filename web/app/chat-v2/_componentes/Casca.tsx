@@ -274,7 +274,7 @@ export function Casca({
   const carregarCarteira = useCallback((forcar = false) => {
     if (carteiraPedida.current && !forcar) return;
     carteiraPedida.current = true;
-    fetch("/api/chat/carteira")
+    fetch("/api/chat/carteira?previa=1")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((j) => setCarteira(j.carteira ?? []))
       .catch(() => {
