@@ -78,9 +78,32 @@ try {
     conferir((await telDoEnsaio()) === original, "…e o telefone do ensaio não mudou");
   } else conferir(false, "achar um número do WinThor sem conversa para o caso 3");
 
-  // ---- 5. vendedor que não atende esta conversa ----
-  const r5 = await trocar(NOVO, "crm_sessao=thiago");
-  conferir(r5.status === 403, "vendedor que não atende a conversa: 403", `${r5.status}`);
+  // ---- 5. quem pode (demanda da Tati, 22/09) ----
+  // A conversa de ensaio nasce SEM dono (fila). Para exercitar a recusa, ela é
+  // transferida para uma carteira e a linha é apagada logo depois — é a única
+  // escrita fora do ensaio que esta prova faz, e ela desfaz.
+  const r5fila = await trocar(NOVO, "crm_sessao=thiago");
+  conferir(r5fila.status === 200, "conversa na FILA: qualquer vendedor pode (a fila é de todos)", `${r5fila.status}`);
+  await sb.from("clientes").update({ telefone: original }).eq("id", ENSAIO);
+
+  const { data: tr } = await sb.from("chat_transferencia")
+    .insert({ cliente_id: ENSAIO, de_carteira: null, para_carteira: "romulo", por: "prova", observacao: "prova trocar-numero" })
+    .select("id").maybeSingle();
+  try {
+    const r5v = await trocar(NOVO, "crm_sessao=thiago");
+    conferir(r5v.status === 403, "conversa COM dono: vendedor de outra carteira é recusado", `${r5v.status}`);
+    conferir((await telDoEnsaio()) === original, "…e o telefone do ensaio não mudou");
+
+    const r5p = await trocar(NOVO, "crm_sessao=pos-venda");
+    conferir(r5p.status === 200, "PÓS-VENDA pode, mesmo sem ser o dono", `${r5p.status} ${r5p.j?.error ?? ""}`);
+    await sb.from("clientes").update({ telefone: original }).eq("id", ENSAIO);
+
+    const r5h = await trocar(NOVO, "crm_sessao=home");
+    conferir(r5h.status === 200, "home também pode", `${r5h.status}`);
+    await sb.from("clientes").update({ telefone: original }).eq("id", ENSAIO);
+  } finally {
+    if (tr?.id) await sb.from("chat_transferencia").delete().eq("id", tr.id);
+  }
 
   // ---- 1. a troca de verdade (e a volta) ----
   const r1 = await trocar(NOVO);
