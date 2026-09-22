@@ -1,7 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { podeAdmin } from "../../../../lib/papel";
-import { souDonoDaConversa } from "../../../../lib/chatEscopo";
+import { podeMexerNoCadastro } from "../../../../lib/chatEscopo";
 import { usuarioDaSessao } from "../../../../lib/chatUsuario";
 import { normalizarTelefone, tel8De } from "../../../../lib/telefone";
 
@@ -33,8 +32,11 @@ export const dynamic = "force-dynamic";
 //     Número que o WinThor NÃO conhece não tem esse risco: a 0132 não desliga
 //     ninguém por isso, e o vínculo por CPF segue.
 //
-// QUEM PODE: quem atende a conversa (dono efetivo) e o admin — decidido aqui,
-// não na tela (a aba pode estar aberta desde antes de uma troca de papel).
+// QUEM PODE: `podeMexerNoCadastro` — quem atende a conversa, quem pegou uma da
+// fila, e quem não tem carteira (admin, home e pós-venda). É a mesma régua de
+// `/api/chat/cadastro` e `/api/chat/vincular`; esta rota nasceu mais apertada
+// (só admin) e o pós-venda batia num 403 (22/09). Decidido aqui e não na tela:
+// a aba pode estar aberta desde antes de uma troca de papel.
 // ---------------------------------------------------------------------------
 
 export async function POST(req: Request) {
@@ -59,8 +61,8 @@ export async function POST(req: Request) {
   const sb = createClient(url, key, { auth: { persistSession: false } });
 
   // ---- quem pode --------------------------------------------------------
-  if (!podeAdmin(sessao) && !(await souDonoDaConversa(sb, cliente_id, sessao, usuario))) {
-    return Response.json({ error: "Só quem atende esta conversa (ou o admin) pode trocar o número." }, { status: 403 });
+  if (!(await podeMexerNoCadastro(sb, cliente_id, sessao))) {
+    return Response.json({ error: "Esta conversa é de outra carteira." }, { status: 403 });
   }
 
   const { data: cli } = await sb.from("clientes").select("id,telefone,nome_completo").eq("id", cliente_id).maybeSingle();

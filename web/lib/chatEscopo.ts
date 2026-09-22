@@ -194,3 +194,36 @@ export async function souDonoDaConversa(
   const dono = donoEfetivo(clienteId, (linha?.vendedor as string) ?? null, atrib);
   return dono !== null && dono === meu;
 }
+
+/**
+ * QUEM PODE MEXER NO CADASTRO DA CONVERSA (22/09/2026).
+ *
+ * É a régua que `/api/chat/cadastro` e `/api/chat/vincular` já aplicavam à mão,
+ * agora num lugar só. Duas diferenças em relação a `souDonoDaConversa`, e as
+ * duas vieram de pedido do time:
+ *
+ *   · quem NÃO tem carteira (admin, home e **pós-venda**) pode. A tela de
+ *     trocar número nasceu exigindo `podeAdmin`, e o pós-venda — que enxerga
+ *     todas as carteiras e atende de verdade — batia num 403 dizendo que só o
+ *     dono podia (demanda da Tati, 22/09);
+ *   · dono NULO não bloqueia: a fila de espera é de todos, e é justamente lá
+ *     que mora o contato novo cujo cadastro precisa de conserto.
+ *
+ * Continua sendo decidido no servidor: a aba pode estar aberta desde antes de
+ * uma troca de papel, que reescreve o cookie sem recarregar a página.
+ */
+export async function podeMexerNoCadastro(
+  sb: SupabaseClient,
+  clienteId: string,
+  sessao: string | null | undefined,
+): Promise<boolean> {
+  const minha = carteiraDe(sessao);
+  if (!sessao) return false;
+  if (!minha) return true;                     // admin, home e pós-venda
+  const [{ data: linha }, atrib] = await Promise.all([
+    sb.from("vw_funil").select("vendedor").eq("cliente_id", clienteId).maybeSingle(),
+    carregarAtribuicoes(sb),
+  ]);
+  const dono = donoEfetivo(clienteId, (linha?.vendedor as string) ?? null, atrib);
+  return !dono || dono === minha;
+}
