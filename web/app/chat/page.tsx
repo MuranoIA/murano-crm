@@ -22,7 +22,7 @@ import { memoriaDeTela, fotoDeRota, memoriaDaSessao } from "../../lib/memoriaTel
 import { MenuSecundario } from "../MenuSecundario";
 import { ORIGEM_HUB } from "../../lib/hub";
 // as etapas do board (nome, ordem, cor) — a MESMA lista que o /, sem cópia
-import { COLUNAS, ETAPAS_SEM_CONVERSA, LETRA_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
+import { COLUNAS, ETAPAS_DO_CHAT, ETAPAS_SEM_CONVERSA, ROTULO_CURTO_ETAPA, type EtapaBoard } from "../../lib/etapasBoard";
 import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../../lib/midia";
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 import OrcamentoFlutuante from "../OrcamentoFlutuante";
@@ -4773,34 +4773,28 @@ export default function Chat() {
                   escolheram". Um chip que contasse o total geral prometeria 159
                   e entregaria 12 ao filtrar por uma carteira.
 
-                  As sete, na ordem do board, inclusive as duas que hoje dão
-                  zero por definição (prospecção e sem cadastro descrevem quem
-                  NÃO tem conversa): apagadas, nunca escondidas — é a regra que
-                  esta sidebar segue em todos os contadores, e a lista vazia
-                  explica que o vazio é estrutural.
+                  QUATRO etapas, não as sete do board (`ETAPAS_DO_CHAT`): as
+                  três de fora — prospecção e as duas de venda — não são
+                  trabalho de conversa, e ocupavam três das sete partes. Elas
+                  continuam classificadas e continuam na lista; o que perderam
+                  foi o chip. "Sem cadastro" fica: é o único dos sem-conversa
+                  que pede decisão, e a lista vazia dele explica que o vazio é
+                  estrutural. */}
+              {/* ⚠️ UMA LINHA, partes IGUAIS — grid, não flex com wrap.
+                  Medido em 14/09/2026, na sidebar de 288px úteis: com os sete
+                  rótulos a faixa ocupava 3 linhas no desktop (71px) e 4 com a
+                  janela pela metade (96px), e foi por isso que ela virou sete
+                  letras. Com quatro partes sobram ~70px por parte — a palavra
+                  cabe de volta, numa linha só.
 
-                  Rótulo curto com o nome completo no `title`, pela mesma razão
-                  do chip de número logo acima: "Tentativa de contato" inteiro
-                  numa pílula de sidebar de 340px empurra a faixa para uma
-                  quarta linha, e altura é o que esta coluna tem de mais
-                  escasso. */}
-              {/* ⚠️ UMA LINHA, sete partes IGUAIS — grid, não flex com wrap.
-                  Medido em 14/09/2026: com os rótulos, a faixa ocupava 3 linhas
-                  no desktop (71px) e 4 com a janela pela metade (96px). Em
-                  sete colunas iguais sobram 36 a 46px por parte, e a faixa cai
-                  para uma linha — 47 a 72px devolvidos à lista, que é o que
-                  esta coluna tem de mais escasso.
-
-                  `1fr` e não `auto`: com `auto` a parte de "Tentativa" ficaria
-                  maior que a de "Pedido" só porque o número tem mais dígitos, e
-                  a barra deixaria de ser uma régua. Partes iguais é o que
-                  permite achar a etapa pela POSIÇÃO, sem ler.
-
-                  O alvo 🎯 saiu: com sete células iguais a faixa já se lê como
-                  um controle segmentado, e ele seria uma oitava coluna comendo
-                  a largura de todas. */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, alignItems: "stretch" }}>
-                {COLUNAS.map((col) => {
+                  `1fr` e não `auto`: com `auto` a parte de "Negociação" ficaria
+                  maior que a de "Ociosos" só porque a palavra é mais longa, e a
+                  barra deixaria de ser uma régua. Partes iguais é o que permite
+                  achar a etapa pela POSIÇÃO, sem ler — e é o que sobrevive a
+                  um contador passando de mil. */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 2, alignItems: "stretch" }}>
+                {ETAPAS_DO_CHAT.map((key) => {
+                  const col = COLUNAS.find((c) => c.key === key)!;
                   const n = contaEtapa.get(col.key) ?? 0;
                   const on = etapaSel === col.key;
                   const voltaPara = FILAS.find((f) => f.k === filaAntesDaEtapa.current)?.rotulo;
@@ -4812,29 +4806,43 @@ export default function Chat() {
                         ? `${col.titulo} — clique de novo para voltar para “${voltaPara ?? "a lista"}”`
                         : `${col.titulo}${n > 0 ? ` (${n})` : ""} — ${col.subLong}${n === 0 ? " · nenhuma conversa nesta etapa agora" : ""}`}
                       style={{
-                        // aperta no desktop e folga no celular, e o motivo é o
-                        // oposto em cada um: na sidebar de 340px cada pixel de
-                        // largura é uma quarta linha de chips comendo a lista;
-                        // no celular a lista tem a tela inteira, e o que falta
-                        // é alvo para o polegar.
-                        display: "flex", alignItems: "center", justifyContent: "center", gap: 3,
+                        // ⚠️ A PALAVRA EM CIMA, O NÚMERO EMBAIXO — e isto é
+                        // medição, não gosto. Lado a lado, numa parte de 70px,
+                        // três dos quatro rótulos cortavam: "Negociação 303"
+                        // pede ~101px e "Sem cadastro" sozinho já pede 70. Em
+                        // duas linhas a palavra tem a célula inteira e o número
+                        // não disputa com ela.
+                        //
+                        // Custa 13px de altura (25 → 38). Continua sendo menos
+                        // da metade dos 71px que as sete pílulas com wrap
+                        // ocupavam no desktop, e altura é o recurso mais
+                        // escasso desta coluna.
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        justifyContent: "center", gap: 0, lineHeight: 1.15,
                         minWidth: 0, overflow: "hidden",
-                        // 6px, e não 7: medido, a faixa tem 288px úteis e com
-                        // 7 o chip de Ociosos sobra por TRÊS pixels, jogando a
-                        // faixa de três linhas para quatro. Ela continua sendo
-                        // wrap — muda de 3 para 4 linhas se um contador passar
-                        // de mil —, mas o caso de todo dia cabe em três.
-                        // No celular a altura sobe: a célula tem ~46px de
-                        // largura e o que falta lá é alvo para o polegar.
-                        padding: isMobile ? "7px 2px" : "4px 2px",
-                        fontSize: isMobile ? 11.5 : 11, fontWeight: on ? 800 : 600, fontFamily: "inherit", cursor: "pointer",
-                        borderRadius: 999, whiteSpace: "nowrap",
+                        // Aperto lateral de 1px: a palavra usa quase toda a
+                        // célula, e cada pixel aqui é uma letra a menos antes
+                        // das reticências. No celular a altura sobe: o que
+                        // falta lá não é largura, é alvo para o polegar.
+                        padding: isMobile ? "6px 2px" : "4px 1px",
+                        // 10,5 no desktop e não 11: é o que faz "Sem cadastro",
+                        // o mais longo dos quatro, caber nos 66px úteis.
+                        fontSize: isMobile ? 11.5 : 10.5,
+                        // ⚠️ O PESO NÃO MUDA COM A SELEÇÃO, e isso é conserto,
+                        // não estilo: em 800 "Sem cadastro" pede 70px contra os
+                        // 66 da célula — ele cortaria exatamente ao ser
+                        // escolhido, que é o pior momento possível. E o negrito
+                        // era o QUARTO sinal de "aceso", junto da borda colorida,
+                        // do filete de baixo, do fundo claro e da cor do texto.
+                        // Custava cinco pixels que não existem para dizer o que
+                        // já estava dito.
+                        fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
+                        borderRadius: 10, whiteSpace: "nowrap",
                         // aceso = a COR DA ETAPA na borda e num filete embaixo, com
                         // o fundo claro; não o fundo chapado dos chips de número.
-                        // Duas das sete cores do board (o cinza dos ociosos, o
-                        // roxo-claro da prospecção) reprovam em contraste com
-                        // texto branco por cima — e trocar a cor delas aqui faria
-                        // o chip discordar da coluna que ele representa.
+                        // O cinza dos ociosos reprova em contraste com texto
+                        // branco por cima — e trocar a cor dele aqui faria o
+                        // chip discordar da coluna que ele representa.
                         color: on ? M.ink : M.gray,
                         background: on ? M.surface : M.bg,
                         border: `1px solid ${on ? col.cor : M.border}`,
@@ -4842,16 +4850,22 @@ export default function Chat() {
                         opacity: n > 0 || on ? 1 : 0.5,
                       }}
                     >
-                      {/* A bolinha vira a própria letra colorida: numa célula
-                          de 36px, ponto + letra + número não cabem, e a cor é
-                          o que separa as duas etapas que começam com P. */}
-                      <span style={{ fontWeight: 800, color: col.cor, flexShrink: 0 }}>{LETRA_ETAPA[col.key]}</span>
+                      {/* Em QUATRO partes a palavra cabe, e volta a ser o que
+                          se lê. Com sete ela não cabia — "Tentativa" pedia 55px
+                          numa célula de 36 — e por isso a faixa tinha virado
+                          letras, com a cor fazendo o trabalho do nome.
+                          A bolinha continua não existindo: a cor vive na borda
+                          e no filete de baixo, e um ponto a mais comeria a
+                          palavra que acabou de caber. */}
+                      <span style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {ROTULO_CURTO_ETAPA[col.key]}
+                      </span>
                       {n > 0 && (
                         <span style={{ fontSize: 10, fontWeight: 800, opacity: on ? 0.85 : 0.65,
                           fontVariantNumeric: "tabular-nums", overflow: "hidden", textOverflow: "clip" }}>
-                          {/* 1.574 não cabe em 36px ao lado da letra. Abreviar é
-                              melhor que cortar: "1,5k" continua verdadeiro, e o
-                              número exato está no `title`. */}
+                          {/* 3.247 não cabe embaixo de "Tentativa" num chip de
+                              70px. Abreviar é melhor que cortar: "3,2k" continua
+                              verdadeiro, e o número exato está no `title`. */}
                           {n > 999 ? `${(n / 1000).toFixed(1).replace(".", ",")}k` : n}
                         </span>
                       )}
