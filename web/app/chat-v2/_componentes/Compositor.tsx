@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+
+import { EMOJIS } from "../../../lib/emojis";
 import { useGravador } from "./audio";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,7 @@ export function Compositor({
   const [texto, setTexto] = useState("");
   const [nota, setNota] = useState(false);
   const [clipe, setClipe] = useState(false);
+  const [emoji, setEmoji] = useState(false);
   const [respostas, setRespostas] = useState<Resposta[] | null>(null);
   const [menu, setMenu] = useState(false);
   const [marcado, setMarcado] = useState(0);
@@ -236,6 +239,24 @@ export function Compositor({
     }
   }
 
+  /**
+   * Insere NO PONTO DO CURSOR, não no fim: quem clica um emoji no meio de uma
+   * frase espera continuar dali, como no WhatsApp. O `setTimeout` é necessário
+   * porque o cursor só pode ser reposicionado depois que o React repintar o
+   * novo `value` — fazer isso na mesma passada posiciona sobre o texto antigo.
+   *
+   * Não passa por `mudou()` de propósito: aquilo abre o menu das respostas
+   * rápidas quando o texto começa com "/", e um emoji não é um atalho.
+   */
+  function inserirEmoji(e: string) {
+    const el = campo.current;
+    const ini = el?.selectionStart ?? texto.length;
+    const fim = el?.selectionEnd ?? texto.length;
+    setTexto(texto.slice(0, ini) + e + texto.slice(fim));
+    const pos = ini + e.length;
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos, pos); }, 0);
+  }
+
   const iconeBotao = "grid size-10 shrink-0 place-items-center rounded-full";
 
   return (
@@ -311,6 +332,27 @@ export function Compositor({
             )
           )}
         </div>
+      )}
+
+      {/* ---- grade de emoji ----------------------------------------------
+          10 colunas: os 40 cabem em 4 linhas, sem rolagem. A camada invisível
+          fecha ao clicar fora — um clique fecha tudo, então não vale paginar. */}
+      {emoji && (
+        <>
+          <div onClick={() => setEmoji(false)} className="fixed inset-0 z-10" />
+          <div className="absolute bottom-[calc(100%-4px)] left-3 z-20 grid w-[264px] grid-cols-10 gap-0.5 rounded-xl bg-v2-superficie p-2 shadow-e3 ring-1 ring-v2-linha">
+            {EMOJIS.map((e) => (
+              <button
+                key={e}
+                onClick={() => inserirEmoji(e)}
+                title={`Inserir ${e}`}
+                className="grid size-6 place-items-center rounded-md text-[17px] leading-none hover:bg-v2-superficie-2"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* ---- menu do clipe ------------------------------------------------ */}
@@ -478,11 +520,34 @@ export function Compositor({
             </svg>
           </button>
 
+          {/* ⚠️ SÓ NO DESKTOP (`sm:`). No celular o teclado do próprio aparelho
+              já traz os emoji, e a barra tem 360 px para dividir entre seis
+              botões e a caixa de texto — foi por espremer essa caixa que a
+              responsividade quebrou em 01/09 (§67). No computador não há
+              teclado de emoji, e é lá que o botão faz falta. */}
+          <button
+            data-ripple
+            onClick={() => { setEmoji((v) => !v); setClipe(false); }}
+            aria-pressed={emoji}
+            title="Emoji"
+            className={[
+              "hidden size-10 shrink-0 place-items-center rounded-full sm:grid",
+              emoji ? "bg-v2-azul-claro text-v2-azul" : "text-v2-tinta-fraca hover:bg-v2-superficie-2",
+            ].join(" ")}
+            aria-label="Emoji"
+          >
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" />
+              <path d="M9 9.5h.01M15 9.5h.01" />
+            </svg>
+          </button>
+
           {!nota && (
             <>
               <button
                 data-ripple
-                onClick={() => setClipe((v) => !v)}
+                onClick={() => { setClipe((v) => !v); setEmoji(false); }}
                 aria-pressed={clipe}
                 title="Anexar arquivo ou enviar um endereço"
                 className={[iconeBotao, "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
