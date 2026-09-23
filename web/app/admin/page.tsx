@@ -1923,6 +1923,42 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   const [fase, setFase] = useState<"montar" | "confirmar" | "enviando" | "fim">("montar");
   const [prog, setProg] = useState<{ feitos: number; ok: number; falhas: number; total: number } | null>(null);
   const [falhas, setFalhas] = useState<{ cliente: string; erro: string }[]>([]);
+  // Retomada segura (planilha): quem já recebeu ESTE template há pouco. `null` =
+  // a pessoa ainda não escolheu — e "Revisar" só destrava depois de escolher, para
+  // um envio interrompido e refeito não mandar em dobro por descuido.
+  const [decisaoJa, setDecisaoJa] = useState<null | "pular" | "todos">(null);
+  // A aba ficou em segundo plano durante o envio? O navegador reduz os temporizadores
+  // de aba escondida, e a espera entre tentativas depende deles.
+  const [ficouEscondida, setFicouEscondida] = useState(false);
+
+  // Enquanto envia: avisa antes de fechar/recarregar a aba, mantém a tela acordada e
+  // registra se a aba foi para segundo plano. Envio de milhares de clientes é um laço
+  // NESTA aba (§26.2) — fechar por engano aos 3.000 deixa a campanha pela metade.
+  useEffect(() => {
+    if (fase !== "enviando") return;
+    setFicouEscondida(false);
+    const avisoFechar = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", avisoFechar);
+    let trava: any = null;
+    const pedirTrava = () => {
+      try { (navigator as any).wakeLock?.request("screen").then((l: any) => { trava = l; }).catch(() => {}); } catch { /* sem suporte: segue sem */ }
+    };
+    const aoMudarVisibilidade = () => {
+      if (document.hidden) setFicouEscondida(true);
+      else pedirTrava();   // a trava se solta sozinha quando a aba some; volta ao voltar
+    };
+    document.addEventListener("visibilitychange", aoMudarVisibilidade);
+    pedirTrava();
+    return () => {
+      window.removeEventListener("beforeunload", avisoFechar);
+      document.removeEventListener("visibilitychange", aoMudarVisibilidade);
+      try { trava?.release(); } catch { /* já foi */ }
+    };
+  }, [fase]);
+
+  // Trocar o template depois de conferir invalida a conferência: "quem já recebeu"
+  // é sobre UM template. Só nas fontes manuais (a automática recalcula sozinha).
+  useEffect(() => { if (fonte !== "auto") setPrevia(null); }, [tplId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tpl = templates.find((t) => t.id === tplId) ?? null;
   // {{1}} é sempre o primeiro nome da cliente; do {{2}} em diante quem preenche
@@ -2115,7 +2151,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         // Planilha, a pedido do usuário: "a planilha já é resultado de um
         // filtro externo" — nem as proteções de custo rodam. Upload + envio.
         pularProtecoes: fonte === "planilha",
+        // o servidor responde quem JÁ recebeu este template há pouco (ver `quemJaRecebeu`)
+        templateEnvioId: tpl?.envio_id ?? null,
       });
+      setDecisaoJa(null);
       setPrevia({ ...j, semAlcance });
     } catch (e: any) {
       avisar("erro", e?.message ?? String(e));
@@ -2166,7 +2205,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
   const alternar = (lista: string[], set: (v: string[]) => void, v: string) =>
     set(lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v]);
 
-  const selecionados: any[] = previa?.selecionados ?? [];
+  const selecionadosTodos: any[] = previa?.selecionados ?? [];
+  const jaSet = new Set<string>(previa?.jaReceberam ?? []);
+  const haJa = jaSet.size > 0;
+  // "pular": quem já recebeu este template sai do envio. "todos"/sem decisão: a lista inteira.
+  const selecionados: any[] = decisaoJa === "pular"
+    ? selecionadosTodos.filter((x) => !jaSet.has(x.envio_id))
+    : selecionadosTodos;
   const custo = selecionados.length * CUSTO_TEMPLATE;
   // CONCORRENCIA envios em paralelo, não mais um a um com pausa de 1,8s. Aquela
   // pausa era herança do RD Conversas — cota de ~48 chamadas/min COMPARTILHADA
@@ -2260,6 +2305,12 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
         <div style={{ fontSize: 13, color: M.gray, marginBottom: 10, fontWeight: 600 }}>
           {p.feitos}/{p.total} · ✔ {p.ok} enviados · ✖ {p.falhas} falharam
         </div>
+        {ficouEscondida && (
+          <Recado tipo="aviso">
+            Esta aba ficou em segundo plano durante o envio. O navegador reduz o ritmo de abas escondidas
+            {fase === "enviando" ? " — mantenha esta aba à vista até terminar." : " — confira o total de enviados acima."}
+          </Recado>
+        )}
         <div style={{ height: 10, background: M.bg, borderRadius: 6, overflow: "hidden" }}>
           <div style={{ height: "100%", width: `${p.total ? (p.feitos / p.total) * 100 : 0}%`, background: M.roxo, transition: "width .2s" }} />
         </div>
@@ -2297,6 +2348,17 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           Vai enviar <b>{selecionados.length}</b> templates <b>reais no WhatsApp</b> — custo aproximado{" "}
           <b style={{ color: M.verde }}>{moedaBR(custo)}</b>. Isso é <b>irreversível</b>.
         </div>
+        {haJa && decisaoJa === "todos" && (
+          <div style={{ fontSize: 12.5, color: "#b3261e", marginTop: 8, fontWeight: 700 }}>
+            ⚠️ {jaSet.size.toLocaleString("pt-BR")} desta lista já receberam este template nas últimas {previa?.janelaRetomadaHoras ?? 12} h
+            e vão receber de novo — foi a sua escolha.
+          </div>
+        )}
+        {haJa && decisaoJa === "pular" && (
+          <div style={{ fontSize: 12.5, color: M.verde, marginTop: 8, fontWeight: 700 }}>
+            ✓ {jaSet.size.toLocaleString("pt-BR")} que já receberam ficam de fora — retomando de onde parou.
+          </div>
+        )}
         <div style={{ fontSize: 12.5, color: M.gray, marginTop: 8 }}>
           Template: <b>{tpl?.nome ?? "padrão do sistema"}</b>
         </div>
@@ -2743,6 +2805,32 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               {minutos >= 2 && <> · ~<b>{minutos} min</b> de aba aberta</>}
             </div>
 
+            {previa.jaReceberamErro && (
+              <div style={{ marginTop: 10 }}>
+                <Recado tipo="aviso">
+                  Não consegui checar quem já recebeu este template há pouco. Se este envio já foi tentado
+                  antes, confira o extrato abaixo antes de repetir — a planilha não tem proteção contra envio em dobro.
+                </Recado>
+              </div>
+            )}
+
+            {haJa && (
+              <div style={{ marginTop: 10 }}>
+                <Recado tipo={decisaoJa ? "ok" : "erro"}>
+                  <b>{jaSet.size.toLocaleString("pt-BR")}</b> desta lista <b>já receberam este template</b> nas últimas{" "}
+                  {previa.janelaRetomadaHoras ?? 12} h — um envio anterior foi interrompido? Escolha antes de continuar:
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <Botao cor={decisaoJa === "pular" ? M.verde : M.gray} onClick={() => setDecisaoJa("pular")}>
+                      {decisaoJa === "pular" ? "✓ " : ""}Pular esses {jaSet.size.toLocaleString("pt-BR")} e enviar só os {(selecionadosTodos.length - jaSet.size).toLocaleString("pt-BR")} restantes
+                    </Botao>
+                    <Botao cor={decisaoJa === "todos" ? M.wine : M.gray} onClick={() => setDecisaoJa("todos")}>
+                      {decisaoJa === "todos" ? "✓ " : ""}Enviar para todos os {selecionadosTodos.length.toLocaleString("pt-BR")}, de novo
+                    </Botao>
+                  </div>
+                </Recado>
+              </div>
+            )}
+
             {/* O envio continua sendo um laço do NAVEGADOR (§26.2), agora em
                 CONCORRENCIA faixas em vez de uma só — mas ainda É a aba. Quem
                 fecha no meio para a campanha no meio, e isso tem de ser dito
@@ -2751,8 +2839,10 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
               <div style={{ marginTop: 10 }}>
                 <Recado tipo="aviso">
                   São ~{minutos} minutos de envio, e ele acontece <b>nesta aba</b>: fechá-la, dormir a
-                  máquina ou cair a internet interrompe a campanha onde estiver. Dá para retomar — é só
-                  rodar de novo, que quem já recebeu fica de fora pela janela de anti-repetição.
+                  máquina ou cair a internet interrompe a campanha onde estiver.{" "}
+                  {fonte === "planilha"
+                    ? "Se parar, é só conferir a planilha de novo: a tela avisa quantos já receberam este template e você escolhe pular esses."
+                    : "Dá para retomar — é só rodar de novo, que quem já recebeu fica de fora pela janela de anti-repetição."}
                 </Recado>
               </div>
             )}
@@ -2828,10 +2918,13 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
             )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18, flexWrap: "wrap" }}>
-              <Botao cor={M.wine} disabled={!selecionados.length || !tpl || faltaPreencher}
+              <Botao cor={M.wine} disabled={!selecionados.length || !tpl || faltaPreencher || (haJa && decisaoJa === null)}
                 onClick={() => setFase("confirmar")}>
                 Revisar ({selecionados.length})
               </Botao>
+              {haJa && decisaoJa === null && (
+                <span style={{ fontSize: 12.5, color: "#b3261e" }}>escolha acima: pular quem já recebeu, ou enviar para todos</span>
+              )}
               {faltaPreencher && <span style={{ fontSize: 12.5, color: "#8a6100" }}>preencha os campos do template acima</span>}
               {!tpl && <span style={{ fontSize: 12.5, color: "#8a6100" }}>escolha um template</span>}
             </div>

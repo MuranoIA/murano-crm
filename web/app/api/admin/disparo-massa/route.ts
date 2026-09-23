@@ -2,7 +2,7 @@ import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
-import { resolverListaManual, LIMITE_LISTA, LOTE_RESOLVER, type CardManual } from "../../../../lib/publicoManual";
+import { resolverListaManual, quemJaRecebeu, JANELA_RETOMADA_HORAS, LIMITE_LISTA, LOTE_RESOLVER, type CardManual } from "../../../../lib/publicoManual";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // a prévia varre a vw_funil inteira (paginada)
@@ -235,7 +235,21 @@ export async function POST(req: Request) {
         cards,
         pularProtecoes,
       );
-      return Response.json({ ...publico, semAlcance: semAlcanceInline });
+      // Planilha: sem proteção nenhuma, então um envio INTERROMPIDO e refeito
+      // mandaria em dobro. Informa quem já recebeu ESTE template há pouco, e a
+      // tela obriga a escolher (ver `quemJaRecebeu`). Falha ao consultar não
+      // derruba a prévia — vira um aviso, e a tela mostra que não deu para checar.
+      let jaReceberam: string[] = [];
+      let jaReceberamErro = false;
+      const templateEnvioId = typeof b.templateEnvioId === "string" ? b.templateEnvioId.trim() : "";
+      if (pularProtecoes && templateEnvioId) {
+        try { jaReceberam = await quemJaRecebeu(sbAdmin(), templateEnvioId, publico.selecionados); }
+        catch { jaReceberamErro = true; }
+      }
+      return Response.json({
+        ...publico, semAlcance: semAlcanceInline,
+        jaReceberam, jaReceberamErro, janelaRetomadaHoras: JANELA_RETOMADA_HORAS,
+      });
     }
 
     const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
