@@ -21,7 +21,7 @@ import type { Ligacao } from "../../../lib/ligacaoDados";
 import type { ApiLigacao } from "./Ligacao";
 import type { Gesto } from "./Compositor";
 import { INDICADORES, itensDoPapel } from "../../navegacao";
-import type { Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
+import type { Citada, Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
 
 // pesado e raro: quem não manda template não baixa este código
 const Templates = dynamic(() => import("./Templates"), { ssr: false });
@@ -93,6 +93,19 @@ function juntarNovas(atual: Mensagem[], chegou: Mensagem[]): Mensagem[] {
   return [...sobrevive, ...chegou].sort((a, b) => (a.criada_em < b.criada_em ? -1 : 1));
 }
 
+/**
+ * ⚠️ `/api/chat/thread` devolve `citadas` como LISTA de mensagens; a tela
+ * procura por id. Guardar a lista crua num objeto (era `setCitadas(j.citadas)`)
+ * fazia `citadas[wamid]` dar `undefined` SEMPRE — nenhuma citação aparecia no
+ * v2, nem de texto nem de foto, e sem erro nenhum no console (23/09/2026).
+ * O chat de hoje já convertia; aqui faltava.
+ */
+function porId(cs: any): Record<string, Citada> {
+  const fora: Record<string, Citada> = {};
+  for (const c of Array.isArray(cs) ? cs : []) if (c?.id) fora[String(c.id)] = c as Citada;
+  return fora;
+}
+
 /** O que mostrar no lugar do texto quando a mensagem citada é mídia. */
 const rotuloDeMidia = (t: string | null) =>
   ({ image: "📷 Foto", sticker: "📷 Figurinha", audio: "🎤 Áudio", voice: "🎤 Áudio",
@@ -153,7 +166,7 @@ export function Casca({
   // `conversaNaCloud()` que a rota de ligação usa para decidir — a tela não
   // deduz do rótulo da linha, que é outra pergunta.
   const [podeLigar, setPodeLigar] = useState(false);
-  const [citadas, setCitadas] = useState<Record<string, { conteudo: string | null; enviada_por: string | null }>>({});
+  const [citadas, setCitadas] = useState<Record<string, Citada>>({});
   const [progresso, setProgresso] = useState<Progresso | null>(null);
   const [locais, setLocais] = useState<{ nome: string; endereco?: string }[]>([]);
   const [dialogo, setDialogo] = useState<null | "transferir" | "resolver">(null);
@@ -429,7 +442,7 @@ export function Casca({
         setTransferencias(j.transferencias ?? []);
         setLigacoes(j.ligacoes ?? []);
         setPodeLigar(!!j.pode_ligar);
-        setCitadas(j.citadas ?? {});
+        setCitadas(porId(j.citadas));
         if (j.cliente) {
           setAvulsa({
             cliente_id: id,
@@ -536,7 +549,7 @@ export function Casca({
         setTransferencias(j.transferencias ?? []);
         setLigacoes(j.ligacoes ?? []);
         setPodeLigar(!!j.pode_ligar);
-        setCitadas((c) => ({ ...c, ...(j.citadas ?? {}) }));
+        setCitadas((c) => ({ ...c, ...porId(j.citadas) }));
       })
       .catch(() => {});
   }, [threadInicial?.cliente_id]);
@@ -555,7 +568,7 @@ export function Casca({
         setTemMais(!!j.tem_mais);
         // `continuacao: true` não recarrega notas nem transferências — elas já
         // vieram inteiras no primeiro lote. As citadas, sim: são do lote.
-        setCitadas((c) => ({ ...c, ...(j.citadas ?? {}) }));
+        setCitadas((c) => ({ ...c, ...porId(j.citadas) }));
       })
       .catch(() => {})
       .finally(() => abertaRef.current === id && setCarregandoAntigas(false));
@@ -582,7 +595,7 @@ export function Casca({
         // os trechos citados do lote vêm junto: sem isto, a bolha que responde
         // uma mensagem antiga aparece SEM a citação até a próxima recarga
         // completa — e some justamente no instante em que se olha para ela
-        if (j.citadas) setCitadas((c) => ({ ...c, ...j.citadas }));
+        if (j.citadas) setCitadas((c) => ({ ...c, ...porId(j.citadas) }));
         const estados: Mensagem[] = j.estados ?? [];
         setMensagens((atual) => {
           const comEstado = estados.length
@@ -764,7 +777,11 @@ export function Casca({
         if (alvo) {
           setCitadas((c) => ({
             ...c,
-            [citar]: { conteudo: alvo.conteudo, enviada_por: alvo.enviada_por },
+            [citar]: {
+              id: alvo.id, conteudo: alvo.conteudo, enviada_por: alvo.enviada_por,
+              criada_em: alvo.criada_em, midia_tipo: alvo.midia_tipo,
+              midia_mime: alvo.midia_mime, midia_nome: alvo.midia_nome,
+            },
           }));
         }
       }

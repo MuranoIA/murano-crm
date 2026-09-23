@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { Bolha } from "./Bolha";
-import type { Mensagem } from "./tipos";
+import type { Citada, Mensagem } from "./tipos";
 import { chaveDoDia, diaDaMensagem, hora } from "./formato";
 import { MarcoLigacao } from "./MarcoLigacao";
 import type { Ligacao } from "../../../lib/ligacaoDados";
@@ -54,7 +54,7 @@ export function Thread({
   notas: Nota[];
   transferencias: Transferencia[];
   ligacoes?: Ligacao[];
-  citadas: Record<string, { conteudo: string | null; enviada_por: string | null }>;
+  citadas: Record<string, Citada>;
   temMais: boolean;
   carregandoAntigas: boolean;
   aoCarregarAntigas: () => void;
@@ -68,6 +68,17 @@ export function Thread({
   const alturaAntes = useRef(0);
   const primeiraChave = mensagens.length ? mensagens[0].id : "";
   const primeiraAnterior = useRef(primeiraChave);
+
+  // A mensagem citada pode estar NA TELA (a cliente marcou uma foto de dois
+  // minutos atras) ou ter ficado para tras do lote, e ai vem do servidor em
+  // `citadas`. Procurar primeiro no lote e o que faz a citacao aparecer NA HORA
+  // na bolha otimista, sem esperar a resposta da rota.
+  const daTela = useMemo(() => {
+    const m: Record<string, Mensagem> = {};
+    for (const x of mensagens) m[x.id] = x;
+    return m;
+  }, [mensagens]);
+  const acharCitada = (id: string): Citada | undefined => daTela[id] ?? citadas[id];
 
   const itens = useMemo<Item[]>(() => {
     // tudo junto, ordenado por data: mensagens, notas e transferências
@@ -247,7 +258,7 @@ export function Thread({
                   m={i.m}
                   primeiraDoGrupo={i.primeira}
                   ultimaDoGrupo={i.ultima}
-                  citada={i.m.resposta_a ? citadas[i.m.resposta_a] : undefined}
+                  citada={i.m.resposta_a ? acharCitada(i.m.resposta_a) : undefined}
                   aoReenviar={aoReenviar}
                   aoEncaminhar={aoEncaminhar}
                   aoResponder={aoResponder}

@@ -4,6 +4,24 @@
 export type { Conversa, Lista } from "../_dados/lista";
 export type { Mensagem, Thread } from "../_dados/thread";
 
+/**
+ * A MENSAGEM CITADA por outra (a cliente responde "quero 2 desse" marcando a
+ * foto). É `Mensagem` podada: só o que a tirinha da citação desenha.
+ *
+ * ⚠️ Os campos de MÍDIA são o ponto (23/09/2026). Sem eles a citação de uma
+ * foto virava a palavra "mídia" — e o vendedor, que mandou cinco imagens,
+ * ficava sem saber QUAL delas a cliente marcou. Era o que o piloto relatou.
+ */
+export type Citada = {
+  id: string;
+  conteudo: string | null;
+  enviada_por: string | null;
+  criada_em?: string | null;
+  midia_tipo?: string | null;
+  midia_mime?: string | null;
+  midia_nome?: string | null;
+};
+
 /** Os recortes da sidebar. Um estado só: dois controles para a mesma escolha
  *  acabam se contradizendo (CLAUDE.md §32 e §68.2). */
 export type Fila = "todas" | "nao_lidas" | "recados" | "favoritas" | "fila" | "resolvidas" | "carteira";

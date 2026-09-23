@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Mensagem } from "./tipos";
+import type { Citada, Mensagem } from "./tipos";
 import { hora } from "./formato";
 import { traduzErroMeta } from "../../../lib/erroMeta";
 
@@ -205,6 +205,59 @@ function Conteudo({ m }: { m: Mensagem }) {
   return <span className="whitespace-pre-wrap break-words">{m.conteudo}</span>;
 }
 
+// ---------------------------------------------------------------------------
+// A TIRINHA DA CITAÇÃO (23/09/2026)
+//
+// A cliente manda "vou querer 2 desse" marcando UMA das cinco fotos que o
+// vendedor acabou de enviar. Sem a miniatura, a bolha dizia só "mídia" — e a
+// pergunta que importa ("qual delas?") ficava sem resposta na tela; o vendedor
+// tinha de abrir o WhatsApp no celular para saber. Era o que o piloto relatou,
+// e o chat de hoje já mostrava a foto.
+//
+// A miniatura vem da MESMA rota da bolha (`/api/chat/midia?id=`), que devolve
+// uma URL assinada — nada de link do bucket na tela. Falhar aqui não pode
+// quebrar a citação: `onError` esconde a imagem e resta o rótulo.
+// ---------------------------------------------------------------------------
+const ROTULO_MIDIA: Record<string, string> = {
+  image: "Foto", sticker: "Figurinha", audio: "Áudio", voice: "Áudio",
+  video: "Vídeo", document: "Documento",
+};
+
+function Citacao({ c }: { c: Citada }) {
+  const tipo = String(c.midia_tipo ?? "");
+  const temImagem = tipo === "image" || tipo === "sticker" || tipo === "video";
+  const rotulo = ROTULO_MIDIA[tipo];
+  // legenda quando existe; senão o nome do arquivo; senão o tipo. A ordem
+  // importa: "Vou querer 2 desse" é mais útil que "IMG-20260923.jpg".
+  const texto = c.conteudo?.trim() || (rotulo ? c.midia_nome ?? rotulo : "mensagem");
+  return (
+    <span className="mb-1 flex items-stretch gap-2 overflow-hidden rounded-md border-l-[3px] border-v2-azul bg-black/[0.035] pl-2 text-[12.5px] leading-4 text-v2-tinta-fraca">
+      <span className="min-w-0 flex-1 py-1">
+        <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-v2-azul">
+          {c.enviada_por === "customer" ? "cliente" : "você"}
+        </span>
+        <span className="flex items-center gap-1">
+          {rotulo && !temImagem && <span aria-hidden>{tipo === "document" ? "📄" : "🎤"}</span>}
+          <span className="line-clamp-2 break-words">{texto}</span>
+        </span>
+      </span>
+      {temImagem && (
+        // 44px de lado, reservados: a tirinha não pode mudar de altura quando a
+        // miniatura chega, senão a thread inteira pula (meta de CLS da spec)
+        <img
+          src={`/api/chat/midia?id=${encodeURIComponent(c.id)}`}
+          alt={c.midia_nome ?? "mídia citada"}
+          loading="lazy"
+          width={44}
+          height={44}
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+          className="size-11 shrink-0 self-center rounded bg-v2-superficie-2 object-cover"
+        />
+      )}
+    </span>
+  );
+}
+
 function BolhaBase({
   m,
   primeiraDoGrupo,
@@ -218,7 +271,7 @@ function BolhaBase({
   primeiraDoGrupo: boolean;
   ultimaDoGrupo: boolean;
   /** o trecho citado, quando esta mensagem responde a outra (0086) */
-  citada?: { conteudo: string | null; enviada_por: string | null };
+  citada?: Citada;
   aoReenviar?: (m: Mensagem) => void;
   aoEncaminhar?: (m: Mensagem) => void;
   /** responder CITANDO esta mensagem. Vale para a da cliente e para a nossa, e
@@ -253,16 +306,7 @@ function BolhaBase({
           ultimaDoGrupo ? (minha ? "rounded-br-md" : "rounded-bl-md") : "",
         ].join(" ")}
       >
-        {citada && (
-          // o trecho citado vem do servidor (`citadas`), porque a mensagem
-          // original pode estar centenas de bolhas atrás — ou fora do lote
-          <span className="mb-1 block border-l-[3px] border-v2-azul bg-black/[0.035] px-2 py-1 text-[12.5px] leading-4 text-v2-tinta-fraca">
-            <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-v2-azul">
-              {citada.enviada_por === "customer" ? "cliente" : "você"}
-            </span>
-            <span className="line-clamp-2 break-words">{citada.conteudo || "mídia"}</span>
-          </span>
-        )}
+        {citada && <Citacao c={citada} />}
 
         {m.tipo === "template" && (
           <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-v2-vinho-texto">
