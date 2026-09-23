@@ -26,6 +26,7 @@ import { memoriaDeTela, fotoDeRota, memoriaDaSessao, type Sessao } from "../lib/
 // o "⋯" que recolhe as telas de apoio — o MESMO componente do chat
 import { MenuSecundario } from "./MenuSecundario";
 import { useSugestoesPendentes, SeloSugestoes, idadeEmPalavras } from "./sugestoesPendentes";
+import { useLarguraJanela, LIMITE_CELULAR, LIMITE_NAVEGACAO, LIMITE_TRES_COLUNAS } from "../lib/janela";
 
 type Msg = { c: string | null; e: string | null; t?: string | null }; // conteudo, enviada_por, criada_em
 type Card = {
@@ -501,7 +502,15 @@ export default function Page() {
   const [atualizado, setAtualizado] = useState<string>("—");
   const [erro, setErro] = useState<string>("");
   const [carregando, setCarregando] = useState(true);
-  const [isMobile, setIsMobile] = useState(false); // < 768px -> layout empilhado (colunas viram faixas)
+  // < 768px -> layout empilhado (colunas viram faixas). Entre 768 e 1064 o
+  // desenho é o de mesa, mas a barra do topo recolhe no ☰: com meia janela de
+  // monitor (demanda 11) a navegação, o tema e o "Sair" já não cabem juntos —
+  // medido: com 960 px o "Sair" ficava 14 px fora da tela, e com 768 o
+  // cabeçalho inteiro transbordava 206 px. Ver lib/janela.ts.
+  const larg = useLarguraJanela();
+  const isMobile = larg < LIMITE_CELULAR;
+  const isMedio = !isMobile && larg < LIMITE_TRES_COLUNAS;
+  const navRecolhida = larg < LIMITE_NAVEGACAO;
   // ⚠️ Os dez filtros abaixo nascem da MEMÓRIA DA TELA (topo do arquivo), não
   // do padrão. É o que faz o board voltar do chat como você o deixou.
   // `useState(() => ...)` é inicializador preguiçoso: lê o armazenamento uma
@@ -1516,14 +1525,6 @@ export default function Page() {
     };
   }, [sessao]);
 
-  // detecta celular (largura < 768) -> board empilhado com scroll horizontal por faixa
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-
   // AUTO-SYNC DA COLUNA NEGOCIAÇÃO — REMOVIDO DO NAVEGADOR (03/08/2026).
   //
   // Existia aqui um setInterval de 10s que chamava /api/negociacao-sync com até 10
@@ -2116,11 +2117,11 @@ export default function Page() {
     >
       <div style={{ height: 3, background: RD.wine }} />
       {/* Top bar */}
-      <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px" }}>
+      <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: navRecolhida ? "0 16px" : "0 26px" }}>
         <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
           <Logo size={26} />
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
-          {!isMobile && (
+          {!navRecolhida && (
           <nav style={{ marginLeft: 12, alignSelf: "stretch", display: "flex", alignItems: "center", gap: 2 }}>
             <span style={{ display: "inline-flex", alignItems: "center", color: RD.cyan, fontWeight: 700, fontSize: 14, borderBottom: `2px solid ${RD.cyan}`, padding: "0 10px" }}>Funil</span>
             <Link href="/chat" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: RD.gray, fontWeight: 600, fontSize: 14, textDecoration: "none", padding: "0 10px", borderBottom: "2px solid transparent", whiteSpace: "nowrap" }}>💬 Chat</Link>
@@ -2156,7 +2157,7 @@ export default function Page() {
             )}
           </nav>
           )}
-          {isMobile && (
+          {navRecolhida && (
             <button onClick={() => setMenuMobile((v) => !v)} title="Menu" style={{ marginLeft: 4, width: 38, height: 34, borderRadius: 8, border: `1px solid ${RD.border}`, background: RD.surface, color: RD.wine, fontSize: 18, lineHeight: 1, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>☰</button>
           )}
           {/* Identidade + troca de papel num pill só. Clica -> dropdown com os papéis
@@ -2222,7 +2223,7 @@ export default function Page() {
               DENTRO de outro é frágil de fechar e péssimo no toque. Os itens são
               os mesmos, sob um título próprio — nada ficou inalcançável, e
               "Rodar desfile" continua a UM clique de distância de onde estava. */}
-          {!isMobile && (
+          {!navRecolhida && (
             <MenuSecundario
               cores={{ texto: RD.gray, ink: RD.navy, surface: RD.surface, border: RD.border,
                 sombra: "0 12px 32px rgba(16,32,64,.20)" }}
@@ -2272,7 +2273,7 @@ export default function Page() {
               })()}
             </MenuSecundario>
           )}
-          {!isMobile && (
+          {!navRecolhida && (
           <div style={{ position: "relative", display: "inline-flex" }}>
             <button
               onClick={() => setTemaMenuAberto((v) => !v)}
@@ -2301,7 +2302,7 @@ export default function Page() {
             )}
           </div>
           )}
-          {!isMobile && (
+          {!navRecolhida && (
           <button
             onClick={sair}
             style={{ background: "transparent", border: `1px solid ${RD.border}`, color: RD.gray, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
@@ -2312,7 +2313,7 @@ export default function Page() {
         </div>
       </div>
 
-      {isMobile && menuMobile && (() => {
+      {navRecolhida && menuMobile && (() => {
         const row = { display: "flex", alignItems: "center", gap: 6, width: "100%", boxSizing: "border-box" as const, padding: "13px 18px", fontSize: 15, fontWeight: 600, color: RD.navy, textDecoration: "none", background: "transparent", border: "none", borderBottom: `1px solid ${RD.border}`, cursor: "pointer", textAlign: "left" as const };
         const fecha = () => setMenuMobile(false);
         return (
@@ -2358,7 +2359,7 @@ export default function Page() {
         );
       })()}
 
-      <main style={{ padding: isMobile ? "12px 12px" : "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
+      <main style={{ padding: isMobile ? "12px 12px" : navRecolhida ? "14px 16px" : "18px 26px", maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
           {/* Vendedor: NÃO tem linha de cima — busca + "na carteira" vão pra linha única dos filtros.
               Admin/home mantêm a busca ampla + chips + "na carteira" aqui em cima. */}
@@ -3173,7 +3174,7 @@ export default function Page() {
         <div style={{
           display: "grid",
           gridAutoFlow: isMobile ? "row" : "column",
-          gridAutoColumns: isMobile ? "1fr" : "minmax(330px, 1fr)",
+          gridAutoColumns: isMobile ? "1fr" : isMedio ? "minmax(290px, 1fr)" : "minmax(330px, 1fr)",
           gap: isMobile ? 10 : 12,
           alignItems: "start",
           overflowX: isMobile ? "visible" : "auto",

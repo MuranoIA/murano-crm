@@ -27,6 +27,7 @@ import { limiteDe, recadoDeLimite, recadoDeLimiteDoTipo, tipoDoMime } from "../.
 import { explicarErroMicrofone, explicarErroGravador } from "../../lib/microfone";
 import OrcamentoFlutuante from "../OrcamentoFlutuante";
 import { useSugestoesPendentes, SeloSugestoes } from "../sugestoesPendentes";
+import { useLarguraJanela, LIMITE_CELULAR, LIMITE_NAVEGACAO, LIMITE_TRES_COLUNAS } from "../../lib/janela";
 
 // ---------------------------------------------------------------------------
 // CHAT — ambiente de atendimento, layout inspirado no WhatsApp
@@ -1383,7 +1384,20 @@ export default function Chat() {
   const [enviando, setEnviando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
+  // ---- em que tamanho de janela a tela está (demanda 11) -------------------
+  // Duas coisas eram uma só: "celular" (uma coluna por vez) e "mesa" (três).
+  // Meia janela de monitor (683–1184 px) cai no meio e sufocava a conversa, que
+  // ficava com ~320 px entre a lista e o painel do cliente. Agora há uma faixa
+  // MÉDIA — lista + conversa, com o painel do cliente numa folha lateral — e o
+  // resto sai da largura que sobra para a conversa (`larguraThread`, abaixo),
+  // não de mais um número mágico. Ver lib/janela.ts.
+  const larg = useLarguraJanela();
+  const isMobile = larg < LIMITE_CELULAR;
+  const isMedio = !isMobile && larg < LIMITE_TRES_COLUNAS;
+  /** O painel do cliente deixa de ser COLUNA e vira folha que abre por cima. */
+  const painelEmFolha = isMobile || isMedio;
+  /** A navegação do produto recolhe no ☰ antes de empurrar a identidade para fora. */
+  const navRecolhida = larg < LIMITE_NAVEGACAO;
   const [filtro, setFiltro] = useState<Selecao>(() => memChat.ler()?.filtro ?? "todas");
   // A fila de onde a pessoa saiu quando escolheu uma etapa. Serve para o clique
   // no chip ACESO devolver para onde ela estava, e não para um "Meus
@@ -1953,25 +1967,27 @@ export default function Chat() {
   // a propria funcao, para o `finally` dela poder se rechamar
   const carregarListaRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    const mq = () => setIsMobile(window.innerWidth < 768);
-    mq(); window.addEventListener("resize", mq);
-    return () => window.removeEventListener("resize", mq);
-  }, []);
-
   // `painelAberto` nasce `true` porque no desktop ele é uma COLUNA ao lado da
   // conversa — o ERP ao lado do diálogo é justamente o que o RD não tem. No
   // celular o mesmo estado vira uma FOLHA por cima da conversa: abrir um
   // atendimento mostrava a ficha do cliente e escondia as mensagens.
   // Fecha uma vez, quando a tela se descobre estreita. Depois disso quem manda
   // é o botão 📊 — inclusive para reabrir.
-  const jaFechouNoCelular = useRef(false);
+  //
+  // Vale para a faixa MÉDIA também (demanda 11): ali o painel é uma folha lateral
+  // e abri-la sozinha cobriria a conversa. E o inverso: se a tela fechou o painel
+  // por estar estreita, ele VOLTA quando a janela volta a comportar uma coluna —
+  // quem arrasta a borda para lá e para cá não deve reabrir o painel na mão.
+  const fechadoPelaTela = useRef(false);
   useEffect(() => {
-    if (isMobile && !jaFechouNoCelular.current) {
-      jaFechouNoCelular.current = true;
+    if (painelEmFolha) {
+      fechadoPelaTela.current = true;
       setPainelAberto(false);
+    } else if (fechadoPelaTela.current) {
+      fechadoPelaTela.current = false;
+      setPainelAberto(true);
     }
-  }, [isMobile]);
+  }, [painelEmFolha]);
 
   useEffect(() => {
     fetch("/api/session", { cache: "no-store" })
@@ -4062,12 +4078,36 @@ export default function Chat() {
   // num aparelho de 390px, `scrollWidth` 684 contra `clientWidth` 390, e a
   // página inteira passava a rolar de lado. Ícone também aqui, pelo mesmo
   // motivo, e o `title` continua sendo a legenda.
-  const acoesSoIcone = compacto || isMobile;
+  //
+  // ---- o que sobra para a CONVERSA decide o tamanho dos controles -------------
+  // Em vez de um número mágico por controle, uma conta: largura da janela menos a
+  // lista, menos o painel quando ele é coluna. Medido em 960 px com as três
+  // colunas: a conversa ficava com 320 px e Favoritar/PDF saíam cortados, com o
+  // TEMPLATE em cima do botão de enviar. Com pouco espaço, os botões do cabeçalho
+  // viram ícone (o `title` continua sendo a legenda) e a pílula do compositor
+  // recolhe os secundários atrás do "⋯" — os mesmos arranjos que o celular e a
+  // lupa já usam, agora ligados pelo espaço e não pelo aparelho.
+  const listaLarg = isMobile ? larg : isMedio ? Math.min(G.lista, 300) : G.lista;
+  const painelColuna = !!sel && painelAberto && !painelEmFolha;
+  const larguraThread = larg - (isMobile ? 0 : listaLarg) - (painelColuna ? G.painel : 0);
+  // 900 e não menos: sete botões COM TEXTO + o avatar somam ~650 px, e o nome do
+  // cliente precisa de outros ~200 para ser lido. Medido a 1064 px (conversa de
+  // 764) com o limite anterior de 720: os botões passavam POR CIMA do nome, que
+  // ficava com 26 px.
+  const acoesSoIcone = compacto || isMobile || larguraThread < 900;
+  // Abaixo de ~560 nem os ícones cabem na linha do nome: a 768 px (lista 300 +
+  // conversa 468) eles tomavam tudo e o nome ficava "156 - NATAS…". Vão para uma
+  // linha própria, como no celular, e o nome ganha a largura toda. Na lupa não:
+  // ali o que falta é altura, não largura (§41.5).
+  const apertado = !isMobile && !compacto && larguraThread < 560;
   // A diferença entre os dois casos: na lupa as ações dividem a linha do nome,
   // porque ali o que falta é ALTURA (§41.5). No celular sobra altura e falta
   // largura — então elas ganham uma faixa própria, onde os cinco ícones cabem
   // inteiros. Faixa que rola escondendo botão é pior que faixa que custa 40px.
   const acoesEmFaixa = isMobile && !compacto;
+  /** As ações descem para a segunda linha do cabeçalho: no celular (toque) e na
+   *  conversa apertada da faixa média. */
+  const acoesEmLinha = acoesEmFaixa || apertado;
 
   // ---- baixar a conversa em PDF -------------------------------------------
   //
@@ -4152,7 +4192,8 @@ export default function Chat() {
   // que o WhatsApp também deixa dentro do campo, anexo e áudio.
   // (mesmo valor de `acoesSoIcone` hoje; separados de propósito — um governa o
   //  cabeçalho e o outro o compositor, e mexer num não deve arrastar o outro.)
-  const barraEnxuta = compacto || isMobile;
+  // 600: a 1184 px (conversa de 544) a pílula completa deixava 150 px para escrever.
+  const barraEnxuta = compacto || isMobile || larguraThread < 600;
   const raioPilBtn = compacto ? G.raioPilC : G.raioPil;
   // SVG dentro de <button> nao se centraliza sozinho como texto se centraliza.
   // So em `bancada`, onde o filho e um <svg>: nos outros o filho e emoji e o
@@ -4313,7 +4354,7 @@ export default function Chat() {
             CRM dentro de uma moldura. O menu continua existindo no navegador,
             onde o CRM é o produto inteiro — é a mesma tela servindo dois
             contextos, e só o contexto muda. */}
-        {modoApp ? null : !isMobile ? (
+        {modoApp ? null : !navRecolhida ? (
           <nav style={{ display: "flex", alignItems: "center", alignSelf: "stretch", gap: 2, marginLeft: 8, minWidth: 0, overflowX: "auto" }}>
             {NAV.filter((n) => !n.soAdmin || sessao.role === "admin").map((n) => {
               const ativo = n.href === "/chat";
@@ -4368,11 +4409,11 @@ export default function Chat() {
             `overflowX: auto` das abas do produto; fora dela o botão não tem mais
             como empurrar a barra para a rolagem, que foi o que obrigou a altura
             de 20px na primeira versão. */}
-        {!modoApp && !isMobile && (
+        {!modoApp && !navRecolhida && (
           <MenuSecundario cores={{ texto: M.gray, ink: M.ink, surface: M.surface, border: M.border,
                 sombra: "0 12px 32px rgba(28,14,27,.20)" }} />
         )}
-        {menuMobile && isMobile && (
+        {menuMobile && navRecolhida && (
           <>
             <div onClick={() => setMenuMobile(false)} style={{ position: "fixed", inset: 0, zIndex: 100 }} />
             <div style={{ position: "absolute", top: "100%", left: 12, zIndex: 101, minWidth: 210, background: M.surface, border: `1px solid ${M.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(28,14,27,.20)", overflow: "hidden" }}>
@@ -4410,7 +4451,7 @@ export default function Chat() {
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* ---- sidebar: lista de conversas ---- */}
         {mostraLista && (
-          <div style={{ width: isMobile ? "100%" : G.lista, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
+          <div style={{ width: isMobile ? "100%" : listaLarg, flexShrink: 0, display: "flex", flexDirection: "column", background: M.surface, borderRight: `1px solid ${M.border}` }}>
             {/* ---- cabeçalho da lista, no arranjo do RD ----
                 1) título-dropdown com as filas e seus contadores
                 2) campo de busca (lupa à direita)
@@ -5222,7 +5263,7 @@ export default function Chat() {
                     preço de cortar o telefone de quem tem nome comprido.
                     No compacto ele segue medindo o que precisa: 56 comeria a
                     conversa, que é o motivo de a lupa existir. */}
-                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : acoesEmFaixa ? "8px 12px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: acoesEmFaixa ? "wrap" : "nowrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: compacto ? 7 : 10, padding: compacto ? "7px 10px" : acoesEmLinha ? "8px 12px" : G.cabConvPad, minHeight: bc && !compacto ? 56 : undefined, background: M.surface, borderBottom: `1px solid ${M.border}`, flexWrap: acoesEmLinha ? "wrap" : "nowrap" }}>
                   {isMobile && !compacto && (
                     <button onClick={() => { selRef.current = null; setSel(null); setMsgs(null); marcarConversaNaUrl(null); }} style={{ background: "transparent", border: "none", fontSize: 16, color: M.gray, cursor: "pointer", padding: "0 4px", fontFamily: "inherit" }}>←</button>
                   )}
@@ -5300,7 +5341,7 @@ export default function Chat() {
                       esta mudança acabou de ganhar. */}
                   <span style={compacto
                     ? { display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap", overflowX: "auto", flexShrink: 0, maxWidth: "62%" }
-                    : acoesEmFaixa
+                    : acoesEmLinha
                       // `flexBasis: 100%` joga a faixa para a segunda linha do
                       // cabeçalho. `overflowX` é só rede de proteção: com cinco
                       // ícones ela não é usada, mas uma conversa com Pegar e
@@ -5436,7 +5477,7 @@ export default function Chat() {
                      Histórico, logo abaixo do nome). Aqui elas trocam o conteúdo
                      da coluna da direita, que continua visível: o ERP ao lado da
                      conversa é justamente o que o RD não tem. ---- */}
-                {!isMobile && (
+                {!painelEmFolha && (
                   <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 14px", background: M.surface, borderBottom: `1px solid ${M.border}`, overflowX: "auto", flexShrink: 0 }}>
                     {abasContato.map((a) => {
                       const on = painelAberto && abaAtual === a.k;
@@ -6612,7 +6653,7 @@ export default function Chat() {
         )}
 
         {/* ---- painel do contato (desktop): o ERP ao lado da conversa ---- */}
-        {mostraThread && sel && painelAberto && !isMobile && (
+        {mostraThread && sel && painelAberto && !painelEmFolha && (
           <div className={bc ? "bc-rolagem" : undefined} style={{ width: G.painel, flexShrink: 0, overflowY: "auto", background: M.surface, borderLeft: `1px solid ${M.border}` }}>
             <div style={{ padding: "10px 14px", borderBottom: `1px solid ${M.border}`, background: M.roxoSoft, position: "sticky", top: 0, zIndex: 2 }}>
               <b style={{ fontSize: 12.5, color: M.wine }}>{ABAS.find((a) => a.k === abaAtual)?.rotulo}</b>
@@ -6649,19 +6690,41 @@ export default function Chat() {
             No celular de verdade com `original` o botao nem renderiza, entao
             esta condicao conserta exatamente o caso quebrado e deixa o
             desenho antigo byte a byte como era. */}
-        {(d1 || compacto) && isMobile && mostraThread && sel && painelAberto && (
+        {/* ⚠️ `isMedio` entra na condição SEM `d1`: na faixa média o painel deixa
+            de ser coluna em TODOS os desenhos (inclusive `original`), então ele
+            precisa ter para onde abrir — senão o botão "Cliente" ficaria morto,
+            o mesmo defeito que o `compacto` já teve aqui. */}
+        {(d1 || compacto || isMedio) && painelEmFolha && mostraThread && sel && painelAberto && (
           <>
             <div onClick={() => setPainelAberto(false)}
               style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(28,14,27,.38)" }} />
-            <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 61, maxHeight: "82dvh",
-              display: "flex", flexDirection: "column", background: M.surface,
-              borderRadius: "16px 16px 0 0", boxShadow: "0 -10px 34px rgba(28,14,27,.28)",
-              paddingBottom: "env(safe-area-inset-bottom)" }}>
-              {/* alça: o alvo de "fechar" não pode ser só o ✕ de 12px */}
+            {/* Celular: sobe de baixo (o polegar alcança). Faixa média: entra pela
+                direita, como o "side sheet" do Material — a conversa continua
+                visível à esquerda, que é o que a coluna fixa não deixava. */}
+            <div style={isMedio
+              ? { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(360px, 92vw)", zIndex: 61,
+                  display: "flex", flexDirection: "column", background: M.surface,
+                  boxShadow: "-10px 0 34px rgba(28,14,27,.28)" }
+              : { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 61, maxHeight: "82dvh",
+                  display: "flex", flexDirection: "column", background: M.surface,
+                  borderRadius: "16px 16px 0 0", boxShadow: "0 -10px 34px rgba(28,14,27,.28)",
+                  paddingBottom: "env(safe-area-inset-bottom)" }}>
+              {isMedio ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px 6px 16px", flexShrink: 0 }}>
+                  <b style={{ fontSize: 13, color: M.wine, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {nomeComCodigo(sel.cliente, sel.codcli)}
+                  </b>
+                  <button onClick={() => setPainelAberto(false)} title="Fechar os dados do cliente"
+                    style={{ width: 32, height: 32, borderRadius: 999, border: `1px solid ${M.border}`, background: M.surface,
+                      color: M.gray, fontSize: 14, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>✕</button>
+                </div>
+              ) : (
+              /* alça: o alvo de "fechar" não pode ser só o ✕ de 12px */
               <div onClick={() => setPainelAberto(false)}
                 style={{ padding: "9px 0 5px", display: "flex", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                 <span style={{ width: 38, height: 4, borderRadius: 999, background: M.border }} />
               </div>
+              )}
               <div style={{ display: "flex", gap: 2, padding: "0 10px", borderBottom: `1px solid ${M.border}`,
                 overflowX: "auto", flexShrink: 0 }}>
                 {abasContato.map((a) => {
@@ -6677,7 +6740,7 @@ export default function Chat() {
                   );
                 })}
               </div>
-              <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", ...(isMedio ? { flex: 1, minHeight: 0 } : null) }}>
                 <PainelContato
                   c={contato}
                   aba={abaAtual}
