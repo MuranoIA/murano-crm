@@ -3841,7 +3841,9 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
   const cadastro = d.cadastro ?? null;
   const locais = d.locais ?? null;
   const sla = d.sla ?? null;
+  const avisoPv = d.avisoPosVenda ?? null;
   const [txtPausa, setTxtPausa] = useState<string>(pausa?.texto ?? "");
+  const [txtPv, setTxtPv] = useState<string>(avisoPv?.texto ?? "");
   const [sel, setSel] = useState<string[]>(linhasInfo.selecionadas ?? []);
   const marcada = (id: string) => sel.includes(id);
   const alternar = (id: string) =>
@@ -3956,6 +3958,30 @@ function MecanismosAba({ d, salvar }: { d: any; salvar: (chave: string, valor: b
               <span style={{ marginLeft: "auto" }}>
                 <Botao disabled={ocupado || txtPausa.trim() === (pausa.texto ?? "").trim() || txtPausa.trim().length < 10}
                   onClick={async () => { setOcupado(true); await salvar("texto_pausa", txtPausa.trim()); setOcupado(false); }}>
+                  {ocupado ? "Salvando…" : "Salvar aviso"}
+                </Botao>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ---- aviso de transferência para o pós-venda (0138) --------------
+             Fica LOGO DEPOIS do aviso de pausa porque são a mesma família: os
+             dois textos que o sistema manda em nome do consultor. Separá-los
+             faria o admin procurar um sabendo onde está o outro. */}
+        {avisoPv && (
+          <div style={{ border: `1px solid ${M.border}`, borderRadius: 10, padding: 15, marginBottom: 12 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: M.wine, letterSpacing: -0.2, marginBottom: 4 }}>{avisoPv.rotulo}</div>
+            <p style={{ fontSize: 13, color: M.ink, margin: "0 0 10px", lineHeight: 1.55 }}>{avisoPv.resumo}</p>
+            <textarea value={txtPv} onChange={(e) => setTxtPv(e.target.value)} rows={3}
+              style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", fontSize: 13, fontFamily: "inherit",
+                lineHeight: 1.5, color: M.ink, background: M.bg, border: `1px solid ${M.border}`, borderRadius: 9,
+                outline: "none", resize: "vertical" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: M.muted }}>{txtPv.trim().length} caracteres</span>
+              <span style={{ marginLeft: "auto" }}>
+                <Botao disabled={ocupado || txtPv.trim() === (avisoPv.texto ?? "").trim() || txtPv.trim().length < 10}
+                  onClick={async () => { setOcupado(true); await salvar("aviso_pos_venda_texto", txtPv.trim()); setOcupado(false); }}>
                   {ocupado ? "Salvando…" : "Salvar aviso"}
                 </Botao>
               </span>
