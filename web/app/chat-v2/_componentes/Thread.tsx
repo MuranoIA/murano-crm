@@ -124,6 +124,8 @@ export function Thread({
   // está (§65.3).
   const conteudo = useRef<HTMLDivElement>(null);
   const colado = useRef(true);
+  /** quando a PESSOA mexeu na rolagem pela última vez (roda, toque, teclado) */
+  const gesto = useRef(0);
 
   useEffect(() => {
     const el = raiz.current;
@@ -136,15 +138,43 @@ export function Thread({
     const aoRolar = () => {
       colado.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
     };
+    const aoMexer = () => { gesto.current = Date.now(); };
 
     fim();
     el.addEventListener("scroll", aoRolar, { passive: true });
+    for (const e of ["wheel", "touchstart", "keydown"] as const) {
+      el.addEventListener(e, aoMexer, { passive: true });
+    }
     const obs = new ResizeObserver(() => {
       if (colado.current) fim();
     });
     obs.observe(alvo);
+
+    // ⚠️ E MESMO ASSIM A CONVERSA ABRIA CURTA (24/09/2026 — medido: 198 px
+    // acima do fim, parada ali).
+    //
+    // A lista é virtualizada: ela desenha só o que cabe na tela e ESTIMA o
+    // resto. Ao pular para o fim, os itens que entram são medidos de verdade e
+    // a altura muda — e nesse instante a distância até o fim passa dos 140 px
+    // que definem "colado". O ResizeObserver então não cola mais, e a conversa
+    // fica parada no meio de mensagens antigas. Era o relato da consultora.
+    //
+    // Por isso o primeiro segundo é insistente: cola a cada quadro, sem
+    // consultar `colado`, até a altura assentar. Quem rolar com a roda, o dedo
+    // ou o teclado interrompe na hora — ninguém é puxado de volta.
+    let vivo = true;
+    const ate = Date.now() + 1200;
+    const quadro = () => {
+      if (!vivo || gesto.current) return;
+      fim();
+      if (Date.now() < ate) requestAnimationFrame(quadro);
+    };
+    requestAnimationFrame(quadro);
+
     return () => {
+      vivo = false;
       el.removeEventListener("scroll", aoRolar);
+      for (const e of ["wheel", "touchstart", "keydown"] as const) el.removeEventListener(e, aoMexer);
       obs.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
