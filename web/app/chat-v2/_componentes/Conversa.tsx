@@ -5,7 +5,7 @@ import { Thread, type Nota, type Transferencia } from "./Thread";
 import type { Gesto } from "./Compositor";
 import type { Ligacao } from "../../../lib/ligacaoDados";
 import { Compositor } from "./Compositor";
-import type { Conversa as TConversa, Mensagem } from "./tipos";
+import type { Citada, Conversa as TConversa, Mensagem } from "./tipos";
 import { iniciais, nomeLimpo, telefoneBonito, tomDoAvatar } from "./formato";
 
 const VINTE_QUATRO_H = 24 * 3600 * 1000;
@@ -196,7 +196,7 @@ export function Conversa({
   mensagens: Mensagem[];
   notas: Nota[];
   transferencias: Transferencia[];
-  citadas: Record<string, { conteudo: string | null; enviada_por: string | null }>;
+  citadas: Record<string, Citada>;
   temMais: boolean;
   carregando: boolean;
   carregandoAntigas: boolean;
