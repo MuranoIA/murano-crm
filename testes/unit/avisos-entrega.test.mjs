@@ -23,13 +23,24 @@ test("recusaDoSegredo: env ausente 503, errado 401, certo null", () => {
   assert.equal(recusaDoSegredo("segredo-longo", "segredo-longo"), null);
 });
 
-test("telefoneDoAviso: normaliza e acrescenta o 9 só em local 7/8 de 10 dígitos", () => {
+test("telefoneDoAviso: 10 dígitos com local 7, 8 ou 9 ganham o 9", () => {
   assert.equal(telefoneDoAviso("(91) 8123-4567"), "5591981234567");
   assert.equal(telefoneDoAviso("9171234567"), "5591971234567");
+  assert.equal(telefoneDoAviso("9191234567"), "5591991234567");     // local 9 (regra revista 25/09)
   assert.equal(telefoneDoAviso("559181234567"), "5591981234567");   // já com o 55
-  assert.equal(telefoneDoAviso("91 98123-4567"), "5591981234567");  // já tem o 9
-  assert.equal(telefoneDoAviso("9132234567"), "559132234567");      // fixo: fica
-  assert.equal(telefoneDoAviso("9191234567"), "559191234567");      // local 9: regra do dono é 7/8
+  assert.equal(telefoneDoAviso("559191234567"), "5591991234567");   // 55 + local 9
+  assert.equal(telefoneDoAviso("91 98123-4567"), "5591981234567");  // já tem o 9: fica
+  assert.equal(telefoneDoAviso("91 99123-4567"), "5591991234567");  // 11 dígitos começando em 9: fica
+});
+
+test("telefoneDoAviso: fixo (local 2 a 5) não tem WhatsApp — vira null", () => {
+  for (const cru of ["9122234567", "9132234567", "9142234567", "9152234567", "559132234567", "(98) 3222-1234"]) {
+    assert.equal(telefoneDoAviso(cru), null, cru);
+  }
+});
+
+test("telefoneDoAviso: local 0, 1 ou 6 fica como está (sem decisão do dono)", () => {
+  assert.equal(telefoneDoAviso("9162234567"), "559162234567");
 });
 
 test("telefoneDoAviso: inválido vira null", () => {
@@ -144,9 +155,19 @@ test("fluxo: envia com o payload do contrato, registra 'enviado' e espelha como 
   assert.equal(msg.tipo, "template");
   assert.equal(msg.conteudo, "Olá, Maria! Seu pedido 36001817 saiu.");
   assert.equal(msg.vendedor_carteira, "luana");                  // dona da carteira no ERP
-  const disp = log.inserts.find((i) => i.tabela === "disparos_template").row;
-  assert.equal(disp.operator_id, null);
-  assert.equal(disp.template_id, "entrega_saiu");
+  assert.equal(msg.aviso_entrega, true);                         // a marca que o funil ignora (0143)
+  // disparos_template moveria o card (aguardando resposta, atividade efetiva,
+  // anti-repetição do disparo em massa) — o aviso não entra lá
+  assert.equal(log.inserts.find((i) => i.tabela === "disparos_template"), undefined);
+});
+
+test("fluxo: telefone FIXO é pulado sem chamar a Meta", async () => {
+  metaResponde(() => { throw new Error("não devia chamar"); });
+  const { sb, log } = bancoFalso([item({ telefone_cru: "9132234567" })]);
+  const r = await processarAvisos(deps(sb));
+  assert.deepEqual(r, { processados: 1, enviados: 0, pulados: 1, falhos: 0, adiados: 0 });
+  assert.equal(chamadasMeta.length, 0);
+  assert.deepEqual(log.registros[0], { p_id: "a1", p_status: "pulado", p_motivo: "telefone_invalido", p_wamid: null, p_telefone: "9132234567" });
 });
 
 test("fluxo: telefone inválido é pulado sem chamar a Meta", async () => {

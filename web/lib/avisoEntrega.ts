@@ -72,18 +72,32 @@ export function recusaDoSegredo(recebido: string | null | undefined, esperado: s
  * Telefone do cadastro do WinThor -> número da Meta, ou `null` se não dá.
  *
  * A mesma normalização do resto do Pulse (`normalizarTelefone`: DDD válido, 55
- * na frente), mais UMA regra do dono (card #19, pergunta 7): número de celular
- * antigo, sem o nono dígito — 10 dígitos (12 com o 55) cujo número local começa
- * com 7 ou 8 — ganha o 9. Sem isso o aviso iria para um número que a Meta
- * recusa (131026), e a cliente não saberia que o pedido saiu.
+ * na frente), mais a regra do dono (card #19, pergunta 7, revista em
+ * 25/09/2026) para o número de 10 dígitos (12 com o 55), sem o nono dígito:
  *
- * ⚠️ Local começando com 9 NÃO ganha o 9 (a regra do dono é 7 ou 8). Medido em
- * 25/09/2026: 179 cadastros ativos têm 10 dígitos com local começando em 9.
+ *   local começando com 7, 8 ou 9 -> celular antigo: ganha o 9
+ *   local começando com 2, 3, 4 ou 5 -> FIXO: não há WhatsApp -> null
+ *                                      (a rota registra 'pulado', telefone_invalido)
+ *
+ * Sem o 9 o aviso iria para um número que a Meta recusa (131026), e a cliente
+ * não saberia que o pedido saiu. O 9 entrou na lista depois de medido: 179
+ * cadastros ativos tinham 10 dígitos com local começando em 9 (25/09/2026).
+ *
+ * ⚠️ Local começando com 0, 1 ou 6 fica como está — o dono não decidiu, e
+ * nenhuma das duas regras vale para ele. Se a Meta recusar, cai em 'falhou'
+ * com a explicação.
  */
+export const LOCAL_CELULAR_SEM_NOVE = new Set(["7", "8", "9"]);
+export const LOCAL_FIXO = new Set(["2", "3", "4", "5"]);
+
 export function telefoneDoAviso(cru: string | null | undefined): string | null {
   const n = normalizarTelefone(String(cru ?? ""));
   if (!n) return null;
-  if (n.length === 12 && (n[4] === "7" || n[4] === "8")) return `${n.slice(0, 4)}9${n.slice(4)}`;
+  if (n.length === 12) {
+    const local = n[4];
+    if (LOCAL_CELULAR_SEM_NOVE.has(local)) return `${n.slice(0, 4)}9${n.slice(4)}`;
+    if (LOCAL_FIXO.has(local)) return null;
+  }
   return n;
 }
 
@@ -246,19 +260,31 @@ async function processarUm(
 
   // Espelho no chat, como qualquer template enviado — mas como `bot`: não foi
   // a vendedora quem mandou. Falha aqui não desfaz o envio nem o registro.
+  //
+  // ⚠️ O FUNIL IGNORA ESTA MENSAGEM (decisão do dono, 25/09/2026, migration
+  // 0143). A marca é `aviso_entrega: true`, gravada AQUI — e não o nome do
+  // modelo, que é configurável no hub e mudaria por baixo das views. As views
+  // do board e do chat e a `get_funil_card` tiram a linha marcada de toda
+  // conta de "última mensagem": o card fica onde estaria sem o aviso. A
+  // mensagem continua na conversa (a vendedora vê o que a cliente recebeu).
+  //
+  // Pelo mesmo motivo NÃO grava em `disparos_template`: o board lê aquela
+  // tabela para "aguardando resposta", para a atividade efetiva do card e para
+  // o anti-repetição do disparo em massa — qualquer um dos três moveria o
+  // card. O registro do aviso é a fila do hub (`ent_aviso_cliente`: status,
+  // wamid, telefone, motivo), e o status de entrega chega pela linha abaixo.
+  //
+  // ⚠️ Ordem de deploy: a coluna vem da 0143. Sem ela o upsert falha (e o
+  // catch engole) — aplicar a migration ANTES de publicar este código.
   const corpo = corpos.get(item.meta_nome);
   const conteudo = corpo
     ? aplicarVariaveis(corpo, [String(item.primeiro_nome ?? "").trim() || "cliente", String(item.pedido ?? "")])
     : `[template] ${item.meta_nome}`;
   try {
-    await sb.from("disparos_template").insert({
-      id: wamid, cliente_id: contato.cliente_id, telefone: tel, vendedor: contato.carteira,
-      operator_id: null, template_id: item.meta_nome, status: "sent",
-    });
     await sb.from("mensagens").upsert({
       id: wamid, cliente_id: contato.cliente_id, vendedor_carteira: contato.carteira ?? null,
       enviada_por: "bot", tipo: "template", conteudo, status: "wait",
-      criada_em: agora().toISOString(), linha_id: linha,
+      criada_em: agora().toISOString(), linha_id: linha, aviso_entrega: true,
     }, { onConflict: "id" });
   } catch { /* o webhook de status ainda atualiza a linha, se ela existir */ }
 }
