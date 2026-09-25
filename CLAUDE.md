@@ -6193,4 +6193,35 @@ Regras que não são óbvias:
   `example: ["<sufixo>"]`, não o link inteiro — Graph v22). O envio pelo chat
   recusa modelo com link variável: o token só existe no envio automático.
 
+### 74.1 Modo de teste — receber os dois avisos no próprio celular (25/09/2026)
+
+Mesma rota, mesma porta (o cabeçalho do segredo; sem ele 401/503 como sempre),
+com o corpo:
+
+```
+POST https://crm.muranoprofessional.com.br/api/interno/avisos-entrega
+x-entregas-aviso-segredo: <ENTREGAS_AVISO_SEGREDO>
+content-type: application/json
+
+{ "teste": { "telefone": "91 98123-4567", "tipo": "saiu" } }      // ou "proxima"
+                                          // opcionais: "nome" (padrão "Cliente teste"), "pedido" (padrão 123456)
+```
+
+Resposta: `{ teste: true, tipo, enviado: true, wamid, telefone }`. Erros:
+400 (corpo mal formado, ou telefone inválido/fixo pela MESMA `telefoneDoAviso`),
+409 (`ent_aviso_config.meta_nome` nulo para o tipo), 502 (recusa da Meta,
+traduzida por `classificarFalha`, com o texto cru).
+
+- **Não toca a fila:** não chama `ent_avisos_pegar` nem `ent_aviso_registrar`.
+  A decisão mora em `atenderChamada` (lib) e tem teste de mutação: fazer o
+  corpo com `teste` cair no fluxo da fila derruba 4 testes.
+- **Não grava** em `mensagens` nem em `disparos_template`, e não chama
+  `acharOuCriarContato` — teste não é conversa de cliente.
+- **Ignora `ligado`** (serve justamente para antes de ligar); só exige `meta_nome`.
+- Components da MESMA `componentesDoAviso` do envio real; o token do botão é o
+  de exemplo `0123456789abcdef0123456789abcdef` (o rastreio abre em "link
+  inválido" — esperado). Linha de envio: a de uma conversa nova
+  (`linhaDaConversa` com id inexistente -> forçada, senão a padrão).
+- Deixa um `console.info` `[avisos-entrega] TESTE ...` (sem o segredo) nos logs da Vercel.
+
 Rodar: `node --import ./testes/unit/resolver-ts.mjs --test "testes/unit/*.test.mjs"`.

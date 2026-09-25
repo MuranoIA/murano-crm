@@ -288,3 +288,93 @@ async function processarUm(
     }, { onConflict: "id" });
   } catch { /* o webhook de status ainda atualiza a linha, se ela existir */ }
 }
+
+// ---------------------------------------------------------------------------
+// MODO DE TESTE (25/09/2026). Para o dono receber os dois avisos no PRÓPRIO
+// celular antes de ligar o envio real. Mesma porta (o segredo), mesma rota,
+// corpo `{ teste: { telefone, tipo, nome?, pedido? } }`.
+//
+// O que ele NÃO faz, e é o motivo de existir separado do fluxo da fila:
+//   - não chama `ent_avisos_pegar` nem `ent_aviso_registrar` (a fila do hub
+//     fica intocada — nenhum aviso de cliente é "gasto" por um teste);
+//   - não grava em `mensagens` nem em `disparos_template` (teste não é
+//     conversa de cliente);
+//   - ignora `ent_aviso_config.ligado`: o teste serve justamente para ANTES
+//     de ligar. Só exige `meta_nome` cadastrado.
+// Os components saem da MESMA `componentesDoAviso` do envio real — o teste
+// prova o formato que a cliente vai receber, não uma cópia dele.
+// ---------------------------------------------------------------------------
+
+export const TIPOS_AVISO = ["saiu", "proxima"] as const;
+export type TipoAviso = (typeof TIPOS_AVISO)[number];
+export const NOME_TESTE = "Cliente teste";
+export const PEDIDO_TESTE = 123456;
+/** Token de exemplo (32 hex): o botão abre o rastreio com ele e cai em "link inválido" — é teste. */
+export const TOKEN_TESTE = "0123456789abcdef0123456789abcdef";
+
+export type PedidoTeste = { telefone: string; tipo: TipoAviso; nome: string; pedido: number };
+
+/** Lê `corpo.teste`. `null` = não é teste; `{ erro }` = é teste, mas mal formado (400). */
+export function lerPedidoTeste(corpo: unknown): PedidoTeste | { erro: string } | null {
+  const t = (corpo as any)?.teste;
+  if (t == null) return null;
+  if (typeof t !== "object") return { erro: "teste deve ser um objeto" };
+  if (!TIPOS_AVISO.includes(t.tipo)) return { erro: "tipo deve ser 'saiu' ou 'proxima'" };
+  const telefone = String(t.telefone ?? "").trim();
+  if (!telefone) return { erro: "telefone obrigatório" };
+  const nome = t.nome == null ? NOME_TESTE : String(t.nome).trim().slice(0, 60);
+  if (!nome) return { erro: "nome vazio" };
+  const pedido = t.pedido == null ? PEDIDO_TESTE : Number(t.pedido);
+  if (!Number.isInteger(pedido) || pedido <= 0) return { erro: "pedido deve ser inteiro positivo" };
+  return { telefone, tipo: t.tipo, nome, pedido };
+}
+
+export type RespostaRota = { status: number; corpo: Record<string, unknown> };
+
+export async function enviarTeste(
+  deps: Pick<DepsAvisos, "sb" | "enviar" | "linhaDe">, p: PedidoTeste,
+): Promise<RespostaRota> {
+  const tel = telefoneDoAviso(p.telefone);
+  if (!tel) return { status: 400, corpo: { teste: true, tipo: p.tipo, error: "telefone inválido (fixo ou fora do formato)" } };
+
+  const { data: cfg, error } = await deps.sb.from("ent_aviso_config").select("meta_nome,idioma").eq("tipo", p.tipo).maybeSingle();
+  if (error) return { status: 500, corpo: { teste: true, tipo: p.tipo, error: `ent_aviso_config: ${error.message}` } };
+  const metaNome = String(cfg?.meta_nome ?? "").trim();
+  if (!metaNome) {
+    return { status: 409, corpo: { teste: true, tipo: p.tipo, error: `modelo do tipo '${p.tipo}' não cadastrado em ent_aviso_config.meta_nome` } };
+  }
+
+  // Linha de envio: a de uma conversa NOVA (forçada, senão a padrão do
+  // cadastro). O id não existe de propósito — `linhaDaConversa` só LÊ
+  // `mensagens` e, sem conversa, devolve a padrão. Não se chama
+  // `acharOuCriarContato`: o teste não cria contato nem conversa.
+  let linha: string | null = null;
+  try { linha = await deps.linhaDe(deps.sb, `teste-aviso:${tel}`); } catch { linha = null; }
+
+  console.info(`[avisos-entrega] TESTE tipo=${p.tipo} modelo=${metaNome} para=${tel} linha=${linha ?? "env"} pedido=${p.pedido}`);
+  try {
+    const { wamid } = await deps.enviar(
+      tel, metaNome, cfg?.idioma || "pt_BR",
+      componentesDoAviso({ primeiro_nome: p.nome, pedido: p.pedido, link_token: TOKEN_TESTE }),
+      linha,
+    );
+    return { status: 200, corpo: { teste: true, tipo: p.tipo, enviado: true, wamid, telefone: tel } };
+  } catch (e: any) {
+    const c = classificarFalha(e);
+    return { status: 502, corpo: { teste: true, tipo: p.tipo, enviado: false, error: c.motivo, telefone: tel } };
+  }
+}
+
+/**
+ * A decisão da rota, depois da porta: corpo com `teste` -> `enviarTeste` (e a
+ * fila NÃO é tocada); sem `teste` -> `processarAvisos`, o fluxo de sempre.
+ */
+export async function atenderChamada(deps: DepsAvisos, corpo: unknown): Promise<RespostaRota> {
+  const teste = lerPedidoTeste(corpo);
+  if (teste !== null) {
+    if ("erro" in teste) return { status: 400, corpo: { teste: true, error: teste.erro } };
+    return enviarTeste(deps, teste);
+  }
+  const r = await processarAvisos(deps);
+  return { status: 200, corpo: r };
+}

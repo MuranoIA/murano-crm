@@ -9,6 +9,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   recusaDoSegredo, telefoneDoAviso, componentesDoAviso, classificarFalha, processarAvisos,
+  lerPedidoTeste, atenderChamada, TOKEN_TESTE,
 } from "../../web/lib/avisoEntrega.ts";
 import { sendTemplate } from "../../web/lib/whatsapp.ts";
 
@@ -236,6 +237,115 @@ test("rota: sem env 503, segredo errado 401, sem credencial 503 — sem pegar na
     delete process.env.SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     assert.equal((await POST(pedido("segredo-de-teste"))).status, 503);
+  } finally {
+    process.env = antes;
+  }
+});
+
+// ------------------------------------------------ modo de teste ---------
+
+/** Banco do modo de teste: anota TODA rpc e toda escrita — nenhuma pode acontecer. */
+function bancoDoTeste(config) {
+  const log = { rpcs: [], escritas: [] };
+  const sb = {
+    rpc: async (fn, args) => { log.rpcs.push(fn); return { data: [], error: null }; },
+    from: (nome) => {
+      const q = {
+        select: () => q, eq: () => q, in: () => q,
+        maybeSingle: async () => ({ data: nome === "ent_aviso_config" ? config : null, error: null }),
+        insert: async (row) => { log.escritas.push({ tabela: nome, row }); return { error: null }; },
+        upsert: async (row) => { log.escritas.push({ tabela: nome, row }); return { error: null }; },
+      };
+      return q;
+    },
+  };
+  return { sb, log };
+}
+
+test("lerPedidoTeste: sem teste é null; padrões de nome e pedido; tipo e pedido validados", () => {
+  assert.equal(lerPedidoTeste({}), null);
+  assert.equal(lerPedidoTeste(null), null);
+  assert.deepEqual(lerPedidoTeste({ teste: { telefone: "91 98123-4567", tipo: "saiu" } }),
+    { telefone: "91 98123-4567", tipo: "saiu", nome: "Cliente teste", pedido: 123456 });
+  assert.deepEqual(lerPedidoTeste({ teste: { telefone: "x", tipo: "proxima", nome: " Ana ", pedido: 42 } }),
+    { telefone: "x", tipo: "proxima", nome: "Ana", pedido: 42 });
+  assert.ok("erro" in lerPedidoTeste({ teste: { telefone: "1", tipo: "outro" } }));
+  assert.ok("erro" in lerPedidoTeste({ teste: { telefone: "1", tipo: "saiu", pedido: 1.5 } }));
+  assert.ok("erro" in lerPedidoTeste({ teste: { tipo: "saiu" } }));
+});
+
+test("teste: envia UM template com os MESMOS components do envio real e não toca a fila nem o chat", async () => {
+  metaResponde(() => json(200, { messages: [{ id: "wamid.TESTE" }] }));
+  const { sb, log } = bancoDoTeste({ meta_nome: "entrega_saiu_para_entrega", idioma: "pt_BR" });
+  const r = await atenderChamada(deps(sb), { teste: { telefone: "(91) 8123-4567", tipo: "saiu" } });
+
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.corpo, { teste: true, tipo: "saiu", enviado: true, wamid: "wamid.TESTE", telefone: "5591981234567" });
+  assert.deepEqual(log.rpcs, []);          // nem ent_avisos_pegar, nem ent_aviso_registrar
+  assert.deepEqual(log.escritas, []);      // nem mensagens, nem disparos_template
+  assert.equal(chamadasMeta.length, 1);
+  assert.match(chamadasMeta[0].url, /PHONE_ID_TESTE\/messages$/);   // linha padrão, como conversa nova
+  const corpo = chamadasMeta[0].body;
+  assert.equal(corpo.to, "5591981234567");
+  assert.equal(corpo.template.name, "entrega_saiu_para_entrega");
+  assert.deepEqual(corpo.template.components,
+    componentesDoAviso({ primeiro_nome: "Cliente teste", pedido: 123456, link_token: TOKEN_TESTE }));
+  assert.match(TOKEN_TESTE, /^[0-9a-f]{32}$/);
+});
+
+test("teste: sem meta_nome -> 409, sem chamar a Meta", async () => {
+  metaResponde(() => { throw new Error("não devia chamar"); });
+  const { sb, log } = bancoDoTeste({ meta_nome: null, idioma: "pt_BR" });
+  const r = await atenderChamada(deps(sb), { teste: { telefone: "91981234567", tipo: "proxima" } });
+  assert.equal(r.status, 409);
+  assert.equal(chamadasMeta.length, 0);
+  assert.deepEqual(log.rpcs, []);
+});
+
+test("teste: telefone inválido ou fixo -> 400; corpo mal formado -> 400", async () => {
+  metaResponde(() => { throw new Error("não devia chamar"); });
+  const { sb, log } = bancoDoTeste({ meta_nome: "m", idioma: "pt_BR" });
+  assert.equal((await atenderChamada(deps(sb), { teste: { telefone: "1234", tipo: "saiu" } })).status, 400);
+  assert.equal((await atenderChamada(deps(sb), { teste: { telefone: "9132234567", tipo: "saiu" } })).status, 400);
+  assert.equal((await atenderChamada(deps(sb), { teste: { telefone: "91981234567", tipo: "x" } })).status, 400);
+  assert.equal(chamadasMeta.length, 0);
+  assert.deepEqual(log.rpcs, []);
+});
+
+test("teste: recusa da Meta volta traduzida (502), sem tocar a fila", async () => {
+  metaResponde(() => json(400, { error: { code: 131026, message: "Message undeliverable", error_data: { details: "" } } }));
+  const { sb, log } = bancoDoTeste({ meta_nome: "m", idioma: "pt_BR" });
+  const r = await atenderChamada(deps(sb), { teste: { telefone: "91981234567", tipo: "saiu" } });
+  assert.equal(r.status, 502);
+  assert.equal(r.corpo.enviado, false);
+  assert.match(r.corpo.error, /Message undeliverable/);
+  assert.deepEqual(log.rpcs, []);
+});
+
+test("sem teste: atenderChamada segue o fluxo da fila de sempre", async () => {
+  metaResponde(() => json(200, { messages: [{ id: "wamid.ABC" }] }));
+  const { sb, log } = bancoFalso([item()]);
+  const r = await atenderChamada(deps(sb), {});
+  assert.equal(r.status, 200);
+  assert.equal(r.corpo.enviados, 1);
+  assert.equal(log.registros.length, 1);
+});
+
+test("rota: modo de teste sem o segredo -> 401 (a mesma porta)", async () => {
+  const { POST } = await import("../../web/app/api/interno/avisos-entrega/route.ts");
+  const antes = { ...process.env };
+  try {
+    process.env.ENTREGAS_AVISO_SEGREDO = "segredo-de-teste";
+    const r = await POST(new Request("http://x/api/interno/avisos-entrega", {
+      method: "POST", body: JSON.stringify({ teste: { telefone: "91981234567", tipo: "saiu" } }),
+    }));
+    assert.equal(r.status, 401);
+    delete process.env.ENTREGAS_AVISO_SEGREDO;
+    const r2 = await POST(new Request("http://x/api/interno/avisos-entrega", {
+      method: "POST", headers: { "x-entregas-aviso-segredo": "x" },
+      body: JSON.stringify({ teste: { telefone: "91981234567", tipo: "saiu" } }),
+    }));
+    assert.equal(r2.status, 503);
   } finally {
     process.env = antes;
   }
