@@ -6158,19 +6158,34 @@ Regras que não são óbvias:
   `SUPABASE_*` ou `WHATSAPP_TOKEN` a rota recusa ANTES de chamar
   `ent_avisos_pegar` — pegar marca `enviando`, e esse estado nunca volta
   sozinho (preferimos perder um aviso a mandar dois).
-- **Telefone:** `normalizarTelefone` + a regra do dono: 10 dígitos (12 com o
-  55) cujo número local começa com **7 ou 8** ganha o 9. Local começando com 9
-  NÃO (179 cadastros ativos nesse formato em 25/09).
+- **Telefone:** `normalizarTelefone` + a regra do dono (revista em 25/09): 10
+  dígitos (12 com o 55) cujo número local começa com **7, 8 ou 9** ganha o 9;
+  local começando com **2 a 5** é FIXO e o aviso é pulado (`telefone_invalido`).
+  Local 0, 1 ou 6 fica como está (sem decisão). O 9 entrou depois de medido:
+  179 cadastros ativos nesse formato em 25/09.
 - **Erro:** 5xx, rede e limite de taxa (130429/131056/80007) -> `pendente`
   (o hub desiste após 3); recusa da Meta -> `falhou` com a tradução E o texto
   cru. `lib/whatsapp.ts` passou a pôr `httpStatus` no erro para isso.
-- **Espelho:** `mensagens` e `disparos_template` como `enviada_por='bot'`,
-  `operator_id` nulo, conversa da dona da carteira no WinThor.
-  ⚠️ **Efeito no board:** `vw_funil` só leva a `tentativa_contato` template de
-  `operator`. Um aviso `bot` vira a última mensagem e o card cai em
-  **negociação** (<24h) e depois **ociosos** — e tira o card de "Pedido
-  emitido" se a última era o "*pedido faturado". Não alterado de propósito;
-  decisão do dono.
+- **Espelho:** só em `mensagens`, como `enviada_por='bot'`, conversa da dona
+  da carteira no WinThor, **com `aviso_entrega = true`** (migration 0143).
+- **O funil IGNORA o aviso** (decisão do dono, 25/09, migration **0143**): toda
+  condição de "mensagem real" (`tipo <> 'evento_sistema'`) de `vw_funil`,
+  `vw_funil_visivel`, `vw_chat_conversa` e `get_funil_card` ganhou
+  `AND NOT aviso_entrega` — última mensagem, prévias, ramo de conversa, ramo
+  1b e os NOT EXISTS da prospecção. O card fica onde estaria sem o aviso; a
+  mensagem continua na THREAD. A marca é gravada pela rota, e não deduzida:
+  `bot` também é o disparo em massa, e o nome do modelo é configurável no hub.
+  Consequências: conversa só com aviso não aparece na lista do chat; quem só
+  recebeu o aviso continua elegível no disparo em massa.
+  ⚠️ Por isso a rota **não grava em `disparos_template`**: o board lê aquela
+  tabela para "aguardando resposta", para a atividade efetiva do card e para o
+  anti-repetição — qualquer um moveria o card. O registro do aviso é a fila do
+  hub (`ent_aviso_cliente`). ⚠️ Ordem: 0143 ANTES do deploy deste código (sem a
+  coluna o upsert falha e o catch engole o espelho).
+  ⚠️ Achado de passagem, não corrigido: `get_funil_card` NUNCA recebeu o ramo
+  "cliente falou há +30 min -> ociosos" da 0136. O delta do board pode mostrar
+  negociação e o refresh da matview, 2 min depois, ociosos.
+  Teste: `supabase/tests/funil_ignora_aviso_entrega.sql` (transação revertida).
 - **Opt-out:** não existe lista de "não contatar" no Pulse. O lugar da
   checagem está marcado em `processarUm`.
 - **Modelos:** criados em Administração → Templates; o botão de link aceita
