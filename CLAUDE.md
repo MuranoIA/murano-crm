@@ -6136,3 +6136,46 @@ isso, e o certo é recriar, não afrouxar a prova.
    de medir, ou use `novaAbaIsolada`.
 14. **Sem janela de 24h não há caixa de texto** — é o desenho (§33.1). Um teste
    que exige `<textarea>` reprova a tela por estar certa.
+
+## 74. Aviso de entrega ao cliente — card #19 do Entregas (25/09/2026)
+
+O hub (murano-app, migration 0102 de lá) enfileira em `ent_aviso_cliente` o
+aviso "seu pedido saiu" e "você é a próxima" e chama, pelo pg_cron, a cada
+minuto e só com pendência: `POST /api/interno/avisos-entrega` com o cabeçalho
+`x-entregas-aviso-segredo`. O Pulse é o ÚNICO que fala com a Meta. Contrato
+completo em `murano-app/docs/entregas-plano-envio-pulse.md`.
+
+| Peça | Papel |
+|---|---|
+| `web/lib/avisoEntrega.ts` | toda a regra, com dependências injetadas (testável sem servidor) |
+| `web/app/api/interno/avisos-entrega/route.ts` | só a porta: segredo, credenciais, fiação |
+| `testes/unit/` | primeiros testes de UNIDADE do repo — `node:test`, nada fala com produção |
+
+Regras que não são óbvias:
+
+- **Segredo:** env `ENTREGAS_AVISO_SEGREDO` ausente -> 503; errado -> 401;
+  comparação em tempo constante sobre o sha256 dos dois lados. Sem
+  `SUPABASE_*` ou `WHATSAPP_TOKEN` a rota recusa ANTES de chamar
+  `ent_avisos_pegar` — pegar marca `enviando`, e esse estado nunca volta
+  sozinho (preferimos perder um aviso a mandar dois).
+- **Telefone:** `normalizarTelefone` + a regra do dono: 10 dígitos (12 com o
+  55) cujo número local começa com **7 ou 8** ganha o 9. Local começando com 9
+  NÃO (179 cadastros ativos nesse formato em 25/09).
+- **Erro:** 5xx, rede e limite de taxa (130429/131056/80007) -> `pendente`
+  (o hub desiste após 3); recusa da Meta -> `falhou` com a tradução E o texto
+  cru. `lib/whatsapp.ts` passou a pôr `httpStatus` no erro para isso.
+- **Espelho:** `mensagens` e `disparos_template` como `enviada_por='bot'`,
+  `operator_id` nulo, conversa da dona da carteira no WinThor.
+  ⚠️ **Efeito no board:** `vw_funil` só leva a `tentativa_contato` template de
+  `operator`. Um aviso `bot` vira a última mensagem e o card cai em
+  **negociação** (<24h) e depois **ociosos** — e tira o card de "Pedido
+  emitido" se a última era o "*pedido faturado". Não alterado de propósito;
+  decisão do dono.
+- **Opt-out:** não existe lista de "não contatar" no Pulse. O lugar da
+  checagem está marcado em `processarUm`.
+- **Modelos:** criados em Administração → Templates; o botão de link aceita
+  `{{1}}` no FIM com o exemplo da parte variável (a Meta exige
+  `example: ["<sufixo>"]`, não o link inteiro — Graph v22). O envio pelo chat
+  recusa modelo com link variável: o token só existe no envio automático.
+
+Rodar: `node --import ./testes/unit/resolver-ts.mjs --test "testes/unit/*.test.mjs"`.

@@ -101,6 +101,10 @@ async function post(payload: Record<string, unknown>, de?: string | null): Promi
     // 131047 = fora da janela de 24h — erro de negócio, não de infra
     const err: any = new Error(`Graph ${code ?? r.status}: ${detalhe}`);
     err.foraDaJanela = code === 131047;
+    // o status HTTP separa recusa (4xx: não adianta repetir) de instabilidade
+    // da Meta (5xx: vale tentar de novo) — o aviso de entrega decide por ele
+    // (lib/avisoEntrega.ts)
+    err.httpStatus = r.status;
     err.graphCode = code;
     throw err;
   }

@@ -94,7 +94,50 @@ export type BotaoTemplate = {
   tipo: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
   texto: string;              // rótulo do botão, até 25 caracteres
   valor?: string | null;      // URL (tipo URL) ou telefone em E.164 (tipo PHONE_NUMBER)
+  // Só para URL DINÂMICA (link terminando em `{{1}}`): o valor de exemplo da
+  // parte variável que o revisor da Meta vê. A Meta exige na criação e recusa
+  // sem ele — ver `urlDinamica`.
+  exemplo?: string | null;
 };
+
+/**
+ * O link termina na parte variável `{{1}}`? É o botão de URL DINÂMICA da Meta:
+ * o começo do link é fixo e aprovado, o fim é preenchido a cada envio (ex.: o
+ * token do rastreio da entrega). A Meta aceita UMA variável por botão, SEMPRE
+ * no fim do link, e sempre `{{1}}` — o número é por botão, não do corpo.
+ */
+export function urlDinamica(valor?: string | null): boolean {
+  return /\{\{\s*1\s*\}\}$/.test(String(valor ?? "").trim());
+}
+
+/**
+ * Erro legível do botão de link, ou `null`. Separado de `validarBotoes` porque
+ * a regra do link dinâmico tem três armadilhas próprias, e cada uma vira uma
+ * recusa da Meta minutos depois, sem dizer qual foi:
+ *   - variável em qualquer lugar que não o FIM do link;
+ *   - número diferente de 1, ou mais de uma variável;
+ *   - exemplo ausente, com espaço, ou que já traz o link inteiro.
+ */
+export function erroDoLink(b: BotaoTemplate): string | null {
+  const t = String(b.texto ?? "").trim();
+  const v = String(b.valor ?? "").trim();
+  if (!/^https?:\/\/.+/i.test(v)) return `o link do botão "${t}" precisa começar com http:// ou https://`;
+  const vars = v.match(/\{\{[^}]*\}\}/g) ?? [];
+  if (!vars.length) return null;
+  if (vars.length > 1 || !urlDinamica(v)) {
+    return `o link do botão "${t}" só pode ter uma parte variável, {{1}}, no final do endereço`;
+  }
+  if (/^https?:\/\/\{\{/i.test(v)) {
+    return `o link do botão "${t}" precisa de um endereço fixo antes da parte variável`;
+  }
+  const ex = String(b.exemplo ?? "").trim();
+  if (!ex) return `informe um exemplo da parte variável do botão "${t}" — a Meta exige para aprovar`;
+  if (/\s/.test(ex)) return `o exemplo do botão "${t}" não pode ter espaço`;
+  if (/^https?:\/\//i.test(ex)) {
+    return `o exemplo do botão "${t}" é só a parte que entra no lugar de {{1}}, não o link inteiro`;
+  }
+  return null;
+}
 
 // Limites que a TELA respeita, mais estreitos que o teto real da Meta (ela
 // aceita até 10 botões, 2 URL, 1 telefone). Igual à experiência do RD Conversas
@@ -126,8 +169,8 @@ export function validarBotoes(botoes: BotaoTemplate[]): { erro: string | null; o
     if (!t) return { erro: "todo botão precisa de um texto", ordenados: botoes };
     if (t.length > MAX_TEXTO_BOTAO) return { erro: `o texto do botão "${t}" passa de ${MAX_TEXTO_BOTAO} caracteres`, ordenados: botoes };
     if (b.tipo === "URL") {
-      const v = String(b.valor ?? "").trim();
-      if (!/^https?:\/\/.+/i.test(v)) return { erro: `o link do botão "${t}" precisa começar com http:// ou https://`, ordenados: botoes };
+      const erroLink = erroDoLink(b);
+      if (erroLink) return { erro: erroLink, ordenados: botoes };
     }
     if (b.tipo === "PHONE_NUMBER") {
       const v = String(b.valor ?? "").trim();

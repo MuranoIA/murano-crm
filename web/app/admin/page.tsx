@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  aplicarVariaveis, variaveisDe, validarBotoes, MAX_BOTOES, MAX_URL, MAX_TELEFONE, MAX_TEXTO_BOTAO,
+  aplicarVariaveis, variaveisDe, validarBotoes, urlDinamica, MAX_BOTOES, MAX_URL, MAX_TELEFONE, MAX_TEXTO_BOTAO,
   type BotaoTemplate,
 } from "../../lib/templateVars";
 import { textoPedidoDeDados } from "../../lib/cadastroCampos";
@@ -1233,8 +1233,23 @@ function LinhaBotao({ b, i, mudar, remover }: {
       {b.tipo === "URL" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <label style={rotuloCampo}>Link</label>
-          <input value={b.valor ?? ""} placeholder="https://…" onChange={(e) => mudar(i, { valor: e.target.value })}
-            style={{ ...inputBase, width: 240 }} />
+          <input value={b.valor ?? ""} placeholder="https://… (termine em {{1}} para link variável)"
+            onChange={(e) => mudar(i, { valor: e.target.value })}
+            style={{ ...inputBase, width: 280 }} />
+        </div>
+      )}
+      {/* Link DINÂMICO: o fim do endereço ({{1}}) muda a cada envio — ex. o
+          token do rastreio da entrega. A Meta só aprova com um exemplo da
+          parte variável, então o campo aparece assim que o link termina em
+          {{1}}, e não antes (em link fixo, mandar exemplo também é recusa). */}
+      {b.tipo === "URL" && urlDinamica(b.valor) && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={rotuloCampo} title="Só a parte que entra no lugar de {{1}}, sem o começo do link">
+            Exemplo da parte variável
+          </label>
+          <input value={b.exemplo ?? ""} placeholder="ex.: a1b2c3d4"
+            onChange={(e) => mudar(i, { exemplo: e.target.value })}
+            style={{ ...inputBase, width: 170 }} />
         </div>
       )}
       {b.tipo === "PHONE_NUMBER" && (

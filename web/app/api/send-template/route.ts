@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendTemplate, linhaDaConversa } from "../../../lib/whatsapp";
-import { variaveisDe, limparVariavel, aplicarVariaveis, conferirVariaveis } from "../../../lib/templateVars";
+import { variaveisDe, limparVariavel, aplicarVariaveis, conferirVariaveis, urlDinamica } from "../../../lib/templateVars";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30; // dá folga p/ a chamada à API da RD (evita timeout de 10s da Vercel)
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
       // fallback de quem já a configurou, e some quando ninguém depender dela.
       const { data: cloudTpls } = await sb
         .from("crm_templates")
-        .select("id,nome,meta_nome,idioma,corpo,cabecalho_tipo,imagem_path,usa_nome,status,padrao")
+        .select("id,nome,meta_nome,idioma,corpo,cabecalho_tipo,imagem_path,usa_nome,status,padrao,botoes")
         .eq("canal", "cloud").eq("ativo", true).order("id");
 
       const aprovados = (cloudTpls ?? []).filter((t: any) => String(t.status ?? "").toUpperCase() === "APPROVED");
@@ -104,6 +104,16 @@ export async function POST(req: Request) {
               ? "Há mais de um template aprovado e nenhum marcado como padrão — escolha o padrão em Administração → Templates."
               : "Nenhum template criado para esta linha. Crie um em Administração → Templates.",
         }, { status: 501 });
+      }
+
+      // Modelo com botão de LINK VARIÁVEL (termina em {{1}}) — hoje só os
+      // avisos de entrega, que o sistema manda sozinho com o token do rastreio
+      // (/api/interno/avisos-entrega). Daqui não há de onde tirar esse valor, e
+      // mandar sem ele é recusa 132000 da Meta depois do clique.
+      if (Array.isArray(escolhido?.botoes) && escolhido.botoes.some((b: any) => b?.tipo === "URL" && urlDinamica(b?.valor))) {
+        return Response.json({
+          error: `"${escolhido.nome}" tem um botão de link variável e é enviado automaticamente pelo sistema — escolha outro modelo.`,
+        }, { status: 400 });
       }
 
       // Quantos campos este template pede: a conta sai do próprio corpo, que é
