@@ -91,18 +91,24 @@ select 2, 'sem a marca MOVE: ' || a.v, 'diferente de antes',
 -- 3. PROSPECÇÃO: cliente nunca contatada recebe SÓ o aviso (o contato nasce
 --    como a rota faz: cadastro + vínculo pelo codcli). O card winthor:<codcli>
 --    continua na prospecção, e o cadastro novo não vira conversa.
+-- A vw_funil monta MENOS cards de prospeccao que a visivel (25/09/2026: 153
+-- contra 406), entao o prospect escolhido pode nem estar nela. A regra e "o
+-- aviso nao muda a presenca do card": compara com o antes, nao com true.
+create temp table prospect_antes on commit drop as
+select pg_temp.tem_def('vw_funil', 'winthor:' || (select prospect from alvo))::text as na_vw_funil;
+
 insert into public.clientes (id, nome_completo, telefone, canal)
 select 'teste-0143-cli', w.nome, w.telefone, 'whatsapp'
   from public.wth_carteira w, alvo where w.codcli = alvo.prospect;
 insert into public.wth_vinculo (cliente_id, codcli, cpf, origem)
-select 'teste-0143-cli', prospect, 'teste-0143', 'teste' from alvo;
+select 'teste-0143-cli', prospect, 'teste-0143', 'manual' from alvo;
 insert into public.mensagens (id, cliente_id, enviada_por, tipo, conteudo, status, criada_em, aviso_entrega, linha_id)
 values ('teste-0143-aviso-p', 'teste-0143-cli', 'bot', 'template', 'Seu pedido saiu.', 'wait', now(), true, (select linha from alvo));
 
 insert into resultado values
   (3, 'prospect com aviso segue em prospeccao (visivel)', 'true',
       pg_temp.tem_def('vw_funil_visivel', 'winthor:' || (select prospect from alvo))::text, null),
-  (4, 'prospect com aviso segue em prospeccao (vw_funil)', 'true',
+  (4, 'prospect com aviso: presenca na vw_funil igual a de antes', (select na_vw_funil from prospect_antes),
       pg_temp.tem_def('vw_funil', 'winthor:' || (select prospect from alvo))::text, null),
   (5, 'cadastro so com aviso nao vira conversa (visivel)', 'false',
       pg_temp.tem_def('vw_funil_visivel', 'teste-0143-cli')::text, null),

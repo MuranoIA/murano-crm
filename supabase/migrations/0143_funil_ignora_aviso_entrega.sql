@@ -98,6 +98,13 @@
 alter table public.mensagens
   add column if not exists aviso_entrega boolean not null default false;
 
+-- ⚠️ DESEMPENHO — medido ao aplicar (25/09/2026): coluna nova SEM estatística
+-- faz o planejador estimar mal o `NOT aviso_entrega` e a vw_funil_visivel troca
+-- o nested loop por cliente (4.267 × 22 linhas) por uma varredura de 207 mil
+-- mensagens: +15% no refresh (≈650 → ≈750 ms). Com o ANALYZE abaixo o plano
+-- volta e o tempo fica igual ao de antes (≈612 × ≈618 ms). Não tirar.
+analyze public.mensagens (aviso_entrega);
+
 comment on column public.mensagens.aviso_entrega is
   'true = aviso de entrega ao cliente (hub Entregas, card #19), gravado pela '
   'rota /api/interno/avisos-entrega do Pulse. O funil (vw_funil, '
@@ -262,3 +269,9 @@ begin
     raise exception 'get_funil_card ficou com a marca em número errado de lugares';
   end if;
 end $$;
+
+-- As matviews recriadas nascem sem estatistica (o REFRESH CONCURRENTLY usa
+-- elas para calcular a diferenca).
+analyze public.vw_funil;
+analyze public.vw_funil_visivel;
+analyze public.vw_chat_conversa;
