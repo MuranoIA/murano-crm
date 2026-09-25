@@ -89,6 +89,7 @@ export async function subirImagemDeCabecalho(bytes: Uint8Array, mime: string, no
 export { validarBotoes, MAX_BOTOES, MAX_URL, MAX_TELEFONE, MAX_TEXTO_BOTAO } from "./templateVars";
 export type { BotaoTemplate } from "./templateVars";
 import type { BotaoTemplate } from "./templateVars";
+import { urlDinamica } from "./templateVars";
 
 export type NovoTemplate = {
   metaNome: string;             // minúsculo com underline — identificador na Meta
@@ -136,7 +137,15 @@ export function componentesDe(t: NovoTemplate): unknown[] {
     comps.push({
       type: "BUTTONS",
       buttons: t.botoes.map((b) => (
-        b.tipo === "URL" ? { type: "URL", text: b.texto, url: b.valor }
+        // Link DINÂMICO (termina em {{1}}): a Meta exige `example` com o valor
+        // da PARTE VARIÁVEL — só o sufixo, não o link inteiro (documentação de
+        // componentes, Graph v22). Link fixo não leva `example`: mandar num
+        // botão sem variável também é recusa.
+        b.tipo === "URL"
+          ? {
+              type: "URL", text: b.texto, url: String(b.valor ?? "").trim(),
+              ...(urlDinamica(b.valor) ? { example: [String(b.exemplo ?? "").trim()] } : {}),
+            }
         : b.tipo === "PHONE_NUMBER" ? { type: "PHONE_NUMBER", text: b.texto, phone_number: b.valor }
         : { type: "QUICK_REPLY", text: b.texto }
       )),
