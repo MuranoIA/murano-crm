@@ -1,8 +1,10 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { sessaoDoChat } from "./_dados/servidor";
 import { lerLista } from "./_dados/lista";
 import { lerThread } from "./_dados/thread";
 import { Casca } from "./_componentes/Casca";
+import { COOKIE_TEMA_CHAT, temaChatDe } from "../../lib/temaChat";
 
 // A tela é dinâmica por construção: depende do cookie de sessão e do que
 // aconteceu no banco há dois segundos. Cache aqui serviria conversa de outra
@@ -44,5 +46,10 @@ export default async function PaginaChatV2({
     cliente ? lerThread(cliente, 40) : Promise.resolve(null),
   ]);
 
-  return <Casca inicial={lista} threadInicial={thread} embutido={embutido} />;
+  // ⚠️ O TEMA VEM DO COOKIE, LIDO AQUI. Decidido no cliente, a tela abriria
+  // no tema antigo e trocaria de cor depois do JS — o pisca que a §padrão
+  // manda evitar. Cookie desconhecido cai no padrão.
+  const tema = temaChatDe(cookies().get(COOKIE_TEMA_CHAT)?.value);
+
+  return <Casca inicial={lista} threadInicial={thread} embutido={embutido} tema={tema} />;
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 import { EMOJIS } from "../../../lib/emojis";
 import { GavetaFigurinhas, type Figurinha } from "./Figurinhas";
+import { Camera } from "./Camera";
 import { useGravador } from "./audio";
 
 // ---------------------------------------------------------------------------
@@ -80,6 +81,12 @@ export function Compositor({
   const [clipe, setClipe] = useState(false);
   const [emoji, setEmoji] = useState(false);
   const [figurinhas, setFigurinhas] = useState(false);
+  const [camera, setCamera] = useState(false);
+  const cameraArquivo = useRef<HTMLInputElement>(null);
+  // ⚠️ NO CELULAR quem abre a câmera é o SISTEMA (`capture` no input): foco,
+  // flash e HDR do aparelho, e sem pedir permissão de câmera ao navegador. No
+  // computador não existe câmera nativa para abrir, então a prévia é nossa.
+  const ehCelular = typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const [respostas, setRespostas] = useState<Resposta[] | null>(null);
   const [menu, setMenu] = useState(false);
   const [marcado, setMarcado] = useState(0);
@@ -363,6 +370,25 @@ export function Compositor({
         </>
       )}
 
+      <Camera
+        aberta={camera}
+        aoFechar={() => setCamera(false)}
+        aoFoto={(f) => mandar([f])}
+        aoErro={aoErro}
+      />
+      <input
+        ref={cameraArquivo}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) mandar([f]);
+        }}
+      />
+
       <GavetaFigurinhas
         aberta={figurinhas}
         aoFechar={() => setFigurinhas(false)}
@@ -623,6 +649,21 @@ export function Compositor({
               >
                 <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M21 11.5 12.5 20a5 5 0 1 1-7-7l8-8a3.5 3.5 0 1 1 5 5l-8 8a2 2 0 1 1-3-3l7.5-7.5" />
+                </svg>
+              </button>
+
+              {/* CÂMERA (28/09): ao lado do clipe, como no WhatsApp. No celular
+                  abre a câmera do aparelho; no computador, a nossa. */}
+              <button
+                data-ripple
+                onClick={() => (ehCelular ? cameraArquivo.current?.click() : setCamera(true))}
+                title="Tirar uma foto agora"
+                aria-label="Tirar foto"
+                className={[iconeBotao, "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2L9 5h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-9Z" />
+                  <circle cx="12" cy="13" r="3.2" />
                 </svg>
               </button>
 

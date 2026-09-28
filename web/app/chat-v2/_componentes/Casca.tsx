@@ -22,6 +22,8 @@ import type { ApiLigacao } from "./Ligacao";
 import type { Gesto } from "./Compositor";
 import { INDICADORES, itensDoPapel } from "../../navegacao";
 import type { Citada, Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
+import { COOKIE_TEMA_CHAT, type TemaChat } from "../../../lib/temaChat";
+import { SeletorTema } from "./SeletorTema";
 
 // pesado e raro: quem não manda template não baixa este código
 const Templates = dynamic(() => import("./Templates"), { ssr: false });
@@ -115,6 +117,7 @@ export function Casca({
   inicial,
   threadInicial,
   embutido,
+  tema: temaInicial,
 }: {
   inicial: Lista;
   threadInicial: Thread | null;
@@ -122,7 +125,11 @@ export function Casca({
    *  Vem do SERVIDOR e não de `location.search` para que o cabeçalho nunca
    *  pisque dentro do quadro antes de o JS decidir escondê-lo. */
   embutido: boolean;
+  /** o tema lido do cookie no servidor — a tela nasce nele, sem piscar */
+  tema: TemaChat;
 }) {
+  // o tema nasce do cookie (lido no servidor) e troca na hora, sem recarregar
+  const [tema, setTema] = useState<TemaChat>(temaInicial);
   const [lista, setLista] = useState<Conversa[]>(inicial.conversas);
   // lido dentro de callbacks estáveis (o `abrir`), sem torná-los instáveis
   const listaRef = useRef(lista);
@@ -1465,7 +1472,7 @@ export function Casca({
   }, [lista, aberta, avulsa]);
 
   return (
-    <div className="v2 flex h-dvh min-h-0 flex-col overflow-hidden">
+    <div className="v2 flex h-dvh min-h-0 flex-col overflow-hidden" data-tema={tema}>
       <Ripple />
       <Snackbars avisos={avisos} fechar={fechar} />
 
@@ -1544,6 +1551,9 @@ export function Casca({
             {/* `null` = ainda não sabemos se há push, e nesse estado nada é
                 desenhado: um botão que pisca e some ao descobrir que já estava
                 ativo é pior que esperar meio segundo. */}
+            {/* TEMA (28/09): ao lado do sino, na barra do produto. Fora do
+                embutido — dentro da lupa do board a barra nem aparece. */}
+            {!embutido && <SeletorTema tema={tema} aoTrocar={setTema} />}
             {push.estado !== null && (
               <button
                 data-ripple
