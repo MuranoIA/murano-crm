@@ -54,15 +54,60 @@ try {
     String(colunas.raio),
   );
 
-  // ---- 5. o painel de Filtros não repete as colunas ----
-  await a.js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith("Filtros")).click(); return true;`);
-  await espera(400);
+  // ---- 5. o consultor virou SELETOR COM LISTA, não painel de chips ----
+  conferir(
+    await a.js(`return ${TEXTOS}.some(t => t.startsWith("Todos os consultores"));`),
+    "o recorte por consultor é um seletor que diz o que está sendo visto",
+  );
+  await a.js(`
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim().startsWith("Todos os consultores"));
+    b.click(); return true;`);
+  await espera(600);
+  const noMenu = await a.js(`
+    const m = document.querySelector('[role="menu"]');
+    return m ? [...m.querySelectorAll('button')].map(b => b.textContent.trim()) : null;`);
+  conferir(
+    noMenu && noMenu.length > 1 && /^Todos os consultores/.test(noMenu[0]),
+    "…e abre a lista de consultores, com o “todos” em primeiro",
+    JSON.stringify((noMenu ?? []).slice(0, 3)),
+  );
+  await a.js(`document.querySelector('[role="menu"]').previousElementSibling.click(); return true;`);
+  await espera(300);
   conferir(
     !(await a.js(`return [...document.querySelectorAll('p')].some(p => p.textContent.includes("Coluna do board"));`)),
-    "o painel de Filtros não repete as colunas (uma escolha, um controle)",
+    "e o painel de filtros não existe mais (uma escolha, um controle)",
   );
-  await a.js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith("Filtros")).click(); return true;`);
-  await espera(300);
+
+  // ---- 5b. a barra do produto: sem sublinhado e sem emoji ----
+  const barra = await a.js(`
+    const as = [...document.querySelectorAll('nav a, nav button')];
+    return {
+      sublinhado: as.map(x => getComputedStyle(x).textDecorationLine),
+      rotulos: as.map(x => x.textContent.trim()),
+    };`);
+  conferir(
+    barra.sublinhado.every((d) => d === "none"),
+    "a barra do produto não tem link sublinhado",
+    JSON.stringify(barra.sublinhado.slice(0, 3)),
+  );
+  conferir(
+    !barra.rotulos.some((t) => /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(t)),
+    "…nem emoji junto dos títulos",
+    JSON.stringify(barra.rotulos),
+  );
+
+  // ---- 5c. a linha da conversa: código no nome e de quem é ----
+  const naLinha = await a.js(`
+    const b = document.querySelector('[data-ripple][aria-current], .rolagem button');
+    const t = b ? b.textContent : "";
+    // sem "\d" aqui: isto vive dentro de um template literal, e a barra
+    // invertida é comida antes de virar regex — o teste passava a procurar a
+    // letra "d". Classe explícita resolve.
+    return { texto: t.slice(0, 80), temCodigo: /[0-9]+ - /.test(t) };`);
+  conferir(naLinha.temCodigo, "o nome do contato vem montado como “1234 - NOME”", naLinha.texto.slice(0, 40));
+  const tags = await a.js(`
+    return [...document.querySelectorAll('.rolagem span[title^="atende "]')].length;`);
+  conferir(tags > 0, "quem vê todas as carteiras vê de quem é cada conversa", `${tags} etiquetas`);
 
   // ---- 6. clicar num mini-card troca a fila de verdade ----
   await a.js(`
@@ -109,7 +154,11 @@ try {
     const i = document.querySelector('input[placeholder*="Buscar"]');
     let el = i; while (el && !el.className.includes('border-b')) el = el.parentElement;
     return el ? Math.round(el.getBoundingClientRect().height) : null;`);
-  conferir(alturaCabecalho != null && alturaCabecalho < 260, "…e o cabeçalho não come a lista", `${alturaCabecalho}px`);
+  // 290: o cabeçalho cresceu de propósito em 28/09 — a fila e os três atalhos
+  // passaram a ter a altura de um campo (pedido do dono, por simetria com a
+  // busca), e o consultor ganhou linha própria. Ainda sobra tela para 6 linhas
+  // da lista num aparelho de 780 px.
+  conferir(alturaCabecalho != null && alturaCabecalho < 290, "…e o cabeçalho não come a lista", `${alturaCabecalho}px`);
   await a.foto("cabecalho-lista-360");
 
   const exc = a.excecoes.filter((e) => !/ResizeObserver/.test(e));

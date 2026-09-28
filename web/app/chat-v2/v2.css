@@ -87,6 +87,17 @@
     font: inherit;
     color: inherit;
   }
+  /* ⚠️ SEM SUBLINHADO (28/09/2026, pedido do dono). Esta folha entra SEM
+     preflight (ver o topo do arquivo), então todo <a> ficava com o sublinhado
+     padrão do navegador — e a barra do produto virava uma fileira de links
+     sublinhados. Quem QUER o sublinhado (o link dentro de uma mensagem, o
+     "Abrir em nova aba" da foto) o pede por classe, e continua valendo. */
+  /* ⚠️ só a decoração. `color` NÃO entra aqui: `.v2 a` tem especificidade
+     maior que uma classe do Tailwind (elemento + classe contra classe), então
+     um `color` neste bloco venceria todo `text-v2-azul` da tela. */
+  .v2 a {
+    text-decoration: none;
+  }
   .v2 p,
   .v2 h1,
   .v2 h2,

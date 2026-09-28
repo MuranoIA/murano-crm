@@ -11,7 +11,7 @@ import { enviarArquivos, type EventoArquivo, type Progresso } from "./anexos";
 import { tipoDoMime } from "../../../lib/midia";
 import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
-import { SEM_RECORTE, quantosRecortes, type Recortes } from "./Filtros";
+import { SEM_RECORTE, quantosRecortes, type Recortes } from "./tipos";
 import { useRealtimeDoChat } from "./realtime";
 import {
   useAvisoDeChegada, usePermissaoDeNotificacao, usePonteDoHub, usePush, useTituloDaAba,
@@ -234,7 +234,6 @@ export function Casca({
   // `precisaExtras` é o que autoriza a lista completa a vir COM etapa e linha.
   // São 2 consultas a mais no servidor e uma varredura de 4 mil clientes; quem
   // não abre os filtros não paga por nenhuma das duas.
-  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [precisaExtras, setPrecisaExtras] = useState(false);
   const [recortes, setRecortes] = useState<Recortes>(SEM_RECORTE);
   const [comExtras, setComExtras] = useState(false);
@@ -1583,11 +1582,10 @@ export function Casca({
             presentes={presentes}
             recortes={recortes}
             aoMudarRecortes={setRecortes}
-            filtrosAbertos={filtrosAbertos}
-            // abrir os filtros é o gesto que manda buscar a lista inteira COM
-            // etapa e número — e é o único momento em que essa conta é paga
+            // abrir um seletor de recorte é o gesto que manda buscar a lista
+            // inteira COM etapa e número — e é o único momento em que essa
+            // conta é paga. (Era o painel de Filtros, que saiu em 28/09.)
             aoAbrirFiltros={() => {
-              setFiltrosAbertos((v) => !v);
               setPrecisaCompleta(true);
               setPrecisaExtras(true);
             }}

@@ -3,6 +3,7 @@
 // do servidor (`_dados/`) e o que a tela desenha.
 export type { Conversa, Lista } from "../_dados/lista";
 export type { Mensagem, Thread } from "../_dados/thread";
+import type { EtapaBoard } from "../../../lib/etapasBoard";
 
 /**
  * A MENSAGEM CITADA por outra (a cliente responde "quero 2 desse" marcando a
@@ -65,3 +66,29 @@ export type ItemCarteira = {
   ultima_mensagem?: string | null;
   ultima_enviada_por?: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// OS RECORTES QUE CRUZAM com a fila: consultor, número e coluna do board.
+//
+// Cruzam entre si e com a fila em vez de substituí-la — "as não lidas da
+// Kamilly em Negociação" é uma pergunta legítima, e era a escolha do chat
+// antigo (§23.5). Cada contador conta DENTRO do que os outros já escolheram:
+// um chip que promete 12 e entrega 3 é pior que chip nenhum.
+//
+// ⚠️ NÃO são a mesma escolha que a fila, e por isso são controles separados.
+// Onde dois controles decidem A MESMA coisa, eles acabam se contradizendo —
+// foi o que a 0099 teve de desfazer (§32).
+//
+// Viviam num painel (`Filtros.tsx`); desde 28/09/2026 a coluna do board é uma
+// faixa fixa e o consultor é um seletor com a lista, ambos no cabeçalho — o
+// painel foi removido e só o tipo sobreviveu.
+// ---------------------------------------------------------------------------
+export type Recortes = {
+  vendedor: string | null;
+  linha: string | null;
+  etapa: EtapaBoard | null;
+};
+
+export const SEM_RECORTE: Recortes = { vendedor: null, linha: null, etapa: null };
+export const quantosRecortes = (r: Recortes) =>
+  (r.vendedor ? 1 : 0) + (r.linha ? 1 : 0) + (r.etapa ? 1 : 0);
