@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { ItemConversa } from "./ItemConversa";
-import { Filtros, quantosRecortes, type Recortes } from "./Filtros";
+import { Filtros, type Recortes } from "./Filtros";
+import { COLUNAS, COR_ETAPA, LETRA_ETAPA, TITULO_ETAPA, type EtapaBoard } from "../../../lib/etapasBoard";
 import { ListaCarteira } from "./Carteira";
 import { FILAS, type Conversa, type Fila, type ItemCarteira } from "./tipos";
 
@@ -119,11 +120,51 @@ export function ListaConversas({
 
   const chave = useMemo(() => (c: Conversa) => c.cliente_id, []);
 
+  // o painel de Filtros guarda dois recortes; a coluna do board saiu para a
+  // faixa do cabeçalho (27/09) e por isso não entra neste contador
+  const recortesNoPainel = (recortes.vendedor ? 1 : 0) + (recortes.linha ? 1 : 0);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-v2-superficie">
-      {/* ---- cabeçalho: busca + recortes ---------------------------------- */}
+      {/* ---- cabeçalho ---------------------------------------------------
+          A ORDEM É PEDIDO DO TIME (27/09/2026, print do chat antigo): fila +
+          três atalhos · quatro mini-cards · busca · colunas do board · ordem.
+          O time usou o v2 e sentiu falta de ver as quatro filas de uma vez —
+          que era o achado 1 do laudo de UX, perdido quando os chips viraram um
+          menu só (22/09). O menu FICA: ele é quem diz o que está aberto e
+          guarda favoritas; os mini-cards são o atalho para as quatro de sempre.
+          "Ativar avisos" NÃO entra: no v2 o aviso mora no sino da conversa. */}
       <div className="shrink-0 border-b border-v2-linha px-3 pb-2 pt-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
+          <span className="min-w-0 flex-1" />
+          {ATALHOS.map((a) => (
+            <AtalhoFila
+              key={a.id}
+              atalho={a}
+              ativo={fila === a.id}
+              n={contagens[a.id]}
+              aoTrocar={aoTrocarFila}
+            />
+          ))}
+        </div>
+
+        {/* Os quatro de todo dia, com o número à vista. Zero fica esmaecido —
+            e enquanto o servidor não contou, o cartão fica SEM número, nunca
+            com zero: "0 esperando" e "ainda não sei" são coisas diferentes. */}
+        <div className="mt-2 grid grid-cols-4 gap-1">
+          {CARTOES.map((c) => (
+            <MiniCard
+              key={c.id}
+              cartao={c}
+              ativo={fila === c.id}
+              n={contagens[c.id]}
+              aoTrocar={aoTrocarFila}
+            />
+          ))}
+        </div>
+
+        <div className="mt-2 flex items-center gap-2">
         <label className="relative block min-w-0 flex-1">
           <span className="sr-only">Buscar conversa</span>
           <svg
@@ -170,13 +211,53 @@ export function ListaConversas({
             sempre à vista, que era o achado 1 do laudo de UX. O que pede ação
             não pode sumir, então o botão ganha um PONTO LARANJA quando há não
             lidas ou recados numa fila que não está aberta. */}
-        {/* UMA LINHA (pedido do piloto): o botão de fila é quem cede — o
-            nome dele trunca antes de a linha quebrar; Filtros e a ordenação
-            não encolhem, porque ícone sem rótulo ali seria adivinhação. */}
-        <div className="-mx-3 mt-2 flex flex-nowrap items-center gap-1 px-3 pb-1">
-          <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
+        {/* AS COLUNAS DO BOARD, fora do painel de filtros (pedido do time):
+            são a leitura de relance de "onde estão minhas conversas". Quadrados
+            de canto pequeno, como o print — a pílula redonda as fazia parecer
+            mais um filtro solto.
 
-          {/* Os RECORTES (consultor, número, coluna do board) — ocasionais,
+            ⚠️ Estando aqui, elas SAEM do painel de Filtros: dois controles para
+            a mesma escolha acabam se contradizendo (§32, §68.2). */}
+        {fila !== "carteira" && (
+          <div className="-mx-3 mt-2 flex flex-wrap gap-1 px-3">
+            {COLUNAS.map((c) => {
+              const k = c.key as EtapaBoard;
+              const ativo = recortes.etapa === k;
+              const n = completa ? contaPorEtapa.get(c.key) ?? 0 : null;
+              return (
+                <button
+                  key={c.key}
+                  data-ripple
+                  onClick={() => aoMudarRecortes({ ...recortes, etapa: ativo ? null : k })}
+                  aria-pressed={ativo}
+                  title={TITULO_ETAPA[k]}
+                  className={[
+                    "flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[12px] transition-colors duration-150",
+                    ativo
+                      ? "bg-v2-azul-claro ring-1 ring-inset ring-v2-azul"
+                      : "ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+                  ].join(" ")}
+                >
+                  {/* A LETRA, não o nome (como no chat de hoje e no print): sete
+                      nomes ocupavam TRÊS linhas da coluna de 320 px — medido em
+                      27/09 —, e a faixa existe justamente para ser lida de
+                      relance. O nome inteiro está no `title` e na coluna do
+                      board, que é de onde a letra vem. */}
+                  <span aria-hidden className="font-bold" style={{ color: COR_ETAPA[k] }}>
+                    {LETRA_ETAPA[k]}
+                  </span>
+                  <span className="sr-only">{TITULO_ETAPA[k]}</span>
+                  {n != null && n > 0 && <span className="tabular-nums text-v2-tinta-fraca">{n}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* UMA LINHA (pedido do piloto): Filtros e a ordenação não encolhem,
+            porque ícone sem rótulo ali seria adivinhação. */}
+        <div className="-mx-3 mt-2 flex flex-nowrap items-center gap-1 px-3 pb-1">
+          {/* Os RECORTES (consultor e número) — ocasionais,
               e por isso atrás de um botão desde o início. Esconder o recorte
               não esconde contador nenhum: ele nasce sem filtro. */}
           <button
@@ -184,10 +265,10 @@ export function ListaConversas({
             onClick={aoAbrirFiltros}
             aria-pressed={filtrosAbertos}
             aria-expanded={filtrosAbertos}
-            title="Filtrar por consultor, número ou coluna do board"
+            title="Filtrar por consultor ou número"
             className={[
               "flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] transition-colors duration-150",
-              filtrosAbertos || quantosRecortes(recortes) > 0
+              filtrosAbertos || recortesNoPainel > 0
                 ? "bg-v2-azul text-white"
                 : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
             ].join(" ")}
@@ -196,9 +277,12 @@ export function ListaConversas({
               <path d="M4 6h16M7 12h10M10 18h4" />
             </svg>
             Filtros
-            {quantosRecortes(recortes) > 0 && (
+            {/* ⚠️ conta só o que o PAINEL controla. A coluna do board mora na
+                faixa acima desde 27/09: contá-la aqui faria o botão anunciar um
+                filtro que não está dentro dele. */}
+            {recortesNoPainel > 0 && (
               <span className="min-w-4 rounded-full bg-white/20 px-1 text-[11px] tabular-nums">
-                {quantosRecortes(recortes)}
+                {recortesNoPainel}
               </span>
             )}
           </button>
@@ -308,6 +392,115 @@ export function ListaConversas({
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OS TRÊS ATALHOS ao lado da fila, e os QUATRO MINI-CARDS abaixo dela.
+//
+// Pedido do time em 27/09/2026, copiando o chat de hoje: as filas de todo dia
+// têm de estar À VISTA, não dentro de um menu. Os dois grupos apontam para as
+// MESMAS filas do menu — não são um segundo estado, só outro caminho para o
+// mesmo `aoTrocarFila` (a régua do §68.2: uma escolha, vários controles que
+// escrevem nela).
+//
+// "Sem dono" e o atalho da fila de espera são a mesma fila, como no print. É
+// repetição de propósito: o ícone é o gesto rápido, o cartão é o número.
+// ---------------------------------------------------------------------------
+type Atalho = { id: Fila; rotulo: string; icone: React.ReactNode };
+
+const ICONE = (d: string, extra?: React.ReactNode) => (
+  <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+    {extra}
+  </svg>
+);
+
+const ATALHOS: Atalho[] = [
+  // bandeja: o que chegou e ainda não tem dono
+  { id: "fila", rotulo: "Fila de espera", icone: ICONE("M4 13h4l2 3h4l2-3h4M4 13 6 5h12l2 8v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z") },
+  // papel dobrado: a nota interna da supervisão
+  { id: "recados", rotulo: "Recados da supervisão", icone: ICONE("M5 4h14v11l-5 5H5V4ZM19 15h-5v5") },
+  // agenda: todos os clientes do RCA, com ou sem conversa
+  { id: "carteira", rotulo: "Minha carteira", icone: ICONE("M7 4h11a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7V4ZM4 8h3M4 12h3M4 16h3") },
+];
+
+function AtalhoFila({
+  atalho, ativo, n, aoTrocar,
+}: {
+  atalho: Atalho;
+  ativo: boolean;
+  n: number | null;
+  aoTrocar: (f: Fila) => void;
+}) {
+  return (
+    <button
+      data-ripple
+      onClick={() => aoTrocar(atalho.id)}
+      aria-pressed={ativo}
+      aria-label={atalho.rotulo}
+      title={n != null && n > 0 ? `${atalho.rotulo} — ${n}` : atalho.rotulo}
+      className={[
+        "relative grid size-9 shrink-0 place-items-center rounded-lg transition-colors duration-150",
+        ativo ? "bg-v2-azul-claro text-v2-azul ring-1 ring-inset ring-v2-azul" : "text-v2-tinta-fraca hover:bg-v2-superficie-2",
+      ].join(" ")}
+    >
+      {atalho.icone}
+      {/* o número só aparece quando pede ação — recado por ver, conversa sem
+          dono. Contador em tudo vira decoração e some da vista. */}
+      {n != null && n > 0 && (atalho.id === "recados" || atalho.id === "fila") && (
+        <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-v2-laranja px-1 text-center text-[10.5px] font-semibold leading-[18px] text-white ring-2 ring-v2-superficie">
+          {n > 99 ? "99+" : n}
+        </span>
+      )}
+    </button>
+  );
+}
+
+type Cartao = { id: Fila; rotulo: string; destaque?: boolean };
+
+const CARTOES: Cartao[] = [
+  // "Esperando" é a cliente que falou e ainda não teve resposta — no v2 essa é
+  // a conta de não lidas, que já exclui encerradas e fila (§lista.contarFilas)
+  { id: "nao_lidas", rotulo: "Esperando", destaque: true },
+  { id: "todas", rotulo: "Meus" },
+  { id: "fila", rotulo: "Sem dono" },
+  { id: "resolvidas", rotulo: "Encerradas" },
+];
+
+function MiniCard({
+  cartao, ativo, n, aoTrocar,
+}: {
+  cartao: Cartao;
+  ativo: boolean;
+  n: number | null;
+  aoTrocar: (f: Fila) => void;
+}) {
+  const vazio = n === 0;
+  return (
+    <button
+      data-ripple
+      onClick={() => aoTrocar(cartao.id)}
+      aria-pressed={ativo}
+      title={`${cartao.rotulo}${n != null ? ` — ${n}` : ""}`}
+      className={[
+        "rounded-lg px-1 py-1.5 text-center transition-colors duration-150",
+        ativo
+          ? "bg-v2-azul-claro ring-1 ring-inset ring-v2-azul"
+          : "ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "block text-[17px] font-bold leading-5 tabular-nums",
+          vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : ativo ? "text-v2-azul" : "text-v2-tinta",
+        ].join(" ")}
+      >
+        {/* sem número ainda: um traço, nunca um zero que mente */}
+        {n == null ? "—" : n}
+      </span>
+      <span className="block truncate text-[10.5px] leading-3 text-v2-tinta-fraca">{cartao.rotulo}</span>
+    </button>
   );
 }
 
