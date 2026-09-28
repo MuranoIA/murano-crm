@@ -138,7 +138,14 @@ export function ListaConversas({
           menu só (22/09). O menu FICA: ele é quem diz o que está aberto e
           guarda favoritas; os mini-cards são o atalho para as quatro de sempre.
           "Ativar avisos" NÃO entra: no v2 o aviso mora no sino da conversa. */}
-      <div className="shrink-0 border-b border-v2-linha px-3 pb-2 pt-3">
+      {/* ⚠️ 10% DE PÚRPURA NO FUNDO (28/09/2026, pedido do dono). É isto que
+          faz os controles brancos se destacarem: com o fundo branco de antes,
+          branco sobre branco não tinha degrau nenhum, e a sombra sozinha não
+          dava conta. O contraste vem da CAMADA, não de mudar a paleta. */}
+      <div
+        className="shrink-0 border-b border-v2-linha px-3 pb-2.5 pt-3"
+        style={{ background: "color-mix(in srgb, var(--color-v2-vinho) 10%, #fff)" }}
+      >
         <div className="flex items-center gap-1.5">
           <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
           <span className="min-w-0 flex-1" />
@@ -187,7 +194,7 @@ export function ListaConversas({
             value={busca}
             onChange={(e) => aoBuscar(e.target.value)}
             placeholder={fila === "carteira" ? "Buscar na carteira" : "Buscar por nome ou telefone"}
-            className="h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
+            className="h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] shadow-e1 placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
             style={{ transition: "border-color 120ms var(--ease-padrao)" }}
           />
         </label>
@@ -198,7 +205,7 @@ export function ListaConversas({
           onClick={aoNovoContato}
           aria-label="Novo contato"
           title="Novo contato — conversar com um número"
-          className="grid size-11 shrink-0 place-items-center rounded-xl text-v2-azul ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
+          className="grid size-11 shrink-0 place-items-center rounded-xl bg-v2-superficie text-v2-azul shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
         >
           <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
@@ -327,7 +334,7 @@ export function ListaConversas({
               className={[
                 "flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] shadow-e1 transition-colors duration-150",
                 antigasPrimeiro
-                  ? "bg-v2-vinho text-white"
+                  ? "bg-v2-vinho-claro font-semibold text-v2-vinho ring-2 ring-inset ring-v2-vinho"
                   : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
               ].join(" ")}
             >
@@ -495,7 +502,7 @@ function MenuRecorte({
         className={[
           "flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] transition-colors duration-150",
           atual
-            ? "bg-v2-vinho text-white shadow-e2"
+            ? "bg-v2-vinho-claro font-semibold text-v2-vinho shadow-e1 ring-2 ring-inset ring-v2-vinho"
             : "bg-v2-superficie font-medium text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
         ].join(" ")}
       >
@@ -611,10 +618,12 @@ function AtalhoFila({
       aria-label={atalho.rotulo}
       title={n != null && n > 0 ? `${atalho.rotulo} — ${n}` : atalho.rotulo}
       className={[
-        "relative grid size-11 shrink-0 place-items-center rounded-xl transition-colors duration-150",
+        // branco com relevo sobre o fundo tingido, e o traço em púrpura: são
+        // atalhos da marca, não ações (28/09)
+        "relative grid size-11 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
         ativo
-          ? "bg-v2-vinho-claro text-v2-vinho-texto ring-1 ring-inset ring-v2-vinho"
-          : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+          ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
+          : "bg-v2-superficie text-v2-vinho-texto ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
       ].join(" ")}
     >
       {atalho.icone}
@@ -659,22 +668,26 @@ function MiniCard({
       aria-pressed={ativo}
       title={`${cartao.rotulo}${n != null ? ` — ${n}` : ""}`}
       className={[
-        "rounded-lg px-1 py-1.5 text-center transition-colors duration-150",
+        // ⚠️ O ATIVO É CLARO, COM O NÚMERO ESCURO (28/09/2026). Número branco
+        // sobre o vinho claro ficou ilegível — e o número é a única coisa que
+        // este cartão existe para mostrar. O destaque vem da BORDA e do fundo
+        // tingido, nunca de inverter o texto.
+        "rounded-lg px-1 py-1.5 text-center shadow-e1 transition-colors duration-150",
         ativo
-          ? "bg-v2-vinho-claro ring-1 ring-inset ring-v2-vinho"
-          : "ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+          ? "bg-v2-vinho-claro ring-2 ring-inset ring-v2-vinho"
+          : "bg-v2-superficie ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
       ].join(" ")}
     >
       <span
         className={[
           "block text-[17px] font-bold leading-5 tabular-nums",
-          ativo ? "text-white" : vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : "text-v2-tinta",
+          vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : ativo ? "text-v2-vinho" : "text-v2-tinta",
         ].join(" ")}
       >
         {/* sem número ainda: um traço, nunca um zero que mente */}
         {n == null ? "—" : n}
       </span>
-      <span className={["block truncate text-[10.5px] leading-3", ativo ? "text-white/85" : "text-v2-tinta-fraca"].join(" ")}>
+      <span className={["block truncate text-[10.5px] leading-3", ativo ? "text-v2-vinho-texto" : "text-v2-tinta-fraca"].join(" ")}>
         {cartao.rotulo}
       </span>
     </button>
@@ -710,8 +723,9 @@ function MenuFilas({
     return () => window.removeEventListener("keydown", esc);
   }, [pos]);
 
-  // o que pede ação e está FORA da fila aberta — é o que o ponto avisa
+  // o que pede ação e está FORA da fila aberta — é o que o contador avisa
   const pendente = (["nao_lidas", "recados"] as Fila[]).filter((f) => f !== fila && (contagens[f] ?? 0) > 0);
+  const pendentes = pendente.reduce((t, f) => t + (contagens[f] ?? 0), 0);
   const dica = pendente
     .map((f) => `${contagens[f]} em ${FILAS.find((x) => x.id === f)?.rotulo}`)
     .join(" · ");
@@ -736,7 +750,7 @@ function MenuFilas({
         // logo abaixo e puxava a atenção para um controle que é de escolha, não
         // de ação. Letra preta sobre superfície discreta; o azul continua sendo
         // do que AGE (enviar, ligar).
-        className="relative flex h-11 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie-2 pl-3 pr-2 text-[14px] font-medium text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie"
+        className="relative flex h-11 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie pl-3 pr-2 text-[14px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
       >
         <span className="min-w-0 truncate">{atual.rotulo}</span>
         {n != null && n > 0 && (
@@ -747,8 +761,17 @@ function MenuFilas({
         <svg aria-hidden viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="m7 10 5 5 5-5" />
         </svg>
+        {/* ⚠️ DENTRO do botão, e COM O NÚMERO (28/09/2026). Pendurado para
+            fora, o ponto era cortado pela borda da faixa e virava um risco
+            vermelho no canto; e um ponto sem número não diz quanto está
+            esperando, que é justamente a pergunta. */}
         {pendente.length > 0 && (
-          <span aria-label={dica} className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-v2-laranja ring-2 ring-v2-superficie" />
+          <span
+            aria-label={dica}
+            className="absolute right-0.5 top-0.5 min-w-[17px] rounded-full bg-v2-laranja px-1 text-center text-[10px] font-semibold leading-4 text-white ring-2 ring-v2-superficie"
+          >
+            {pendentes > 99 ? "99+" : pendentes}
+          </span>
         )}
       </button>
 
