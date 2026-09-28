@@ -65,6 +65,11 @@ export type Conversa = {
   etapa_board?: EtapaBoard | null;
   /** por qual número esta conversa corre. Só vem com `opts.linhas`. */
   linha_id?: string | null;
+  /** quantas notas internas a conversa tem, de qualquer autor — inclusive as
+   *  minhas. É o que o filtro "Recados" mostra (#41). */
+  notas: number;
+  /** quando a nota mais recente foi escrita — a ordem da fila de recados */
+  nota_em?: string | null;
   /** recados da supervisão que EU ainda não vi (0129); 0 = nenhum */
   nota_nova: number;
   nota_autor: string | null;
@@ -96,7 +101,12 @@ export type Contagens = {
   favoritas: number;
   fila: number;
   resolvidas: number;
+  /** conversas com nota interna — o tamanho do filtro "Recados" */
   recados: number;
+  /** …e quantas delas PEDEM AÇÃO: nota de outra pessoa que eu ainda não vi.
+   *  Separar os dois é o que impede o ponto de alerta de ficar aceso para
+   *  sempre por causa das minhas próprias notas. */
+  recados_novos: number;
   /** ver `Cubo`. Ausente só em resposta antiga em cache. */
   cubo?: Cubo;
 };
@@ -140,21 +150,39 @@ export type Extras = { etapas?: boolean; linhas?: boolean };
 // ---------------------------------------------------------------------------
 async function recadosNaoVistos(sb: any, usuario: string) {
   const [notas, vistas] = await Promise.all([
+    // ⚠️ SEM o `neq(autor)` no banco (demanda #41, 28/09/2026). Ele existia
+    // para eu não ser avisado do meu próprio bilhete — o que continua valendo
+    // para o AVISO. Mas esta é a única fonte de "esta conversa tem nota", e com
+    // o filtro no banco a nota que eu mesmo escrevi sumia do filtro Recados: o
+    // dono escreveu uma nota, procurou por ela, e a tela disse que não havia
+    // nada. O recorte por autoria passou a ser feito em memória, onde dá para
+    // separar as duas perguntas. São ~340 linhas hoje: não é consulta cara.
     sb.from("chat_nota").select("id,cliente_id,autor,criada_em")
-      .neq("autor", usuario).order("criada_em", { ascending: false }).limit(1000),
+      .order("criada_em", { ascending: false }).limit(1000),
     sb.from("chat_nota_vista").select("nota_id").in("usuario", [usuario, "*"]),
   ]);
   const visto = new Set((vistas.data ?? []).map((v: any) => Number(v.nota_id)));
-  const m = new Map<string, { n: number; autor: string }>();
+  /** o que PEDE AÇÃO: nota de outra pessoa que eu ainda não vi */
+  const novos = new Map<string, { n: number; autor: string }>();
+  /** e o que o FILTRO mostra: toda conversa que tem nota interna, com a data
+   *  da mais recente — é por ela que a fila é ordenada, não pela atividade da
+   *  conversa: uma nota escrita hoje numa conversa parada há um mês afundaria
+   *  na lista, e o corte de "mostrar as recentes" esconderia justamente ela. */
+  const comNota = new Map<string, { n: number; em: string }>();
   for (const n of (notas.data ?? []) as any[]) {
-    if (visto.has(Number(n.id))) continue;
-    const j = m.get(n.cliente_id);
+    // a consulta vem da mais nova para a mais velha: a primeira de cada
+    // cliente é a mais recente
+    const tem = comNota.get(n.cliente_id);
+    if (tem) tem.n += 1;
+    else comNota.set(n.cliente_id, { n: 1, em: String(n.criada_em) });
+    if (String(n.autor ?? "") === usuario || visto.has(Number(n.id))) continue;
+    const j = novos.get(n.cliente_id);
     // da mais nova para a mais velha: a primeira de cada cliente é a que a
     // tela mostra; as seguintes só somam
     if (j) j.n += 1;
-    else m.set(n.cliente_id, { n: 1, autor: String(n.autor ?? "") });
+    else novos.set(n.cliente_id, { n: 1, autor: String(n.autor ?? "") });
   }
-  return m;
+  return { novos, comNota };
 }
 
 const semSinteticos = (q: any) =>
@@ -224,7 +252,7 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
   const favs = new Set((favoritos ?? []).map((f: any) => f.cliente_id));
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e.status]));
 
-  const c: Contagens = { todas: 0, nao_lidas: 0, favoritas: 0, fila: 0, resolvidas: 0, recados: 0 };
+  const c: Contagens = { todas: 0, nao_lidas: 0, favoritas: 0, fila: 0, resolvidas: 0, recados: 0, recados_novos: 0 };
   const cubo: Cubo = {};
   const somar = (fila: string, dono: string, etapa: string) => {
     const f = (cubo[fila] ??= {});
@@ -252,7 +280,8 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
     // recado ATRAVESSA dono e status, como favorito: é um bilhete para mim,
     // não um estado da conversa — escondê-lo numa resolvida faria o contador
     // prometer o que a lista não mostra
-    if (recados.has(l.cliente_id)) c.recados++;
+    if (recados.comNota.has(l.cliente_id)) c.recados++;
+    if (recados.novos.has(l.cliente_id)) c.recados_novos++;
 
     // ---- o mesmo veredito, agora no cubo -------------------------------
     // A régua é EXATAMENTE a de cima; as filas são as mesmas chaves que a tela
@@ -266,7 +295,7 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
       if (naoLida) somar("nao_lidas", chaveDono, chaveEtapa);
     }
     if (favs.has(l.cliente_id)) somar("favoritas", chaveDono, chaveEtapa);
-    if (recados.has(l.cliente_id)) somar("recados", chaveDono, chaveEtapa);
+    if (recados.comNota.has(l.cliente_id)) somar("recados", chaveDono, chaveEtapa);
   }
   return { ...c, cubo };
 }
@@ -431,8 +460,10 @@ export async function lerLista(
         nao_lida:
           c.ultima_enviada_por === "customer" && (!marca || new Date(c.ultima_atividade) > new Date(marca)),
         favorita: favoritas.has(c.cliente_id),
-        nota_nova: recados.get(c.cliente_id)?.n ?? 0,
-        nota_autor: recados.get(c.cliente_id)?.autor ?? null,
+        notas: recados.comNota.get(c.cliente_id)?.n ?? 0,
+        nota_em: recados.comNota.get(c.cliente_id)?.em ?? null,
+        nota_nova: recados.novos.get(c.cliente_id)?.n ?? 0,
+        nota_autor: recados.novos.get(c.cliente_id)?.autor ?? null,
         status: e?.status ?? "aberta",
         motivo: e?.motivo ?? null,
         ...(etapaDe ? { etapa_board: etapaDe(c) } : {}),

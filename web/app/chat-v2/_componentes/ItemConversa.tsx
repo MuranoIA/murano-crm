@@ -88,7 +88,7 @@ function Linha({
           )}
         </span>
 
-        {(consultor || c.na_fila || resolvida || c.transferida_de || c.nota_nova > 0 || (presentes && presentes.length > 0)) && (
+        {(consultor || c.na_fila || resolvida || c.transferida_de || c.notas > 0 || (presentes && presentes.length > 0)) && (
           <span className="mt-1 flex flex-wrap items-center gap-1">
             {/* DE QUEM É a conversa. A cor vem de `carteira_config` — a mesma
                 do board e do funil, para a pessoa ser sempre a mesma cor no
@@ -111,14 +111,27 @@ function Linha({
                 {consultor.nome}
               </span>
             )}
-            {/* o recado é da supervisão PARA mim: pede ação, por isso laranja */}
-            {c.nota_nova > 0 && (
+            {/* ⚠️ DUAS ETIQUETAS, e a diferença é a AÇÃO (#41, 28/09/2026).
+                Laranja: recado de outra pessoa que eu ainda não vi — pede
+                leitura. Neutra: a conversa tem nota interna (talvez a minha),
+                e é por isso que ela aparece no filtro Recados. Sem a segunda,
+                a conversa entrava na lista sem nada explicando por quê. */}
+            {c.nota_nova > 0 ? (
               <span
                 title={c.nota_autor ? `recado de ${c.nota_autor}` : "recado da supervisão"}
                 className="rounded-full bg-v2-laranja-claro px-1.5 py-px text-[10px] font-medium text-v2-laranja"
               >
                 🗒 {c.nota_nova > 1 ? `${c.nota_nova} recados` : "recado"}
               </span>
+            ) : (
+              c.notas > 0 && (
+                <span
+                  title={c.notas > 1 ? `${c.notas} notas internas nesta conversa` : "tem nota interna"}
+                  className="rounded-full bg-v2-superficie-2 px-1.5 py-px text-[10px] font-medium text-v2-tinta-fraca"
+                >
+                  🗒 {c.notas > 1 ? `${c.notas} notas` : "nota"}
+                </span>
+              )
             )}
             {c.na_fila && (
               <span className="rounded-full bg-v2-laranja-claro px-1.5 py-px text-[10px] font-medium text-v2-laranja">

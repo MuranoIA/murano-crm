@@ -201,7 +201,7 @@ export function Casca({
           vendedor: null, carteira_dona: null, transferida_de: null, etapa: null,
           ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
           nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
-          nota_nova: 0, nota_autor: null,
+          notas: 0, nota_nova: 0, nota_autor: null,
         }
       : null,
   );
@@ -239,6 +239,24 @@ export function Casca({
   useEffect(() => {
     msgsRef.current = mensagens;
   }, [mensagens]);
+
+  // ---- A FILA DE RECADOS VEM EM LOTES (pedido do dono, 28/09/2026) --------
+  //
+  // Com o filtro passando a mostrar toda conversa COM nota, a fila deixou de
+  // ser curta: são ~340 notas no banco, e elas só crescem. O pedido foi
+  // explícito — "mostra xx recentes, aí quando acaba tem um botãozinho mostrar
+  // mais, e só se clicar carrega mais xx recentes".
+  //
+  // ⚠️ O lote é de TELA, não de rede: as conversas já estão em memória e a
+  // lista é virtualizada, então nada fica mais rápido por cortar aqui. O que
+  // melhora é a LEITURA — uma caixa de entrada de 300 linhas não é caixa de
+  // entrada. Por isso o corte vale só para os recados, e o botão diz quantas
+  // ainda faltam em vez de esconder o tamanho de verdade.
+  const LOTE_RECADOS = 30;
+  const [mostraRecados, setMostraRecados] = useState(LOTE_RECADOS);
+  // voltar para a fila de recados recomeça pelo primeiro lote: o botão é para
+  // ir mais fundo AGORA, não uma preferência que a pessoa carrega para sempre
+  useEffect(() => { setMostraRecados(LOTE_RECADOS); }, [fila]);
 
   const [precisaCompleta, setPrecisaCompleta] = useState(false);
   const [contagensServidor, setContagensServidor] = useState<Contagens | null>(null);
@@ -466,7 +484,7 @@ export function Casca({
             transferida_de: null, etapa: null,
             ultima_atividade: "", ultima_mensagem: null, ultima_enviada_por: null,
             nao_lida: false, favorita: false, na_fila: false, status: "aberta", motivo: null,
-          nota_nova: 0, nota_autor: null,
+          notas: 0, nota_nova: 0, nota_autor: null,
           });
         }
       })
@@ -1367,14 +1385,14 @@ export function Casca({
       favoritas: base.filter((c) => c.favorita).length,
       fila: base.filter((c) => c.na_fila).length,
       resolvidas: base.filter((c) => c.status === "resolvida").length,
-      recados: base.filter((c) => c.nota_nova > 0).length,
+      recados: base.filter((c) => c.notas > 0).length,
       // agenda, não fila: o número dela mora no cabeçalho da própria lista
       carteira: null,
     };
   }, [lista, completa, contagensServidor, comRecorte, recortes, passaVend, passaLinha, passaEtapa]);
 
 
-  const visiveis = useMemo(() => {
+  const todasVisiveis = useMemo(() => {
     const t = busca.trim().toLowerCase();
     const so = t.replace(/\D/g, "");
     if (fila === "carteira") return [];
@@ -1390,7 +1408,7 @@ export function Casca({
               : fila === "fila"
                 ? c.na_fila
                 : fila === "recados"
-                  ? c.nota_nova > 0
+                  ? c.notas > 0
                   : fila === "resolvidas"
                   ? c.status === "resolvida"
                   : false;
@@ -1400,9 +1418,24 @@ export function Casca({
       const tel = String(c.telefone ?? "").replace(/\D/g, "");
       return nome.includes(t) || (so.length >= 3 && tel.includes(so));
     });
+    // ⚠️ RECADOS ordena pela NOTA, não pela conversa: a fila responde "o que
+    // foi escrito por último", e uma nota de hoje numa conversa parada há um
+    // mês ficaria no fim — logo, fora do primeiro lote.
+    if (fila === "recados") {
+      const por = filtradas.slice().sort((a, b) => String(b.nota_em ?? "").localeCompare(String(a.nota_em ?? "")));
+      return antigasPrimeiro ? por.reverse() : por;
+    }
     // a lista chega da mais recente para a mais antiga: inverter é de graça
     return antigasPrimeiro ? filtradas.slice().reverse() : filtradas;
   }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro]);
+
+  // ⚠️ O corte é a ÚLTIMA coisa, depois do filtro e da busca — senão o botão
+  // prometeria "mais 270" numa busca que só tem três resultados.
+  const visiveis = useMemo(
+    () => (fila === "recados" ? todasVisiveis.slice(0, mostraRecados) : todasVisiveis),
+    [todasVisiveis, fila, mostraRecados],
+  );
+  const recadosOcultos = fila === "recados" ? Math.max(0, todasVisiveis.length - visiveis.length) : 0;
 
   // ---- quem aparece no seletor de consultor -------------------------------
   //
@@ -1437,7 +1470,7 @@ export function Casca({
       : fila === "nao_lidas" ? c.nao_lida && !c.na_fila && c.status !== "resolvida"
       : fila === "favoritas" ? c.favorita
       : fila === "fila" ? c.na_fila
-      : fila === "recados" ? c.nota_nova > 0
+      : fila === "recados" ? c.notas > 0
       : fila === "resolvidas" ? c.status === "resolvida"
       : false;
 
@@ -1469,6 +1502,16 @@ export function Casca({
   // (`comExtras`). Sem isso a lista completa tem 4 mil conversas e nenhuma
   // etapa, e contar nela devolveria zero em todas as sete — o número mentiroso
   // que a §61.5 descreve, e o mais difícil de perceber.
+  // ⚠️ DOIS NÚMEROS, de propósito (#41): o filtro "Recados" mostra toda
+  // conversa COM nota (inclusive as minhas), e o alerta conta só o que pede
+  // ação — nota de outra pessoa que eu ainda não vi. Com um número só, ou a
+  // minha nota some do filtro (era o defeito) ou o ponto laranja fica aceso
+  // para sempre por causa dela.
+  const recadosNovos = useMemo(
+    () => (completa ? lista.filter((c) => c.nota_nova > 0).length : contagensServidor?.recados_novos ?? null),
+    [completa, lista, contagensServidor],
+  );
+
   const cuboServidor = contagensServidor?.cubo;
   const porEtapa = useMemo(() => {
     if (completa && comExtras) return contagensDosRecortes.porEtapa;
@@ -1687,6 +1730,9 @@ export function Casca({
             carregando={carregandoLista}
             completa={completa}
             contagens={contagens}
+            recadosNovos={recadosNovos}
+            ocultos={recadosOcultos}
+            aoMostrarMais={() => setMostraRecados((n) => n + LOTE_RECADOS)}
             aoAbrir={abrir}
             // os três gestos que exigem a lista inteira. Fora deles, a sessão
             // custa a primeira página e mais nada.
