@@ -28,6 +28,11 @@ export type Mensagem = {
   reacao: string | null;
   resposta_a: string | null;
   erro: string | null;
+  /** o pino que a cliente mandou (0115, §62). `null` na esmagadora maioria. */
+  localizacao?: {
+    lat: number; lng: number;
+    nome?: string | null; endereco?: string | null; url?: string | null;
+  } | null;
   /** SÓ DO NAVEGADOR — nunca vem do servidor. A bolha de um anexo que ainda
    *  está subindo: a prévia é o próprio arquivo (`URL.createObjectURL`) e `pct`
    *  é o andamento do upload. Some quando a linha de verdade chega. */
@@ -46,7 +51,10 @@ export type Thread = {
 };
 
 const COLS =
-  "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,reacao,resposta_a,erro";
+  // ⚠️ `localizacao` (0115) precisa estar aqui: sem ela a bolha não tem como
+  // desenhar o cartão do mapa, e o que sobra é o texto cru — que para um pino
+  // sem nome é um par de coordenadas, inútil para quem atende (demanda #44).
+  "id,conteudo,enviada_por,tipo,status,criada_em,midia_tipo,midia_mime,midia_nome,reacao,resposta_a,erro,localizacao";
 
 export async function lerThread(cliente_id: string, limite = 40): Promise<Thread> {
   const sb = banco();
