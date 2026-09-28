@@ -2304,6 +2304,8 @@ export default function Page() {
           {!isMobile && (
           <button
             onClick={sair}
+            // dentro do hub (iframe) o Sair do Pulse some: vale o do hub, la em cima (layout.tsx)
+            className="so-fora-do-hub"
             style={{ background: "transparent", border: `1px solid ${RD.border}`, color: RD.gray, borderRadius: 8, padding: "5px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
           >
             Sair
@@ -2352,7 +2354,7 @@ export default function Page() {
                 <Link href="/admin" onClick={fecha} style={row}>⚙️ Administração<SeloSugestoes fila={sugestoes} /></Link>
               )}
               <button onClick={() => { alternarTema(); }} style={row}>🎨 Tema: {TEMA_ROTULO[tema]} <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>trocar ↻</span></button>
-              <button onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
+              <button className="so-fora-do-hub" onClick={() => { fecha(); sair(); }} style={{ ...row, color: RD.wine, borderBottom: "none", fontWeight: 700 }}>Sair</button>
             </div>
           </>
         );
