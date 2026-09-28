@@ -37,7 +37,16 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="pt-BR" className={inter.className}>
+    <html lang="pt-BR" className={inter.className} suppressHydrationWarning>
+      <head>
+        {/* Dentro do iframe do hub, o que so vale no app sozinho (o Sair) nasce escondido: o <html>
+            e marcado antes da primeira pintura. Pedido do dono em 27/09/2026 — eram dois Sair. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "try{if(window.self!==window.top)document.documentElement.dataset.embutido='hub'}catch(e){document.documentElement.dataset.embutido='hub'}",
+          }}
+        />
+      </head>
       <body
         style={{
           margin: 0,
@@ -47,7 +56,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           WebkitFontSmoothing: "antialiased",
         }}
       >
-        <style dangerouslySetInnerHTML={{ __html: "@keyframes pulse-alert{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.25;transform:scale(.65)}}.et-tip-wrap{display:inline-flex;align-items:center;cursor:help}" }} />
+        <style dangerouslySetInnerHTML={{ __html: "@keyframes pulse-alert{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.25;transform:scale(.65)}}.et-tip-wrap{display:inline-flex;align-items:center;cursor:help}html[data-embutido=hub] .so-fora-do-hub{display:none!important}" }} />
         <RegistrarPwa />
         <LembrarTela />
         <VerComo />
