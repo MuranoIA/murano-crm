@@ -860,6 +860,7 @@ export function Casca({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           cliente_id: id,
+          origem: "conversa", // separa o custo da Meta no Café Code (massa × avulso)
           template_id: t.template_id,
           // só manda `variaveis` quando o template pede campos: a rota recusa
           // lista vazia em template de um campo só, e preenche o nome sozinha
