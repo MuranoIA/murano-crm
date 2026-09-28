@@ -65,6 +65,11 @@ export type ItemCarteira = {
   /** o começo da última mensagem (só de quem já conversou; `?previa=1`) */
   ultima_mensagem?: string | null;
   ultima_enviada_por?: string | null;
+  /** o contato tem conversa — ainda que ela não esteja na MINHA lista */
+  tem_conversa?: boolean;
+  /** …e de quem ela é, quando não é de quem a agenda diz. Acontece quando dois
+   *  cadastros do ERP dividem o mesmo telefone (demanda #43). */
+  conversa_de?: string | null;
 };
 
 // ---------------------------------------------------------------------------
