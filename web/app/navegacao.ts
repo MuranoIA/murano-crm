@@ -20,6 +20,9 @@
 // atendimento pede.
 // ---------------------------------------------------------------------------
 
+// ⚠️ SEM EMOJI NO RÓTULO (28/09/2026, pedido do dono): emoji é desenhado
+// pela fonte do sistema — cor, peso e alinhamento não são nossos, e três deles
+// no meio de sete palavras faziam a barra parecer improvisada. O nome basta.
 export type ItemNav = {
   href: string;
   rotulo: string;
@@ -30,17 +33,17 @@ export type ItemNav = {
 
 export const NAV: ItemNav[] = [
   { href: "/", rotulo: "Funil" },
-  { href: "/chat", rotulo: "💬 Chat" },
+  { href: "/chat", rotulo: "Chat" },
   { href: "#orcamento", rotulo: "Orçamento", acao: "orcamento" },
   { href: "/analises", rotulo: "Análises", soAdmin: true },
   { href: "/templates", rotulo: "Templates" },
-  { href: "/admin", rotulo: "⚙️ Administração", soAdmin: true },
+  { href: "/admin", rotulo: "Administração", soAdmin: true },
 ];
 
 /** Os indicadores de atendimento: fora da barra, mas a um clique de quem atende. */
 export const INDICADORES = {
   href: "/chat/indicadores",
-  rotulo: "📊 Indicadores",
+  rotulo: "Indicadores",
   dica: "Tempo de resposta e encerramentos por vendedor",
 };
 

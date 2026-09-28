@@ -3,6 +3,7 @@
 import { memo } from "react";
 import type { Conversa } from "./tipos";
 import { iniciais, nomeLimpo, previa, quando, tomDoAvatar } from "./formato";
+import { nomeComCodigo } from "../../../lib/nomeCliente";
 
 // Uma linha da lista. `memo` com props estáveis: quando uma mensagem chega, só
 // a conversa dela muda de objeto — as outras 300 linhas não redesenham. É o
@@ -13,12 +14,18 @@ function Linha({
   selecionada,
   aoAbrir,
   presentes,
+  consultor,
 }: {
   c: Conversa;
   selecionada: boolean;
   aoAbrir: (id: string) => void;
   /** outras pessoas com esta conversa aberta agora (anti-colisão) */
   presentes?: string[];
+  /** de quem é a conversa. Só vem para quem enxerga todas as carteiras
+   *  (admin, home, pós-venda, supervisão) — pedido do dono em 28/09/2026: numa
+   *  lista de todas as carteiras, "de quem é isto?" é a pergunta que decide se
+   *  vale abrir, e ela estava sem resposta. */
+  consultor?: { nome: string; cor: string | null };
 }) {
   const resolvida = c.status === "resolvida";
   return (
@@ -54,7 +61,10 @@ function Linha({
               c.nao_lida ? "font-semibold text-v2-tinta" : "font-medium text-v2-tinta",
             ].join(" ")}
           >
-            {nomeLimpo(c.cliente)}
+            {/* `1234 - NOME`, como no chat de hoje: o código é o que se digita
+                no ERP, no pedido e na consulta. Custo ZERO — o `codcli` já vem
+                no mesmo SELECT que traz o nome (lib/nomeCliente). */}
+            {nomeComCodigo(nomeLimpo(c.cliente), c.codcli)}
           </span>
           <span className="shrink-0 text-[11px] tabular-nums text-v2-tinta-fraca">{quando(c.ultima_atividade)}</span>
         </span>
@@ -78,8 +88,29 @@ function Linha({
           )}
         </span>
 
-        {(c.na_fila || resolvida || c.transferida_de || c.nota_nova > 0 || (presentes && presentes.length > 0)) && (
+        {(consultor || c.na_fila || resolvida || c.transferida_de || c.nota_nova > 0 || (presentes && presentes.length > 0)) && (
           <span className="mt-1 flex flex-wrap items-center gap-1">
+            {/* DE QUEM É a conversa. A cor vem de `carteira_config` — a mesma
+                do board e do funil, para a pessoa ser sempre a mesma cor no
+                sistema inteiro. Entra SUAVE (um véu da cor, não a cor chapada):
+                são até 900 etiquetas numa tela, e nesse volume a cor cheia vira
+                ruído e come a leitura da prévia, que é o que decide se abre. */}
+            {consultor && (
+              <span
+                title={`atende ${consultor.nome}`}
+                className="flex items-center gap-1 rounded-md px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-v2-tinta-fraca"
+                style={
+                  consultor.cor
+                    ? { background: `color-mix(in srgb, ${consultor.cor} 13%, transparent)` }
+                    : { background: "var(--color-v2-superficie-2)" }
+                }
+              >
+                {consultor.cor && (
+                  <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ background: consultor.cor }} />
+                )}
+                {consultor.nome}
+              </span>
+            )}
             {/* o recado é da supervisão PARA mim: pede ação, por isso laranja */}
             {c.nota_nova > 0 && (
               <span
