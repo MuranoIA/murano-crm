@@ -1,7 +1,8 @@
 "use client";
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { pedacoDeMapa, urlDoLadrilho } from "../../../lib/mapaTiles";
 import type { Citada, Mensagem } from "./tipos";
 import { hora } from "./formato";
 import { traduzErroMeta } from "../../../lib/erroMeta";
@@ -212,10 +213,17 @@ function Conteudo({ m }: { m: Mensagem }) {
   // chat-v2 não sabia desenhá-lo. Mesmo cartão nos dois sentidos, senão a
   // conversa contaria duas histórias visuais para a mesma coisa.
   //
-  // ⚠️ SEM imagem de mapa: um preview estático exigiria chave de um provedor de
-  // tiles e faria cada bolha virar uma requisição a terceiro numa tela que
-  // carrega 200 mensagens. O cartão traz o que serve para agir — e o toque
-  // abre o mapa do próprio aparelho.
+  // ⚠️ A MINIATURA (28/09/2026, pedido do dono): o cartão de texto respondia
+  // "tem uma localização", não "onde". Ela é montada com ladrilhos do
+  // OpenStreetMap servidos pela NOSSA rota — ver `lib/mapaTiles.ts` para a
+  // conta e `api/chat/mapa` para o porquê de passarem por nós.
+  //
+  // O que a mantém barata: `loading="lazy"` (só custa quando a bolha entra na
+  // tela), ladrilho cacheado por uma semana, e o volume — 61 mensagens de
+  // localização em toda a base, 56 nos últimos 30 dias.
+  //
+  // Se o mapa não vier, a bolha volta a ser o cartão de texto que já era: o
+  // `onError` esconde o mosaico e nada mais muda.
   if (m.localizacao && Number.isFinite(m.localizacao.lat) && Number.isFinite(m.localizacao.lng)) {
     const { lat, lng, nome, endereco, url } = m.localizacao;
     const mapa = url || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
@@ -224,23 +232,72 @@ function Conteudo({ m }: { m: Mensagem }) {
         href={mapa}
         target="_blank"
         rel="noreferrer"
-        className="flex w-[260px] max-w-full items-start gap-2 rounded-lg bg-v2-superficie-2 p-2 no-underline"
+        className="block w-[260px] max-w-full overflow-hidden rounded-lg bg-v2-superficie-2 no-underline"
       >
-        <span aria-hidden className="text-[18px] leading-none">📍</span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium text-v2-tinta">{nome || "Localização"}</span>
-          {/* sem nome nem endereço sobram as coordenadas — e aí elas são a
-              informação, não um rótulo feio: dizem onde é, e o toque abre */}
-          <span className="mt-0.5 block text-[12.5px] leading-[17px] text-v2-tinta-fraca">
-            {endereco || `${lat.toFixed(5)}, ${lng.toFixed(5)}`}
+        <Miniatura lat={lat} lng={lng} />
+        <span className="flex items-start gap-2 p-2">
+          <span aria-hidden className="text-[18px] leading-none">📍</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium text-v2-tinta">{nome || "Localização"}</span>
+            {/* sem nome nem endereço sobram as coordenadas — e aí elas são a
+                informação, não um rótulo feio: dizem onde é, e o toque abre */}
+            <span className="mt-0.5 block text-[12.5px] leading-[17px] text-v2-tinta-fraca">
+              {endereco || `${lat.toFixed(5)}, ${lng.toFixed(5)}`}
+            </span>
+            <span className="mt-1 block text-[12px] font-medium text-v2-azul">abrir no mapa</span>
           </span>
-          <span className="mt-1 block text-[12px] font-medium text-v2-azul">abrir no mapa</span>
         </span>
       </a>
     );
   }
 
   return <span className="whitespace-pre-wrap break-words">{m.conteudo}</span>;
+}
+
+/**
+ * O mosaico 2×2 com o alfinete no centro.
+ *
+ * ⚠️ A ALTURA É RESERVADA no `span` de fora: sem isso a bolha pula quando os
+ * ladrilhos terminam de carregar, e o CLS estoura — a mesma regra da imagem.
+ *
+ * A atribuição do OpenStreetMap não é enfeite: é condição de uso dos ladrilhos.
+ */
+function Miniatura({ lat, lng }: { lat: number; lng: number }) {
+  const [caiu, setCaiu] = useState(false);
+  const pedaco = useMemo(() => pedacoDeMapa(lat, lng), [lat, lng]);
+  if (!pedaco || caiu) return null;
+  return (
+    <span
+      className="relative block overflow-hidden bg-v2-superficie-2"
+      style={{ width: "100%", height: pedaco.altura }}
+    >
+      {pedaco.ladrilhos.map((t) => (
+        <img
+          key={`${t.z}/${t.x}/${t.y}`}
+          src={urlDoLadrilho(t)}
+          alt=""
+          aria-hidden
+          loading="lazy"
+          decoding="async"
+          width={256}
+          height={256}
+          onError={() => setCaiu(true)}
+          className="absolute max-w-none"
+          style={{ left: t.esq, top: t.topo }}
+        />
+      ))}
+      {/* o alfinete fica no centro porque o mosaico foi deslocado para isso */}
+      <span
+        aria-hidden
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full text-[20px] leading-none drop-shadow"
+      >
+        📍
+      </span>
+      <span className="absolute bottom-0 right-0 bg-white/70 px-1 text-[9px] leading-[13px] text-v2-tinta-fraca">
+        © OpenStreetMap
+      </span>
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------

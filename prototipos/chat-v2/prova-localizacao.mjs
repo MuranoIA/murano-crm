@@ -95,6 +95,44 @@ try {
       .filter(s => s.children.length === 0 && /^📍\s*-?\d/.test((s.textContent||'').trim())).length;`);
   conferir(cru === 0, "o texto cru não aparece ao lado do cartão", `${cru} sobras`);
 
+  // ---- a MINIATURA do mapa (pedido do dono, 28/09) ----------------------
+  const mapa = await a.js(`
+    const cartoes = [...document.querySelectorAll('a')].filter(x => /maps/.test(x.getAttribute('href')||''));
+    const c = cartoes[0];
+    if (!c) return null;
+    const janela = c.querySelector('span.relative.block');
+    const imgs = [...c.querySelectorAll('img')];
+    const r = janela ? janela.getBoundingClientRect() : null;
+    // a janela está COBERTA pelos ladrilhos? (sem buraco branco na miniatura)
+    const cobre = (px, py) => imgs.some(i => {
+      const b = i.getBoundingClientRect();
+      return px >= b.left && px < b.right && py >= b.top && py < b.bottom;
+    });
+    const cantos = r ? [[r.left+1,r.top+1],[r.right-1,r.top+1],[r.left+1,r.bottom-1],[r.right-1,r.bottom-1]] : [];
+    return {
+      ladrilhos: imgs.length,
+      lazy: imgs.every(i => i.getAttribute('loading') === 'lazy'),
+      pelaNossaRota: imgs.every(i => (i.getAttribute('src')||'').startsWith('/api/chat/mapa?')),
+      carregados: imgs.filter(i => i.complete && i.naturalWidth > 0).length,
+      altura: r ? Math.round(r.height) : 0,
+      descobertos: cantos.filter(([x,y]) => !cobre(x,y)).length,
+      atribuicao: /OpenStreetMap/.test(c.textContent || ''),
+    };`);
+
+  conferir(mapa && mapa.ladrilhos === 4, "a miniatura é um mosaico de 4 ladrilhos", `${mapa?.ladrilhos}`);
+  conferir(
+    mapa?.pelaNossaRota,
+    "…servidos pela NOSSA rota, não pedidos do navegador ao OpenStreetMap",
+  );
+  conferir(mapa?.lazy, "…e só carregam quando a bolha entra na tela (lazy)");
+  conferir(mapa?.carregados === 4, "os quatro chegaram de verdade", `${mapa?.carregados}/4`);
+  conferir(
+    mapa?.descobertos === 0,
+    "a janela do mapa fica INTEIRA coberta — sem buraco branco no canto",
+    `${mapa?.descobertos} cantos descobertos · ${mapa?.altura}px de altura`,
+  );
+  conferir(mapa?.atribuicao, "a atribuição do OpenStreetMap está na miniatura (é condição de uso)");
+
   await a.foto("localizacao-cartao");
   const exc = a.excecoes.filter((e) => !/ResizeObserver/.test(e));
   conferir(!exc.length, "sem exceção", exc.slice(0, 1).join(""));
