@@ -227,3 +227,51 @@ export async function resolverListaManual(db: any, codclis: number[]): Promise<R
 
   return { cards, semAlcance };
 }
+
+/**
+ * Janela em que "já recebeu este template" vale como sinal de envio INTERROMPIDO.
+ * Doze horas cobrem um envio de 5.000 (2h30 no laço antigo, ~15-30 min agora)
+ * retomado no mesmo dia, sem tratar como "duplicado" quem recebeu o mesmo
+ * template numa campanha de semanas atrás.
+ */
+export const JANELA_RETOMADA_HORAS = 12;
+
+/**
+ * Quem, entre os selecionados, JÁ recebeu este template há pouco.
+ *
+ * Por que existe (18/09/2026): a planilha pula TODAS as proteções, inclusive a
+ * anti-repetição — decisão do usuário, "a planilha já é o resultado curado". Mas
+ * o envio é um laço na aba, e com 5.000 clientes ela fica aberta por muito
+ * tempo. Se a aba fechar aos 3.000 e a mesma planilha for enviada de novo, os
+ * primeiros 3.000 recebem em DOBRO (R$ 0,43 a mais cada e a cliente recebendo
+ * duas vezes). A tela dizia "é só rodar de novo, que quem já recebeu fica de
+ * fora" — o que era falso justamente para planilha.
+ *
+ * Isto NÃO reaplica a proteção: só INFORMA quem já recebeu, e a pessoa decide
+ * (pular esses, ou enviar para todos de novo de propósito). A decisão continua
+ * sendo dela, e a planilha continua valendo como o público inteiro.
+ *
+ * O `template_id` gravado por `/api/send-template` é o nome do template na Meta
+ * (`meta_nome`) — o mesmo valor que a tela manda como `templateEnvioId`.
+ */
+export async function quemJaRecebeu(
+  db: any, templateEnvioId: string, selecionados: { envio_id: string; cliente_id: string }[],
+  horas: number = JANELA_RETOMADA_HORAS,
+): Promise<string[]> {
+  if (!templateEnvioId || !selecionados.length) return [];
+  const desde = new Date(Date.now() - horas * 3_600_000).toISOString();
+  const recebeu = new Set<string>();
+  // ⚠️ paginado: o PostgREST corta em 1.000 linhas SEM avisar (§61.2), e um
+  // envio interrompido aos 3.000 deixa 3.000 linhas para ler.
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await db.from("disparos_template").select("cliente_id")
+      .eq("template_id", templateEnvioId).gte("criada_em", desde)
+      .order("id", { ascending: true }).range(de, de + 999);
+    if (error) throw new Error(error.message);
+    for (const l of data ?? []) if (l.cliente_id) recebeu.add(String(l.cliente_id));
+    if (!data || data.length < 1000) break;
+  }
+  return selecionados
+    .filter((s) => recebeu.has(String(s.envio_id)) || recebeu.has(String(s.cliente_id)))
+    .map((s) => s.envio_id);
+}

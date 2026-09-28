@@ -105,6 +105,13 @@ export default async function (t) {
         return true;`);
       await new Promise((r) => setTimeout(r, 400));
 
+      // Se algum destes clientes já recebeu o template padrão hoje (a equipe envia o
+      // dia todo), a tela OBRIGA a escolher entre pular esses ou enviar para todos —
+      // é a proteção contra envio em dobro (regressao-retomar-planilha). Aqui o envio
+      // é simulado, então escolhe "todos" para manter a conta deste caso intacta.
+      await aba.js(`const b=[...document.querySelectorAll('button')].find(x=>(x.textContent||'').startsWith('Enviar para todos os')); if(b) b.click(); return !!b;`);
+      await new Promise((r) => setTimeout(r, 300));
+
       // ---- o SIMULADOR de /api/send-template (trava a) ----------------------------
       await aba.js(`
         window.__e = { chamadas: {}, ordem: [], emVoo: 0, maxEmVoo: 0, total: 0, reais: 0 };
