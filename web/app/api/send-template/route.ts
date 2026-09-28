@@ -29,13 +29,18 @@ export async function POST(req: Request) {
     // em massa não têm como pedir um texto por cliente e continuam chamando
     // esta rota como sempre chamaram, sem o campo. Por isso ele é opcional e a
     // ausência dele reproduz o comportamento antigo, inteiro.
-    let cliente_id: string, template_id: string | undefined, variaveis: unknown;
+    //
+    // `origem` diz de qual tela saiu o envio (massa | conversa | card). A Meta
+    // cobra igual nos três, então é a única forma de o Café Code separar o custo
+    // do disparo em massa do envio avulso. Opcional: quem não manda grava null.
+    let cliente_id: string, template_id: string | undefined, variaveis: unknown, origemBruta: unknown;
     try {
-      ({ cliente_id, template_id, variaveis } = await req.json());
+      ({ cliente_id, template_id, variaveis, origem: origemBruta } = await req.json());
     } catch {
       return Response.json({ error: "body inválido" }, { status: 400 });
     }
     if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
+    const origem = origemBruta === "massa" || origemBruta === "conversa" || origemBruta === "card" ? origemBruta : null;
 
     const sb = createClient(supaUrl!, supaKey!, { auth: { persistSession: false } });
 
@@ -176,7 +181,7 @@ export async function POST(req: Request) {
         const { wamid } = await sendTemplate(to, nomeTemplate, escolhido?.idioma ?? "pt_BR", componentes, linha);
         await sb.from("disparos_template").insert({
           id: wamid, cliente_id: cli.id, telefone: cli.telefone, vendedor: cli.carteira,
-          operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent",
+          operator_id: operator_id ?? null, template_id: nomeTemplate, status: "sent", origem,
         });
         // espelha em mensagens como template (o funil usa isso p/ a etapa tentativa_contato)
         //

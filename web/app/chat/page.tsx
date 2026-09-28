@@ -3502,6 +3502,7 @@ export default function Chat() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cliente_id: sel.cliente_id,
+          origem: "conversa",
           ...(escolha ? { template_id: escolha } : {}),
           // o servidor revalida tudo isto: a tela avisa cedo, mas não é ela
           // quem autoriza o envio
