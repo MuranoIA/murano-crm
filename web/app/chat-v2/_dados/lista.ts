@@ -160,7 +160,13 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
   const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados] = await Promise.all([
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
-    sb.from("chat_conversa").select("cliente_id,status"),
+    // ⚠️ SÓ O QUE NÃO ESTÁ ABERTO (bug relatado em 28/09/2026). A tabela tem
+    // 1.518 linhas e o PostgREST corta em 1.000 EM SILÊNCIO: a conversa que
+    // alguém acabava de resolver caía fora da página, voltava sem status e
+    // reaparecia em "Meus atendimentos" na primeira recarga. Quem não está
+    // aqui é `aberta` por definição, então pedir só as outras é ao mesmo tempo
+    // o conserto e a consulta mais barata (147 linhas em vez de 1.518).
+    sb.from("chat_conversa").select("cliente_id,status").neq("status", "aberta"),
     carregarAtribuicoes(sb),
     recadosNaoVistos(sb, s.usuario),
   ]);
@@ -223,7 +229,13 @@ export async function lerLista(
     carregarAtribuicoes(sb),
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
-    sb.from("chat_conversa").select("cliente_id,status,motivo"),
+    // ⚠️ SÓ O QUE NÃO ESTÁ ABERTO (bug relatado em 28/09/2026). A tabela tem
+    // 1.518 linhas e o PostgREST corta em 1.000 EM SILÊNCIO: a conversa que
+    // alguém acabava de resolver caía fora da página, voltava sem status e
+    // reaparecia em "Meus atendimentos" na primeira recarga. Quem não está
+    // aqui é `aberta` por definição, então pedir só as outras é ao mesmo tempo
+    // o conserto e a consulta mais barata (147 linhas em vez de 1.518).
+    sb.from("chat_conversa").select("cliente_id,status,motivo").neq("status", "aberta"),
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
     // quem atende sem carteira. `carteira is null` porque quem tem já está
     // na lista acima, sob o slug, e apareceria duas vezes; `atende_chat`

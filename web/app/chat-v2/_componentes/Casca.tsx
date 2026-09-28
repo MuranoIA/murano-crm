@@ -1243,13 +1243,19 @@ export function Casca({
           setLista((l) =>
             l.map((c) => (c.cliente_id === id ? { ...c, status, motivo: motivo ?? null } : c)),
           );
+          // ⚠️ RESOLVER FECHA A CONVERSA (28/09/2026, pedido do dono). Ela saiu
+          // da fila de trabalho e some da lista aberta — deixá-la na tela dizia
+          // o contrário do que acabou de ser feito, e o próximo atendimento
+          // começava por cima de uma conversa encerrada. Reabrir NÃO fecha:
+          // quem reabre quer continuar ali.
+          if (status === "resolvida") fechar_();
           avisar(status === "resolvida" ? "Conversa resolvida." : "Conversa reaberta.", { tom: "ok" });
           recarregarContagens();
         })
         .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
         .finally(() => setOcupado(false));
     },
-    [recarregarContagens, avisar, marcarMutacao],
+    [recarregarContagens, avisar, marcarMutacao, fechar_],
   );
 
   // ---- ENCAMINHAR ---------------------------------------------------------
