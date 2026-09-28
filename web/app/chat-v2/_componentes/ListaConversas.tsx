@@ -35,6 +35,7 @@ export function ListaConversas({
   consultores,
   linhas,
   contaPorConsultor,
+  totalConsultores,
   contaPorLinha,
   contaPorEtapa,
   carteira,
@@ -65,9 +66,14 @@ export function ListaConversas({
   aoAbrirFiltros: () => void;
   consultores: { endereco: string; nome: string; cor: string | null }[];
   linhas: { id: string; rotulo: string; numero: string | null }[];
-  contaPorConsultor: Map<string, number>;
-  contaPorLinha: Map<string, number>;
-  contaPorEtapa: Map<string, number>;
+  // `null` = ainda não sei. Os números vêm do CUBO do servidor (~15 kB) quando
+  // a lista inteira não está em memória, e dela quando está — ver `contagens.ts`.
+  // Nunca zero no lugar de "não sei": zero é uma afirmação.
+  contaPorConsultor: Map<string, number> | null;
+  /** o total sem o recorte de consultor (a opção "Todos") */
+  totalConsultores: number | null;
+  contaPorLinha: Map<string, number> | null;
+  contaPorEtapa: Map<string, number> | null;
   /** a agenda (§38); null = ainda não chegou */
   carteira: ItemCarteira[] | null;
   /** null = a lista inteira ainda não veio: não dá para afirmar "sem conversa" */
@@ -238,7 +244,7 @@ export function ListaConversas({
             {COLUNAS.map((c) => {
               const k = c.key as EtapaBoard;
               const ativo = recortes.etapa === k;
-              const n = completa ? contaPorEtapa.get(c.key) ?? 0 : null;
+              const n = contaPorEtapa ? contaPorEtapa.get(c.key) ?? 0 : null;
               return (
                 <button
                   key={c.key}
@@ -297,10 +303,14 @@ export function ListaConversas({
                 valor: c.endereco,
                 rotulo: c.nome,
                 cor: c.cor,
-                n: completa ? contaPorConsultor.get(c.endereco) ?? 0 : null,
+                n: contaPorConsultor ? contaPorConsultor.get(c.endereco) ?? 0 : null,
               }))}
               valor={recortes.vendedor}
-              total={completa ? conversas.length : null}
+              // "Todos os consultores" conta IGNORANDO o próprio consultor
+              // escolhido — senão a opção que desliga o filtro mostraria o
+              // número do filtro ligado. `conversas.length` não serve aqui: é o
+              // que está na tela DEPOIS de filtrar.
+              total={totalConsultores ?? (completa ? conversas.length : null)}
               aoEscolher={(v) => aoMudarRecortes({ ...recortes, vendedor: v })}
               aoAbrir={aoAbrirFiltros}
             />
@@ -315,7 +325,7 @@ export function ListaConversas({
                 valor: l.id,
                 rotulo: l.rotulo,
                 cor: null,
-                n: completa ? contaPorLinha.get(l.id) ?? 0 : null,
+                n: contaPorLinha ? contaPorLinha.get(l.id) ?? 0 : null,
               }))}
               valor={recortes.linha}
               total={completa ? conversas.length : null}

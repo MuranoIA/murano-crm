@@ -1,7 +1,7 @@
 // Tipos que a tela e o servidor compartilham. Ficam num arquivo só para não
 // haver duas definições da mesma conversa — o tipo é o contrato entre a carga
 // do servidor (`_dados/`) e o que a tela desenha.
-export type { Conversa, Lista } from "../_dados/lista";
+export type { Conversa, Contagens, Cubo, Lista } from "../_dados/lista";
 export type { Mensagem, Thread } from "../_dados/thread";
 import type { EtapaBoard } from "../../../lib/etapasBoard";
 
