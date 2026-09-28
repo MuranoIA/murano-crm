@@ -2210,6 +2210,7 @@ function DisparoMassaAba({ cfg, avisar, recarregar }: {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             cliente_id: alvo.envio_id,
+            origem: "massa", // separa o custo da Meta no Café Code (massa × avulso)
             ...(tpl?.envio_id ? { template_id: tpl.envio_id } : {}),
             // só quando o template pede mais de um campo: com um campo só, o
             // servidor põe o primeiro nome sozinho — que é o de sempre

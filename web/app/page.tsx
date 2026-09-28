@@ -1036,7 +1036,7 @@ export default function Page() {
       const r = await fetch("/api/send-template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cliente_id: clienteId }),
+        body: JSON.stringify({ cliente_id: clienteId, origem: "card" }),
       });
       // lê como texto e tenta JSON — evita "Unexpected end of JSON input" em corpo vazio
       const txt = await r.text();
