@@ -227,7 +227,7 @@ export function ListaConversas({
           // dono): sete quadradinhos soltos deixavam um vão à direita e pareciam
           // sete botões avulsos. Grade de sete colunas iguais, dentro de um
           // trilho — o segmento aceso é preenchido, como numa régua de etapas.
-          <div className="mt-2 grid grid-cols-7 gap-1 rounded-xl bg-v2-superficie-2 p-1 ring-1 ring-inset ring-v2-linha">
+          <div className="mt-2 grid grid-cols-7 gap-1">
             {COLUNAS.map((c) => {
               const k = c.key as EtapaBoard;
               const ativo = recortes.etapa === k;
@@ -240,10 +240,13 @@ export function ListaConversas({
                   aria-pressed={ativo}
                   title={n != null ? `${TITULO_ETAPA[k]} — ${n}` : TITULO_ETAPA[k]}
                   className={[
-                    "flex h-8 min-w-0 flex-col items-center justify-center rounded-lg leading-none transition-colors duration-150",
+                    // cada uma com o PRÓPRIO contorno e um degrau de sombra
+                    // (28/09, pedido do dono): dentro de um trilho só, liam
+                    // como régua e se misturavam ao fundo
+                    "flex h-9 min-w-0 flex-col items-center justify-center rounded-lg leading-none shadow-e1 ring-1 ring-inset transition-colors duration-150",
                     ativo
-                      ? "bg-v2-vinho text-white shadow-e1"
-                      : "text-v2-tinta-fraca hover:bg-v2-superficie",
+                      ? "bg-v2-vinho-claro ring-v2-vinho"
+                      : "bg-v2-superficie ring-v2-linha-forte hover:bg-v2-vinho-claro",
                   ].join(" ")}
                 >
                   {/* A LETRA, não o nome (como no chat de hoje e no print): sete
@@ -254,13 +257,13 @@ export function ListaConversas({
                   <span
                     aria-hidden
                     className="text-[12px] font-bold"
-                    style={{ color: ativo ? "#fff" : COR_ETAPA[k] }}
+                    style={{ color: COR_ETAPA[k] }}
                   >
                     {LETRA_ETAPA[k]}
                   </span>
                   <span className="sr-only">{TITULO_ETAPA[k]}</span>
                   {n != null && (
-                    <span className={["mt-0.5 text-[10px] tabular-nums", ativo ? "text-white/80" : "text-v2-tinta-fraca"].join(" ")}>
+                    <span className="mt-0.5 text-[10px] tabular-nums text-v2-tinta-fraca">
                       {n > 999 ? `${Math.round(n / 100) / 10}k` : n}
                     </span>
                   )}
@@ -322,10 +325,10 @@ export function ListaConversas({
               aria-pressed={antigasPrimeiro}
               title={antigasPrimeiro ? "Mostrando as mais antigas primeiro" : "Mostrando as mais recentes primeiro"}
               className={[
-                "flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] transition-colors duration-150",
+                "flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] shadow-e1 transition-colors duration-150",
                 antigasPrimeiro
-                  ? "bg-v2-vinho-claro text-v2-vinho-texto ring-1 ring-inset ring-v2-vinho"
-                  : "text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+                  ? "bg-v2-vinho text-white"
+                  : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
               ].join(" ")}
             >
               {antigasPrimeiro ? "↑ Antigas" : "↓ Recentes"}
@@ -340,6 +343,7 @@ export function ListaConversas({
           <ListaCarteira
             carteira={carteira}
             busca={busca}
+            consultor={recortes.vendedor}
             selecionada={selecionada}
             comConversa={comConversa}
             aoAbrir={aoAbrirDaCarteira}
@@ -491,8 +495,8 @@ function MenuRecorte({
         className={[
           "flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] transition-colors duration-150",
           atual
-            ? "bg-v2-vinho-claro text-v2-vinho-texto ring-1 ring-inset ring-v2-vinho"
-            : "text-v2-tinta ring-1 ring-inset ring-v2-linha hover:bg-v2-superficie-2",
+            ? "bg-v2-vinho text-white shadow-e2"
+            : "bg-v2-superficie font-medium text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
         ].join(" ")}
       >
         {atual?.cor ? (
@@ -617,7 +621,10 @@ function AtalhoFila({
       {/* o número só aparece quando pede ação — recado por ver, conversa sem
           dono. Contador em tudo vira decoração e some da vista. */}
       {n != null && n > 0 && (atalho.id === "recados" || atalho.id === "fila") && (
-        <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-v2-laranja px-1 text-center text-[10.5px] font-semibold leading-[18px] text-white ring-2 ring-v2-superficie">
+        // ⚠️ DENTRO do botão (28/09/2026). Pendurada para fora (-top-1), a
+        // bolinha era cortada pelo topo da faixa — e contador cortado é pior
+        // que contador nenhum: ele existe exatamente para ser lido de relance.
+        <span className="absolute right-0 top-0 min-w-[16px] rounded-full bg-v2-laranja px-1 text-center text-[10px] font-semibold leading-4 text-white ring-2 ring-v2-superficie">
           {n > 99 ? "99+" : n}
         </span>
       )}
@@ -661,13 +668,15 @@ function MiniCard({
       <span
         className={[
           "block text-[17px] font-bold leading-5 tabular-nums",
-          vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : ativo ? "text-v2-vinho-texto" : "text-v2-tinta",
+          ativo ? "text-white" : vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : "text-v2-tinta",
         ].join(" ")}
       >
         {/* sem número ainda: um traço, nunca um zero que mente */}
         {n == null ? "—" : n}
       </span>
-      <span className="block truncate text-[10.5px] leading-3 text-v2-tinta-fraca">{cartao.rotulo}</span>
+      <span className={["block truncate text-[10.5px] leading-3", ativo ? "text-white/85" : "text-v2-tinta-fraca"].join(" ")}>
+        {cartao.rotulo}
+      </span>
     </button>
   );
 }

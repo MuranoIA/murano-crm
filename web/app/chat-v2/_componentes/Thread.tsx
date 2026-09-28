@@ -48,6 +48,7 @@ export function Thread({
   aoReenviar,
   aoEncaminhar,
   aoResponder,
+  aoSalvarFigurinha,
   aoApagarNota,
 }: {
   mensagens: Mensagem[];
@@ -61,6 +62,7 @@ export function Thread({
   aoReenviar?: (m: Mensagem) => void;
   aoEncaminhar?: (m: Mensagem) => void;
   aoResponder?: (m: Mensagem) => void;
+  aoSalvarFigurinha?: (m: Mensagem) => void;
   aoApagarNota?: (n: Nota) => void;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
@@ -292,6 +294,7 @@ export function Thread({
                   aoReenviar={aoReenviar}
                   aoEncaminhar={aoEncaminhar}
                   aoResponder={aoResponder}
+                  aoSalvarFigurinha={aoSalvarFigurinha}
                 />
               )
             }

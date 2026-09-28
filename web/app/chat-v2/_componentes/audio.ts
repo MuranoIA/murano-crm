@@ -19,13 +19,25 @@ import { ehWebm, webmParaOgg } from "../../../lib/opusOgg";
 
 const FORMATOS = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"];
 
+// ⚠️ PARAR ≠ ENVIAR (28/09/2026, pedido do dono). Antes, soltar o botão
+// mandava o áudio na hora: quem tropeçou na frase ou foi interrompido no meio
+// já tinha enviado, e "apagar para todos" não existe na Cloud API (§49). Agora
+// parar guarda a PRÉVIA — dá para ouvir, regravar ou descartar —, e só o
+// "Enviar" manda. A prévia mora aqui, e não no compositor, porque é o mesmo
+// objeto que o gravador produz: dois donos do mesmo arquivo divergiriam.
+export type PreviaAudio = { arquivo: File; url: string; segundos: number };
+
 export function useGravador(aoPronto: (arquivo: File) => void, aoErro: (msg: string) => void) {
   const [gravando, setGravando] = useState(false);
   const [segundos, setSegundos] = useState(0);
+  const [previa, setPrevia] = useState<PreviaAudio | null>(null);
   const rec = useRef<MediaRecorder | null>(null);
   const pedacos = useRef<BlobPart[]>([]);
   const relogio = useRef<any>(null);
   const cancelado = useRef(false);
+  // quantos segundos a gravação durou: o `setSegundos(0)` do `onstop`
+  // apaga o estado antes de a prévia ser montada
+  const contados = useRef(0);
 
   const parar = useCallback((cancelar = false) => {
     cancelado.current = cancelar;
@@ -72,17 +84,34 @@ export function useGravador(aoPronto: (arquivo: File) => void, aoErro: (msg: str
           aoErro("Áudio curto demais — segure o botão para gravar.");
           return;
         }
-        aoPronto(new File([blob], `audio-${Date.now()}.${ext}`, { type: blob.type }));
+        const arquivo = new File([blob], `audio-${Date.now()}.${ext}`, { type: blob.type });
+        // PARAR guarda a prévia; quem manda é o botão "Enviar áudio"
+        setPrevia({ arquivo, url: URL.createObjectURL(arquivo), segundos: contados.current });
       };
       r.start();
       setGravando(true);
       setSegundos(0);
-      relogio.current = setInterval(() => setSegundos((s) => s + 1), 1000);
+      relogio.current = setInterval(() => setSegundos((s) => { contados.current = s + 1; return s + 1; }), 1000);
     } catch (e) {
       stream.getTracks().forEach((t) => t.stop()); // idem: falhar não pode deixar a luz acesa
       aoErro(explicarErroGravador(e));
     }
   }, [aoPronto, aoErro]);
 
-  return { gravando, segundos, gravar, parar };
+  /** manda a prévia e limpa (o "Enviar áudio") */
+  const confirmar = useCallback(() => {
+    if (!previa) return;
+    aoPronto(previa.arquivo);
+    URL.revokeObjectURL(previa.url);
+    setPrevia(null);
+  }, [previa, aoPronto]);
+
+  /** joga a prévia fora — nada foi enviado */
+  const descartar = useCallback(() => {
+    if (!previa) return;
+    URL.revokeObjectURL(previa.url);
+    setPrevia(null);
+  }, [previa]);
+
+  return { gravando, segundos, gravar, parar, previa, confirmar, descartar };
 }

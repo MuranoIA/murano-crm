@@ -266,6 +266,7 @@ function BolhaBase({
   aoReenviar,
   aoEncaminhar,
   aoResponder,
+  aoSalvarFigurinha,
 }: {
   m: Mensagem;
   primeiraDoGrupo: boolean;
@@ -278,6 +279,9 @@ function BolhaBase({
    *  para mídia — responder uma foto com outra foto é o gesto normal de quem
    *  atende salão. Ausente quando a mensagem não pode ser citada (ver abaixo). */
   aoResponder?: (m: Mensagem) => void;
+  /** guardar esta figurinha no pacote (0144). Só vem quando a bolha é
+   *  uma figurinha — para o resto não há o que salvar. */
+  aoSalvarFigurinha?: (m: Mensagem) => void;
 }) {
   const minha = m.enviada_por !== "customer";
   const falhou = m.status === "failed" || !!m.erro;
@@ -333,7 +337,7 @@ function BolhaBase({
         </span>
       </div>
 
-      {(aoResponder || aoEncaminhar) && !otimista && !falhou && (
+      {(aoResponder || aoEncaminhar || (aoSalvarFigurinha && m.midia_tipo === "sticker")) && !otimista && !falhou && (
         <span className="mt-0.5 flex gap-1">
           {/* ⚠️ Só dá para citar uma mensagem que a META conhece. Um id nosso
               (a bolha otimista) ou herdado do RD faria o Graph recusar a
@@ -361,6 +365,20 @@ function BolhaBase({
               className="acao-msg rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
             >
               ↪ encaminhar
+            </button>
+          )}
+          {/* SALVAR NO PACOTE (0144): só na figurinha, e é daqui que o pacote
+              nasce na prática — ninguém tem um `.webp` à mão, mas figurinha boa
+              chega na conversa toda semana. */}
+          {aoSalvarFigurinha && m.midia_tipo === "sticker" && (
+            <button
+              data-ripple
+              onClick={() => aoSalvarFigurinha(m)}
+              title="Guardar esta figurinha para reenviar depois"
+              aria-label="Salvar figurinha"
+              className="acao-msg rounded-full px-2 py-0.5 text-[11px] text-v2-tinta-fraca hover:bg-v2-superficie-2"
+            >
+              ☆ salvar figurinha
             </button>
           )}
         </span>

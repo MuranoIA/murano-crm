@@ -984,6 +984,51 @@ export function Casca({
     [apanharNovas, recarregarLista, avisar, citando],
   );
 
+  // FIGURINHA DO PACOTE (0144): a rota é a MESMA da mídia — ela baixa o
+  // arquivo guardado, manda pela Meta e espelha em `mensagens`. Sem bolha
+  // otimista aqui: não há arquivo local para prever, e a bolha de verdade
+  // chega em seguida, já com o tique.
+  const mandarFigurinha = useCallback(
+    (f: { id: number }) => {
+      const id = abertaRef.current;
+      if (!id) return;
+      setEnviando(true);
+      fetch("/api/chat/enviar-midia", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cliente_id: id, figurinha_id: f.id }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => apanharNovas())
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }))
+        .finally(() => setEnviando(false));
+    },
+    [apanharNovas, avisar],
+  );
+
+  // SALVAR NO PACOTE a figurinha que chegou (ou que saiu): é daí que o pacote
+  // nasce de verdade — ninguém tem um `.webp` à mão, mas figurinha boa chega
+  // na conversa toda semana.
+  const salvarFigurinha = useCallback(
+    (m: Mensagem) => {
+      fetch("/api/chat/figurinhas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mensagem_id: m.id }),
+      })
+        .then(async (r) => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+        })
+        .then(() => avisar("Figurinha salva no pacote.", { tom: "ok" }))
+        .catch((e) => avisar(String(e?.message ?? e), { tom: "erro" }));
+    },
+    [avisar],
+  );
+
   const mandarLocal = useCallback(
     (indice: number) => {
       const id = abertaRef.current;
@@ -1456,7 +1501,7 @@ export function Casca({
                   key={n.href}
                   data-ripple
                   onClick={() => setOrcamentoAberto(true)}
-                  className="rounded-full px-2.5 py-1 text-[12.5px] font-medium text-white/85 hover:bg-white/10"
+                  className="rounded-lg bg-white/10 px-2.5 py-1 text-[12.5px] font-medium text-white/90 ring-1 ring-inset ring-white/15 hover:bg-white/20"
                 >
                   {n.rotulo}
                 </button>
@@ -1465,9 +1510,15 @@ export function Casca({
                   key={n.href}
                   href={n.href}
                   aria-current={n.href === "/chat" ? "page" : undefined}
+                  // ⚠️ CADA ITEM É UM BOTÃO (28/09/2026, pedido do dono): um tom
+                  // acima da barra, com contorno tênue. Texto solto sobre o
+                  // vinho não se lê como clicável — e a tela inteira é escura,
+                  // então o contraste tem de vir da CAMADA, não da cor.
                   className={[
-                    "whitespace-nowrap rounded-full px-2.5 py-1 text-[12.5px] font-medium",
-                    n.href === "/chat" ? "bg-white/20 text-white" : "text-white/85 hover:bg-white/10",
+                    "whitespace-nowrap rounded-lg px-2.5 py-1 text-[12.5px] font-medium ring-1 ring-inset",
+                    n.href === "/chat"
+                      ? "bg-white text-v2-vinho ring-white"
+                      : "bg-white/10 text-white/90 ring-white/15 hover:bg-white/20",
                   ].join(" ")}
                 >
                   {n.rotulo}
@@ -1477,7 +1528,7 @@ export function Casca({
             <a
               href={INDICADORES.href}
               title={INDICADORES.dica}
-              className="whitespace-nowrap rounded-full px-2.5 py-1 text-[12.5px] font-medium text-white/85 hover:bg-white/10"
+              className="whitespace-nowrap rounded-lg bg-white/10 px-2.5 py-1 text-[12.5px] font-medium text-white/90 ring-1 ring-inset ring-white/15 hover:bg-white/20"
             >
               {INDICADORES.rotulo}
             </a>
@@ -1506,8 +1557,17 @@ export function Casca({
                 </svg>
               </button>
             )}
-            <span className="hidden truncate text-[12px] text-white/80 sm:inline">
-              {inicial.minha_carteira ? `carteira ${inicial.minha_carteira}` : inicial.meu_usuario}
+            {/* ⚠️ SÓ O QUE VEM ANTES DO @ (28/09/2026). Com a janela pela
+                metade, o e-mail inteiro passava por cima dos itens do menu —
+                e o domínio é o mesmo para todo mundo, então não distingue
+                ninguém. O endereço completo fica no `title`. */}
+            <span
+              title={inicial.meu_usuario}
+              className="hidden max-w-[180px] truncate text-[12px] text-white/80 lg:inline"
+            >
+              {inicial.minha_carteira
+                ? `carteira ${inicial.minha_carteira}`
+                : String(inicial.meu_usuario ?? "").split("@")[0]}
             </span>
             <MenuSecundario
               cores={{
@@ -1634,6 +1694,8 @@ export function Casca({
             aoReenviar={reenviar}
             aoArquivos={mandarArquivos}
             aoLocal={mandarLocal}
+            aoFigurinha={mandarFigurinha}
+            aoSalvarFigurinha={salvarFigurinha}
             aoNota={mandarNota}
             aoApagarNota={apagarNota}
             aoEncaminhar={setEncaminhando}
