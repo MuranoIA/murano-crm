@@ -12,6 +12,7 @@ import { tipoDoMime } from "../../../lib/midia";
 import type { Nota, Transferencia } from "./Thread";
 import { nomeLimpo } from "./formato";
 import { SEM_RECORTE, quantosRecortes, type Recortes } from "./tipos";
+import { consultoresDoCubo, etapasDoCubo, filasDoCubo, podeDerivar } from "./contagens";
 import { useRealtimeDoChat } from "./realtime";
 import {
   useAvisoDeChegada, usePermissaoDeNotificacao, usePonteDoHub, usePush, useTituloDaAba,
@@ -21,7 +22,12 @@ import type { Ligacao } from "../../../lib/ligacaoDados";
 import type { ApiLigacao } from "./Ligacao";
 import type { Gesto } from "./Compositor";
 import { INDICADORES, itensDoPapel } from "../../navegacao";
-import type { Citada, Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
+import type { Citada, Contagens, Conversa, Fila, ItemCarteira, Lista, Mensagem, Thread } from "./tipos";
+
+/** nenhum número conhecido — o chip fica sem contador, que é diferente de zero */
+const VAZIO: Record<Fila, number | null> = {
+  todas: null, nao_lidas: null, favoritas: null, fila: null, resolvidas: null, recados: null, carteira: null,
+};
 import { COOKIE_TEMA_CHAT, type TemaChat } from "../../../lib/temaChat";
 import { SeletorTema } from "./SeletorTema";
 
@@ -235,7 +241,7 @@ export function Casca({
   }, [mensagens]);
 
   const [precisaCompleta, setPrecisaCompleta] = useState(false);
-  const [contagensServidor, setContagensServidor] = useState<Record<string, number> | null>(null);
+  const [contagensServidor, setContagensServidor] = useState<Contagens | null>(null);
 
   // ---- os recortes da fase 4 (consultor, número, coluna do board) ---------
   // `precisaExtras` é o que autoriza a lista completa a vir COM etapa e linha.
@@ -1336,7 +1342,13 @@ export function Casca({
   const comRecorte = quantosRecortes(recortes) > 0;
   const contagens = useMemo<Record<Fila, number | null>>(() => {
     if (!completa) {
-      const s = comRecorte ? null : contagensServidor;
+      // ⚠️ Com recorte ligado o número NÃO é mais ausente (28/09/2026): o
+      // servidor passou a mandar o cubo, que já conhece consultor e coluna.
+      // Antes o chip calava e a tela dava a impressão de contador quebrado —
+      // que é metade da queixa da demanda #42.
+      const cubo = contagensServidor?.cubo;
+      if (comRecorte) return podeDerivar(cubo, recortes) ? filasDoCubo(cubo, recortes) : VAZIO;
+      const s = contagensServidor;
       return {
         todas: s ? s.todas : null,
         nao_lidas: s ? s.nao_lidas : null,
@@ -1358,7 +1370,7 @@ export function Casca({
       // agenda, não fila: o número dela mora no cabeçalho da própria lista
       carteira: null,
     };
-  }, [lista, completa, contagensServidor, comRecorte, passaVend, passaLinha, passaEtapa]);
+  }, [lista, completa, contagensServidor, comRecorte, recortes, passaVend, passaLinha, passaEtapa]);
 
 
   const visiveis = useMemo(() => {
@@ -1445,6 +1457,39 @@ export function Casca({
     }
     return { porConsultor, porLinha, porEtapa };
   }, [lista, fila, passaVend, passaLinha, passaEtapa]);
+
+  // ---- DE ONDE VEM CADA NÚMERO DE FILTRO ---------------------------------
+  //
+  // Com a lista inteira em memória, dela — é instantâneo e já está pago. Sem
+  // ela, do CUBO do servidor, que custa ~15 kB. `null` significa "ainda não
+  // sei": o contador some, nunca vira zero, porque zero é uma afirmação.
+  //
+  // ⚠️ A coluna do board só existe na lista quando ela veio com `?etapas=1`
+  // (`comExtras`). Sem isso a lista completa tem 4 mil conversas e nenhuma
+  // etapa, e contar nela devolveria zero em todas as sete — o número mentiroso
+  // que a §61.5 descreve, e o mais difícil de perceber.
+  const cuboServidor = contagensServidor?.cubo;
+  const porEtapa = useMemo(() => {
+    if (completa && comExtras) return contagensDosRecortes.porEtapa;
+    return podeDerivar(cuboServidor, recortes) ? etapasDoCubo(cuboServidor, fila, recortes) : null;
+  }, [completa, comExtras, contagensDosRecortes, cuboServidor, fila, recortes]);
+
+  const porConsultor = useMemo(() => {
+    if (completa) return contagensDosRecortes.porConsultor;
+    return podeDerivar(cuboServidor, recortes) ? consultoresDoCubo(cuboServidor, fila, recortes) : null;
+  }, [completa, contagensDosRecortes, cuboServidor, fila, recortes]);
+
+  // o número não entra no cubo (uma linha ativa só, §23.4): continua exigindo a
+  // lista inteira, que é o gesto de abrir aquele seletor
+  const porLinha = completa ? contagensDosRecortes.porLinha : null;
+
+  // "Todos os consultores" tem de contar SEM o recorte de consultor: é a opção
+  // que o desliga, e mostrar nela o número do filtro ligado seria dizer que
+  // desligar não muda nada.
+  const totalConsultores = useMemo(() => {
+    const semVend = { ...recortes, vendedor: null };
+    return podeDerivar(cuboServidor, semVend) ? filasDoCubo(cuboServidor, semVend)[fila] : null;
+  }, [cuboServidor, fila, recortes]);
 
   // Quem da agenda já tem conversa. ⚠️ SÓ com a lista COMPLETA: com a primeira
   // página (60) toda a agenda aparecia "sem conversa", inclusive quem conversa
@@ -1657,7 +1702,22 @@ export function Casca({
             aoChegarNoFim={() => setPrecisaCompleta(true)}
             presentes={presentes}
             recortes={recortes}
-            aoMudarRecortes={setRecortes}
+            // ⚠️ LIGAR um recorte exige a lista inteira, e com a coluna do
+            // board junto (demanda #42, 28/09/2026): a tela abre com 60
+            // conversas, e nenhuma delas traz `etapa_board` enquanto a lista
+            // não vier com `?etapas=1`. Sem isto, clicar num quadradinho
+            // filtrava contra um campo que não existe e a lista ficava VAZIA —
+            // sem erro nenhum, que é o pior jeito de falhar.
+            //
+            // Os CONTADORES não dependem disso: eles vêm do cubo do servidor
+            // (~15 kB) desde a abertura. Só o recorte aplicado paga a lista.
+            aoMudarRecortes={(r) => {
+              setRecortes(r);
+              if (quantosRecortes(r) > 0) {
+                setPrecisaCompleta(true);
+                setPrecisaExtras(true);
+              }
+            }}
             // abrir um seletor de recorte é o gesto que manda buscar a lista
             // inteira COM etapa e número — e é o único momento em que essa
             // conta é paga. (Era o painel de Filtros, que saiu em 28/09.)
@@ -1667,9 +1727,10 @@ export function Casca({
             }}
             consultores={consultores}
             linhas={inicial.linhas}
-            contaPorConsultor={contagensDosRecortes.porConsultor}
-            contaPorLinha={contagensDosRecortes.porLinha}
-            contaPorEtapa={contagensDosRecortes.porEtapa}
+            contaPorConsultor={porConsultor}
+            totalConsultores={totalConsultores}
+            contaPorLinha={porLinha}
+            contaPorEtapa={porEtapa}
             carteira={carteira}
             comConversa={comConversa}
             aoAbrirDaCarteira={abrirDaCarteira}

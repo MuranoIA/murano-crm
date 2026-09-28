@@ -70,6 +70,26 @@ export type Conversa = {
   nota_autor: string | null;
 };
 
+// ---------------------------------------------------------------------------
+// O CUBO (28/09/2026) — uma varredura responde a QUALQUER combinação de filtro.
+//
+// `cubo[fila][dono][etapa] = n`. Chave vazia significa "sem" nos dois casos:
+// `""` de dono é a fila de espera (conversa sem dono nenhum), `""` de etapa é a
+// conversa que não cai em coluna nenhuma do board.
+//
+// ⚠️ Por que um cubo, e não um número por filtro: os contadores contam DENTRO
+// do que os outros seletores já escolheram (§23.5) — então cada clique num
+// filtro mudaria a pergunta e pediria outra varredura das ~4 mil conversas. Com
+// o cubo, o servidor varre UMA vez e a tela deriva todos os números em memória;
+// trocar de fila ou de consultor passa a custar zero. São ~15 kB de números
+// contra 2,7 MB da lista inteira, que é o que a tela baixava antes só para
+// conseguir contar.
+//
+// A mesma linha pode entrar em mais de uma fila de propósito: favorito e recado
+// atravessam dono e status (é um marcador MEU, não um estado da conversa).
+// ---------------------------------------------------------------------------
+export type Cubo = Record<string, Record<string, Record<string, number>>>;
+
 export type Contagens = {
   todas: number;
   nao_lidas: number;
@@ -77,6 +97,8 @@ export type Contagens = {
   fila: number;
   resolvidas: number;
   recados: number;
+  /** ver `Cubo`. Ausente só em resposta antiga em cache. */
+  cubo?: Cubo;
 };
 
 export type Lista = {
@@ -157,7 +179,8 @@ const semSinteticos = (q: any) =>
 // os contadores depois que já apareceu (`/api/chat-v2/contagens`).
 export async function contarFilas(s: Sessao): Promise<Contagens> {
   const sb = banco();
-  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados] = await Promise.all([
+  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados, etapaDe] =
+    await Promise.all([
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
     // ⚠️ SÓ O QUE NÃO ESTÁ ABERTO (bug relatado em 28/09/2026). A tabela tem
@@ -169,9 +192,20 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
     sb.from("chat_conversa").select("cliente_id,status").neq("status", "aberta"),
     carregarAtribuicoes(sb),
     recadosNaoVistos(sb, s.usuario),
+    // a coluna do board de cada conversa, para o cubo. São 2 consultas curtas
+    // (`vw_venda_card`, 552 linhas hoje, e `wth_descartados`) e elas ficam em
+    // memória por um minuto — as duas views são reescritas pelo cron a cada 10
+    // min, então reconsultá-las a cada aviso de mensagem nova seria pagar por
+    // um dado que não mudou.
+    classificadorEmCache(sb),
   ]);
   const PAGE = 1000;
-  const MAGRAS = "cliente_id,vendedor,ultima_atividade,ultima_enviada_por";
+  // ⚠️ `etapa`, `telefone` e `codcli` entram para o classificador de coluna
+  // (§68.1): a etapa do board NÃO é a `etapa` da view — as duas de venda vêm da
+  // nota fiscal e ganham dela. Três colunas curtas a mais sobre as mesmas
+  // linhas; o que pesa aqui é a prévia da mensagem, que continua de fora.
+  const MAGRAS =
+    "cliente_id,vendedor,ultima_atividade,ultima_enviada_por,etapa,telefone,codcli";
 
   const linhas: any[] = [];
   for (let from = 0; ; from += PAGE) {
@@ -191,6 +225,13 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
   const estado = new Map((estados ?? []).map((e: any) => [e.cliente_id, e.status]));
 
   const c: Contagens = { todas: 0, nao_lidas: 0, favoritas: 0, fila: 0, resolvidas: 0, recados: 0 };
+  const cubo: Cubo = {};
+  const somar = (fila: string, dono: string, etapa: string) => {
+    const f = (cubo[fila] ??= {});
+    const d = (f[dono] ??= {});
+    d[etapa] = (d[etapa] ?? 0) + 1;
+  };
+
   for (const l of linhas) {
     const dono = donoEfetivo(l.cliente_id, l.vendedor ?? null, atrib);
     const naFila = dono === null;
@@ -212,8 +253,52 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
     // não um estado da conversa — escondê-lo numa resolvida faria o contador
     // prometer o que a lista não mostra
     if (recados.has(l.cliente_id)) c.recados++;
+
+    // ---- o mesmo veredito, agora no cubo -------------------------------
+    // A régua é EXATAMENTE a de cima; as filas são as mesmas chaves que a tela
+    // usa. Uma segunda régua aqui divergiria da primeira na primeira mudança.
+    const chaveDono = dono ?? "";
+    const chaveEtapa = etapaDe(l) ?? "";
+    if (naFila) somar("fila", chaveDono, chaveEtapa);
+    else if (resolvida) somar("resolvidas", chaveDono, chaveEtapa);
+    else {
+      somar("todas", chaveDono, chaveEtapa);
+      if (naoLida) somar("nao_lidas", chaveDono, chaveEtapa);
+    }
+    if (favs.has(l.cliente_id)) somar("favoritas", chaveDono, chaveEtapa);
+    if (recados.has(l.cliente_id)) somar("recados", chaveDono, chaveEtapa);
   }
-  return c;
+  return { ...c, cubo };
+}
+
+// ---------------------------------------------------------------------------
+// O classificador de coluna, guardado por um minuto.
+//
+// `vw_venda_card` e `wth_descartados` são reescritas pelo `wth-sync-tudo` a
+// cada 10 min. A rota de contagens, ao contrário, é chamada a cada aviso de
+// mensagem nova — reconsultá-las ali seria pagar, dezenas de vezes por hora,
+// por um dado que não mudou. Um minuto é curto o bastante para a coluna nunca
+// ficar visivelmente velha e longo o bastante para cobrir uma rajada.
+//
+// Cache de instância: cada máquina quente tem a sua, e uma instância fria só
+// paga a primeira chamada. Falhar aqui não pode derrubar a contagem inteira —
+// sem classificador o cubo fica com a etapa vazia, que a tela lê como "ainda
+// não sei", nunca como zero.
+// ---------------------------------------------------------------------------
+type Classificador = (alvo: any) => EtapaBoard | null;
+let cacheEtapa: { em: number; fn: Classificador } | null = null;
+const VALIDADE_ETAPA = 60_000;
+
+async function classificadorEmCache(sb: any): Promise<Classificador> {
+  if (cacheEtapa && Date.now() - cacheEtapa.em < VALIDADE_ETAPA) return cacheEtapa.fn;
+  try {
+    const { data: vend } = await sb.from("carteira_config").select("slug").eq("ativo", true);
+    const fn = await classificador(sb, (vend ?? []).map((v: any) => String(v.slug)));
+    cacheEtapa = { em: Date.now(), fn };
+    return fn;
+  } catch {
+    return cacheEtapa?.fn ?? (() => null);
+  }
 }
 
 export async function lerLista(
