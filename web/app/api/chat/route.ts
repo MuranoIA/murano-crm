@@ -162,7 +162,13 @@ export async function GET() {
     // custaria mais que o recurso inteiro. `eq(usuario)` porque a marca é DE
     // QUEM MARCOU — duas pessoas podem favoritar a mesma cliente.
     sb.from("chat_favorito").select("cliente_id").eq("usuario", usuario ?? ""),
-    sb.from("chat_conversa").select("cliente_id,status,motivo"),
+    // ⚠️ SÓ O QUE NÃO ESTÁ ABERTO (bug relatado em 28/09/2026). A tabela tem
+    // 1.518 linhas e o PostgREST corta em 1.000 EM SILÊNCIO: a conversa que
+    // alguém acabava de resolver caía fora da página, voltava sem status e
+    // reaparecia em "Meus atendimentos" na primeira recarga. Quem não está
+    // aqui é `aberta` por definição, então pedir só as outras é ao mesmo tempo
+    // o conserto e a consulta mais barata (147 linhas em vez de 1.518).
+    sb.from("chat_conversa").select("cliente_id,status,motivo").neq("status", "aberta"),
     // destinos possíveis de transferência (fonte única: carteira_config, §14.1)
     sb.from("carteira_config").select("slug,cor").eq("ativo", true).order("slug"),
     // ...e quem atende SEM carteira: admin, home e pós-venda também têm
