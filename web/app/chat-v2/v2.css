@@ -60,6 +60,90 @@
   --ease-enfatico: cubic-bezier(0.05, 0.7, 0.1, 1);
 }
 
+/* ===========================================================================
+   OS TEMAS (28/09/2026, pedido do dono) — só os CLAROS, e só no /chat-v2.
+   São os do Café Code, com os valores copiados de lá.
+
+   ⚠️ NENHUM COMPONENTE MUDA. Um tema aqui é só redefinir as fichas do bloco
+   acima debaixo de `.v2[data-tema=…]`; as utilidades do Tailwind leem
+   `var(--color-v2-…)` e a subárvore inteira troca de cor. É a prova de que a
+   paleta estava mesmo em fichas.
+
+   A régua de SIGNIFICADO não muda com o tema, só o valor:
+     · `vinho`   = marca e moldura (a barra do topo);
+     · `azul`    = AÇÃO — e é por isso que no Atlântico ela vira latão: ação
+       azul dentro de uma interface azul desaparece;
+     · `laranja` = acento pontual, o que pede resposta.
+   =========================================================================== */
+
+.v2[data-tema="atlantico"] {
+  --color-v2-vinho: #1a5fa8;
+  --color-v2-vinho-forte: #0f3b6b;
+  --color-v2-vinho-claro: #e4edf8;
+  --color-v2-vinho-texto: #0f3b6b;
+
+  /* latão: a ação, 5,13:1 sobre branco */
+  --color-v2-azul: #a35c12;
+  --color-v2-azul-forte: #7d460d;
+  --color-v2-azul-claro: #f7eee2;
+  --color-v2-azul-foco: #c87f2a;
+
+  --color-v2-laranja: #b42318;
+  --color-v2-laranja-claro: #fbe7e4;
+
+  --color-v2-fundo: #edf1f7;
+  --color-v2-superficie: #ffffff;
+  --color-v2-superficie-2: #f6f9fc;
+  --color-v2-tinta: #101b2d;
+  --color-v2-tinta-fraca: #4e5c70;
+  --color-v2-linha: #d5dee9;
+  --color-v2-linha-forte: #7c8b9e;
+
+  --color-v2-ok: #12684a;
+  --color-v2-ok-claro: #ddf0e8;
+  --color-v2-erro: #b42318;
+  --color-v2-erro-claro: #fbe7e4;
+
+  /* sombra tingida do escuro do tema — cinza ao lado de azul lê como sujo */
+  --shadow-e1: 0 1px 2px rgb(16 27 45 / 0.08), 0 1px 3px 1px rgb(16 27 45 / 0.05);
+  --shadow-e2: 0 1px 2px rgb(16 27 45 / 0.1), 0 2px 6px 2px rgb(16 27 45 / 0.06);
+  --shadow-e3: 0 4px 10px 3px rgb(16 27 45 / 0.08), 0 1px 3px rgb(16 27 45 / 0.12);
+}
+
+.v2[data-tema="cafe"] {
+  --color-v2-vinho: #5b3a29;
+  --color-v2-vinho-forte: #3b2418;
+  --color-v2-vinho-claro: #f1e2d2;
+  --color-v2-vinho-texto: #5b3a29;
+
+  /* cold brew: o azul assinatura, um tom mais fundo */
+  --color-v2-azul: #1f5c94;
+  --color-v2-azul-forte: #164672;
+  --color-v2-azul-claro: #e6eef6;
+  --color-v2-azul-foco: #3b82c4;
+
+  --color-v2-laranja: #a4541f;
+  --color-v2-laranja-claro: #f7e8db;
+
+  --color-v2-fundo: #efe3d3;
+  --color-v2-superficie: #fffaf4;
+  --color-v2-superficie-2: #f8efe4;
+  --color-v2-tinta: #2a1a12;
+  --color-v2-tinta-fraca: #6a5243;
+  --color-v2-linha: #e5d5c2;
+  --color-v2-linha-forte: #9a7e66;
+
+  --color-v2-ok: #3f6b2f;
+  --color-v2-ok-claro: #e5eedb;
+  --color-v2-erro: #a52a21;
+  --color-v2-erro-claro: #f9e3de;
+
+  /* sombra tingida de café, nunca cinza */
+  --shadow-e1: 0 1px 2px rgb(42 26 18 / 0.1), 0 1px 3px 1px rgb(42 26 18 / 0.06);
+  --shadow-e2: 0 1px 2px rgb(42 26 18 / 0.12), 0 4px 10px 1px rgb(42 26 18 / 0.08);
+  --shadow-e3: 0 6px 16px 2px rgb(42 26 18 / 0.12), 0 1px 3px rgb(42 26 18 / 0.16);
+}
+
 /* --- base mínima, SÓ dentro de .v2 ---------------------------------------
    É o que o preflight faria, reduzido ao necessário e preso ao escopo. */
 @layer base {
