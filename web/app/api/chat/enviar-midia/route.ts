@@ -31,8 +31,14 @@ export async function POST(req: Request) {
   const cliente_id = String(b?.cliente_id ?? "");
   const path = String(b?.path ?? "");
   const legenda = String(b?.legenda ?? "").trim();
+  // FIGURINHA DO PACOTE (0144): em vez do arquivo que o navegador acabou de
+  // subir, o que já está guardado. O resto do caminho é idêntico — upload na
+  // Meta, espelho em `mensagens`, bolha igual — e é por isso que ela entra
+  // AQUI e não numa rota própria: uma segunda cópia deste fluxo divergiria no
+  // primeiro ajuste (foi o que a §P0 aprendeu com as três vias de anexo).
+  const figurinha_id = Number(b?.figurinha_id ?? 0);
   if (!cliente_id) return Response.json({ error: "cliente_id ausente" }, { status: 400 });
-  if (!path) return Response.json({ error: "path ausente" }, { status: 400 });
+  if (!path && !figurinha_id) return Response.json({ error: "path ausente" }, { status: 400 });
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
@@ -49,25 +55,52 @@ export async function POST(req: Request) {
   // por ele: media_id pertence à linha que subiu o arquivo.
   const linha = await linhaDaConversa(sb, cliente_id);
 
-  // ⚠️ o caminho vem do navegador, então é conferido contra o dono: sem isto,
-  // uma sessão qualquer poderia mandar o arquivo de OUTRA conversa (o bucket é
-  // privado, mas o caminho carrega o id do cliente e é adivinhável).
   const limpo = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
-  if (!path.includes(`/${limpo(cli.id as string)}/`)) {
+  let origem = path;
+  let mimeDeclarado = String(b?.mime ?? "");
+  let nomeDeclarado = String(b?.nome ?? "");
+
+  if (figurinha_id) {
+    // ---- figurinha do pacote -------------------------------------------
+    const { data: f } = await sb.from("chat_figurinha")
+      .select("id,caminho,mime,nome").eq("id", figurinha_id).maybeSingle();
+    if (!f) return Response.json({ error: "figurinha não encontrada" }, { status: 404 });
+    origem = String(f.caminho);
+    mimeDeclarado = String(f.mime ?? "image/webp");
+    nomeDeclarado = `${limpo(String(f.nome ?? "figurinha"))}.webp`;
+  } else if (!path.includes(`/${limpo(cli.id as string)}/`)) {
+    // ⚠️ o caminho vem do navegador, então é conferido contra o dono: sem isto,
+    // uma sessão qualquer poderia mandar o arquivo de OUTRA conversa (o bucket é
+    // privado, mas o caminho carrega o id do cliente e é adivinhável).
     return Response.json({ error: "arquivo não pertence a esta conversa" }, { status: 403 });
   }
 
-  const baixado = await sb.storage.from("wa-midia").download(path);
+  const baixado = await sb.storage.from("wa-midia").download(origem);
   if (baixado.error || !baixado.data) {
     return Response.json({
-      error: "Não achei o arquivo que subiu — tente enviar de novo.",
+      error: figurinha_id
+        ? "Não achei o arquivo desta figurinha — ela pode ter sido apagada do pacote."
+        : "Não achei o arquivo que subiu — tente enviar de novo.",
     }, { status: 404 });
   }
 
-  let mime = String(b?.mime || baixado.data.type || "application/octet-stream");
-  let nome = String(b?.nome ?? "") || `arquivo.${extensaoDoMime(mime)}`;
+  let mime = mimeDeclarado || baixado.data.type || "application/octet-stream";
+  let nome = nomeDeclarado || `arquivo.${extensaoDoMime(mime)}`;
   let bytes: ArrayBuffer | Uint8Array = await baixado.data.arrayBuffer();
-  let caminho = path;
+  let caminho = origem;
+
+  // ⚠️ A FIGURINHA É COPIADA para a pasta da conversa antes de virar mensagem.
+  // Apontar a mensagem para o arquivo do PACOTE seria mais barato e quebraria
+  // depois: quem tirasse a figurinha do pacote apagaria a bolha de todas as
+  // conversas em que ela já tinha sido mandada. São ~50 KB por envio.
+  if (figurinha_id) {
+    const mes = new Date().toISOString().slice(0, 7);
+    const copia = `${mes}/${limpo(cli.id as string)}/${crypto.randomUUID()}.webp`;
+    const { error: eCopia } = await sb.storage
+      .from("wa-midia").upload(copia, bytes, { contentType: mime, upsert: false });
+    if (eCopia) return Response.json({ error: eCopia.message }, { status: 500 });
+    caminho = copia;
+  }
 
   // o limite já foi conferido em `assinar`, mas o token de upload não amarra
   // tamanho: quem subiu pode ter mandado mais do que declarou.

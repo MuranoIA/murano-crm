@@ -127,13 +127,17 @@ function Acao({
   onClick: () => void;
   children: React.ReactNode;
 }) {
+  // ⚠️ CADA AÇÃO É UM BOTÃO, com contorno e um degrau de sombra (28/09/2026,
+  // pedido do dono). Ícone solto sobre o branco do cabeçalho não se lê como
+  // clicável — some no fundo, e a pessoa não sabe onde é a área de toque. O
+  // traço é púrpura (a marca) em vez de cinza; o azul segue sendo do que age.
   const pintura = ativo
     ? cor === "ok"
-      ? "bg-v2-ok-claro text-v2-ok"
+      ? "bg-v2-ok-claro text-v2-ok ring-v2-ok"
       : cor === "vinho"
-        ? "bg-v2-vinho-claro text-v2-vinho-texto"
-        : "bg-v2-azul-claro text-v2-azul"
-    : "text-v2-tinta-fraca hover:bg-v2-superficie-2";
+        ? "bg-v2-vinho-claro text-v2-vinho ring-v2-vinho"
+        : "bg-v2-azul-claro text-v2-azul ring-v2-azul"
+    : "bg-v2-superficie text-v2-vinho-texto shadow-e1 ring-v2-linha-forte hover:bg-v2-vinho-claro";
   return (
     <button
       data-ripple
@@ -141,7 +145,10 @@ function Acao({
       title={rotulo}
       aria-label={rotulo}
       aria-pressed={ativo}
-      className={["grid size-10 shrink-0 place-items-center rounded-full transition-colors", pintura].join(" ")}
+      className={[
+        "grid size-9 shrink-0 place-items-center rounded-lg ring-1 ring-inset transition-colors",
+        pintura,
+      ].join(" ")}
     >
       {children}
     </button>
@@ -169,6 +176,8 @@ export function Conversa({
   aoReenviar,
   aoArquivos,
   aoLocal,
+  aoFigurinha,
+  aoSalvarFigurinha,
   aoNota,
   aoApagarNota,
   aoEncaminhar,
@@ -212,6 +221,10 @@ export function Conversa({
   aoReenviar: (m: Mensagem) => void;
   aoArquivos: (arquivos: File[], legenda: string) => void;
   aoLocal: (indice: number) => void;
+  /** manda uma figurinha do pacote (0144) */
+  aoFigurinha: (f: { id: number }) => void;
+  /** guarda no pacote a figurinha desta bolha */
+  aoSalvarFigurinha: (m: Mensagem) => void;
   aoNota: (texto: string) => void;
   aoApagarNota: (n: Nota) => void;
   aoEncaminhar: (m: Mensagem) => void;
@@ -471,6 +484,7 @@ export function Conversa({
           aoReenviar={aoReenviar}
           aoEncaminhar={aoEncaminhar}
           aoResponder={aoResponder}
+          aoSalvarFigurinha={aoSalvarFigurinha}
           aoApagarNota={aoApagarNota}
         />
       )}
@@ -515,6 +529,7 @@ export function Conversa({
         aoTemplate={aoTemplate}
         aoArquivos={aoArquivos}
         aoLocal={aoLocal}
+        aoFigurinha={aoFigurinha}
         aoNota={aoNota}
         aoErro={aoErro}
         aoRegistrarGesto={registrar}

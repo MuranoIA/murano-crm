@@ -102,6 +102,7 @@ const ItemDaCarteira = memo(Linha);
 export function ListaCarteira({
   carteira,
   busca,
+  consultor,
   selecionada,
   comConversa,
   aoAbrir,
@@ -110,24 +111,36 @@ export function ListaCarteira({
   /** null = ainda carregando */
   carteira: ItemCarteira[] | null;
   busca: string;
+  /** ⚠️ O RECORTE POR CONSULTOR VALE AQUI TAMBÉM (bug relatado em 28/09/2026).
+   *  Admin com "Romulo" marcado via a agenda INTEIRA — 4.520 clientes, a soma
+   *  de todas as carteiras — e o cabeçalho anunciava esse número. O seletor é
+   *  um só para a tela: se ele vale para as conversas e não para a agenda, ele
+   *  passa a mentir na metade dos casos. */
+  consultor: string | null;
   selecionada: string | null;
   /** cliente_ids com conversa; null = não sabemos (a lista inteira não veio) */
   comConversa: Set<string> | null;
   aoAbrir: (k: ItemCarteira) => void;
   raizRef: React.RefObject<HTMLDivElement>;
 }) {
+  // a agenda já filtrada pelo consultor escolhido — é a base de tudo abaixo,
+  // inclusive do contador do cabeçalho
+  const daCarteira = useMemo(
+    () => (!carteira ? [] : consultor ? carteira.filter((k) => k.vendedor === consultor) : carteira),
+    [carteira, consultor],
+  );
+
   const visiveis = useMemo(() => {
-    if (!carteira) return [];
     const t = busca.trim().toLowerCase();
-    if (!t) return carteira;
+    if (!t) return daCarteira;
     const so = t.replace(/\D/g, "");
-    return carteira.filter((k) => {
+    return daCarteira.filter((k) => {
       if (String(k.cliente ?? "").toLowerCase().includes(t)) return true;
       if (so.length >= 3 && String(k.telefone ?? "").replace(/\D/g, "").includes(so)) return true;
       // o código do WinThor é como o time chama o cliente ao telefone
       return so.length >= 2 && String(k.codcli).startsWith(so);
     });
-  }, [carteira, busca]);
+  }, [daCarteira, busca]);
 
   const chave = useRef((k: ItemCarteira) => String(k.codcli)).current;
 
@@ -137,12 +150,16 @@ export function ListaCarteira({
   if (!visiveis.length) {
     return (
       <p className="px-4 py-10 text-center text-[13px] text-v2-tinta-fraca">
-        {busca.trim() ? `Nenhum cliente da carteira para “${busca.trim()}”.` : "Nenhum cliente na carteira."}
+        {busca.trim()
+          ? `Nenhum cliente da carteira para “${busca.trim()}”.`
+          : consultor
+            ? `Nenhum cliente na carteira de ${consultor}.`
+            : "Nenhum cliente na carteira."}
       </p>
     );
   }
 
-  const semTelefone = carteira.filter((k) => k.precisa_telefone).length;
+  const semTelefone = daCarteira.filter((k) => k.precisa_telefone).length;
   return (
     <>
       <p className="sticky top-0 z-[1] border-b border-v2-linha bg-v2-superficie-2 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">

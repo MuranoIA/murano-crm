@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { EMOJIS } from "../../../lib/emojis";
+import { GavetaFigurinhas, type Figurinha } from "./Figurinhas";
 import { useGravador } from "./audio";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ export function Compositor({
   aoTemplate,
   aoArquivos,
   aoLocal,
+  aoFigurinha,
   aoNota,
   aoErro,
   aoRegistrarGesto,
@@ -59,6 +61,8 @@ export function Compositor({
   aoTemplate: () => void;
   aoArquivos: (arquivos: File[], legenda: string) => void;
   aoLocal: (indice: number) => void;
+  /** manda uma figurinha do pacote (0144) */
+  aoFigurinha: (f: Figurinha) => void;
   aoNota: (texto: string) => void;
   aoErro: (msg: string) => void;
   /** publica para cima os gestos que só existem aqui dentro: gravar, anexar e
@@ -75,12 +79,16 @@ export function Compositor({
   const [nota, setNota] = useState(false);
   const [clipe, setClipe] = useState(false);
   const [emoji, setEmoji] = useState(false);
+  const [figurinhas, setFigurinhas] = useState(false);
   const [respostas, setRespostas] = useState<Resposta[] | null>(null);
   const [menu, setMenu] = useState(false);
   const [marcado, setMarcado] = useState(0);
   const campo = useRef<HTMLTextAreaElement>(null);
   const arquivo = useRef<HTMLInputElement>(null);
-  const { gravando, segundos, gravar, parar } = useGravador((f) => aoArquivos([f], ""), aoErro);
+  const { gravando, segundos, gravar, parar, previa, confirmar, descartar } = useGravador(
+    (f) => aoArquivos([f], ""),
+    aoErro,
+  );
 
   // ---- UM caminho só para todo arquivo que entra ------------------------
   // Clipe, colar e arrastar terminam aqui. Três cópias divergiriam no primeiro
@@ -355,6 +363,13 @@ export function Compositor({
         </>
       )}
 
+      <GavetaFigurinhas
+        aberta={figurinhas}
+        aoFechar={() => setFigurinhas(false)}
+        aoEnviar={aoFigurinha}
+        aoErro={aoErro}
+      />
+
       {/* ---- menu do clipe ------------------------------------------------ */}
       {clipe && (
         <div className="absolute bottom-[calc(100%-4px)] left-3 z-10 w-72 overflow-hidden rounded-xl bg-v2-superficie p-1 shadow-e3 ring-1 ring-v2-linha">
@@ -463,9 +478,38 @@ export function Compositor({
           <button data-ripple onClick={() => parar(true)} className="rounded-lg px-2 py-1 text-[13px] text-v2-tinta-fraca">
             Cancelar
           </button>
+          {/* ⚠️ PARAR NÃO ENVIA MAIS (28/09/2026, pedido do dono): ele guarda a
+              prévia para ouvir antes. Quem tropeça na frase ou é interrompido
+              não fica com o áudio já entregue — e "apagar para todos" não
+              existe na Cloud API (§49), então desfazer aqui é a única chance. */}
           <button
             data-ripple
             onClick={() => parar(false)}
+            className="rounded-full bg-v2-azul px-3 py-1.5 text-[13px] font-semibold text-white"
+          >
+            Parar
+          </button>
+        </div>
+      )}
+
+      {/* ---- a prévia: ouvir antes de mandar ------------------------------- */}
+      {previa && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-v2-superficie-2 px-3 py-2 ring-1 ring-inset ring-v2-linha-forte">
+          <audio controls src={previa.url} className="h-9 min-w-0 flex-1" />
+          <button
+            data-ripple
+            onClick={() => { descartar(); void gravar(); }}
+            title="Gravar de novo (o áudio atual é descartado)"
+            className="rounded-lg px-2 py-1 text-[13px] text-v2-tinta-fraca hover:bg-v2-superficie"
+          >
+            Regravar
+          </button>
+          <button data-ripple onClick={descartar} className="rounded-lg px-2 py-1 text-[13px] text-v2-tinta-fraca hover:bg-v2-superficie">
+            Descartar
+          </button>
+          <button
+            data-ripple
+            onClick={confirmar}
             className="rounded-full bg-v2-azul px-3 py-1.5 text-[13px] font-semibold text-white"
           >
             Enviar áudio
@@ -545,9 +589,33 @@ export function Compositor({
 
           {!nota && (
             <>
+              {/* FIGURINHAS (0144): ao lado do emoji, como no WhatsApp. Também
+                  só no computador, pela mesma conta de largura do emoji — e no
+                  celular a figurinha recebida se salva pela bolha do mesmo
+                  jeito, que é de onde o pacote nasce. */}
               <button
                 data-ripple
-                onClick={() => { setClipe((v) => !v); setEmoji(false); }}
+                onClick={() => { setFigurinhas((v) => !v); setEmoji(false); setClipe(false); }}
+                aria-pressed={figurinhas}
+                title="Figurinhas"
+                aria-label="Figurinhas"
+                className={[
+                  "hidden size-10 shrink-0 place-items-center rounded-full sm:grid",
+                  figurinhas ? "bg-v2-azul-claro text-v2-azul" : "text-v2-tinta-fraca hover:bg-v2-superficie-2",
+                ].join(" ")}
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  {/* quadrado com a ponta dobrada: é assim que uma figurinha se
+                      desenha em uma linha só */}
+                  <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14l-6 6H5.5A1.5 1.5 0 0 1 4 18.5v-13Z" />
+                  <path d="M20 14h-4.5a1.5 1.5 0 0 0-1.5 1.5V20" />
+                  <path d="M8.5 9.5h.01M13.5 9.5h.01M9 13.5c.9.8 2.3.8 3.2 0" />
+                </svg>
+              </button>
+
+              <button
+                data-ripple
+                onClick={() => { setClipe((v) => !v); setEmoji(false); setFigurinhas(false); }}
                 aria-pressed={clipe}
                 title="Anexar arquivo ou enviar um endereço"
                 className={[iconeBotao, "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
