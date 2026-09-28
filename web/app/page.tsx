@@ -2115,8 +2115,10 @@ export default function Page() {
       }}
     >
       <div style={{ height: 3, background: RD.wine }} />
-      {/* Top bar */}
-      <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px" }}>
+      {/* Top bar — fixa no topo ao rolar (pedido do dono em 27/09/2026, "igual ao Café Code").
+          `sticky` e nao `fixed`: continua ocupando o proprio lugar, nada embaixo precisa de recuo.
+          zIndex acima dos cards do funil e abaixo dos menus/dialogos (que usam 1000+). */}
+      <div style={{ background: RD.surface, borderBottom: `1px solid ${RD.border}`, padding: "0 26px", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ maxWidth: 1440, margin: "0 auto", minHeight: 56, padding: "6px 0", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flexWrap: isMobile ? "wrap" : "nowrap" }}>
           <Logo size={26} />
           <b style={{ fontSize: 16, letterSpacing: 0.2 }}>CRM</b>
