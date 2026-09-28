@@ -5,6 +5,7 @@ import { usuarioDaSessao } from "../../../../lib/chatUsuario";
 import {
   carregarAtribuicoes, donoEfetivo, enderecoDeAtendimento, ehEnderecoDePessoa, emailDoEndereco,
 } from "../../../../lib/chatEscopo";
+import { avisarTransferencia, marcarAvisada, recadoDoAviso } from "../../../../lib/avisoTransferencia";
 
 export const dynamic = "force-dynamic";
 
@@ -99,7 +100,9 @@ export async function POST(req: Request) {
 
   // dono efetivo hoje = transferência vigente ?? carteira do funil
   const [{ data: linha }, atrib] = await Promise.all([
-    sb.from("vw_funil").select("cliente_id,vendedor").eq("cliente_id", cliente_id).maybeSingle(),
+    // `telefone` entra aqui porque o aviso de pós-venda precisa dele: um
+    // cliente_id que não começa com `wa:` não carrega o número.
+    sb.from("vw_funil").select("cliente_id,vendedor,telefone").eq("cliente_id", cliente_id).maybeSingle(),
     carregarAtribuicoes(sb),
   ]);
   const de = donoEfetivo(cliente_id, (linha?.vendedor as string) ?? null, atrib);
@@ -186,8 +189,27 @@ export async function POST(req: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
+  // -------------------------------------------------------------------------
+  // AVISO À CLIENTE — só quando a conversa passa de ALGUÉM para o pós-venda.
+  //
+  // `de !== null` é a régua, e não é detalhe: `de === null` é a conversa que
+  // estava na fila, sem dono. Dizer "vou te passar para o pós-venda" a quem não
+  // estava sendo atendida por ninguém descreve uma passagem que não houve — e o
+  // pedido foi sobre o consultor transferindo, não sobre alguém puxando da fila.
+  //
+  // Depois do insert e fora de qualquer `throw`: a transferência já está
+  // gravada e é o que importa. O desfecho do aviso viaja na resposta para a
+  // tela contar — em especial o caso "fora da janela de 24h", que é uma em cada
+  // cinco (medido) e no qual a cliente NÃO é avisada.
+  let avisoDaCliente: string | null = null;
+  if (!devolver && de !== null) {
+    const r = await avisarTransferencia(sb, cliente_id, para, (linha?.telefone as string) ?? null);
+    if (r.enviado) await marcarAvisada(sb, data.id);
+    avisoDaCliente = recadoDoAviso(r);
+  }
+
   return Response.json({
     ok: true, transferencia: data,
-    aviso: devolver ? "Conversa devolvida — voltou para a fila de espera." : undefined,
+    aviso: devolver ? "Conversa devolvida — voltou para a fila de espera." : (avisoDaCliente ?? undefined),
   });
 }

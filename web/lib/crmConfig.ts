@@ -61,6 +61,17 @@ export type CrmConfig = {
    * alguém está vigiando.
    */
   sla_minutos: number;
+  /**
+   * Avisar a cliente quando a conversa é transferida para o pós-venda (0138).
+   * **Nasce LIGADO**, ao contrário da resposta de fora do horário: aquela era
+   * um robô que ninguém tinha pedido, esta É o pedido — nascer desligada faria
+   * a funcionalidade não existir até alguém descobrir onde ligar.
+   */
+  aviso_pos_venda_ativo: boolean;
+  /** O texto que a cliente lê nessa transferência. Vazio = não envia. */
+  aviso_pos_venda_texto: string;
+  /** Janela da trava anti-repetição, em horas. */
+  aviso_pos_venda_horas: number;
   atualizado_por: string | null;
   atualizado_em: string | null;
 };
@@ -74,6 +85,13 @@ export const CRM_CONFIG_PADRAO: CrmConfig = {
   linha_padrao_calling: null,
   texto_pausa: "",
   sla_minutos: 0,
+  // ⚠️ VAZIO no padrão, embora a coluna nasça preenchida. Este objeto é o que
+  // vale quando a LEITURA FALHA — e aí o certo é não enviar nada. Um texto
+  // cravado aqui faria uma instabilidade do banco virar mensagem para cliente
+  // real, que é o pior lado para o qual errar.
+  aviso_pos_venda_ativo: true,
+  aviso_pos_venda_texto: "",
+  aviso_pos_venda_horas: 12,
   atualizado_por: null,
   atualizado_em: null,
 };
@@ -208,6 +226,13 @@ export async function lerCrmConfig(sb: Sb): Promise<CrmConfig> {
       linha_padrao_calling: typeof data.linha_padrao_calling === "string" ? data.linha_padrao_calling : null,
       texto_pausa: String(data.texto_pausa ?? ""),
       sla_minutos: Math.max(0, Number(data.sla_minutos ?? 0) || 0),
+      // `!== false` e não `=== true`: enquanto a 0138 não estiver aplicada a
+      // coluna vem `undefined`, e o mecanismo tem de valer como ligado — que é
+      // o estado de fábrica. O que impede o envio nesse intervalo é o texto
+      // vazio logo abaixo, não um interruptor que ninguém viu.
+      aviso_pos_venda_ativo: data.aviso_pos_venda_ativo !== false,
+      aviso_pos_venda_texto: String(data.aviso_pos_venda_texto ?? ""),
+      aviso_pos_venda_horas: Math.max(1, Number(data.aviso_pos_venda_horas ?? 12) || 12),
       linhas: (linhasR?.data ?? []) as Linha[],
       atualizado_por: data.atualizado_por ?? null,
       atualizado_em: data.atualizado_em ?? null,
