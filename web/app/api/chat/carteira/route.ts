@@ -82,10 +82,12 @@ const PAGE = 1000;
 // ---------------------------------------------------------------------------
 const CORTE_PREVIA = 80;
 
+type Conversa = { texto: string | null; por: string | null; dono: string | null };
+
 async function lerPrevias(sb: any, carteira: string | null) {
-  const m = new Map<string, { texto: string | null; por: string | null }>();
+  const m = new Map<string, Conversa>();
   const pagina = (from: number) => {
-    let q = sb.from("vw_chat_conversa").select("cliente_id,ultima_mensagem,ultima_enviada_por")
+    let q = sb.from("vw_chat_conversa").select("cliente_id,ultima_mensagem,ultima_enviada_por,vendedor")
       .not("ultima_atividade", "is", null)
       .order("cliente_id", { ascending: true })   // ordem total: sem ela as páginas repetem e pulam
       .range(from, from + PAGE - 1);
@@ -103,6 +105,7 @@ async function lerPrevias(sb: any, carteira: string | null) {
           // por LETRA, não por unidade de string: `slice` cortava um emoji ao meio
           texto: t == null ? null : Array.from(String(t)).slice(0, CORTE_PREVIA).join(""),
           por: (l as any).ultima_enviada_por ?? null,
+          dono: (l as any).vendedor ?? null,
         });
       }
       if (((r as any).data ?? []).length === PAGE) cheia = true;
@@ -210,6 +213,51 @@ export async function GET(req: Request) {
   // falhou a prévia? a agenda sai sem ela — a prévia é enfeite, a agenda não
   const previas = await previasP;
 
+  // ---- A CONVERSA QUE É DE OUTRO CONSULTOR (demanda #43, 28/09/2026) -------
+  //
+  // Relato: um cliente da agenda aparecia com "sem conversa" e, ao ser aberto,
+  // mostrava noventa mensagens. Medido: **o ERP tem dois cadastros com o mesmo
+  // telefone**, de RCAs diferentes — 36 telefones repetidos hoje, 25 deles em
+  // carteiras diferentes. O contato do chat é UM só (o telefone é a chave, §16.3)
+  // e pertence à conversa de um dos dois; o outro consultor vê a linha na agenda
+  // dele e, para ele, ela não tinha conversa nenhuma.
+  //
+  // Dizer "sem conversa" ali é AFIRMAR algo falso — a doença que a §36.1 nomeia.
+  // A linha passa a dizer de quem é a conversa, que é a informação que resolve:
+  // o consultor sabe com quem falar em vez de disparar um template do zero.
+  //
+  // ⚠️ A consulta acima é recortada pela MINHA carteira (é o que a deixa barata
+  // para um vendedor). Então o que falta é exatamente o que não é meu: uma
+  // consulta dirigida com esses poucos ids, não uma varredura maior. Medido em
+  // 28/09: 23 linhas em toda a base.
+  const idsResolvidos = [
+    ...new Set(
+      clientes
+        .map((c) => porCodcli.get(Number(c.codcli)) ?? (c.tel8 ? porTel8.get(c.tel8) ?? null : null))
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  if (previas) {
+    const orfaos = idsResolvidos.filter((id) => !previas.has(id));
+    // teto defensivo: se um dia a maioria da agenda cair aqui, a consulta
+    // dirigida deixa de ser dirigida e é melhor não pagar por ela
+    if (orfaos.length && orfaos.length <= 600) {
+      for (let i = 0; i < orfaos.length; i += 100) {
+        const { data } = await sb.from("vw_chat_conversa")
+          .select("cliente_id,ultima_mensagem,ultima_enviada_por,vendedor")
+          .in("cliente_id", orfaos.slice(i, i + 100));
+        for (const l of data ?? []) {
+          const txt = (l as any).ultima_mensagem;
+          previas.set((l as any).cliente_id, {
+            texto: txt == null ? null : Array.from(String(txt)).slice(0, CORTE_PREVIA).join(""),
+            por: (l as any).ultima_enviada_por ?? null,
+            dono: (l as any).vendedor ?? null,
+          });
+        }
+      }
+    }
+  }
+
   // TROCA DE NÚMERO PENDENTE (22/09): o consultor trocou o número pelo chat e a
   // correção ainda espera o supervisor no WinThor. Enquanto isso o número do
   // ERP está ERRADO — mostrá-lo aqui levaria alguém a ligar ou criar contato
@@ -240,6 +288,14 @@ export async function GET(req: Request) {
       impedimento: cliente_id ? null : impedimentoDe(sit),
       // só com `?previa=1`, e só de quem já conversou
       ...(pv ? { ultima_mensagem: pv.texto, ultima_enviada_por: pv.por } : {}),
+      // "existe conversa", independentemente de ser minha — é o que impede a
+      // linha de dizer "sem conversa" para quem tem noventa mensagens
+      ...(pv ? { tem_conversa: true } : {}),
+      // …e de quem ela é, quando NÃO é de quem a agenda diz. É o caso do
+      // telefone compartilhado por dois cadastros do ERP.
+      ...(pv && pv.dono && pv.dono !== (slugPorRca.get(c.rca_num) ?? null)
+        ? { conversa_de: pv.dono }
+        : {}),
     };
   });
 

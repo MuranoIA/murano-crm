@@ -81,10 +81,21 @@ function Linha({
           </span>
         )}
       </span>
-      {/* laranja só para o que PEDE ação; "sem conversa" é informação, cinza */}
+      {/* laranja só para o que PEDE ação; "sem conversa" é informação, cinza.
+          ⚠️ A conversa DE OUTRO CONSULTOR (demanda #43) aparecia como "sem
+          conversa" e abria com noventa mensagens: são dois cadastros do ERP com
+          o mesmo telefone, e o contato do chat é um só. Dizer de quem ela é
+          evita o template disparado do zero em cima de uma conversa em curso. */}
       {inerte ? (
         <span className="shrink-0 rounded-full bg-v2-laranja-claro px-2 py-0.5 text-[10.5px] font-medium text-v2-laranja">
           informar número
+        </span>
+      ) : k.conversa_de ? (
+        <span
+          title={`Este telefone também está cadastrado para ${k.conversa_de} no WinThor, e a conversa está com ${k.conversa_de}.`}
+          className="shrink-0 rounded-full bg-v2-superficie-2 px-2 py-0.5 text-[10.5px] font-medium text-v2-tinta-fraca"
+        >
+          conversa com {k.conversa_de}
         </span>
       ) : (
         !temConversa && (
@@ -178,7 +189,15 @@ export function ListaCarteira({
           <ItemDaCarteira
             k={k}
             selecionada={!!k.cliente_id && k.cliente_id === selecionada}
-            temConversa={comConversa === null || (!!k.cliente_id && comConversa.has(k.cliente_id))}
+            // ⚠️ `comConversa` vem da MINHA lista, então uma conversa de outro
+            // consultor lia como "sem conversa". `tem_conversa` é a resposta do
+            // servidor à pergunta certa: este contato tem conversa, de quem
+            // quer que ela seja.
+            temConversa={
+              k.tem_conversa === true ||
+              comConversa === null ||
+              (!!k.cliente_id && comConversa.has(k.cliente_id))
+            }
             aoAbrir={aoAbrir}
           />
         )}

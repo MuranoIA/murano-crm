@@ -202,6 +202,44 @@ function Conteudo({ m }: { m: Mensagem }) {
       </a>
     );
   }
+  // ---- O PINO (demanda #44, 28/09/2026) ---------------------------------
+  //
+  // A cliente manda a localização e o consultor via o texto cru — que, quando o
+  // pino não tem nome, é um par de coordenadas: `📍 -1.3774588, -48.3543379`.
+  // Ilegível, e sem nada em que tocar para abrir o mapa.
+  //
+  // O dado já estava no banco e já vinha na thread (0115, §62.2); só a bolha do
+  // chat-v2 não sabia desenhá-lo. Mesmo cartão nos dois sentidos, senão a
+  // conversa contaria duas histórias visuais para a mesma coisa.
+  //
+  // ⚠️ SEM imagem de mapa: um preview estático exigiria chave de um provedor de
+  // tiles e faria cada bolha virar uma requisição a terceiro numa tela que
+  // carrega 200 mensagens. O cartão traz o que serve para agir — e o toque
+  // abre o mapa do próprio aparelho.
+  if (m.localizacao && Number.isFinite(m.localizacao.lat) && Number.isFinite(m.localizacao.lng)) {
+    const { lat, lng, nome, endereco, url } = m.localizacao;
+    const mapa = url || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    return (
+      <a
+        href={mapa}
+        target="_blank"
+        rel="noreferrer"
+        className="flex w-[260px] max-w-full items-start gap-2 rounded-lg bg-v2-superficie-2 p-2 no-underline"
+      >
+        <span aria-hidden className="text-[18px] leading-none">📍</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-v2-tinta">{nome || "Localização"}</span>
+          {/* sem nome nem endereço sobram as coordenadas — e aí elas são a
+              informação, não um rótulo feio: dizem onde é, e o toque abre */}
+          <span className="mt-0.5 block text-[12.5px] leading-[17px] text-v2-tinta-fraca">
+            {endereco || `${lat.toFixed(5)}, ${lng.toFixed(5)}`}
+          </span>
+          <span className="mt-1 block text-[12px] font-medium text-v2-azul">abrir no mapa</span>
+        </span>
+      </a>
+    );
+  }
+
   return <span className="whitespace-pre-wrap break-words">{m.conteudo}</span>;
 }
 
