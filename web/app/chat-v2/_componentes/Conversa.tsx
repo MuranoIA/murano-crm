@@ -451,7 +451,15 @@ export function Conversa({
           ))}
         </div>
       ) : (
+        // ⚠️ `key` COM O ID DA CONVERSA (24/09/2026). Sem ela o React reusa a
+        // mesma Thread ao trocar de conversa, e a régua de rolagem vai junto:
+        // quem tinha subido para reler um preço na conversa anterior abria a
+        // seguinte NO MEIO do histórico, porque "estou colado no fim" continuava
+        // falso e o efeito que rola até o fim só roda na montagem. Era o relato
+        // da consultora. Remontar também zera as alturas medidas da lista
+        // virtual, que são de outra conversa.
         <Thread
+          key={conversa.cliente_id}
           mensagens={mensagens}
           notas={notas}
           transferencias={transferencias}
