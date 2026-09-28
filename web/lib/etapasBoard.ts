@@ -45,29 +45,12 @@ export const COR_ETAPA: Record<EtapaBoard, string> =
 // iguais), e aqui seria pior, porque as duas telas ficam a um clique uma da
 // outra. O nome completo continua no `title` do chip, como o seletor de número
 // já faz com o parêntese do cadastro.
-/**
- * Uma letra por etapa, para a faixa de filtro do chat caber em UMA linha.
- *
- * Medido em 14/09/2026: com os rótulos curtos, as sete pílulas ocupavam 3
- * linhas no desktop e 4 com a janela pela metade — 71 a 96 px de altura, na
- * coluna onde altura é o recurso mais escasso. Em sete partes iguais sobram
- * 36 a 46 px por parte, o bastante para a letra e o número.
- *
- * ⚠️ PROSPECÇÃO E PEDIDO COMEÇAM COM A MESMA LETRA, e o desenho pedido era com
- * letra única. O que os separa é a COR (roxo e verde, as mesmas do board), a
- * posição — a ordem é sempre a do board — e o nome completo no `title`. Se um
- * dia isso não bastar, a saída é duas letras (`Pr`/`Pe`), não trocar a ordem:
- * a ordem é o que torna a faixa legível de relance.
- */
-export const LETRA_ETAPA: Record<EtapaBoard, string> = {
-  prospeccao: "P",
-  sem_cadastro: "S",
-  ociosos: "O",
-  tentativa_contato: "T",
-  negociacao: "N",
-  pedido_emitido: "P",
-  vender_novamente: "V",
-};
+// Houve aqui um `LETRA_ETAPA` — uma letra por etapa (P S O T N P V), de quando
+// a faixa do chat mostrava as SETE e a palavra não cabia nos 36px que sobravam
+// por parte. Com quatro (ver `ETAPAS_DO_CHAT`) a palavra voltou a caber, e a
+// tabela de letras virou peso morto. Se a faixa um dia voltar a crescer, o git
+// tem o desenho — e a armadilha que ele carregava: prospecção e pedido começam
+// com a mesma letra, e só a cor e a posição as separavam.
 
 export const ROTULO_CURTO_ETAPA: Record<EtapaBoard, string> = {
   prospeccao: "Prospecção",
@@ -85,6 +68,34 @@ export const ROTULO_CURTO_ETAPA: Record<EtapaBoard, string> = {
 // a regra da casa para os contadores da sidebar), mas a lista vazia precisa
 // dizer que o vazio é estrutural, e não um filtro que deu errado.
 export const ETAPAS_SEM_CONVERSA: EtapaBoard[] = ["prospeccao", "sem_cadastro"];
+
+/**
+ * As etapas que a faixa de filtro do /chat oferece — quatro das sete.
+ *
+ * Pedido do usuário em 14/09/2026, um dia depois de a faixa virar sete partes
+ * iguais: "vamos deixar somente sem cadastro, ociosos, tentativa de contato,
+ * negociação. apenas estes quatro, sendo assim, se der, pode deixar a palavra".
+ *
+ * O que as três de fora têm em comum é não serem trabalho de CONVERSA:
+ * prospecção é carteira que ainda não virou conversa, e as duas de venda vêm da
+ * nota fiscal. Elas continuam existindo no board, que é a tela que as tem como
+ * coluna; aqui elas ocupavam três das sete partes e empurravam a palavra para
+ * fora, deixando a faixa em letras.
+ *
+ * ⚠️ Isto recorta a FAIXA, não a régua. `etapa_board` continua sendo calculada
+ * para as sete em `classificadorDeEtapa` — o board depende disso, e uma conversa
+ * classificada como "vender_novamente" continua aparecendo na lista normal do
+ * chat. O que ela não tem é um chip próprio para ser filtrada.
+ *
+ * A ORDEM é a do board, como em toda parte: é ela que permite achar a etapa
+ * pela posição, sem ler.
+ */
+export const ETAPAS_DO_CHAT: EtapaBoard[] = [
+  "sem_cadastro",
+  "ociosos",
+  "tentativa_contato",
+  "negociacao",
+];
 
 // ---------------------------------------------------------------------------
 // A régua
