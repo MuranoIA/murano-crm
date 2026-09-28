@@ -1,9 +1,10 @@
 "use client";
 
-import { COLUNAS, COR_ETAPA, ROTULO_CURTO_ETAPA, TITULO_ETAPA, type EtapaBoard } from "../../../lib/etapasBoard";
+import type { EtapaBoard } from "../../../lib/etapasBoard";
 
 // ---------------------------------------------------------------------------
-// OS TRÊS RECORTES QUE CRUZAM: consultor, número e coluna do board.
+// OS RECORTES QUE CRUZAM: consultor e número (a coluna do board saiu daqui —
+// ver o aviso no fim deste arquivo).
 //
 // Eles CRUZAM com as filas (Todas / Não lidas / Favoritas / Fila / Resolvidas)
 // e entre si, em vez de substituí-las — "as não lidas da Kamilly em Negociação"
@@ -136,22 +137,11 @@ export function Filtros({
         </Grupo>
       )}
 
-      <Grupo titulo="Coluna do board">
-        {/* a ORDEM é sempre a do board: é o que torna a faixa legível de
-            relance, e o que permite duas colunas começarem com a mesma letra
-            sem confundir (§68.3) */}
-        {COLUNAS.map((c) => (
-          <Pilula
-            key={c.key}
-            ativo={recortes.etapa === c.key}
-            rotulo={ROTULO_CURTO_ETAPA[c.key as EtapaBoard]}
-            titulo={TITULO_ETAPA[c.key as EtapaBoard]}
-            cor={COR_ETAPA[c.key as EtapaBoard]}
-            n={n(contaPorEtapa, c.key)}
-            onClick={() => aoMudar({ ...recortes, etapa: alterna(recortes.etapa, c.key as EtapaBoard) })}
-          />
-        ))}
-      </Grupo>
+      {/* ⚠️ A COLUNA DO BOARD SAIU DAQUI em 27/09/2026, a pedido do time: ela
+          agora é uma faixa fixa no cabeçalho da lista, sempre à vista. Deixá-la
+          nos dois lugares seria dois controles para a mesma escolha, que é
+          exatamente o que a 0099 teve de desfazer (§32). O campo `etapa`
+          continua neste tipo — quem escreve nele é a faixa. */}
 
       {quantosRecortes(recortes) > 0 && (
         <button
