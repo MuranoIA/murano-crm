@@ -26,6 +26,8 @@
 export type ItemNav = {
   href: string;
   rotulo: string;
+  /** o nome por extenso, quando o rótulo da barra precisa ser curto */
+  dica?: string;
   /** só quem tem papel `admin` vê */
   soAdmin?: boolean;
   acao?: "orcamento";
@@ -38,6 +40,13 @@ export const NAV: ItemNav[] = [
   { href: "/analises", rotulo: "Análises", soAdmin: true },
   { href: "/templates", rotulo: "Templates" },
   { href: "/admin", rotulo: "Administração", soAdmin: true },
+  // O painel administrativo novo (demanda #51, 29/09/2026). Nasce com UMA
+  // funcionalidade — quem aparece na lista de transferência — e o nome diz que
+  // está em construção, porque é isso que ele é: o dono vai organizando coisas
+  // lá aos poucos. Rótulo curto na barra e o nome inteiro no `title`: o nome
+  // completo tem 45 caracteres e empurraria os outros seis itens para fora.
+  { href: "/admin-novo", rotulo: "Admin (novo)", soAdmin: true,
+    dica: "Admin (novo painel administrativo, em construção)" },
 ];
 
 /** Os indicadores de atendimento: fora da barra, mas a um clique de quem atende. */

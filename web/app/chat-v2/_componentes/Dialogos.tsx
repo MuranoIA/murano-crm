@@ -54,6 +54,17 @@ const campo =
   "mt-1 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-3 py-2.5 focus:border-v2-azul focus:outline-none";
 const primario = "rounded-full bg-v2-azul px-4 py-2 text-[14px] font-semibold text-white disabled:bg-v2-linha-forte";
 
+/** "pos-venda" é o valor guardado; "Pós-venda" é o que se lê. Sem isto a lista
+ *  mostraria o identificador do banco para o consultor. */
+function rotuloDoPapel(papel: string): string {
+  const p = String(papel ?? "").toLowerCase();
+  if (p === "pos-venda") return "Pós-venda";
+  if (p === "home") return "Home";
+  if (p === "admin") return "Administração";
+  if (p === "supervisao") return "Supervisão";
+  return papel;
+}
+
 // ---------------------------------------------------------------------------
 // TRANSFERIR ≠ MUDAR CARTEIRA. A transferência vale só dentro do chat; a
 // carteira é o dono comercial e vem do RCA do WinThor (§18). A tela DIZ isso,
@@ -62,12 +73,15 @@ const primario = "rounded-full bg-v2-azul px-4 py-2 text-[14px] font-semibold te
 export function Transferir({
   conversa,
   vendedores,
+  atendentes,
   ocupado,
   aoFechar,
   aoConfirmar,
 }: {
   conversa: Conversa;
-  vendedores: { slug: string; cor: string | null }[];
+  vendedores: { slug: string; cor: string | null; transferencia?: boolean }[];
+  /** quem atende SEM carteira: pós-venda, home, admin marcado em /admin */
+  atendentes: { endereco: string; nome: string; papel: string; transferencia?: boolean }[];
   ocupado: boolean;
   aoFechar: () => void;
   aoConfirmar: (para: string | null, observacao: string) => void;
@@ -114,13 +128,39 @@ export function Transferir({
               §56: o botão aparece, a pessoa clica, e o servidor diz não. A
               paridade (fase 5) achou isto: o chat de hoje já escondia. */}
           {!conversa.carteira_dona && <option value="__fila">↩ devolver para a fila de espera</option>}
-          {vendedores
-            .filter((v) => v.slug !== conversa.vendedor)
-            .map((v) => (
-              <option key={v.slug} value={v.slug}>
-                {v.slug}
-              </option>
-            ))}
+          {/* ⚠️ DOIS GRUPOS, porque são dois tipos de destino (demanda #51).
+              O servidor aceita os dois desde 09/09 — `u:<email>` para quem
+              atende sem carteira —, mas a lista só mostrava os vendedores. O
+              resultado era o pós-venda existindo no banco e não existindo na
+              tela: não dava para passar um caso para a Tatiana, nem para a Laís
+              do Home. Era uma lacuna da LISTA, não da regra.
+
+              `optgroup` e não uma lista corrida: "thamires" e "Tatiana (pós-venda)"
+              lado a lado, sem título, sugerem que são a mesma coisa — e não são.
+              Um é dono comercial, o outro atende sem carteira. */}
+          {vendedores.filter((v) => v.transferencia !== false && v.slug !== conversa.vendedor).length > 0 && (
+            <optgroup label="Consultores">
+              {vendedores
+                .filter((v) => v.transferencia !== false && v.slug !== conversa.vendedor)
+                .map((v) => (
+                  <option key={v.slug} value={v.slug}>
+                    {v.slug}
+                  </option>
+                ))}
+            </optgroup>
+          )}
+          {atendentes.filter((p) => p.transferencia !== false && p.endereco !== conversa.vendedor).length > 0 && (
+            <optgroup label="Atendimento">
+              {atendentes
+                .filter((p) => p.transferencia !== false && p.endereco !== conversa.vendedor)
+                .map((p) => (
+                  <option key={p.endereco} value={p.endereco}>
+                    {p.nome}
+                    {p.papel ? ` · ${rotuloDoPapel(p.papel)}` : ""}
+                  </option>
+                ))}
+            </optgroup>
+          )}
         </select>
       </label>
 

@@ -1611,6 +1611,7 @@ export function Casca({
                 <a
                   key={n.href}
                   href={n.href}
+                  title={n.dica}
                   aria-current={n.href === "/chat" ? "page" : undefined}
                   // ⚠️ CADA ITEM É UM BOTÃO (28/09/2026, pedido do dono): um tom
                   // acima da barra, com contorno tênue. Texto solto sobre o
@@ -1694,7 +1695,9 @@ export function Casca({
                   ) : (
                     <a key={n.href} href={n.href}
                        className="block px-3 py-2.5 text-[13px] font-semibold text-v2-tinta hover:bg-v2-superficie-2">
-                      {n.rotulo}
+                      {/* no menu do celular cabe o nome inteiro — e é lá que ele
+                          explica o que a tela é */}
+                      {n.dica ?? n.rotulo}
                     </a>
                   ),
                 )}
@@ -1902,6 +1905,7 @@ export function Casca({
         <Transferir
           conversa={conversaAberta}
           vendedores={inicial.vendedores}
+          atendentes={inicial.atendentes ?? []}
           ocupado={ocupado}
           aoFechar={() => setDialogo(null)}
           aoConfirmar={transferir}
