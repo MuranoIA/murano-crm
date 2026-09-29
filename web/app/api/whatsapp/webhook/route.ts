@@ -248,6 +248,37 @@ async function gravarMensagemRecebida(
   // Depois do upsert, pela mesma razao: nada aqui pode custar a mensagem dela.
   await tentarVincularPeloCpf(sb, cliente.id, extrairConteudo(msg));
 
+  // ---- RESPOSTA A UMA CAMPANHA: distribui em rodízio (0147) ---------------
+  //
+  // É aqui, e em nenhum outro lugar, porque só o webhook sabe que uma cliente
+  // falou. A regra inteira mora na função SQL — inclusive o `for update` que
+  // impede duas respostas simultâneas de levarem o mesmo atendente.
+  //
+  // ⚠️ SÓ NA MENSAGEM NOVA. Reentrega da Meta não é resposta nova: sem esta
+  // guarda, um evento reentregue distribuiria de novo uma cliente que já tem
+  // dono — e o rodízio andaria uma casa sem ninguém ter respondido nada. É a
+  // mesma razão pela qual a reabertura da conversa, logo acima, olha
+  // `jaExistia`.
+  //
+  // Envolvido em try: a mensagem da cliente já está salva, e nada daqui para
+  // baixo pode custar o 200 que a Meta espera (§16.1).
+  if (!jaExistia) {
+    try {
+      // ⚠️ o ERRO da RPC precisa aparecer. O supabase-js não lança: devolve
+      // `{ error }`. Sem esta linha, uma função quebrada distribui zero
+      // clientes em silêncio — foi exatamente o que aconteceu na 1ª rodada da
+      // prova (parâmetro de saída ambíguo, e nenhum sinal em lugar nenhum).
+      const { data: dist, error } = await sb.rpc("campanha_distribuir", { p_cliente_id: cliente.id });
+      if (error) console.error("[wa-webhook] campanha_distribuir:", error.message);
+      const d = Array.isArray(dist) ? dist[0] : null;
+      if (d?.o_atendente) {
+        console.log(`[wa-webhook] campanha "${d.o_campanha}" -> ${d.o_atendente}`);
+      }
+    } catch (e) {
+      console.error("[wa-webhook] distribuição de campanha falhou:", String((e as any)?.message ?? e));
+    }
+  }
+
   // ---- push com o app fechado (0096) --------------------------------------
   // Último passo do fluxo, de propósito: a mensagem já está salva e a conversa
   // já reabriu. `avisar` NUNCA lança (ver lib/chatPush.ts) — o webhook precisa
