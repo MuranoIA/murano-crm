@@ -45,12 +45,34 @@ export const COR_ETAPA: Record<EtapaBoard, string> =
 // iguais), e aqui seria pior, porque as duas telas ficam a um clique uma da
 // outra. O nome completo continua no `title` do chip, como o seletor de número
 // já faz com o parêntese do cadastro.
-// Houve aqui um `LETRA_ETAPA` — uma letra por etapa (P S O T N P V), de quando
-// a faixa do chat mostrava as SETE e a palavra não cabia nos 36px que sobravam
-// por parte. Com quatro (ver `ETAPAS_DO_CHAT`) a palavra voltou a caber, e a
-// tabela de letras virou peso morto. Se a faixa um dia voltar a crescer, o git
-// tem o desenho — e a armadilha que ele carregava: prospecção e pedido começam
-// com a mesma letra, e só a cor e a posição as separavam.
+// ⚠️ `LETRA_ETAPA` CONTINUA VIVO — não é peso morto (28/09/2026).
+//
+// Ele foi removido daqui no PR #218, que tirou as letras do chat ANTIGO: lá a
+// faixa passou a mostrar quatro etapas (`ETAPAS_DO_CHAT`) e a palavra voltou a
+// caber. Só que no mesmo dia, em outra frente, o **chat-v2** passou a desenhar
+// as SETE como quadradinhos de uma letra — e importa esta tabela.
+//
+// Resultado: `master` parou de compilar ("'LETRA_ETAPA' is not exported"), o
+// build da Vercel falhou e NENHUM deploy saiu — inclusive os dois que já
+// estavam mergeados e que o dono estava esperando ver no ar.
+//
+// A lição, para quem mexer aqui: este arquivo é compartilhado por três telas
+// (board, /chat e /chat-v2). Tirar um export porque a SUA tela parou de usá-lo
+// é seguro só depois de um `grep` no projeto inteiro — `tsc` do lado de quem
+// remove não acusa nada, porque quem quebra é o outro arquivo.
+//
+// A armadilha do desenho fica registrada: prospecção e pedido começam com a
+// mesma letra (P), e só a cor e a posição as separam.
+
+export const LETRA_ETAPA: Record<EtapaBoard, string> = {
+  prospeccao: "P",
+  sem_cadastro: "S",
+  ociosos: "O",
+  tentativa_contato: "T",
+  negociacao: "N",
+  pedido_emitido: "P",
+  vender_novamente: "V",
+};
 
 export const ROTULO_CURTO_ETAPA: Record<EtapaBoard, string> = {
   prospeccao: "Prospecção",
