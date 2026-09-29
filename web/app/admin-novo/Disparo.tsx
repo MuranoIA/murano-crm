@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { enviarEmMassa, type AlvoEnvio, type FalhaEnvio, type Progresso } from "../../lib/envioEmMassa";
+import { BOTAO_CONTORNO, CAMPO, CHIP, CHIP_DESLIGADO, CHIP_LIGADO } from "./estilo";
 
 // ---------------------------------------------------------------------------
 // O DISPARO, DENTRO DA CAMPANHA (demanda #52, decisão do dono em 29/09/2026:
@@ -162,15 +163,27 @@ export function Disparo({
     leitor.readAsText(f);
   };
 
-  if (!cfg) return <p className="mt-3 text-[13px] text-v2-tinta-fraca">carregando…</p>;
+  // enquanto templates e carteiras não chegam: o formato do passo 1, não um
+  // "carregando…" solto (a tela nunca fica em branco nem pula de altura)
+  if (!cfg)
+    return (
+      <div className="mt-3 rounded-2xl bg-v2-superficie p-4 ring-1 ring-inset ring-v2-linha" aria-label="carregando">
+        <div className="esqueleto h-4 w-32" />
+        <div className="esqueleto mt-3 h-12 w-full" />
+        <div className="esqueleto mt-6 h-4 w-40" />
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {[0, 1, 2, 3, 4].map((i) => <div key={i} className="esqueleto h-9 w-24" />)}
+        </div>
+      </div>
+    );
 
   return (
-    <div className="mt-3 rounded-2xl bg-v2-superficie-2 p-3">
-      <h4 className="text-[12px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">1 · O template</h4>
+    <div className="mt-3 rounded-2xl bg-v2-superficie p-4 ring-1 ring-inset ring-v2-linha sm:p-5">
+      <Passo n={1} titulo="O template" />
       <select
         value={tpl}
         onChange={(e) => { setTpl(e.target.value); setPrevia(null); }}
-        className="mt-1 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-3 py-2 text-[14px] outline-none focus:border-v2-azul"
+        className={CAMPO}
       >
         <option value="">escolha…</option>
         {cfg.templates.map((t) => (
@@ -180,7 +193,7 @@ export function Disparo({
         ))}
       </select>
       {template?.corpo && (
-        <p className="mt-1 whitespace-pre-wrap rounded-xl bg-v2-superficie px-3 py-2 text-[12.5px] leading-[18px] text-v2-tinta-fraca">
+        <p className="mt-2 whitespace-pre-wrap rounded-xl bg-v2-superficie-2 px-3 py-2.5 text-[12.5px] leading-[18px] text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha">
           {template.corpo}
         </p>
       )}
@@ -190,29 +203,29 @@ export function Disparo({
           value={extras[i] ?? ""}
           onChange={(e) => setExtras((v) => { const n = [...v]; n[i] = e.target.value; return n; })}
           placeholder={`o que entra em {{${i + 2}}} — vale para a campanha inteira`}
-          className="mt-1 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-3 py-2 text-[13.5px] outline-none focus:border-v2-azul"
+          className={CAMPO}
         />
       ))}
 
-      <h4 className="mt-4 text-[12px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
-        2 · Quem recebe
-      </h4>
+      <div className="mt-6">
+        <Passo n={2} titulo="Quem recebe" />
+      </div>
 
       {/* PLANILHA — e quando ela existe, os filtros ficam desligados */}
-      <div className="mt-1 flex flex-wrap items-center gap-2 rounded-xl bg-v2-superficie px-3 py-2">
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl bg-v2-superficie-2 px-3 py-2.5 ring-1 ring-inset ring-v2-linha">
         <span className="text-[12.5px] text-v2-tinta-fraca">Planilha (1ª coluna = código do cliente):</span>
         <input
           type="file"
           accept=".csv,.txt,text/csv"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) lerPlanilha(f); }}
-          className="text-[12px]"
+          className="min-w-0 max-w-full text-[12px]"
         />
         {planilha && (
           <span className="flex items-center gap-2 text-[12.5px] text-v2-azul">
-            {planilha.nome} · {planilha.codclis.length} códigos
+            <span className="tabular-nums">{planilha.nome} · {planilha.codclis.length} códigos</span>
             <button
               onClick={() => { setPlanilha(null); setPrevia(null); }}
-              className="rounded-full px-2 py-0.5 text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha"
+              className="rounded-lg px-2 py-0.5 text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie"
             >
               tirar
             </button>
@@ -220,26 +233,22 @@ export function Disparo({
         )}
       </div>
 
-      <fieldset disabled={!!planilha} className={planilha ? "pointer-events-none opacity-45" : ""}>
+      <fieldset disabled={!!planilha} className={["m-0 min-w-0 border-0 p-0", planilha ? "pointer-events-none opacity-45" : ""].join(" ")}>
         {planilha && (
           <p className="mt-2 text-[12px] text-v2-laranja">
             Com planilha os filtros ficam desligados — ela já é a lista final.
           </p>
         )}
 
-        <div className="mt-2">
-          <span className="text-[12px] text-v2-tinta-fraca">Carteiras (nenhuma = todas)</span>
-          <div className="mt-1 flex flex-wrap gap-1.5">
+        <div className="mt-4">
+          <span className="text-[12.5px] font-semibold text-v2-tinta-fraca">Carteiras <span className="font-normal">(nenhuma = todas)</span></span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
             {cfg.carteiras.map((c) => (
               <button
                 key={c.slug}
+                aria-pressed={carteiras.includes(c.slug)}
                 onClick={() => setCarteiras((v) => v.includes(c.slug) ? v.filter((x) => x !== c.slug) : [...v, c.slug])}
-                className={[
-                  "rounded-full px-3 py-1 text-[12.5px] font-medium ring-1 ring-inset",
-                  carteiras.includes(c.slug)
-                    ? "bg-v2-azul text-white ring-v2-azul"
-                    : "bg-v2-superficie text-v2-tinta ring-v2-linha-forte",
-                ].join(" ")}
+                className={[CHIP, carteiras.includes(c.slug) ? CHIP_LIGADO : CHIP_DESLIGADO].join(" ")}
               >
                 {c.slug}
               </button>
@@ -247,19 +256,15 @@ export function Disparo({
           </div>
         </div>
 
-        <div className="mt-2">
-          <span className="text-[12px] text-v2-tinta-fraca">Etapas do funil</span>
-          <div className="mt-1 flex flex-wrap gap-1.5">
+        <div className="mt-4">
+          <span className="text-[12.5px] font-semibold text-v2-tinta-fraca">Etapas do funil</span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
             {ETAPAS.map((e) => (
               <button
                 key={e.k}
+                aria-pressed={etapas.includes(e.k)}
                 onClick={() => setEtapas((v) => v.includes(e.k) ? v.filter((x) => x !== e.k) : [...v, e.k])}
-                className={[
-                  "rounded-full px-3 py-1 text-[12.5px] font-medium ring-1 ring-inset",
-                  etapas.includes(e.k)
-                    ? "bg-v2-azul text-white ring-v2-azul"
-                    : "bg-v2-superficie text-v2-tinta ring-v2-linha-forte",
-                ].join(" ")}
+                className={[CHIP, etapas.includes(e.k) ? CHIP_LIGADO : CHIP_DESLIGADO].join(" ")}
               >
                 {e.r}
               </button>
@@ -267,7 +272,7 @@ export function Disparo({
           </div>
         </div>
 
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Numero rotulo="Parado há (dias)" v={diasMin} set={setDiasMin} />
           <Numero rotulo="Sem template há (dias)" v={diasRecontato} set={setDiasRecontato} />
           <Numero rotulo="Cota por consultor" v={porVendedor} set={setPorVendedor} />
@@ -279,68 +284,71 @@ export function Disparo({
         data-ripple
         disabled={ocupado || (!planilha && !etapas.length)}
         onClick={montar}
-        className="mt-3 rounded-full bg-v2-superficie px-4 py-2 text-[13.5px] font-semibold text-v2-azul ring-1 ring-inset ring-v2-linha-forte disabled:opacity-50"
+        className={["mt-4 w-full sm:w-auto", BOTAO_CONTORNO].join(" ")}
       >
         {ocupado ? "montando…" : "Ver quem vai receber"}
       </button>
 
       {previa && (
-        <div className="mt-3 rounded-xl bg-v2-superficie p-3">
-          <p className="text-[13.5px]">
-            <b>{previa.selecionados.length}</b> clientes ·{" "}
-            <span className="text-v2-tinta-fraca">
-              custo estimado R$ {(previa.selecionados.length * CUSTO).toFixed(2)}
-            </span>
-          </p>
-          {!!Object.keys(previa.cortes).length && (
-            <p className="mt-1 text-[12px] leading-[17px] text-v2-tinta-fraca">
-              fora:{" "}
-              {Object.entries(previa.cortes).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(" · ")}
-            </p>
-          )}
-          {previa.avisos?.map((a, i) => (
-            <p key={i} className="mt-1 text-[12px] text-v2-laranja">{a}</p>
-          ))}
-          <ul className="mt-2 max-h-40 overflow-auto text-[12.5px] text-v2-tinta-fraca">
-            {previa.selecionados.slice(0, 50).map((s) => <li key={s.envio_id}>{s.cliente}</li>)}
-            {previa.selecionados.length > 50 && <li>…e mais {previa.selecionados.length - 50}</li>}
-          </ul>
+        <div className="mt-6">
+          <Passo n={3} titulo="Conferir e disparar" />
+          <div className="mt-1.5 rounded-xl bg-v2-superficie-2 p-3 ring-1 ring-inset ring-v2-linha sm:p-4">
+            <div className="flex flex-wrap gap-x-8 gap-y-2">
+              <Cifra rotulo="clientes" valor={String(previa.selecionados.length)} />
+              <Cifra rotulo="custo estimado" valor={`R$ ${(previa.selecionados.length * CUSTO).toFixed(2)}`} />
+            </div>
+            {!!Object.keys(previa.cortes).length && (
+              <p className="mt-2 text-[12px] leading-[17px] tabular-nums text-v2-tinta-fraca">
+                fora:{" "}
+                {Object.entries(previa.cortes).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(" · ")}
+              </p>
+            )}
+            {previa.avisos?.map((a, i) => (
+              <p key={i} className="mt-1 text-[12px] text-v2-laranja">{a}</p>
+            ))}
+            <ul className="rolagem m-0 mt-3 max-h-40 list-none overflow-auto rounded-lg bg-v2-superficie p-2 text-[12.5px] leading-5 text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha">
+              {previa.selecionados.slice(0, 50).map((s) => <li key={s.envio_id}>{s.cliente}</li>)}
+              {previa.selecionados.length > 50 && (
+                <li className="tabular-nums">…e mais {previa.selecionados.length - 50}</li>
+              )}
+            </ul>
 
-          {!prog && (
-            <button
-              data-ripple
-              disabled={!previa.selecionados.length || (!planilha && !template?.envio_id)}
-              onClick={enviar}
-              className="mt-2 rounded-full bg-v2-laranja px-4 py-2 text-[14px] font-semibold text-white disabled:bg-v2-linha-forte"
-            >
-              Disparar agora
-            </button>
-          )}
+            {!prog && (
+              <button
+                data-ripple
+                disabled={!previa.selecionados.length || (!planilha && !template?.envio_id)}
+                onClick={enviar}
+                className="mt-3 flex h-11 w-full items-center justify-center rounded-lg bg-v2-laranja px-5 text-[14px] font-semibold text-white shadow-e1 disabled:bg-v2-linha-forte disabled:shadow-none sm:w-auto"
+              >
+                Disparar agora
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {prog && (
-        <div className="mt-3 rounded-xl bg-v2-superficie p-3">
-          <p className="text-[13.5px] font-semibold">
+        <div className="mt-3 rounded-xl bg-v2-superficie-2 p-3 ring-1 ring-inset ring-v2-linha sm:p-4">
+          <p className="text-[13.5px] font-semibold tabular-nums">
             {prog.feitos} de {prog.total} · {prog.ok} enviados · {prog.falhas} falhas
           </p>
-          <div className="mt-1 h-2 overflow-hidden rounded-full bg-v2-superficie-2">
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-v2-superficie ring-1 ring-inset ring-v2-linha">
             <div className="h-full bg-v2-azul" style={{ width: `${(prog.feitos / Math.max(1, prog.total)) * 100}%` }} />
           </div>
           {/* ⚠️ a aba precisa ficar ABERTA: o laço roda aqui, não no servidor */}
-          <p className="mt-1 text-[12px] text-v2-tinta-fraca">
+          <p className="mt-1.5 text-[12px] text-v2-tinta-fraca">
             Deixe esta aba aberta até o fim — o envio roda aqui.
           </p>
           {prog.feitos < prog.total && (
             <button
               onClick={() => { parar.current = true; }}
-              className="mt-2 rounded-full px-3 py-1 text-[12.5px] text-v2-erro ring-1 ring-inset ring-v2-linha"
+              className="mt-2 flex h-9 items-center rounded-lg px-3 text-[12.5px] font-semibold text-v2-erro ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-erro-claro"
             >
               Parar
             </button>
           )}
           {!!falhas.length && (
-            <ul className="mt-2 max-h-32 overflow-auto text-[12px] text-v2-erro">
+            <ul className="rolagem m-0 mt-2 max-h-32 list-none overflow-auto p-0 text-[12px] text-v2-erro">
               {falhas.slice(0, 20).map((f, i) => <li key={i}>{f.cliente}: {f.erro}</li>)}
             </ul>
           )}
@@ -350,16 +358,38 @@ export function Disparo({
   );
 }
 
+/** Cabeçalho de passo: número num quadrado + título. A ordem é o roteiro do disparo. */
+function Passo({ n, titulo }: { n: number; titulo: string }) {
+  return (
+    <h4 className="m-0 flex items-center gap-2 text-[14px] font-bold tracking-[-0.01em]">
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-v2-vinho text-[12px] font-bold tabular-nums text-white">
+        {n}
+      </span>
+      {titulo}
+    </h4>
+  );
+}
+
+/** Um número grande com o rótulo embaixo — o que se confere antes de gastar. */
+function Cifra({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div>
+      <p className="text-[24px] font-black leading-none tracking-[-0.02em] tabular-nums">{valor}</p>
+      <p className="mt-1 text-[12px] text-v2-tinta-fraca">{rotulo}</p>
+    </div>
+  );
+}
+
 function Numero({ rotulo, v, set }: { rotulo: string; v: number; set: (n: number) => void }) {
   return (
-    <label className="block">
-      <span className="block text-[11.5px] text-v2-tinta-fraca">{rotulo}</span>
+    <label className="block min-w-0">
+      <span className="block text-[12px] leading-4 text-v2-tinta-fraca">{rotulo}</span>
       <input
         type="number"
         min={0}
         value={v}
         onChange={(e) => set(Math.max(0, Number(e.target.value) || 0))}
-        className="mt-0.5 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-2 py-1.5 text-[13.5px] tabular-nums outline-none focus:border-v2-azul"
+        className={[CAMPO, "tabular-nums"].join(" ")}
       />
     </label>
   );
