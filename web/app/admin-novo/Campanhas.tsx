@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Atendente, CampanhaResumo, Disparo, PainelInicial } from "./_dados/painel";
+import type { Atendente, CampanhaResumo, Disparo as DisparoAnterior, PainelInicial } from "./_dados/painel";
+import { Disparo } from "./Disparo";
 
 type Campanha = CampanhaResumo;
 type Alvo = {
@@ -32,7 +33,7 @@ const nomeDoEndereco = (e: string, lista: Atendente[]) =>
 export function Campanhas({ inicial, aoErro }: { inicial: PainelInicial; aoErro: (t: string) => void }) {
   // ⚠️ NASCE COM OS DADOS do servidor (spec §2.3). A rota só é chamada DEPOIS,
   // quando alguma coisa muda — criar, encerrar — e não para a primeira pintura.
-  const [dados, setDados] = useState<{ disparos: Disparo[]; atendentes: Atendente[]; campanhas: Campanha[] }>({
+  const [dados, setDados] = useState<{ disparos: DisparoAnterior[]; atendentes: Atendente[]; campanhas: Campanha[] }>({
     disparos: inicial.disparos, atendentes: inicial.atendentes, campanhas: inicial.campanhas,
   });
   const [montando, setMontando] = useState(false);
@@ -66,10 +67,10 @@ export function Campanhas({ inicial, aoErro }: { inicial: PainelInicial; aoErro:
         próximo atendente da fila — e a fila dá a volta.
       </p>
       <p className="mt-2 rounded-xl bg-v2-superficie-2 px-3 py-2 text-[12.5px] leading-[18px] text-v2-tinta-fraca">
-        <b className="text-v2-tinta">Esta tela não dispara.</b> O disparo continua em{" "}
-        <a href="/admin" className="text-v2-azul underline">Administração › Templates</a>, com a prévia de quem
-        recebe e o custo. Aqui você escolhe um disparo que <b className="text-v2-tinta">já aconteceu</b> e monta a
-        fila de quem vai receber as respostas.
+        O disparo acontece <b className="text-v2-tinta">aqui</b> — template, carteiras, filtros ou planilha, com a
+        prévia de quem recebe e o custo antes de qualquer coisa sair. A tela de{" "}
+        <a href="/admin" className="text-v2-azul underline">Administração › Templates</a> continua funcionando e tem
+        filtros que esta ainda não expõe (produto, financeiro, geografia).
       </p>
 
       {montando && (
@@ -106,7 +107,7 @@ export function Campanhas({ inicial, aoErro }: { inicial: PainelInicial; aoErro:
 function Montar({
   disparos, atendentes, aoErro, aoCriar,
 }: {
-  disparos: Disparo[]; atendentes: Atendente[];
+  disparos: DisparoAnterior[]; atendentes: Atendente[];
   aoErro: (t: string) => void; aoCriar: () => void;
 }) {
   const [nome, setNome] = useState("");
@@ -114,7 +115,14 @@ function Montar({
   const [fila, setFila] = useState<string[]>([]);
   const [janela, setJanela] = useState(7);
   const [ocupado, setOcupado] = useState(false);
-  const d = disparos.find((x) => x.chave === chave);
+  // ⚠️ DOIS CAMINHOS, e o dono decidiu os dois (29/09/2026):
+  //   `agora`    dispara aqui mesmo — é como as próximas campanhas vão nascer;
+  //   `anterior` prende a campanha a um disparo que JÁ aconteceu — ele chamou
+  //              de exceção, para o disparo de hoje que já saiu.
+  const [modo, setModo] = useState<"agora" | "anterior">("agora");
+  // o que o disparo desta tela produziu: é ele que define quem entra na campanha
+  const [feito, setFeito] = useState<null | { de: string; ate: string; templateEnvioId: string | null; enviados: number }>(null);
+  const d = modo === "anterior" ? disparos.find((x) => x.chave === chave) : null;
 
   // ⚠️ A ORDEM DO CLIQUE É A ORDEM DO RODÍZIO. Sem isto a fila seria a ordem
   // alfabética da lista, e "o primeiro que responder vai para o primeiro da
@@ -123,16 +131,16 @@ function Montar({
     setFila((f) => (f.includes(e) ? f.filter((x) => x !== e) : [...f, e]));
 
   async function criar() {
-    if (!d) return aoErro("escolha o disparo");
+    const janelaDisparo = modo === "agora"
+      ? (feito ? { de: feito.de, ate: feito.ate, template_id: feito.templateEnvioId } : null)
+      : (d ? { de: d.de, ate: d.ate, template_id: d.template_id } : null);
+    if (!janelaDisparo) return aoErro(modo === "agora" ? "dispare primeiro" : "escolha o disparo");
     setOcupado(true);
     try {
       const r = await fetch("/api/admin/campanha-distribuicao", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          nome, de: d.de, ate: d.ate, template_id: d.template_id,
-          atendentes: fila, janela_dias: janela,
-        }),
+        body: JSON.stringify({ nome, ...janelaDisparo, atendentes: fila, janela_dias: janela }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
@@ -156,7 +164,36 @@ function Montar({
         />
       </label>
 
-      <label className="mt-3 block">
+      <div className="mt-3 flex gap-1.5">
+        {([["agora", "Disparar agora"], ["anterior", "Usar um disparo que já aconteceu"]] as const).map(([k, r]) => (
+          <button
+            key={k}
+            data-ripple
+            onClick={() => setModo(k)}
+            className={[
+              "rounded-full px-3 py-1.5 text-[12.5px] font-medium ring-1 ring-inset",
+              modo === k ? "bg-v2-vinho text-white ring-v2-vinho" : "bg-v2-superficie text-v2-tinta ring-v2-linha-forte",
+            ].join(" ")}
+          >
+            {r}
+          </button>
+        ))}
+      </div>
+
+      {modo === "agora" && (
+        <>
+          {feito ? (
+            <p className="mt-2 rounded-xl bg-v2-azul-claro px-3 py-2 text-[13px] text-v2-azul">
+              Disparo concluído: <b>{feito.enviados}</b> templates enviados. Agora escolha a fila do rodízio e crie a
+              campanha — ela já nasce ligada a este disparo.
+            </p>
+          ) : (
+            <Disparo aoErro={aoErro} aoEnviado={setFeito} />
+          )}
+        </>
+      )}
+
+      <label className={["mt-3 block", modo === "anterior" ? "" : "hidden"].join(" ")}>
         <span className="text-[12px] font-medium uppercase tracking-wide text-v2-tinta-fraca">
           Disparo que já aconteceu
         </span>
@@ -236,11 +273,17 @@ function Montar({
 
       <button
         data-ripple
-        disabled={!nome || !d || !fila.length || ocupado}
+        disabled={!nome || !fila.length || ocupado || (modo === "anterior" ? !d : !feito)}
         onClick={criar}
         className="mt-3 rounded-full bg-v2-azul px-4 py-2 text-[14px] font-semibold text-white disabled:bg-v2-linha-forte"
       >
-        {ocupado ? "criando…" : d ? `Criar campanha com ${d.total} cliente${d.total > 1 ? "s" : ""}` : "Criar campanha"}
+        {ocupado
+          ? "criando…"
+          : modo === "anterior" && d
+            ? `Criar campanha com ${d.total} cliente${d.total > 1 ? "s" : ""}`
+            : feito
+              ? `Criar campanha com ${feito.enviados} cliente${feito.enviados > 1 ? "s" : ""}`
+              : "Criar campanha"}
       </button>
     </div>
   );
