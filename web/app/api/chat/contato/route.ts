@@ -46,7 +46,7 @@ export async function GET(req: Request) {
     (async () => {
       await cfgP;
       const { data } = await sb.from(VIEW_FUNIL_TELA)
-        .select("cliente,etapa,venda_valor,venda_data,codcli,sem_cadastro")
+        .select("cliente,etapa,venda_valor,venda_data,codcli,sem_cadastro,telefone")
         .eq("cliente_id", cliente_id).maybeSingle();
       return data ?? null;
     })(),
@@ -93,6 +93,34 @@ export async function GET(req: Request) {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // O MESMO NÚMERO EM MAIS DE UM CADASTRO DO ERP (demanda #50, 29/09/2026)
+  //
+  // Relatado com print: o consultor procura por um nome, abre a conversa, e o
+  // cabeçalho mostra OUTRO — dois cadastros do WinThor com o mesmo telefone e
+  // CPFs diferentes, e o contato colado no errado. O estrago não é cosmético:
+  // saiu um template dizendo "Oi, <nome do outro>!" para a cliente.
+  //
+  // O sistema não tem como escolher sozinho — quem sabe de quem é o número é
+  // quem falou com ela. Então a rota devolve os cadastros que dividem o
+  // telefone, marcando o que está valendo, e a tela deixa corrigir.
+  //
+  // Só quando há MAIS DE UM: com um só não há escolha a oferecer, e o bloco
+  // viraria ruído em quase todo contato. Uma consulta indexada por `tel8`,
+  // paga só ao abrir o painel.
+  // -------------------------------------------------------------------------
+  const tel8 = String((funil as any)?.telefone ?? "").replace(/\D/g, "").slice(-8);
+  let erp_mesmo_telefone: any[] = [];
+  if (tel8.length === 8) {
+    const { data } = await sb.from("wth_carteira")
+      .select("codcli,nome,telefone,cidade,rca_num,rca_nome")
+      .eq("tel8", tel8).eq("ativo", true).order("codcli").limit(6);
+    if ((data ?? []).length > 1) {
+      const atual = Number((compras.data as any)?.codcli ?? (funil as any)?.codcli ?? 0);
+      erp_mesmo_telefone = (data ?? []).map((k: any) => ({ ...k, atual: Number(k.codcli) === atual }));
+    }
+  }
+
   return Response.json({
     ciclo_ativo: (await cfgP).ciclo_ativo,
     compras: compras.data ?? null,
@@ -100,6 +128,7 @@ export async function GET(req: Request) {
     funil,
     ultimas_notas: ultimas.data ?? [],
     erp_candidatos,
+    erp_mesmo_telefone,
   });
 }
 

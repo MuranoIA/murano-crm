@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { VIEW_FUNIL_TELA } from "../../../../lib/crmConfig";
 import { carteiraDe } from "../../../../lib/papel";
 import { carregarAtribuicoes, donoEfetivo } from "../../../../lib/chatEscopo";
-import { ligarPorCpf, recadoDoVinculo } from "../../../../lib/vinculoCpf";
+import { apontarParaCliente, ligarPorCpf, recadoDoVinculo } from "../../../../lib/vinculoCpf";
 import { usuarioDaSessao } from "../../../../lib/chatUsuario";
 
 export const dynamic = "force-dynamic";
@@ -52,6 +52,44 @@ export async function POST(req: Request) {
     }
   }
 
+  const por0 = usuarioDaSessao();
+
+  // ---- TROCAR o cadastro de um contato JÁ vinculado (demanda #50) ----------
+  //
+  // Caminho separado, e não um `ligarPorCpf` com outro CPF: aquele recusa
+  // quando já existe vínculo, de propósito. Aqui é o humano desfazendo uma
+  // ligação que o sistema fez errado — e é por isso que o pedido precisa vir
+  // com `trocar: true`, explícito. Um clique acidental no botão de vincular
+  // nunca deve reapontar um contato que já tem dono.
+  if (b?.trocar === true) {
+    const r2 = await apontarParaCliente(sb, { cliente_id, codcli, por: por0 });
+    if (r2.estado === "sem_cadastro") {
+      return Response.json({ error: "esse cliente não está ativo no WinThor" }, { status: 422 });
+    }
+    if (r2.estado === "sem_cpf") {
+      return Response.json({
+        error: `"${r2.nome}" não tem CPF no cadastro do WinThor, então não há como formar o vínculo`,
+      }, { status: 422 });
+    }
+    // A nota fica na conversa, não só no banco: quem abrir amanhã precisa saber
+    // que o nome mudou por decisão de alguém, e de quem foi a decisão.
+    await sb.from("chat_nota").insert({
+      cliente_id, autor: por0 ?? "sistema",
+      texto:
+        `Cadastro corrigido: este número é de ${r2.para.nome} (cód. ${r2.para.codcli}` +
+        (r2.para.rca_num != null ? `, RCA ${r2.para.rca_num}` : "") + ")." +
+        (r2.de ? ` Antes estava em ${r2.de.nome} (cód. ${r2.de.codcli}).` : "") +
+        (r2.carteira_muda ? " A conversa passa para a carteira do RCA novo." : ""),
+    }).then(() => {}, () => { /* a nota é registro, não pode derrubar a correção */ });
+
+    return Response.json({
+      ok: true, ...r2,
+      aviso:
+        `Agora é ${r2.para.nome} (cód. ${r2.para.codcli}).` +
+        (r2.carteira_muda ? " A conversa passa para a carteira do RCA desse cadastro." : ""),
+    });
+  }
+
   const { data: alvo } = await sb.from("wth_carteira")
     .select("cpf,nome").eq("codcli", codcli).maybeSingle();
   if (!alvo?.cpf) {
@@ -60,7 +98,7 @@ export async function POST(req: Request) {
     }, { status: 422 });
   }
 
-  const por = usuarioDaSessao();
+  const por = por0;
   const r = await ligarPorCpf(sb, {
     cliente_id, cpf: String(alvo.cpf), por,
     // false de propósito: aqui QUEM afirma que é a mesma pessoa é o humano, e
