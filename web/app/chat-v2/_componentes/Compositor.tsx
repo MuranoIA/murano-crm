@@ -570,12 +570,27 @@ export function Compositor({
       ) : (
         <div
           className={[
-            "flex items-end gap-1 rounded-2xl border px-2 py-1.5",
+            "flex flex-wrap items-end gap-1 rounded-2xl border px-2 py-1.5",
             nota
               ? "border-amber-300 bg-amber-50 focus-within:border-amber-400"
               : "border-v2-linha-forte bg-v2-superficie focus-within:border-v2-azul",
           ].join(" ")}
         >
+          {/* ⚠️ OS BOTÕES NUMA LINHA PRÓPRIA NO CELULAR (demanda #47,
+              28/09/2026). O pedido foi que a FIGURINHA aparecesse no celular —
+              e ela, o emoji e o template estavam escondidos por uma razão
+              medida: com seis botões de 40 px dentro da pílula, a caixa de
+              texto ficava com ~50 px a 360 px de tela. Foi por espremer essa
+              caixa que a responsividade quebrou em 01/09 (§67).
+     
+              Em vez de escolher entre "tem figurinha" e "dá para escrever", o
+              grupo vira um filho de largura total (`w-full`) e desce para a
+              linha de cima: os seis cabem folgados, e a caixa fica com a
+              largura inteira. Custa ~44 px de altura no celular, e é a mesma
+              troca que o cabeçalho faz logo acima.
+     
+              No desktop (`sm:`) o grupo é `w-auto` e nada muda. */}
+          <div className="flex w-full items-center gap-1 sm:w-auto">
           <button
             data-ripple
             onClick={() => setNota((v) => !v)}
@@ -590,18 +605,17 @@ export function Compositor({
             </svg>
           </button>
 
-          {/* ⚠️ SÓ NO DESKTOP (`sm:`). No celular o teclado do próprio aparelho
-              já traz os emoji, e a barra tem 360 px para dividir entre seis
-              botões e a caixa de texto — foi por espremer essa caixa que a
-              responsividade quebrou em 01/09 (§67). No computador não há
-              teclado de emoji, e é lá que o botão faz falta. */}
+          {/* O emoji some do CELULAR só quando o teclado do aparelho já o traz
+              — e como ele não traz em toda situação (campo dentro de iframe, por
+              exemplo), o botão fica. A conta de largura que o escondia deixou de
+              valer com a linha própria acima. */}
           <button
             data-ripple
             onClick={() => { setEmoji((v) => !v); setClipe(false); }}
             aria-pressed={emoji}
             title="Emoji"
             className={[
-              "hidden size-10 shrink-0 place-items-center rounded-full sm:grid",
+              "grid size-10 shrink-0 place-items-center rounded-full",
               emoji ? "bg-v2-azul-claro text-v2-azul" : "text-v2-tinta-fraca hover:bg-v2-superficie-2",
             ].join(" ")}
             aria-label="Emoji"
@@ -615,10 +629,10 @@ export function Compositor({
 
           {!nota && (
             <>
-              {/* FIGURINHAS (0144): ao lado do emoji, como no WhatsApp. Também
-                  só no computador, pela mesma conta de largura do emoji — e no
-                  celular a figurinha recebida se salva pela bolha do mesmo
-                  jeito, que é de onde o pacote nasce. */}
+              {/* FIGURINHAS (0144): ao lado do emoji, como no WhatsApp — e
+                  AGORA TAMBÉM NO CELULAR, que é o pedido da demanda #47. A
+                  figurinha recebida continua se salvando pela bolha, que é de
+                  onde o pacote nasce. */}
               <button
                 data-ripple
                 onClick={() => { setFigurinhas((v) => !v); setEmoji(false); setClipe(false); }}
@@ -626,7 +640,7 @@ export function Compositor({
                 title="Figurinhas"
                 aria-label="Figurinhas"
                 className={[
-                  "hidden size-10 shrink-0 place-items-center rounded-full sm:grid",
+                  "grid size-10 shrink-0 place-items-center rounded-full",
                   figurinhas ? "bg-v2-azul-claro text-v2-azul" : "text-v2-tinta-fraca hover:bg-v2-superficie-2",
                 ].join(" ")}
               >
@@ -671,7 +685,7 @@ export function Compositor({
                 data-ripple
                 onClick={aoTemplate}
                 title="Enviar um template"
-                className="hidden size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca hover:bg-v2-superficie-2 sm:grid"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-v2-tinta-fraca hover:bg-v2-superficie-2"
                 aria-label="Template"
               >
                 <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -680,6 +694,8 @@ export function Compositor({
               </button>
             </>
           )}
+
+          </div>
 
           <textarea
             ref={campo}

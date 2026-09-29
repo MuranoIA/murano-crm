@@ -382,7 +382,7 @@ export function Conversa({
         {/* `min-w` e não só `flex-1`: com "✋ Pegar" a fileira de ícones espremia
             o nome até "E…" a 360 px. O nome responde "com quem estou falando?"
             — quem cede é a fileira, que quebra para a linha de baixo. */}
-        <div className="min-w-[128px] flex-1 px-1">
+        <div className="min-w-[128px] flex-1 px-1 md:min-w-[128px]">
           <p className="truncate text-[15px] font-semibold leading-5">{nomeLimpo(conversa.cliente)}</p>
           <p className="truncate text-[12px] leading-4 text-v2-tinta-fraca">
             {conversa.codcli ? `cód. ${conversa.codcli} · ` : ""}
@@ -404,6 +404,20 @@ export function Conversa({
           </button>
         )}
 
+        {/* ⚠️ AS AÇÕES NUMA LINHA SÓ (demanda #47, 28/09/2026) — pedido do dono
+            com o print: no celular o cabeçalho quebrava no meio da fileira e os
+            seis ícones saíam 3 em cima, 3 embaixo, ocupando três linhas de
+            altura para dizer a mesma coisa.
+     
+            Agora o grupo inteiro é UM filho de largura total no celular
+            (`w-full`), então ele desce junto para a linha de baixo e nunca se
+            parte: linha 1 é quem é a cliente, linha 2 são as ações. No desktop
+            (`md:`) ele volta a ser `w-auto` e nada muda.
+     
+            `justify-between` e não `justify-end`: a 360 px os seis ícones com
+            `gap` fixo deixavam uma sobra à direita que fazia a fileira parecer
+            desalinhada do resto. */}
+        <div className="flex w-full items-center justify-between gap-1 md:w-auto md:justify-end">
         {/* Ligar só existe quando há linha para discar. Botão desabilitado
             com explicação seria pior: convida a clicar e ensina que o sistema
             não funciona. `aoLigar` nulo = a camada de ligação ainda está
@@ -442,6 +456,7 @@ export function Conversa({
         </Acao>
 
         <MaisAcoes janelaAberta={j.aberta} aoPausa={aoPausa} aoPedirLocal={aoPedirLocal} aoPdf={aoPdf} />
+        </div>
       </header>
 
       {/* ---- anti-colisão: alguém mais está aqui --------------------------
