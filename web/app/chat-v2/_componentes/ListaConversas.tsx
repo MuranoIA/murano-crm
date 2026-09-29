@@ -24,6 +24,9 @@ export function ListaConversas({
   carregando,
   completa,
   contagens,
+  recadosNovos,
+  ocultos,
+  aoMostrarMais,
   aoAbrir,
   aoTrocarFila,
   aoBuscar,
@@ -53,6 +56,13 @@ export function ListaConversas({
   completa: boolean;
   /** null = ainda não chegou do servidor. Chip sem número, nunca zero. */
   contagens: Record<Fila, number | null>;
+  /** ⚠️ O ALERTA de recado NÃO é o tamanho da fila (#41): a fila mostra toda
+   *  conversa com nota, inclusive as minhas; o alerta conta só o que pede
+   *  ação — nota de outra pessoa que eu ainda não vi. */
+  recadosNovos: number | null;
+  /** quantas conversas de recado ficaram fora do lote mostrado */
+  ocultos: number;
+  aoMostrarMais: () => void;
   aoAbrir: (id: string) => void;
   aoTrocarFila: (f: Fila) => void;
   aoBuscar: (t: string) => void;
@@ -153,14 +163,15 @@ export function ListaConversas({
         style={{ background: "color-mix(in srgb, var(--color-v2-vinho) 10%, #fff)" }}
       >
         <div className="flex items-center gap-1.5">
-          <MenuFilas fila={fila} contagens={contagens} aoTrocar={aoTrocarFila} />
+          <MenuFilas fila={fila} contagens={contagens} recadosNovos={recadosNovos} aoTrocar={aoTrocarFila} />
           <span className="min-w-0 flex-1" />
           {ATALHOS.map((a) => (
             <AtalhoFila
               key={a.id}
               atalho={a}
               ativo={fila === a.id}
-              n={contagens[a.id]}
+              // o atalho mostra o que PEDE AÇÃO, não o tamanho da fila
+              n={a.id === "recados" ? recadosNovos : contagens[a.id]}
               aoTrocar={aoTrocarFila}
             />
           ))}
@@ -391,6 +402,29 @@ export function ListaConversas({
               />
             )}
           />
+        )}
+
+        {/* ⚠️ MOSTRAR MAIS (pedido do dono, 28/09/2026) — só nos recados.
+            A fila deixou de ser curta quando passou a mostrar toda conversa
+            com nota (#41), então ela vem em lotes. O botão DIZ QUANTAS FALTAM:
+            um "mostrar mais" mudo esconde o tamanho de verdade, e a pessoa não
+            sabe se clica uma vez ou dez. Fica embaixo da lista, não flutuando,
+            porque ele é o fim dela — e o clique não busca nada no servidor: as
+            conversas já estão em memória (ver a nota do lote na Casca). */}
+        {ocultos > 0 && (
+          <div className="px-3 pb-3 pt-1">
+            <button
+              data-ripple
+              data-faltam={ocultos}
+              onClick={aoMostrarMais}
+              className="w-full rounded-xl bg-v2-superficie px-3 py-2.5 text-[13px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
+            >
+              Mostrar mais {ocultos > 30 ? 30 : ocultos}
+              <span className="ml-1 font-normal text-v2-tinta-fraca">
+                (faltam {ocultos})
+              </span>
+            </button>
+          </div>
         )}
 
         {/* ---- o que a busca achou DENTRO das mensagens ------------------ */}
@@ -714,12 +748,16 @@ function MiniCard({
 function MenuFilas({
   fila,
   contagens,
+  recadosNovos,
   aoTrocar,
 }: {
   fila: Fila;
   contagens: Record<Fila, number | null>;
+  recadosNovos: number | null;
   aoTrocar: (f: Fila) => void;
 }) {
+  // o número do MENU é o tamanho da fila; o do ALERTA é o que pede ação (#41)
+  const alerta = (f: Fila) => (f === "recados" ? recadosNovos : contagens[f]);
   const [pos, setPos] = useState<null | { top: number; left: number; largura: number }>(null);
   const botao = useRef<HTMLButtonElement>(null);
   const atual = FILAS.find((f) => f.id === fila) ?? FILAS[0];
@@ -734,10 +772,10 @@ function MenuFilas({
   }, [pos]);
 
   // o que pede ação e está FORA da fila aberta — é o que o contador avisa
-  const pendente = (["nao_lidas", "recados"] as Fila[]).filter((f) => f !== fila && (contagens[f] ?? 0) > 0);
-  const pendentes = pendente.reduce((t, f) => t + (contagens[f] ?? 0), 0);
+  const pendente = (["nao_lidas", "recados"] as Fila[]).filter((f) => f !== fila && (alerta(f) ?? 0) > 0);
+  const pendentes = pendente.reduce((t, f) => t + (alerta(f) ?? 0), 0);
   const dica = pendente
-    .map((f) => `${contagens[f]} em ${FILAS.find((x) => x.id === f)?.rotulo}`)
+    .map((f) => `${alerta(f)} em ${FILAS.find((x) => x.id === f)?.rotulo}`)
     .join(" · ");
 
   return (
@@ -796,7 +834,7 @@ function MenuFilas({
             {FILAS.map((f) => {
               const ativo = f.id === fila;
               const c = contagens[f.id];
-              const pede = (f.id === "nao_lidas" || f.id === "recados") && (c ?? 0) > 0;
+              const pede = (f.id === "nao_lidas" || f.id === "recados") && (alerta(f.id) ?? 0) > 0;
               return (
                 <button
                   key={f.id}
