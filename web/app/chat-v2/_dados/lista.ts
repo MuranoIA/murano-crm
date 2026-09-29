@@ -117,11 +117,11 @@ export type Lista = {
   tem_mais: boolean;
   /** contadores dos chips, sobre a lista INTEIRA (ver `contarFilas`) */
   contagens?: Contagens;
-  vendedores: { slug: string; cor: string | null }[];
+  vendedores: { slug: string; cor: string | null; transferencia?: boolean }[];
   /** quem atende SEM carteira (admin, home, pós-venda marcados em /admin).
    *  Endereço `u:email`, nunca um slug — dar carteira a quem não tem RCA
    *  contaminaria board, disparo e relatórios (ver lib/chatEscopo). */
-  atendentes: { endereco: string; nome: string; papel: string }[];
+  atendentes: { endereco: string; nome: string; papel: string; transferencia?: boolean }[];
   /** os números ATIVOS. Uma linha só = o seletor por número não aparece. */
   linhas: { id: string; rotulo: string; numero: string | null }[];
   meu_usuario: string;
@@ -354,8 +354,18 @@ export async function lerLista(
     // quem atende sem carteira. `carteira is null` porque quem tem já está
     // na lista acima, sob o slug, e apareceria duas vezes; `atende_chat`
     // (0130) separa quem atende de quem só administra.
-    sb.from("acesso").select("email,nome,papel")
-      .eq("ativo", true).is("carteira", null).eq("atende_chat", true).order("email"),
+    //
+    // ⚠️ `transferencia_visivel` (0146) NÃO entra aqui. Esta lista é quem
+    // ATENDE — ela alimenta o rótulo de presença e o escopo. Quem o admin
+    // esconde da transferência continua atendendo; o recorte é feito na hora de
+    // montar a lista de destinos, logo abaixo.
+    //
+    // A consulta traz TODO MUNDO de `acesso` (16 linhas) porque a mesma leitura
+    // responde duas coisas: quem atende sem carteira, e quais VENDEDORES o
+    // admin escondeu da lista de destinos. Duas consultas para 16 linhas seria
+    // pagar um round-trip por gosto.
+    sb.from("acesso").select("email,nome,papel,carteira,atende_chat,transferencia_visivel")
+      .eq("ativo", true).order("email"),
     // 5 linhas na tabela: cabe no mesmo Promise.all sem custo perceptível, e
     // é ele que decide se a varredura cara de `vw_chat_linha_cliente` vale.
     sb.from("chat_linha").select("phone_number_id,rotulo,numero").eq("ativo", true).order("rotulo"),
@@ -448,6 +458,13 @@ export async function lerLista(
     extras.linhas && linhasAtivas.length > 1 ? mapaDeLinhas(sb) : null,
   ]);
 
+  // vendedores que o admin tirou do seletor de transferência (0146)
+  const escondidos = new Set(
+    (atendemRes.data ?? [])
+      .filter((p: any) => p.carteira && p.transferencia_visivel === false)
+      .map((p: any) => String(p.carteira)),
+  );
+
   const conversas: Conversa[] = [...doEscopo, ...daFila]
     .map((c: any) => {
       const marca = lidaAte.get(c.cliente_id);
@@ -478,11 +495,22 @@ export async function lerLista(
   return {
     conversas,
     tem_mais: limite !== null && linhas.length >= limite,
-    vendedores: (vendedoresRes.data ?? []) as any[],
-    atendentes: (atendemRes.data ?? []).map((p: any) => ({
+    vendedores: (vendedoresRes.data ?? []).map((v: any) => ({
+      ...v,
+      // ⚠️ o vendedor escondido CONTINUA na lista — o chip de consultor, a cor
+      // e o escopo dependem dela. O que a marca faz é tirá-lo do seletor de
+      // destino da transferência (0146), e só disso.
+      transferencia: escondidos.has(String(v.slug)) ? false : true,
+    })),
+    atendentes: (atendemRes.data ?? [])
+      .filter((p: any) => !p.carteira && p.atende_chat === true)
+      .map((p: any) => ({
       endereco: enderecoDePessoa(String(p.email)),
       nome: (p.nome && String(p.nome).trim()) || String(p.email),
       papel: String(p.papel ?? ""),
+      // o admin pode escondê-la da lista de destinos sem tirá-la do
+      // atendimento (0146) — são duas perguntas diferentes
+      transferencia: p.transferencia_visivel !== false,
     })),
     linhas: linhasAtivas,
     meu_usuario: s.usuario,
