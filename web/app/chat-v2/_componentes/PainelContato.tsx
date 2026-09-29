@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { dinheiro, telefoneBonito } from "./formato";
 import type { Conversa } from "./tipos";
-import { FichaCadastro, MesmaPessoa, type CandidatoErp } from "./FichaCadastro";
+import { FichaCadastro, MesmaPessoa, OutroCadastro, type CadastroDoTelefone, type CandidatoErp } from "./FichaCadastro";
 import { TrocarNumero } from "./TrocarNumero";
 
 // O ERP ao lado da conversa. É a vantagem que o RD Conversas não tem — e no
@@ -23,6 +23,7 @@ type Dados = {
   ultimas_notas: { data_fat: string; valor: number; num_nota: number | null; filial: string | null }[];
   /** mesmo NOME no WinThor com outro telefone, quando este número não tem vínculo */
   erp_candidatos?: CandidatoErp[];
+  erp_mesmo_telefone?: CadastroDoTelefone[];
 };
 
 export function PainelContato({
@@ -150,6 +151,18 @@ export function PainelContato({
                 <b className="text-v2-tinta">Cadastro do WinThor.</b> Nome, CPF e endereço vêm do ERP e não são
                 editados aqui — corrigir por lá vale para todo mundo, e chega em até 10 minutos.
               </p>
+            )}
+
+            {/* ⚠️ FORA do `!temErp` (demanda #50): o caso é justamente o do
+                contato que JÁ tem cadastro — e cadastro errado. Dentro do bloco
+                de "sem cadastro" ele nunca apareceria para quem precisa. */}
+            {ehContato && (
+              <OutroCadastro
+                clienteId={conversa.cliente_id}
+                cadastros={d.erp_mesmo_telefone ?? []}
+                aoAviso={aoAviso}
+                aoTrocado={() => setVersao((v) => v + 1)}
+              />
             )}
             {ehContato && !temErp && (
               <>

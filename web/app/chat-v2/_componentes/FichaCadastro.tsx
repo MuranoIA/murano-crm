@@ -274,3 +274,117 @@ export function MesmaPessoa({
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// "ESTE NÚMERO É DE OUTRO CLIENTE" (demanda #50, 29/09/2026)
+//
+// O caso, com print: o WinThor tem dois cadastros com o MESMO telefone e CPFs
+// diferentes, e o contato do chat ficou colado no errado. O consultor procurou
+// por um nome, abriu a conversa e o cabeçalho mostrava outro — depois de já ter
+// saído um template dizendo "Oi, <nome do outro>!" para a cliente.
+//
+// O sistema não tem como escolher: os dois cadastros são reais e o telefone é
+// o mesmo. Quem sabe é quem falou com ela. Então a tela mostra os dois, marca o
+// que está valendo, e deixa corrigir.
+//
+// ⚠️ A CONFIRMAÇÃO DIZ O QUE MUDA DE VERDADE. Trocar o cadastro troca o RCA, e
+// o RCA é quem decide a carteira da conversa (§45.2) — ou seja, a conversa pode
+// sair da mão de quem está atendendo. Descobrir isso depois do clique seria a
+// pior hora.
+// ---------------------------------------------------------------------------
+export type CadastroDoTelefone = CandidatoErp & { atual?: boolean };
+
+export function OutroCadastro({
+  clienteId,
+  cadastros,
+  aoAviso,
+  aoTrocado,
+}: {
+  clienteId: string;
+  cadastros: CadastroDoTelefone[];
+  aoAviso?: (texto: string, ok: boolean) => void;
+  aoTrocado: () => void;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  // com um cadastro só não há escolha a oferecer — e o bloco viraria ruído em
+  // quase todo contato
+  if (cadastros.length < 2) return null;
+
+  return (
+    <section className="mt-3 rounded-2xl bg-v2-superficie-2 p-3">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
+        Este número está em {cadastros.length} cadastros
+      </h3>
+      <p className="mt-1 text-[12.5px] leading-[18px] text-v2-tinta">
+        O WinThor tem mais de um cliente com este telefone. O sistema não tem como saber qual deles é o dono do
+        número — <b>quem sabe é você</b>. Se o cadastro em uso estiver errado, corrija aqui.
+      </p>
+      {cadastros.map((k) => (
+        <div
+          key={k.codcli}
+          className={[
+            "mt-2 rounded-xl p-2.5 text-[12.5px]",
+            k.atual ? "bg-v2-superficie ring-1 ring-inset ring-v2-azul" : "bg-v2-superficie",
+          ].join(" ")}
+        >
+          <p className="font-semibold">
+            {k.nome}
+            {k.atual && <span className="ml-1.5 text-[11px] font-medium text-v2-azul">em uso</span>}
+          </p>
+          <p className="text-v2-tinta-fraca">
+            cód. {k.codcli}
+            {k.rca_num != null && ` · RCA ${k.rca_num}${k.rca_nome ? ` (${k.rca_nome})` : ""}`}
+            {k.cidade && ` · ${k.cidade}`}
+          </p>
+          {!k.atual && (
+            <button
+              data-ripple
+              disabled={ocupado}
+              onClick={() => {
+                const emUso = cadastros.find((x) => x.atual);
+                if (
+                  !confirm(
+                    `Confirmar que este número é de ${k.nome} (cód. ${k.codcli})?
+
+` +
+                      (emUso ? `A conversa deixa de ser de ${emUso.nome}.
+` : "") +
+                      `O nome no chat passa a ser o deste cadastro` +
+                      (k.rca_num != null ? `, e a conversa vai para a carteira do RCA ${k.rca_num}` : "") +
+                      `.`,
+                  )
+                ) return;
+                setOcupado(true);
+                fetch("/api/chat/vincular", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  // `trocar` explícito: sem ele a rota recusa reapontar um
+                  // contato que já tem cadastro, e é isso que impede um clique
+                  // acidental de mudar o dono de uma conversa
+                  body: JSON.stringify({ cliente_id: clienteId, codcli: k.codcli, trocar: true }),
+                })
+                  .then(async (r) => {
+                    const j = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+                    return j;
+                  })
+                  .then((j) => {
+                    aoAviso?.(j?.aviso ?? "Cadastro corrigido.", true);
+                    aoTrocado();
+                  })
+                  .catch((e) => aoAviso?.(String(e?.message ?? e), false))
+                  .finally(() => setOcupado(false));
+              }}
+              className="mt-2 rounded-full bg-v2-vinho px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-60"
+            >
+              É este o dono do número
+            </button>
+          )}
+        </div>
+      ))}
+      <p className="mt-2 text-[11.5px] leading-4 text-v2-tinta-fraca">
+        A correção fica registrada como nota na conversa, com o seu nome — e o sincronismo do WinThor não a desfaz.
+      </p>
+    </section>
+  );
+}

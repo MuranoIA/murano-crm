@@ -84,6 +84,79 @@ export async function ligarPorCpf(
            telefone_erp: alvo.telefone ?? null, telefone_novo: telNovo || null };
 }
 
+// ---------------------------------------------------------------------------
+// "ESTE NÚMERO É DE OUTRO CLIENTE" — a correção que faltava (demanda #50).
+//
+// O caso real, de 29/09/2026: o WinThor tem DOIS cadastros com o mesmo telefone
+// e CPFs diferentes. O contato do chat ficou colado no cadastro errado, e o
+// estrago não é cosmético — a conversa saiu com um template dizendo "Oi,
+// <nome do outro>!" para a cliente. Quem descobre isso é o consultor, falando
+// com ela; o sistema não tem como saber.
+//
+// ⚠️ POR QUE ISTO NÃO É UM `ligarPorCpf` COM OUTRO CPF: aquele recusa quando já
+// existe vínculo (`ja_vinculado`), de propósito — o caminho automático não deve
+// desfazer o que já foi decidido. Aqui é o oposto: é o humano desfazendo.
+//
+// ⚠️ E POR QUE `origem = 'manual'`: o `wth_reconciliar_vinculos()` roda a cada
+// 10 minutos e refaz o vínculo pelo CPF e pelo telefone — mas os dois ramos que
+// CORRIGEM trazem `where ... origem <> 'manual'`. Ou seja, `'manual'` já era a
+// saída de emergência prevista no desenho do job; ela só não tinha nenhuma tela
+// que a usasse. Sem ela, a correção do consultor duraria dez minutos.
+//
+// O CPF vai junto para `clientes` porque é o que o resto do sistema lê; e o
+// NOME também, porque a thread lê `clientes.nome_completo` direto (a view usa o
+// nome do ERP desde a 0108, mas a thread não). Com um só dos dois, a mesma
+// pessoa apareceria com dois nomes em duas telas.
+// ---------------------------------------------------------------------------
+export type Reapontamento =
+  | { estado: "sem_cadastro"; codcli: number }
+  | { estado: "sem_cpf"; codcli: number; nome: string }
+  | { estado: "trocado"; de: { codcli: number; nome: string } | null;
+      para: { codcli: number; nome: string; rca_num: number | null }; carteira_muda: boolean };
+
+export async function apontarParaCliente(
+  sb: any,
+  opts: { cliente_id: string; codcli: number; por: string | null },
+): Promise<Reapontamento> {
+  const { data: alvo } = await sb.from("wth_carteira")
+    .select("codcli,nome,cpf,rca_num").eq("codcli", opts.codcli).eq("ativo", true).maybeSingle();
+  if (!alvo) return { estado: "sem_cadastro", codcli: opts.codcli };
+  const cpf = soDigitos(String(alvo.cpf ?? ""));
+  // sem CPF não há vínculo possível: a tabela exige a coluna, e o job casa por
+  // ela. Recusar aqui é melhor que gravar um vínculo que o próximo ciclo desfaz.
+  if (!cpf) return { estado: "sem_cpf", codcli: opts.codcli, nome: String(alvo.nome ?? "") };
+
+  const { data: antes } = await sb.from("wth_vinculo")
+    .select("codcli").eq("cliente_id", opts.cliente_id).maybeSingle();
+  let de: { codcli: number; nome: string } | null = null;
+  let rcaAntes: number | null = null;
+  if (antes?.codcli) {
+    const { data: velho } = await sb.from("wth_carteira")
+      .select("nome,rca_num").eq("codcli", antes.codcli).maybeSingle();
+    de = { codcli: Number(antes.codcli), nome: String(velho?.nome ?? "") };
+    rcaAntes = velho?.rca_num ?? null;
+  }
+
+  const { error: e1 } = await sb.from("clientes")
+    .update({ cpf, nome_completo: String(alvo.nome ?? "") }).eq("id", opts.cliente_id);
+  if (e1) throw new Error(`gravar cadastro: ${e1.message}`);
+
+  const { error: e2 } = await sb.from("wth_vinculo").upsert({
+    cliente_id: opts.cliente_id, codcli: alvo.codcli, cpf,
+    origem: "manual", conferido_em: new Date().toISOString(),
+  }, { onConflict: "cliente_id" });
+  if (e2) throw new Error(`gravar vínculo: ${e2.message}`);
+
+  return {
+    estado: "trocado", de,
+    para: { codcli: Number(alvo.codcli), nome: String(alvo.nome ?? ""), rca_num: alvo.rca_num ?? null },
+    // a carteira da conversa sai do RCA do cadastro (§45.2): trocar de cadastro
+    // pode tirar a conversa da mão de quem está atendendo, e isso precisa ser
+    // dito ANTES do clique, não descoberto depois
+    carteira_muda: de != null && rcaAntes !== (alvo.rca_num ?? null),
+  };
+}
+
 /** O recado que vira nota interna na conversa. Nota, e não mensagem: o que entra
  *  em `mensagens` move card de etapa e abre espera no indicador (§21.2). */
 export function recadoDoVinculo(r: ResultadoVinculo): string | null {
