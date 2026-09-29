@@ -126,8 +126,13 @@ alter table campanha_alvo   enable row level security;
 -- Devolve NULL quando não há nada a fazer — que é o caso da esmagadora maioria
 -- das mensagens que entram.
 -- ---------------------------------------------------------------------------
+-- ⚠️ OS PARÂMETROS DE SAÍDA LEVAM PREFIXO `o_`, e não é estilo: sem ele o
+-- plpgsql não sabe se `campanha_id` num `where` é a COLUNA de `campanha_alvo`
+-- ou o parâmetro, e a função morre com "column reference is ambiguous". O mesmo
+-- valia para `atendente`, que é coluna da mesma tabela. E o erro só aparece em
+-- tempo de execução — `create function` aceita numa boa.
 create or replace function campanha_distribuir(p_cliente_id text)
-returns table (campanha_id bigint, atendente text, nome_campanha text)
+returns table (o_campanha_id bigint, o_atendente text, o_campanha text)
 language plpgsql
 security definer
 set search_path to 'public'
@@ -197,9 +202,9 @@ begin
   values (p_cliente_id, v_dono, v_quem, 'campanha',
           'distribuição automática — campanha "' || v_camp.nome || '"');
 
-  campanha_id := v_camp.id;
-  atendente := v_quem;
-  nome_campanha := v_camp.nome;
+  o_campanha_id := v_camp.id;
+  o_atendente := v_quem;
+  o_campanha := v_camp.nome;
   return next;
 end;
 $$;

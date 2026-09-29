@@ -1,16 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { Campanhas } from "./Campanhas";
+import type { PainelInicial, PessoaTransferencia } from "./_dados/painel";
 
-type Pessoa = {
-  email: string;
-  nome: string;
-  papel: string | null;
-  carteira: string | null;
-  atende_chat: boolean;
-  visivel: boolean;
-  impedimento: string | null;
-};
+type Pessoa = PessoaTransferencia;
 
 const PAPEL: Record<string, string> = {
   "pos-venda": "Pós-venda",
@@ -31,27 +25,19 @@ const PAPEL: Record<string, string> = {
 // Dois botões parecidos com consequências diferentes é como se perde uma tarde
 // — e uma conversa.
 // ---------------------------------------------------------------------------
-export function Painel() {
-  const [pessoas, setPessoas] = useState<Pessoa[] | null>(null);
+export function Painel({ inicial }: { inicial: PainelInicial }) {
+  // ⚠️ A 1ª CARGA VEM DO SERVIDOR (spec §2.3): o estado NASCE com os dados, e
+  // não com `null` esperando um `fetch` na montagem. O `useState` só guarda o
+  // que muda daqui para a frente.
+  const [pessoas, setPessoas] = useState<Pessoa[]>(inicial.pessoas);
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/admin/transferencia")
-      .then(async (r) => {
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
-        return j;
-      })
-      .then((j) => setPessoas(j.pessoas ?? []))
-      .catch((e) => setErro(String(e?.message ?? e)));
-  }, []);
 
   async function alternar(p: Pessoa, visivel: boolean) {
     setOcupado(p.email);
     // otimista: a lista é curta e a troca é reversível num clique — esperar o
     // servidor para pintar uma caixa de seleção só faria a tela parecer lenta
-    setPessoas((ps) => (ps ?? []).map((x) => (x.email === p.email ? { ...x, visivel } : x)));
+    setPessoas((ps) => ps.map((x) => (x.email === p.email ? { ...x, visivel } : x)));
     try {
       const r = await fetch("/api/admin/transferencia", {
         method: "PATCH",
@@ -62,15 +48,15 @@ export function Painel() {
       if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
     } catch (e) {
       // desfaz o otimismo: melhor a caixa voltar do que a tela mentir
-      setPessoas((ps) => (ps ?? []).map((x) => (x.email === p.email ? { ...x, visivel: !visivel } : x)));
+      setPessoas((ps) => ps.map((x) => (x.email === p.email ? { ...x, visivel: !visivel } : x)));
       setErro(String((e as any)?.message ?? e));
     } finally {
       setOcupado(null);
     }
   }
 
-  const consultores = (pessoas ?? []).filter((p) => p.carteira);
-  const atendimento = (pessoas ?? []).filter((p) => !p.carteira);
+  const consultores = pessoas.filter((p) => p.carteira);
+  const atendimento = pessoas.filter((p) => !p.carteira);
 
   return (
     <div className="v2 min-h-dvh bg-v2-fundo text-v2-tinta">
@@ -103,10 +89,7 @@ export function Painel() {
           {erro && (
             <p className="mt-3 rounded-lg bg-v2-erro-claro px-3 py-2 text-[12.5px] text-v2-erro">{erro}</p>
           )}
-          {!pessoas && !erro && <p className="mt-4 text-[13px] text-v2-tinta-fraca">carregando…</p>}
-
-          {pessoas && (
-            <>
+          <>
               <Grupo
                 titulo="Consultores"
                 dica="Aparecem pelo nome da carteira, como hoje."
@@ -121,9 +104,10 @@ export function Painel() {
                 ocupado={ocupado}
                 aoAlternar={alternar}
               />
-            </>
-          )}
+          </>
         </section>
+
+        <Campanhas inicial={inicial} aoErro={setErro} />
       </main>
     </div>
   );
