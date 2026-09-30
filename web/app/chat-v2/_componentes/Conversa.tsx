@@ -258,6 +258,12 @@ export function Conversa({
 }) {
   const j = useMemo(() => janela(mensagens), [mensagens]);
 
+  // ⚠️ O SALTO MORA AQUI, e não dentro da thread: quem ESCOLHE a nota é o
+  // compositor (a lista está no menu dele) e quem ROLA é a thread. O `selo`
+  // existe para escolher a MESMA nota duas vezes voltar a saltar — sem ele o
+  // segundo clique não mudaria o estado e nada aconteceria (#55).
+  const [irPara, setIrPara] = useState<{ chave: string; selo: number } | null>(null);
+
   // ---- ARRASTAR E SOLTAR ------------------------------------------------
   //
   // A zona é a CONVERSA INTEIRA, não a caixa de texto: quem arrasta uma foto
@@ -487,6 +493,7 @@ export function Conversa({
         // da consultora. Remontar também zera as alturas medidas da lista
         // virtual, que são de outra conversa.
         <Thread
+          irPara={irPara}
           key={conversa.cliente_id}
           mensagens={mensagens}
           notas={notas}
@@ -540,6 +547,8 @@ export function Conversa({
         enviando={enviando}
         progresso={progresso}
         locais={locais}
+        notas={notas}
+        aoIrParaNota={(n) => setIrPara({ chave: `nota-${n.id}`, selo: Date.now() })}
         aoEnviar={aoEnviar}
         aoTemplate={aoTemplate}
         aoArquivos={aoArquivos}

@@ -207,10 +207,16 @@ export function JanelaVirtual<T>({
   raizRef,
   alturaEstimada,
   overscanPx,
+  // ⚠️ `forcarChaves` ESTAVA SENDO PERDIDO AQUI (29/09/2026). O tipo já o
+  // previa e `useVirtualizacao` já sabia usá-lo, mas este componente não o
+  // repassava — então quem pedisse "monte este item mesmo fora da janela"
+  // recebia um silêncio: o `querySelector` não achava nada e o "ir até aqui"
+  // não ia a lugar nenhum. Achado ao construir a lista de notas (#55).
+  forcarChaves,
   ativo,
   renderItem,
 }: OpcoesVirtual<T> & { renderItem: (item: T, indice: number) => React.ReactNode }) {
-  const virt = useVirtualizacao({ itens, chave, raizRef, alturaEstimada, overscanPx, ativo });
+  const virt = useVirtualizacao({ itens, chave, raizRef, alturaEstimada, overscanPx, forcarChaves, ativo });
   return (
     <>
       {virt.paddingTopo > 0 && <div style={{ height: virt.paddingTopo, flexShrink: 0 }} aria-hidden />}
