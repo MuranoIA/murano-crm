@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { COOKIE_TEMA_CHAT, temaChatDe } from "../../lib/temaChat";
 import { sessaoAdmin } from "./_dados/servidor";
 import { lerPainel } from "./_dados/painel";
 import { Painel } from "./Painel";
@@ -30,5 +32,11 @@ export default async function PaginaAdminNovo() {
   // proteção, é cortesia
   if (!s) redirect("/chat-v2");
   const inicial = await lerPainel();
-  return <Painel inicial={inicial} />;
+  // ⚠️ O TEMA VEM DO SERVIDOR, do mesmo cookie do chat (demanda #53). Lido aqui
+  // e não no cliente: decidido no navegador, a tela abriria no tema antigo e
+  // trocaria de cor depois do JS — o pisca que a spec manda evitar. E é o mesmo
+  // cookie de propósito: escolher no chat vale aqui, e vice-versa. Dois cookies
+  // seriam duas preferências para a mesma pergunta.
+  const tema = temaChatDe(cookies().get(COOKIE_TEMA_CHAT)?.value);
+  return <Painel inicial={inicial} tema={tema} />;
 }

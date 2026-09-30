@@ -1,3 +1,6 @@
+import { cookies } from "next/headers";
+import { COOKIE_TEMA_CHAT, temaChatDe } from "../../lib/temaChat";
+
 // O esqueleto com o FORMATO REAL da tela (spec §2.1): com `loading.tsx` a página
 // faz streaming — o primeiro byte leva isto, e o conteúdo entra depois no mesmo
 // documento. Sem ele, o primeiro byte esperaria as consultas inteiras e a tela
@@ -6,9 +9,14 @@
 // Acompanha o layout do Painel (demanda #92): barra de 56px, título grande, a
 // linha de abas e o cartão da lista em duas colunas no computador. Se o
 // Painel mudar de forma, este muda junto — senão a tela "pula" ao carregar.
+//
+// ⚠️ E LÊ O TEMA (demanda #53). Sem isto o esqueleto pisca na cor padrão e a
+// tela troca de cor quando a página chega — exatamente o pisca que ler o cookie
+// no servidor existe para evitar.
 export default function Carregando() {
+  const tema = temaChatDe(cookies().get(COOKIE_TEMA_CHAT)?.value);
   return (
-    <div className="v2 min-h-dvh bg-v2-fundo" aria-busy="true" aria-label="carregando">
+    <div className="v2 min-h-dvh bg-v2-fundo" data-tema={tema} aria-busy="true" aria-label="carregando">
       <div className="bg-v2-vinho pt-[env(safe-area-inset-top)] shadow-e2">
         <div className="h-14" />
       </div>
