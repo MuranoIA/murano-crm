@@ -47,6 +47,8 @@ export function Compositor({
   aoLocal,
   aoFigurinha,
   aoNota,
+  notas = [],
+  aoIrParaNota,
   aoErro,
   aoRegistrarGesto,
   citando,
@@ -65,6 +67,10 @@ export function Compositor({
   /** manda uma figurinha do pacote (0144) */
   aoFigurinha: (f: Figurinha) => void;
   aoNota: (texto: string) => void;
+  /** as notas desta conversa — a mesma lista que a thread intercala */
+  notas?: { id: number; autor: string; texto: string; criada_em: string }[];
+  /** leva a thread até a nota escolhida na lista (demanda #55) */
+  aoIrParaNota?: (n: { id: number }) => void;
   aoErro: (msg: string) => void;
   /** publica para cima os gestos que só existem aqui dentro: gravar, anexar e
    *  receber arquivos soltos na conversa. É o que permite o `?acao=` da lupa do
@@ -78,6 +84,7 @@ export function Compositor({
 }) {
   const [texto, setTexto] = useState("");
   const [nota, setNota] = useState(false);
+  const [menuNota, setMenuNota] = useState(false);
   const [clipe, setClipe] = useState(false);
   const [emoji, setEmoji] = useState(false);
   const [figurinhas, setFigurinhas] = useState(false);
@@ -591,19 +598,90 @@ export function Compositor({
      
               No desktop (`sm:`) o grupo é `w-auto` e nada muda. */}
           <div className="flex w-full items-center gap-1 sm:w-auto">
-          <button
-            data-ripple
-            onClick={() => setNota((v) => !v)}
-            aria-pressed={nota}
-            title={nota ? "Voltar a escrever para a cliente" : "Nota interna — não vai para a cliente"}
-            className={[iconeBotao, nota ? "bg-amber-200 text-amber-900" : "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
-            aria-label="Nota interna"
-          >
-            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 4h14v11l-5 5H5V4Z" />
-              <path d="M19 15h-5v5" />
-            </svg>
-          </button>
+          {/* ⚠️ O BOTÃO DE NOTA VIROU MENU (demanda #55, 29/09/2026).
+              Escrever nota continua sendo o primeiro item, e no MESMO lugar de
+              sempre. O segundo é a lista — o pedido nasceu de a consultora ter
+              de rolar a conversa inteira procurando uma nota que ela sabe que
+              existe.
+
+              Com nota ligada o botão volta a ser interruptor: ali ele só
+              precisa desligar, e abrir um menu para isso seria um clique a mais
+              no meio de escrever. */}
+          <div className="relative">
+            <button
+              data-ripple
+              onClick={() => (nota ? setNota(false) : setMenuNota((v) => !v))}
+              aria-pressed={nota}
+              aria-haspopup={nota ? undefined : "menu"}
+              aria-expanded={nota ? undefined : menuNota}
+              title={nota ? "Voltar a escrever para a cliente" : "Notas internas — não vão para a cliente"}
+              className={[iconeBotao, nota ? "bg-amber-200 text-amber-900" : "text-v2-tinta-fraca hover:bg-v2-superficie-2"].join(" ")}
+              aria-label="Notas internas"
+            >
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 4h14v11l-5 5H5V4Z" />
+                <path d="M19 15h-5v5" />
+              </svg>
+              {/* quantas notas esta conversa tem — o número é o que faz alguém
+                  descobrir a lista sem precisar ser avisado */}
+              {!nota && notas.length > 0 && (
+                <span className="absolute right-0 top-0 min-w-[15px] rounded-full bg-amber-500 px-1 text-center text-[9.5px] font-semibold leading-[15px] text-white ring-2 ring-v2-superficie">
+                  {notas.length > 9 ? "9+" : notas.length}
+                </span>
+              )}
+            </button>
+
+            {menuNota && !nota && (
+              <>
+                <span className="fixed inset-0 z-20" onClick={() => setMenuNota(false)} aria-hidden />
+                <div
+                  role="menu"
+                  className="entrar absolute bottom-[calc(100%+6px)] left-0 z-30 w-72 overflow-hidden rounded-xl bg-v2-superficie py-1 shadow-e3 ring-1 ring-v2-linha"
+                >
+                  <button
+                    data-ripple
+                    role="menuitem"
+                    onClick={() => { setMenuNota(false); setNota(true); }}
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13.5px] font-medium text-v2-tinta hover:bg-v2-superficie-2"
+                  >
+                    <span aria-hidden>🗒️</span> Escrever nota interna
+                  </button>
+
+                  <div className="border-t border-v2-linha px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
+                    notas desta conversa · {notas.length}
+                  </div>
+                  {notas.length === 0 ? (
+                    <p className="px-3 pb-2 text-[12.5px] text-v2-tinta-fraca">Nenhuma ainda.</p>
+                  ) : (
+                    <ul className="max-h-64 list-none overflow-auto p-0">
+                      {/* da mais nova para a mais velha: quem procura uma nota
+                          costuma procurar a última */}
+                      {[...notas].reverse().map((n) => (
+                        <li key={n.id}>
+                          <button
+                            data-ripple
+                            role="menuitem"
+                            onClick={() => { setMenuNota(false); aoIrParaNota?.(n); }}
+                            className="block w-full px-3 py-2 text-left hover:bg-v2-superficie-2"
+                          >
+                            <span className="flex items-baseline gap-2 text-[10.5px] uppercase tracking-wide text-amber-700">
+                              <span className="min-w-0 truncate">{n.autor}</span>
+                              <span className="ml-auto shrink-0 tabular-nums text-v2-tinta-fraca">
+                                {new Date(n.criada_em).toLocaleDateString("pt-BR", { timeZone: "America/Belem", day: "2-digit", month: "2-digit" })}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 block line-clamp-2 text-[12.5px] leading-[17px] text-v2-tinta">
+                              {n.texto}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* O emoji some do CELULAR só quando o teclado do aparelho já o traz
               — e como ele não traz em toda situação (campo dentro de iframe, por

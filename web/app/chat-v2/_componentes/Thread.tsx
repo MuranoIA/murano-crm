@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { JanelaVirtual } from "../../../lib/virtualizacao";
 import { Bolha } from "./Bolha";
 import type { Citada, Mensagem } from "./tipos";
@@ -50,6 +50,7 @@ export function Thread({
   aoResponder,
   aoSalvarFigurinha,
   aoApagarNota,
+  irPara,
 }: {
   mensagens: Mensagem[];
   notas: Nota[];
@@ -64,6 +65,9 @@ export function Thread({
   aoResponder?: (m: Mensagem) => void;
   aoSalvarFigurinha?: (m: Mensagem) => void;
   aoApagarNota?: (n: Nota) => void;
+  /** chave do item para onde a thread deve SALTAR (a nota escolhida na lista).
+   *  Muda a cada clique, mesmo repetindo a mesma nota — ver `irPara` abaixo. */
+  irPara?: { chave: string; selo: number } | null;
 }) {
   const raiz = useRef<HTMLDivElement>(null);
   const ultimaChave = mensagens.length ? mensagens[mensagens.length - 1].id : "";
@@ -214,6 +218,48 @@ export function Thread({
 
   const chave = useMemo(() => (i: Item) => i.chave, []);
 
+  // ---- IR ATÉ AQUI (demanda #55) -----------------------------------------
+  //
+  // A consultora escolhe uma nota na lista e a thread salta até ela. Três
+  // coisas precisam acontecer, nesta ordem:
+  //
+  //   1. a nota tem de estar MONTADA. A lista é virtualizada: fora da janela
+  //      visível o item não existe no DOM, e `querySelector` não acha o que não
+  //      foi montado. É para isto que `forcarChaves` existe;
+  //   2. o `scrollIntoView` vem no quadro SEGUINTE, porque o item acabou de
+  //      entrar e o navegador ainda não sabe a altura dele;
+  //   3. o realce não é enfeite: numa conversa de centenas de linhas, saltar
+  //      sem dizer para onde deixa a pessoa procurando de novo o que ela
+  //      acabou de pedir.
+  //
+  // ⚠️ E o gesto marca `gesto.current`: sem isso, o laço que cola no fim
+  // durante o primeiro segundo puxaria a tela de volta na cara da pessoa.
+  const [forcada, setForcada] = useState<Set<string> | undefined>(undefined);
+  const [realce, setRealce] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!irPara) return;
+    gesto.current = Date.now();
+    setForcada(new Set([irPara.chave]));
+    let vivo = true;
+    const tenta = (n: number) => {
+      if (!vivo) return;
+      const el = raiz.current?.querySelector(`[data-item="${irPara.chave}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        setRealce(irPara.chave);
+        // some sozinho: realce que fica vira poluição na próxima leitura
+        setTimeout(() => vivo && setRealce(null), 2600);
+        return;
+      }
+      // a montagem pode levar um quadro ou dois; desistir depois de ~1s é
+      // melhor que tentar para sempre
+      if (n < 12) requestAnimationFrame(() => tenta(n + 1));
+    };
+    requestAnimationFrame(() => tenta(0));
+    return () => { vivo = false; };
+  }, [irPara]);
+
   return (
     <div ref={raiz} className="rolagem min-h-0 flex-1 overflow-y-auto py-2">
       <div ref={conteudo}>
@@ -242,6 +288,7 @@ export function Thread({
             raizRef={raiz}
             alturaEstimada={64}
             ativo={itens.length > 80}
+            forcarChaves={forcada}
             renderItem={(i) =>
               i.tipo === "dia" ? (
                 <div className="my-3 flex justify-center">
@@ -252,8 +299,15 @@ export function Thread({
               ) : i.tipo === "nota" ? (
                 // papel amarelo: a nota é da equipe, e precisa ser impossível
                 // confundir com o que a cliente leu
-                <div className="my-1.5 flex justify-center px-3">
-                  <div className="w-full max-w-[min(80%,620px)] rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 shadow-e1">
+                <div className="my-1.5 flex justify-center px-3" data-item={i.chave}>
+                  <div
+                    className={[
+                      "w-full max-w-[min(80%,620px)] rounded-xl border bg-amber-50 px-3 py-2 shadow-e1 transition-shadow",
+                      realce === i.chave
+                        ? "border-amber-500 ring-2 ring-amber-400"
+                        : "border-amber-200",
+                    ].join(" ")}
+                  >
                     <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-amber-700">
                       <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M5 4h14v11l-5 5H5V4Z" />
