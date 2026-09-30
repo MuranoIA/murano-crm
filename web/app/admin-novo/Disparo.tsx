@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { enviarEmMassa, type AlvoEnvio, type FalhaEnvio, type Progresso } from "../../lib/envioEmMassa";
+import { telefoneBonito } from "../chat-v2/_componentes/formato";
 import { BOTAO_CONTORNO, CAMPO, CHIP, CHIP_DESLIGADO, CHIP_LIGADO } from "./estilo";
 
 // ---------------------------------------------------------------------------
@@ -27,9 +28,18 @@ type Template = {
   envio_id: string | null; corpo: string | null; campos: string[]; status: string | null;
 };
 type Carteira = { slug: string; cor: string | null; time: string | null };
+/** o alvo com a ficha que a tabela mostra (demanda #56) */
+type AlvoDetalhado = AlvoEnvio & {
+  vendedor?: string | null;
+  codcli?: number | null;
+  cpf?: string | null;
+  telefone?: string | null;
+  rca?: number | null;
+};
+
 type Previa = {
   total: number;
-  selecionados: AlvoEnvio[];
+  selecionados: AlvoDetalhado[];
   cortes: Record<string, number>;
   porVendedor: Record<string, number>;
   avisos?: string[];
@@ -92,7 +102,7 @@ export function Disparo({
         // ⚠️ a PLANILHA pula os filtros, e é assim de propósito (decisão de
         // 16/09): "a planilha já é o resultado curado". A tela desliga os
         // filtros para a pessoa não achar que eles valem.
-        ? { acao: "previa", cards: planilha.codclis.map((c) => ({ codcli: c })) }
+        ? { acao: "previa", detalhe: true, cards: planilha.codclis.map((c) => ({ codcli: c })) }
         // ⚠️ OS FILTROS VÃO DENTRO DE `filtros`, e não no nível de cima
         // (demanda #54). Mandados soltos, a rota lia `b.filtros` = undefined e
         // rodava com TODOS os padrões: carteira nenhuma — ou seja, a base
@@ -101,6 +111,9 @@ export function Disparo({
         // da campanha mostrar a coluna "era de".
         : {
             acao: "previa",
+            // ⚠️ a tela mostra a TABELA (código, CPF, telefone, RCA), então
+            // pede a ficha. A tela antiga não pede e não paga (#56).
+            detalhe: true,
             canal: template?.canal ?? null,
             filtros: { carteiras, etapas, diasMin, diasRecontato, porVendedor, limite },
           };
@@ -312,12 +325,47 @@ export function Disparo({
             {previa.avisos?.map((a, i) => (
               <p key={i} className="mt-1 text-[12px] text-v2-laranja">{a}</p>
             ))}
-            <ul className="rolagem m-0 mt-3 max-h-40 list-none overflow-auto rounded-lg bg-v2-superficie p-2 text-[12.5px] leading-5 text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha">
-              {previa.selecionados.slice(0, 50).map((s) => <li key={s.envio_id}>{s.cliente}</li>)}
-              {previa.selecionados.length > 50 && (
-                <li className="tabular-nums">…e mais {previa.selecionados.length - 50}</li>
+            {/* ⚠️ A MESMA TABELA da campanha (demanda #56). A lista só com o
+                nome não deixava conferir nada: dois clientes de nome parecido,
+                um telefone errado ou um RCA fora do recorte passavam batidos —
+                e o erro só aparecia depois do envio, com o custo já pago.
+
+                200 linhas de teto, e a tela DIZ quantas ficaram de fora:
+                desenhar cinco mil numa tabela trava a aba, e truncar em
+                silêncio seria prometer uma conferência que não aconteceu. */}
+            <div className="rolagem mt-3 max-h-72 overflow-auto rounded-lg bg-v2-superficie ring-1 ring-inset ring-v2-linha">
+              <table className="w-full border-collapse text-left text-[12.5px]">
+                <thead className="sticky top-0 bg-v2-superficie-2 text-[10.5px] uppercase tracking-wide text-v2-tinta-fraca">
+                  <tr>
+                    <th className="px-2 py-1.5 font-semibold">Cliente</th>
+                    <th className="px-2 py-1.5 font-semibold">Cód.</th>
+                    <th className="px-2 py-1.5 font-semibold">CPF/CNPJ</th>
+                    <th className="px-2 py-1.5 font-semibold">Telefone</th>
+                    <th className="px-2 py-1.5 font-semibold">RCA</th>
+                    <th className="px-2 py-1.5 font-semibold">Consultor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previa.selecionados.slice(0, 200).map((s) => (
+                    <tr key={s.envio_id} className="border-t border-v2-linha">
+                      <td className="max-w-[220px] truncate px-2 py-1.5">{s.cliente}</td>
+                      <td className="px-2 py-1.5 tabular-nums text-v2-tinta-fraca">{s.codcli ?? "—"}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-v2-tinta-fraca">{s.cpf ?? "—"}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-v2-tinta-fraca">
+                        {telefoneBonito(s.telefone)}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums text-v2-tinta-fraca">{s.rca ?? "—"}</td>
+                      <td className="px-2 py-1.5 text-v2-tinta-fraca">{s.vendedor ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {previa.selecionados.length > 200 && (
+                <p className="border-t border-v2-linha px-2 py-1.5 text-[12px] tabular-nums text-v2-tinta-fraca">
+                  …e mais {previa.selecionados.length - 200} — a tabela mostra as 200 primeiras
+                </p>
               )}
-            </ul>
+            </div>
 
             {!prog && (
               <button

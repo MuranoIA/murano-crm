@@ -2,6 +2,7 @@ import { sbAdmin, guardaAdmin, corpo } from "../../../../lib/adminApi";
 import { variaveisDe } from "../../../../lib/templateVars";
 import { lerCrmConfig, linhasVisiveis } from "../../../../lib/crmConfig";
 import { montarPublico, lerFiltros, LIMITE_MAX } from "../../../../lib/publicoDisparo";
+import { fichasDosAlvos } from "../../../../lib/fichaDoAlvo";
 import { resolverListaManual, quemJaRecebeu, JANELA_RETOMADA_HORAS, LIMITE_LISTA, LOTE_RESOLVER, type CardManual } from "../../../../lib/publicoManual";
 
 export const dynamic = "force-dynamic";
@@ -270,7 +271,19 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
+    const db = sbAdmin();
+    const publico = await montarPublico(db, lerFiltros(b.filtros ?? {}));
+
+    // ---- a FICHA de cada selecionado (demanda #56) ------------------------
+    // Só quando a tela pede: a busca é dos selecionados, não da base, mas ainda
+    // é ida ao banco — e a tela antiga mostra só o nome, então não deve pagar.
+    if (b.detalhe === true) {
+      const fichas = await fichasDosAlvos(db, publico.selecionados.map((s) => s.cliente_id));
+      return Response.json({
+        ...publico,
+        selecionados: publico.selecionados.map((s) => ({ ...s, ...(fichas.get(s.cliente_id) ?? {}) })),
+      });
+    }
     return Response.json(publico);
   } catch (e: any) {
     return Response.json({ error: e?.message ?? String(e) }, { status: 500 });
