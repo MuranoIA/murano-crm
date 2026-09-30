@@ -252,6 +252,24 @@ export async function POST(req: Request) {
       });
     }
 
+    // ⚠️ FILTRO SOLTO NO CORPO É ERRO, NÃO PADRÃO (demanda #54, 29/09/2026).
+    // Uma tela mandou `carteiras` no nível de cima em vez de dentro de
+    // `filtros`; a rota leu `b.filtros = undefined`, rodou com TODOS os padrões
+    // — carteira nenhuma, ou seja, a base inteira — e disparou template para
+    // quem não devia. Custou dinheiro e só apareceu depois, na planilha.
+    //
+    // Recusar é melhor que adivinhar: aceitar o formato solto faria existirem
+    // dois contratos, e o dia em que um deles ganhasse um campo a mais o outro
+    // voltaria a silenciar.
+    const soltos = ["carteiras", "times", "etapas", "diasMin", "diasRecontato", "porVendedor", "limite"]
+      .filter((k) => k in b);
+    if (soltos.length && b.filtros === undefined) {
+      return Response.json({
+        error: `os filtros vão dentro de \`filtros\` — vieram soltos no corpo: ${soltos.join(", ")}. `
+          + "Sem isso o público sairia com os valores padrão, e o disparo alcançaria quem não devia.",
+      }, { status: 400 });
+    }
+
     const publico = await montarPublico(sbAdmin(), lerFiltros(b.filtros ?? {}));
     return Response.json(publico);
   } catch (e: any) {

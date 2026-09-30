@@ -93,10 +93,16 @@ export function Disparo({
         // 16/09): "a planilha já é o resultado curado". A tela desliga os
         // filtros para a pessoa não achar que eles valem.
         ? { acao: "previa", cards: planilha.codclis.map((c) => ({ codcli: c })) }
+        // ⚠️ OS FILTROS VÃO DENTRO DE `filtros`, e não no nível de cima
+        // (demanda #54). Mandados soltos, a rota lia `b.filtros` = undefined e
+        // rodava com TODOS os padrões: carteira nenhuma — ou seja, a base
+        // inteira. O sintoma foi um disparo que deveria ser só de uma carteira
+        // sair com clientes de quatro RCAs, e ninguém percebeu até a planilha
+        // da campanha mostrar a coluna "era de".
         : {
             acao: "previa",
-            carteiras, etapas, diasMin, diasRecontato, porVendedor, limite,
             canal: template?.canal ?? null,
+            filtros: { carteiras, etapas, diasMin, diasRecontato, porVendedor, limite },
           };
       const r = await fetch("/api/admin/disparo-massa", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(corpo),
