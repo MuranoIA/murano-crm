@@ -5,6 +5,8 @@ import { Ripple } from "../chat-v2/_componentes/Ripple";
 import { Campanhas } from "./Campanhas";
 import { Vazio } from "./Vazio";
 import type { PainelInicial, PessoaTransferencia } from "./_dados/painel";
+import { SeletorTema } from "../chat-v2/_componentes/SeletorTema";
+import type { TemaChat } from "../../lib/temaChat";
 
 type Pessoa = PessoaTransferencia;
 type Aba = "transferencia" | "campanhas";
@@ -35,7 +37,11 @@ const PAPEL: Record<string, string> = {
 // Dois botões parecidos com consequências diferentes é como se perde uma tarde
 // — e uma conversa.
 // ---------------------------------------------------------------------------
-export function Painel({ inicial }: { inicial: PainelInicial }) {
+export function Painel({ inicial, tema: temaInicial }: { inicial: PainelInicial; tema: TemaChat }) {
+  // ⚠️ A 1ª CARGA JÁ VEM COM O TEMA (demanda #53): lido do cookie no servidor.
+  // Decidido aqui no cliente, a tela abriria no tema antigo e trocaria de cor
+  // depois do JS — o pisca que a spec manda evitar.
+  const [tema, setTema] = useState<TemaChat>(temaInicial);
   // ⚠️ A 1ª CARGA VEM DO SERVIDOR (spec §2.3): o estado NASCE com os dados, e
   // não com `null` esperando um `fetch` na montagem. O `useState` só guarda o
   // que muda daqui para a frente.
@@ -88,7 +94,7 @@ export function Painel({ inicial }: { inicial: PainelInicial }) {
   ];
 
   return (
-    <div className="v2 min-h-dvh bg-v2-fundo text-v2-tinta">
+    <div className="v2 min-h-dvh bg-v2-fundo text-v2-tinta" data-tema={tema}>
       <Ripple />
       {/* A BARRA: moldura da marca, fina e fixa. O título grande mora no
           conteúdo, como no Café Code; aqui só o caminho de volta e onde estou. */}
@@ -107,6 +113,9 @@ export function Painel({ inicial }: { inicial: PainelInicial }) {
           <span className="ml-auto shrink-0 rounded-full bg-white/15 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.08em]">
             em construção
           </span>
+          {/* trocar de tema não deve exigir uma ida ao chat — e é o MESMO
+              cookie, então a escolha feita aqui vale lá */}
+          <SeletorTema tema={tema} aoTrocar={setTema} />
         </div>
       </header>
 
