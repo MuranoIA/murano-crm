@@ -20,7 +20,7 @@ function sb() {
 // seletor do chat mostra o TEXTO antes de enviar, como o RD Conversas faz —
 // quem dispara precisa ver o que a cliente vai ler.
 const COLS = "id,nome,rd_template_id,padrao,canal,meta_nome,corpo,cabecalho_tipo,status,usa_nome";
-const COLS_CATALOGO = "id,nome,rd_template_id,ativo,padrao,criado_em";
+const COLS_CATALOGO = "id,nome,rd_template_id,ativo,padrao,criado_em,oculto_em,oculto_por";
 
 // GET: sem ?catalogo=1 -> lista enxuta dos ATIVOS (o que qualquer sessão usa pra ESCOLHER
 // um template pra enviar — card e disparo em massa). Com ?catalogo=1 (só admin) -> catálogo
@@ -74,20 +74,57 @@ export async function POST(req: Request) {
 // PATCH: admin edita nome/rd_template_id/padrao/ativo de um template existente. Principal
 // uso: corrigir um rd_template_id que ficou desatualizado (template editado/recriado no
 // painel do RD) sem precisar apagar e recadastrar.
+//
+// EXCEÇÃO, de propósito (demanda #59): quem NÃO é admin pode mandar uma coisa só —
+// `{ id, ativo: false }`, o botão "Tirar da lista" do chat. É um recorte, não um
+// relaxamento: qualquer outro campo no mesmo corpo derruba a chamada com 403, em vez
+// de ser ignorado em silêncio. Ignorar seria pior que recusar — a consultora veria
+// "pronto" e o nome do template continuaria o mesmo.
+//
+// Só a saída é de todos; a VOLTA é do admin (Administração → Templates). Esse é o
+// desenho que o dono pediu, e é o que mantém a ação sem susto: o pior caso de um
+// clique errado é um template a menos na lista até alguém reativar.
 export async function PATCH(req: Request) {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
-  if (!podeAdmin(sessao)) return Response.json({ error: "apenas admin edita templates" }, { status: 403 });
 
   let b: any;
   try { b = await req.json(); } catch { return Response.json({ error: "body inválido" }, { status: 400 }); }
   const id = Number(b?.id);
   if (!id) return Response.json({ error: "id ausente" }, { status: 400 });
 
+  const admin = podeAdmin(sessao);
+  const soEsconde = b?.ativo === false && Object.keys(b).every((k) => k === "id" || k === "ativo");
+  if (!admin && !soEsconde) {
+    return Response.json({ error: "apenas admin edita templates" }, { status: 403 });
+  }
+
+  // O template PADRÃO não pode sair da lista por aqui. Ele é o que o botão do card
+  // e o disparo em massa usam quando ninguém escolhe outro (`send-template` resolve
+  // por `padrao=true AND ativo=true`): escondê-lo não deixaria a lista mais curta,
+  // deixaria o envio sem saída — e a falha apareceria longe daqui, no clique de
+  // outra pessoa. Quem quiser mesmo tirá-lo escolhe outro padrão antes.
+  if (b?.ativo === false) {
+    const { data: alvo } = await sb().from("crm_templates").select("padrao,nome").eq("id", id).maybeSingle();
+    if (alvo?.padrao) {
+      return Response.json({
+        error: `"${alvo.nome}" é o template padrão — o botão do card e o disparo em massa usam ele quando ninguém escolhe outro. ` +
+               "Peça ao administrador para marcar outro como padrão antes de tirar este da lista.",
+      }, { status: 409 });
+    }
+  }
+
   const patch: Record<string, unknown> = {};
   if (typeof b.nome === "string" && b.nome.trim()) patch.nome = b.nome.trim();
   if (typeof b.rd_template_id === "string") patch.rd_template_id = b.rd_template_id.trim() || null;
-  if (typeof b.ativo === "boolean") patch.ativo = b.ativo;
+  if (typeof b.ativo === "boolean") {
+    patch.ativo = b.ativo;
+    // o registro de quem tirou da lista (0148). Reativar LIMPA a marca: um template
+    // de volta na lista não está escondido por ninguém, e a marca velha faria a tela
+    // do admin dizer o contrário na próxima vez que alguém olhasse.
+    patch.oculto_em = b.ativo ? null : new Date().toISOString();
+    patch.oculto_por = b.ativo ? null : (cookies().get("crm_email")?.value ?? sessao);
+  }
   if (b.padrao === true) patch.padrao = true;
   else if (b.padrao === false) patch.padrao = false;
   if (!Object.keys(patch).length) return Response.json({ error: "nada pra atualizar" }, { status: 400 });
