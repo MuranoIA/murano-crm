@@ -17,7 +17,21 @@
 
 export type LayoutId = "original" | "continuidade" | "bancada" | "fila" | "balcao" | "v2";
 
-export const LAYOUT_PADRAO: LayoutId = "original";
+// ---------------------------------------------------------------------------
+// 02/10/2026 (demanda #57) — o padrão passa a ser o CHAT NOVO.
+//
+// Decisão do dono: "quero que chat-v2 seja o padrão, e as outras opções sejam
+// desabilitadas. posteriormente, depois de alguns dias de testes, vamos
+// eliminar definitivamente todas as demais".
+//
+// Trocar este valor é o que faz a mudança valer para TODO MUNDO de uma vez,
+// inclusive para quem tem `bancada` gravado no banco: um desenho aposentado
+// deixa de passar em `podeAtivar`, e `layoutEfetivo` cai aqui. Ou seja, a
+// régua continua no CÓDIGO — o banco não precisa estar certo para a tela
+// estar. A 0150 arruma as linhas mesmo assim, para a tela do admin não
+// anunciar um desenho que ninguém mais vê (§29.3).
+// ---------------------------------------------------------------------------
+export const LAYOUT_PADRAO: LayoutId = "v2";
 
 export type Layout = {
   id: LayoutId;
@@ -39,6 +53,21 @@ export type Layout = {
   /** false = existe como protótipo, mas não há tela construída. A rota do
    *  /admin recusa ativar; a tela mostra como "em avaliação". */
   implementado: boolean;
+  /**
+   * true = a tela EXISTE e continua no código, mas não se escolhe mais (#57).
+   *
+   * ⚠️ É outra coisa que `implementado: false`, e misturar as duas apagaria a
+   * informação que importa. "Não implementado" quer dizer que não há tela — é
+   * um fato sobre o deploy. "Aposentado" quer dizer que há tela e a decisão foi
+   * parar de usá-la — é um fato sobre o produto. Marcar o Original como não
+   * implementado seria uma mentira, e a tela do admin diria ao próximo leitor
+   * que o chat de hoje nunca foi construído.
+   *
+   * Os aposentados serão REMOVIDOS do código depois de alguns dias de uso do v2
+   * (demanda #10, fase 7). Até lá continuam aqui como o caminho de volta: basta
+   * tirar esta marca.
+   */
+  aposentado?: boolean;
 };
 
 export const LAYOUTS: Layout[] = [
@@ -65,6 +94,7 @@ export const LAYOUTS: Layout[] = [
     prazo: "—",
     prototipo: null,
     implementado: true,
+    aposentado: true,   // #57
   },
   {
     id: "continuidade",
@@ -94,6 +124,7 @@ export const LAYOUTS: Layout[] = [
     // `app/chat/page.tsx` — não há uma segunda árvore de JSX, e o desenho
     // original ficou intacto para o rollback ser exato.
     implementado: true,
+    aposentado: true,   // #57
   },
   {
     id: "bancada",
@@ -133,6 +164,7 @@ export const LAYOUTS: Layout[] = [
     // estados e o acabamento (18, 28-31). Prometer nos `ganhos` o que a tela
     // não faz é o mesmo erro que `implementado` no banco evitaria.
     implementado: true,
+    aposentado: true,   // #57 — era o desenho em vigor até 02/10/2026
   },
   {
     id: "fila",
@@ -229,8 +261,23 @@ export const ehLayout = (v: unknown): v is LayoutId => PORID.has(String(v ?? "")
 
 export const acharLayout = (v: unknown): Layout | null => PORID.get(String(v ?? "") as LayoutId) ?? null;
 
-/** Só um desenho com tela construída pode ser ativado — global ou em piloto. */
-export const podeAtivar = (v: unknown): boolean => acharLayout(v)?.implementado === true;
+/**
+ * Só um desenho com tela construída E ainda em uso pode ser ativado — global ou
+ * em piloto.
+ *
+ * ⚠️ É esta função que faz a aposentadoria valer de verdade. `layoutEfetivo`
+ * pergunta por ela antes de aceitar o que veio do banco, então a linha que
+ * ainda disser `bancada` passa a cair no padrão sozinha, sem ninguém precisar
+ * rodar SQL. É o mesmo mecanismo que já protegia contra um desenho removido do
+ * código (§29.3) — agora usado de propósito.
+ */
+export const podeAtivar = (v: unknown): boolean => {
+  const l = acharLayout(v);
+  return l?.implementado === true && l.aposentado !== true;
+};
+
+/** O desenho existe, tem tela, e foi aposentado (#57). */
+export const ehAposentado = (v: unknown): boolean => acharLayout(v)?.aposentado === true;
 
 /**
  * O desenho que ESTE usuário vê. O piloto ganha do global de propósito: é para

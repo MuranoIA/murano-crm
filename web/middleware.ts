@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ehOutraTela, layoutEfetivo } from "./lib/chatLayout";
+import { LAYOUT_PADRAO, ehOutraTela, layoutEfetivo } from "./lib/chatLayout";
 
 // ---------------------------------------------------------------------------
 // QUAL CHAT ESTA PESSOA VÊ — decidido no SERVIDOR, antes de qualquer JS.
@@ -19,9 +19,9 @@ import { ehOutraTela, layoutEfetivo } from "./lib/chatLayout";
 // O matcher é o `/chat` EXATO: `/chat/indicadores` não passa por aqui, e nenhuma
 // outra rota do CRM paga esta consulta.
 //
-// FALHA PARA O LADO DO QUE JÁ FUNCIONA: sem sessão, sem env, consulta lenta ou
-// com erro — segue para o chat de hoje. Um piloto que não acende é um incômodo;
-// o chat não abrir seria um atendimento parado.
+// FALHA PARA O LADO DO PADRÃO: sem env, consulta lenta ou com erro, a pessoa
+// vai para o desenho padrão (`LAYOUT_PADRAO`) — desde a #57, o chat novo. Sem
+// sessão nenhuma o middleware nem decide: deixa passar.
 // ---------------------------------------------------------------------------
 
 export const config = { matcher: ["/chat"] };
@@ -87,7 +87,13 @@ export async function middleware(req: NextRequest) {
   const [quem, oQue] = guardado.split("|");
   const lembrado = quem === usuario && !!oQue;
   const lido = lembrado ? oQue : await lerDesenho(usuario);
-  const desenho = lido ?? "original";
+  // ⚠️ a queda cai no PADRÃO, que desde a #57 é o chat novo — e não num
+  // literal. Com "original" cravado aqui, um soluço na consulta jogaria a
+  // pessoa no chat aposentado no meio do expediente, e ela veria duas telas
+  // diferentes no mesmo dia sem entender por quê. Consistência vale mais que
+  // o reflexo de "voltar para o antigo": se o banco está fora, as duas telas
+  // estão igualmente fora.
+  const desenho = lido ?? LAYOUT_PADRAO;
 
   // Só guarda decisão que VEIO DO BANCO. Guardar a de uma consulta que falhou
   // prenderia a pessoa fora do piloto por um minuto por causa de uma rede lenta.
@@ -108,7 +114,7 @@ export async function middleware(req: NextRequest) {
     // consulta funcionou (um `original` aqui com piloto ligado é o sintoma de
     // env ausente ou prazo estourado) — não carrega dado nenhum da pessoa
     const r = NextResponse.next();
-    r.headers.set("x-chat-desenho", lido === null ? "original (consulta falhou)" : `${desenho}${lembrado ? " (lembrado)" : ""}`);
+    r.headers.set("x-chat-desenho", lido === null ? `${desenho} (consulta falhou)` : `${desenho}${lembrado ? " (lembrado)" : ""}`);
     return guardar(r);
   }
 
