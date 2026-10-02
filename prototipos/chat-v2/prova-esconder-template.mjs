@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------------
-// TIRAR UM TEMPLATE DA LISTA DO CHAT (demanda #59, 02/10/2026)
+// RETIRAR UM TEMPLATE DA LISTA DO CHAT (demandas #59 e #61, 02/10/2026)
 //
 //   ENSAIO_VISIVEL=1 npx next start -p 3122     (noutro terminal, na pasta web/)
 //   node prototipos/chat-v2/prova-esconder-template.mjs
@@ -77,11 +77,22 @@ try {
   const a = await novaAba(chrome);
   await a.cookies({ crm_sessao: "admin", crm_email: EU }, BASE);
   await a.ir(`${BASE}/chat-v2?cliente=${encodeURIComponent(ID)}`, { esperar: 3000 });
-  await a.ate(`document.querySelector('button[aria-label="Template"]')`, { ms: 25_000 });
+  // ⚠️ o botão de template só existe com a janela de 24h ABERTA (com ela fechada
+  // ele muda de lugar) — por isso a mensagem de ensaio é de um minuto atrás.
+  // E a abertura é conferida, não suposta: sem isto, uma tela que não abriu vira
+  // "Cannot read properties of null", que não diz nada sobre o que falhou.
+  const temBotaoTpl = await a.ate(`document.querySelector('button[aria-label="Template"]')`, { ms: 30_000 });
+  if (!temBotaoTpl) {
+    await a.foto("esconder-template-SEM-BOTAO");
+    throw new Error("o botão de template não apareceu — a conversa de ensaio abriu?");
+  }
   await a.js(`document.querySelector('button[aria-label="Template"]').click(); return true;`);
-  await a.ate(`/Enviar template/.test(document.body.textContent || '')`, { ms: 15_000 });
-  await a.ate(`document.querySelector('select')`, { ms: 15_000 });
-  await espera(400);
+  const abriuModal = await a.ate(`document.querySelector('select')`, { ms: 30_000 });
+  if (!abriuModal) {
+    await a.foto("esconder-template-SEM-MODAL");
+    throw new Error("o diálogo de template não abriu");
+  }
+  await espera(500);
 
   const temNaLista = await a.js(`
     const s = document.querySelector('select');
@@ -100,7 +111,7 @@ try {
   const noPadrao = await a.js(`
     const txt = document.body.textContent || '';
     return {
-      temBotao: [...document.querySelectorAll('button')].some(b => /Tirar “/.test(b.textContent || '')),
+      temBotao: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Retirar da lista'),
       explica: /é o template padrão/.test(txt),
     };`);
   conferir(!noPadrao.temBotao, "no template PADRÃO o botão nem aparece — não é um botão que falha depois do clique");
@@ -114,34 +125,45 @@ try {
     s.dispatchEvent(new Event('change', { bubbles: true }));
     return true;`);
   await espera(500);
-  const temBotao = await a.js(`
-    const b = [...document.querySelectorAll('button')].find(x => /Tirar “/.test(x.textContent || ''));
-    return b ? b.textContent.trim() : null;`);
-  conferir(!!temBotao && /ENSAIO alvo/.test(temBotao), "o botão nomeia o template que vai sair", String(temBotao));
+  const botao = await a.js(`
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retirar da lista');
+    return b ? { rotulo: b.textContent.trim(), titulo: b.getAttribute('title') || '' } : null;`);
+  conferir(botao?.rotulo === "Retirar da lista", "o gatilho é um BOTÃO com o título pedido (#61)", String(botao?.rotulo));
+  conferir(
+    /ENSAIO alvo/.test(String(botao?.titulo)),
+    "…e o nome do template vai no `title`, para o rótulo não quebrar em duas linhas",
+    String(botao?.titulo),
+  );
 
   await a.js(`
-    [...document.querySelectorAll('button')].find(x => /Tirar “/.test(x.textContent || '')).click();
+    [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Retirar da lista').click();
     return true;`);
   await espera(400);
+  // ⚠️ o aviso é lido no SEU bloco, não no corpo inteiro da página: a lista de
+  // conversas atrás do diálogo tem prévias de mensagens reais, e uma delas pode
+  // conter qualquer palavra que a prova procure
   const pergunta = await a.js(`
-    const t = document.body.textContent || '';
+    const cx = [...document.querySelectorAll('div')].reverse()
+      .find(d => /Retirar/.test(d.textContent || '') && /todos os consultores/.test(d.textContent || ''));
+    const t = (cx ? cx.textContent : '').replace(/[ \\n\\t]+/g, ' ');
     return {
-      avisaEquipe: /toda a equipe/.test(t),
-      avisaQueNaoApaga: /não apaga nada no whatsapp/i.test(t.replace(/\\s+/g, ' ')),
-      diaOndeVolta: /Administração .{0,3} Templates/.test(t),
-      temConfirmar: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Tirar da lista'),
+      texto: t.slice(0, 130),
+      avisaTodos: /todos os consultores/.test(t),
+      falaDaMeta: /whatsapp|meta/i.test(t),
+      falaDoAdmin: /administra/i.test(t),
+      temConfirmar: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Retirar da lista'),
       temCancelar: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Cancelar'),
     };`);
-  conferir(pergunta.temConfirmar && pergunta.temCancelar, "um clique não basta: pergunta, com saída", JSON.stringify(pergunta));
-  conferir(pergunta.avisaEquipe, "…e avisa que vale para TODA a equipe — não é uma preferência pessoal");
-  conferir(pergunta.avisaQueNaoApaga, "…que não apaga nada no WhatsApp");
-  conferir(pergunta.diaOndeVolta, "…e onde se traz de volta");
+  conferir(pergunta.temConfirmar && pergunta.temCancelar, "um clique não basta: pergunta, com saída", pergunta.texto);
+  conferir(pergunta.avisaTodos, "…e avisa a única coisa que muda a decisão: sai para TODOS OS CONSULTORES");
+  conferir(!pergunta.falaDaMeta, "…sem falar da Meta nem do WhatsApp (#61)", pergunta.texto);
+  conferir(!pergunta.falaDoAdmin, "…nem do painel administrativo (#61)", pergunta.texto);
   await a.foto("esconder-template-pergunta");
 
   // ---- 3. confirmar: some da lista NA HORA --------------------------------
   const antes = await a.js(`return document.querySelector('select').options.length;`);
   await a.js(`
-    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Tirar da lista').click();
+    [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Retirar da lista').pop().click();
     return true;`);
   await a.ate(`/saiu da lista/.test(document.body.textContent || '')`, { ms: 15_000 });
   const depois = await a.js(`
@@ -153,7 +175,7 @@ try {
     };`);
   conferir(!depois.aindaTem, "o template sai da lista na hora, sem recarregar a tela");
   conferir(depois.n === antes - 1, "…e sai UM, não a lista toda", `${antes} → ${depois.n}`);
-  conferir(/trazer de volta/.test(depois.recado), "…com um recado que diz que dá para voltar atrás", depois.recado);
+  conferir(/saiu da lista/.test(depois.recado), "…e a tela confirma, em uma linha", depois.recado);
   await a.foto("esconder-template-depois");
 
   // ---- 4. o banco guarda quem e quando ------------------------------------

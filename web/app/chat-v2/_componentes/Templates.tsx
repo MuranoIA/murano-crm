@@ -47,7 +47,7 @@ export default function Templates({
   const [erro, setErro] = useState<string | null>(null);
   const [escolhido, setEscolhido] = useState<Template | null>(null);
   const [valores, setValores] = useState<Record<number, string>>({});
-  // "Tirar da lista" (demanda #59) em dois tempos: o primeiro clique pergunta,
+  // "Retirar da lista" (#59, rotulo ajustado na #61) em dois tempos: o primeiro clique pergunta,
   // o segundo faz. Não é `confirm()` porque isto já é um diálogo — um alerta do
   // navegador por cima de um modal é o tipo de empilhamento que faz a pessoa
   // clicar em OK sem ler. E não é um clique só porque a ação vale para TODA a
@@ -106,7 +106,7 @@ export default function Templates({
       // ir para o padrão, e não para o vizinho de índice: o item some debaixo do
       // cursor, e cair num template qualquer convida a mandar o errado
       setEscolhido(restante.find((t) => t.padrao) ?? restante[0] ?? null);
-      setRecado(`"${escolhido.nome}" saiu da lista. O administrador pode trazer de volta.`);
+      setRecado(`"${escolhido.nome}" saiu da lista.`);
       setPerguntando(false);
     } catch (e: any) {
       setRecado(String(e?.message ?? e));
@@ -170,8 +170,9 @@ export default function Templates({
                 ))}
               </select>
 
-              {/* Tirar da lista (demanda #59). Fica colado no seletor de propósito:
-                  a ação é sobre o item escolhido ali em cima, e não sobre a tela. */}
+              {/* Retirar da lista (demandas #59 e #61). Fica colado no seletor de
+                  propósito: a ação é sobre o item escolhido ali em cima, e não sobre
+                  a tela. */}
               {/* o recado fica POR CIMA do botão, não no lugar dele: depois de tirar um
                   template a pessoa costuma querer tirar o seguinte, e uma falha precisa
                   poder ser repetida sem trocar de template para o botão voltar */}
@@ -186,21 +187,31 @@ export default function Templates({
                   </p>
                 )}
 
+                {/* o nome do template sai do rótulo (ele está no seletor logo acima,
+                    e com 46 caracteres o botão quebrava em duas linhas) e vai para o
+                    `title`; quem confirma o lê por extenso no aviso */}
                 {escolhido && !escolhido.padrao && !perguntando && (
                   <button
+                    data-ripple
                     type="button"
                     onClick={() => setPerguntando(true)}
-                    className="text-[12.5px] font-medium text-v2-tinta-fraca underline underline-offset-2 hover:text-v2-erro"
+                    title={`Retirar “${escolhido.nome}” da lista de templates`}
+                    className="self-start rounded-full border border-v2-linha-forte px-3 py-1.5 text-[13px] font-semibold text-v2-tinta-fraca hover:border-v2-erro hover:text-v2-erro"
                   >
-                    Tirar “{escolhido.nome}” da lista
+                    Retirar da lista
                   </button>
                 )}
 
                 {escolhido && perguntando && (
                   <div className="rounded-xl border border-v2-linha-forte bg-v2-superficie-2 p-2.5">
+                    {/* ⚠️ UMA informação só, e é a que muda a decisão: o template sai
+                        para todo mundo. O que o dono cortou aqui (que não apaga na Meta,
+                        que o administrador devolve) é verdade, mas é tranquilizador e
+                        não acionável — e num aviso de confirmação cada linha a mais
+                        disputa a atenção com a única que precisa ser lida. */}
                     <p className="text-[12.5px] leading-[1.45] text-v2-tinta">
-                      Tirar <b>{escolhido.nome}</b> da lista? Ele some para <b>toda a equipe</b>. Não apaga nada
-                      no WhatsApp — o administrador pode trazer de volta em Administração → Templates.
+                      Retirar <b>{escolhido.nome}</b> da lista? Ele sai da lista de
+                      <b> todos os consultores</b>.
                     </p>
                     <div className="mt-2 flex gap-2">
                       <button
@@ -210,7 +221,7 @@ export default function Templates({
                         onClick={esconder}
                         className="rounded-full bg-v2-erro px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60"
                       >
-                        {escondendo ? "tirando…" : "Tirar da lista"}
+                        {escondendo ? "retirando…" : "Retirar da lista"}
                       </button>
                       <button
                         type="button"
