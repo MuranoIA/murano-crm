@@ -205,9 +205,100 @@ const semSinteticos = (q: any) =>
 // consultas paginadas sobre 4 mil linhas, e a tela ficou esperando por cinco
 // números enquanto tinha 60 conversas prontas para desenhar. Agora a tela pede
 // os contadores depois que já apareceu (`/api/chat-v2/contagens`).
+// ---------------------------------------------------------------------------
+// O QUE CHEGOU DEPOIS DA FOTO (demandas #60 e #38)
+//
+// `VIEW_CHAT_LISTA` é MATERIALIZADA desde a 0139 — uma FOTO refeita de 2 em 2
+// minutos pelo pg_cron. Foi o que resolveu a lentidão do chat (medido lá: 5 a
+// 52 s por carga), e aquela migration já tinha escrito o preço: "conversa nova
+// pode levar até 2 minutos para aparecer na barra lateral".
+//
+// O preço cobrou. O Realtime avisa na hora e a tela recarrega na hora — e
+// recarrega a MESMA foto. Daí o relato: "a notificação chega imediatamente, mas
+// a mensagem na lista demora", e "o nome da cliente deveria ir para o topo
+// imediatamente".
+//
+// Aqui a foto é CORRIGIDA na leitura. Três passos curtos:
+//
+//   1. a hora da foto — a mensagem mais nova que ELA conhece (índice novo da
+//      0149, uma linha);
+//   2. quem recebeu mensagem depois disso (`idx_msg_criada`, dezenas de linhas
+//      num horário movimentado, não milhares);
+//   3. essas conversas calculadas AGORA, por `chat_conversas_agora` (0149).
+//
+// ⚠️ O passo 3 é uma FUNÇÃO, e não uma view gêmea, porque foi medido: o mesmo
+// corpo como view comum, filtrado por fora, varre `mensagens` inteira e ordena
+// em disco (641 ms); com o filtro dentro da CTE vira Index Scan (0,4 ms).
+//
+// ⚠️ E NÃO é "refrescar a foto mais vezes": cada refresh custa 1,49 s, e a cada
+// 15 s isso seria ~10% de um núcleo ligado o tempo todo — num banco que já é o
+// gargalo do pico. Trocar atraso por carga permanente é pagar duas vezes.
+// ---------------------------------------------------------------------------
+
+/** Teto de mensagens examinadas para descobrir QUEM mudou. Com 2 min de foto e
+ *  ~10 mensagens/min no pico, 400 é folga de uma ordem de grandeza; existe para
+ *  o dia em que o cron falhar e a foto ficar velha não virar uma varredura. */
+const TETO_FRESCOR = 400;
+
+async function depoisDaFoto(sb: any): Promise<any[]> {
+  try {
+    const { data: topo } = await sb
+      .from(VIEW_CHAT_LISTA)
+      .select("ultima_atividade")
+      .not("ultima_atividade", "is", null)
+      .order("ultima_atividade", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const corte = topo?.ultima_atividade ?? null;
+    if (!corte) return [];
+
+    // ⚠️ Esta consulta só escolhe QUEM recalcular — quem decide o que a conversa
+    // é continua sendo `chat_conversas_agora`, que carrega a régua inteira da
+    // view (linha visível, tipo, aviso de entrega). Por isso aqui NÃO se lê
+    // `crm_config`: seriam duas idas ao banco a mais na rota mais chamada do
+    // sistema, para refinar uma lista de candidatos que o passo seguinte filtra
+    // de novo. Um candidato a mais não custa nada; `lerCrmConfig` custa.
+    //
+    // O `linha_id not null` fica porque é estático e é o que o `filtroLinhas`
+    // existe para garantir: o histórico do RD (159.944 linhas, todas anteriores
+    // a 09/09/2026) nunca entra numa consulta de tela.
+    const { data: novas } = await sb
+      .from("mensagens").select("cliente_id")
+      .gt("criada_em", corte)
+      .not("linha_id", "is", null)
+      .neq("tipo", "evento_sistema")
+      .eq("aviso_entrega", false)
+      .order("criada_em", { ascending: false })
+      .limit(TETO_FRESCOR);
+    const ids = [...new Set((novas ?? []).map((m: any) => String(m.cliente_id)))];
+    if (!ids.length) return [];
+
+    const { data } = await sb.rpc("chat_conversas_agora", { p_ids: ids });
+    return (data ?? []) as any[];
+  } catch {
+    // ⚠️ frescor é ACABAMENTO, não a lista. Se a 0149 ainda não estiver
+    // aplicada (deploy antes da migration) ou a função falhar, a tela volta ao
+    // comportamento de hoje — até 2 min de atraso — em vez de ficar sem lista.
+    return [];
+  }
+}
+
+/** Junta as conversas recalculadas nas que vieram da foto, no lugar certo.
+ *  Devolve as que não existiam em lado nenhum (conversa que nasceu depois da
+ *  foto), para quem chamou decidir onde põe. */
+function juntarFrescas(frescas: any[], ...baldes: any[][]): any[] {
+  const sobraram: any[] = [];
+  for (const f of frescas) {
+    const alvo = baldes.map((b) => b.find((c) => c.cliente_id === f.cliente_id)).find(Boolean);
+    if (alvo) Object.assign(alvo, f);
+    else sobraram.push(f);
+  }
+  return sobraram;
+}
+
 export async function contarFilas(s: Sessao): Promise<Contagens> {
   const sb = banco();
-  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados, etapaDe] =
+  const [{ data: favoritos }, { data: leituras }, { data: estados }, atrib, recados, etapaDe, frescas] =
     await Promise.all([
     sb.from("chat_favorito").select("cliente_id").eq("usuario", s.usuario),
     sb.from("chat_leitura").select("cliente_id,lida_ate").eq("usuario", s.usuario),
@@ -226,6 +317,10 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
     // min, então reconsultá-las a cada aviso de mensagem nova seria pagar por
     // um dado que não mudou.
     classificadorEmCache(sb),
+    // o que chegou depois da foto (0149). Entra NESTE Promise.all pelo motivo
+    // de sempre (§15.1): em série custaria um round-trip a mais em cada aviso
+    // de mensagem nova, e é justamente a rota que mais roda.
+    depoisDaFoto(sb),
   ]);
   const PAGE = 1000;
   // ⚠️ `etapa`, `telefone` e `codcli` entram para o classificador de coluna
@@ -247,6 +342,11 @@ export async function contarFilas(s: Sessao): Promise<Contagens> {
     linhas.push(...(data ?? []));
     if (!data || data.length < PAGE) break;
   }
+
+  // a conversa que mudou depois da foto conta pelo que ela é AGORA: sem isto o
+  // contador de não lidas fica 2 min atrás da lista, e a tela mostra em cima um
+  // número que o chip ao lado desmente
+  linhas.push(...juntarFrescas(frescas, linhas));
 
   const lidaAte = new Map((leituras ?? []).map((l: any) => [l.cliente_id, l.lida_ate]));
   const favs = new Set((favoritos ?? []).map((f: any) => f.cliente_id));
@@ -380,6 +480,11 @@ export async function lerLista(
     id: String(l.phone_number_id), rotulo: String(l.rotulo ?? l.phone_number_id), numero: l.numero ?? null,
   }));
 
+  // o que chegou depois da foto (0149). Disparado ANTES do laço de páginas e
+  // colhido depois: são três idas curtas que correm enquanto a página grande
+  // está no ar, então não entram no caminho crítico da primeira pintura.
+  const frescasP = depoisDaFoto(sb);
+
   // ---- as conversas do escopo ---------------------------------------------
   const linhas: any[] = [];
   const alvo = limite ?? Infinity;
@@ -425,6 +530,21 @@ export async function lerLista(
         .in("cliente_id", lote)
         .not("ultima_atividade", "is", null);
       linhas.push(...(data ?? []));
+    }
+  }
+
+  // ---- o frescor entra ANTES do escopo e da fila --------------------------
+  // Assim a conversa recalculada passa pelas mesmas peneiras que qualquer
+  // outra: o dono efetivo depois das transferências, a fila de não atribuídos
+  // e o recorte por carteira. Aplicá-lo depois seria uma segunda régua.
+  //
+  // Quem não estava em nenhum balde é conversa que NASCEU depois da foto (o
+  // primeiro "oi" de um número novo). Sem dono vai para a fila, com dono vai
+  // para a lista — a mesma pergunta que a view responde para as outras.
+  {
+    const frescas = await frescasP;
+    for (const f of juntarFrescas(frescas, linhas, filaBruta)) {
+      (f.vendedor == null ? filaBruta : linhas).push(f);
     }
   }
 
