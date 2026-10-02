@@ -1138,7 +1138,7 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
         {avisoMeta && <Recado tipo="aviso">{avisoMeta}</Recado>}
         {!daCloud.length && <p style={{ fontSize: 13, color: M.gray, margin: 0 }}>Nenhum template criado ainda.</p>}
         {daCloud.map((t) => (
-          <div key={t.id} style={{ padding: "12px 0", borderBottom: `1px solid ${M.bg}` }}>
+          <div key={t.id} style={{ padding: "12px 0", borderBottom: `1px solid ${M.bg}`, opacity: t.ativo ? 1 : 0.62 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <b style={{ fontSize: 14 }}>{t.nome}</b>
               <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,
@@ -1146,6 +1146,22 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
                 {t.status_legivel ?? "sem status"}
               </span>
               {t.padrao && <Selo ok sim="padrão" nao="" />}
+              {/* 0148 — "inativo" significava três coisas diferentes e a tela mostrava
+                  as três iguais: apagado na Meta, de uso interno (os avisos de entrega)
+                  e tirado da lista por alguém. Só a terceira tem autor; é ela que o
+                  admin precisa reconhecer para decidir se devolve ou apaga de vez. */}
+              {!t.ativo && (
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,
+                  color: M.laranja, background: M.bg, border: `1px solid ${M.border}` }}>
+                  fora da lista do chat
+                </span>
+              )}
+              {!t.ativo && t.oculto_por && (
+                <span style={{ fontSize: 11.5, color: M.gray }}>
+                  escondido por {String(t.oculto_por).split("@")[0]}
+                  {t.oculto_em ? ` em ${new Date(t.oculto_em).toLocaleDateString("pt-BR")}` : ""}
+                </span>
+              )}
               {t.cabecalho_tipo === "imagem" && <span style={{ fontSize: 11.5, color: M.gray }}>🖼️ com imagem</span>}
               {t.usa_nome && <span style={{ fontSize: 11.5, color: M.gray }}>usa o nome do cliente</span>}
               {t.botoes?.length > 0 && (
@@ -1159,8 +1175,12 @@ function TemplatesAba({ templates, avisoMeta, recarregar, avisar }: {
                   titulo="Passa a ser o template usado quando ninguém escolhe outro">tornar padrão</BotaoLeve>
               )}
               <BotaoLeve cor={t.ativo ? M.laranja : M.verde}
-                onClick={() => mexer("PATCH", { id: t.id, ativo: !t.ativo }, t.ativo ? "Template desativado." : "Template reativado.")}>
-                {t.ativo ? "Desativar" : "Reativar"}
+                titulo={t.ativo
+                  ? "Some da lista de templates do chat e do disparo em massa. Não apaga nada na Meta."
+                  : "Volta para a lista de templates do chat e do disparo em massa."}
+                onClick={() => mexer("PATCH", { id: t.id, ativo: !t.ativo },
+                  t.ativo ? "Template fora da lista do chat." : "Template de volta à lista do chat.")}>
+                {t.ativo ? "Tirar da lista" : "Devolver à lista"}
               </BotaoLeve>
               <BotaoLeve cor={M.laranja}
                 titulo="Apaga também na Meta — o nome fica bloqueado por 30 dias"

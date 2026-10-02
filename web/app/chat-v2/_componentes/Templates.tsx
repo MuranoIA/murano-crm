@@ -47,6 +47,14 @@ export default function Templates({
   const [erro, setErro] = useState<string | null>(null);
   const [escolhido, setEscolhido] = useState<Template | null>(null);
   const [valores, setValores] = useState<Record<number, string>>({});
+  // "Tirar da lista" (demanda #59) em dois tempos: o primeiro clique pergunta,
+  // o segundo faz. Não é `confirm()` porque isto já é um diálogo — um alerta do
+  // navegador por cima de um modal é o tipo de empilhamento que faz a pessoa
+  // clicar em OK sem ler. E não é um clique só porque a ação vale para TODA a
+  // equipe: o freio é o mesmo do /admin (§29.4).
+  const [perguntando, setPerguntando] = useState(false);
+  const [escondendo, setEscondendo] = useState(false);
+  const [recado, setRecado] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/templates")
@@ -78,6 +86,34 @@ export default function Templates({
   // a mesma conferência do servidor (vazio, contagem, limite de 1024 da Meta),
   // dita ANTES do clique
   const problema = !escolhido || faltando.length ? null : conferirVariaveis(escolhido.corpo, lista_);
+
+  // Some da lista para todo mundo; voltar é no /admin. O template continua
+  // existindo na Meta — nada é apagado lá, que é o que o dono pediu.
+  async function esconder() {
+    if (!escolhido || escondendo) return;
+    setEscondendo(true);
+    setRecado(null);
+    try {
+      const r = await fetch("/api/templates", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: escolhido.id, ativo: false }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error ?? `erro ${r.status}`);
+      const restante = (lista ?? []).filter((t) => t.id !== escolhido.id);
+      setLista(restante);
+      // ir para o padrão, e não para o vizinho de índice: o item some debaixo do
+      // cursor, e cair num template qualquer convida a mandar o errado
+      setEscolhido(restante.find((t) => t.padrao) ?? restante[0] ?? null);
+      setRecado(`"${escolhido.nome}" saiu da lista. O administrador pode trazer de volta.`);
+      setPerguntando(false);
+    } catch (e: any) {
+      setRecado(String(e?.message ?? e));
+    } finally {
+      setEscondendo(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4" onClick={aoFechar}>
@@ -116,7 +152,14 @@ export default function Templates({
               </label>
               <select
                 value={escolhido?.id ?? ""}
-                onChange={(e) => setEscolhido(lista.find((t) => String(t.id) === e.target.value) ?? null)}
+                onChange={(e) => {
+                  setEscolhido(lista.find((t) => String(t.id) === e.target.value) ?? null);
+                  // trocar de template zera a pergunta E o recado: sem isto, o "saiu da
+                  // lista" do anterior continuaria no lugar do botão, e o próximo
+                  // template pareceria não ter como sair
+                  setPerguntando(false);
+                  setRecado(null);
+                }}
                 className="mt-1 h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie px-3"
               >
                 {lista.map((t) => (
@@ -126,6 +169,60 @@ export default function Templates({
                   </option>
                 ))}
               </select>
+
+              {/* Tirar da lista (demanda #59). Fica colado no seletor de propósito:
+                  a ação é sobre o item escolhido ali em cima, e não sobre a tela. */}
+              {/* o recado fica POR CIMA do botão, não no lugar dele: depois de tirar um
+                  template a pessoa costuma querer tirar o seguinte, e uma falha precisa
+                  poder ser repetida sem trocar de template para o botão voltar */}
+              <div className="mt-2 flex min-h-[28px] flex-col gap-2">
+                {recado && (
+                  <p className="rounded-lg bg-v2-superficie-2 px-2.5 py-1.5 text-[12.5px] text-v2-tinta-fraca">{recado}</p>
+                )}
+
+                {escolhido?.padrao && (
+                  <p className="text-[12px] text-v2-tinta-fraca">
+                    ★ é o template padrão — o botão do card e o disparo em massa usam ele, então não sai da lista.
+                  </p>
+                )}
+
+                {escolhido && !escolhido.padrao && !perguntando && (
+                  <button
+                    type="button"
+                    onClick={() => setPerguntando(true)}
+                    className="text-[12.5px] font-medium text-v2-tinta-fraca underline underline-offset-2 hover:text-v2-erro"
+                  >
+                    Tirar “{escolhido.nome}” da lista
+                  </button>
+                )}
+
+                {escolhido && perguntando && (
+                  <div className="rounded-xl border border-v2-linha-forte bg-v2-superficie-2 p-2.5">
+                    <p className="text-[12.5px] leading-[1.45] text-v2-tinta">
+                      Tirar <b>{escolhido.nome}</b> da lista? Ele some para <b>toda a equipe</b>. Não apaga nada
+                      no WhatsApp — o administrador pode trazer de volta em Administração → Templates.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        data-ripple
+                        type="button"
+                        disabled={escondendo}
+                        onClick={esconder}
+                        className="rounded-full bg-v2-erro px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60"
+                      >
+                        {escondendo ? "tirando…" : "Tirar da lista"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPerguntando(false)}
+                        className="rounded-full px-3 py-1.5 text-[13px] font-medium text-v2-tinta-fraca hover:bg-v2-superficie"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {campos.map((n) => (
                 <label key={n} className="mt-3 block">

@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { sbAdmin, guardaAdmin, texto } from "../../../../lib/adminApi";
 import {
   subirImagemDeCabecalho, criarTemplate, statusNaMeta, apagarNaMeta, metaNomeDe, validarBotoes,
@@ -19,7 +20,8 @@ export const dynamic = "force-dynamic";
 
 const COLS =
   "id,nome,ativo,padrao,criado_em,canal,meta_nome,meta_id,idioma,categoria," +
-  "corpo,rodape,cabecalho_tipo,cabecalho_texto,imagem_path,usa_nome,botoes,status,motivo_recusa,criado_por,atualizado_em";
+  "corpo,rodape,cabecalho_tipo,cabecalho_texto,imagem_path,usa_nome,botoes,status,motivo_recusa,criado_por,atualizado_em," +
+  "oculto_em,oculto_por";
 
 const IMAGENS_ACEITAS = ["image/jpeg", "image/png"];
 const TAMANHO_MAX = 5 * 1024 * 1024;   // teto da Meta para imagem de cabeçalho
@@ -276,7 +278,14 @@ export async function PATCH(req: Request) {
 
   const db = sbAdmin();
   const patch: Record<string, unknown> = { atualizado_em: new Date().toISOString() };
-  if (typeof b.ativo === "boolean") patch.ativo = b.ativo;
+  if (typeof b.ativo === "boolean") {
+    patch.ativo = b.ativo;
+    // 0148: a marca de "escondido da lista do chat" é registro, não interruptor.
+    // Reativar limpa; desativar daqui também assina, para o admin ler depois quem
+    // tirou — inclusive quando foi ele mesmo.
+    patch.oculto_em = b.ativo ? null : new Date().toISOString();
+    patch.oculto_por = b.ativo ? null : (cookies().get("crm_email")?.value ?? "administração");
+  }
 
   if (b.padrao === true) {
     // só um padrão por vez (índice único parcial já existente em crm_templates)
