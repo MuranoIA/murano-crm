@@ -4216,14 +4216,20 @@ function RedesenhoAba({ d, estabelecer, piloto }: {
   estabelecer: (layout: string) => Promise<boolean>;
   piloto: (email: string, layout: string | null) => Promise<boolean>;
 }) {
-  const vigente: string = d.global?.layout ?? "original";
+  // ⚠️ o que VALE, não o que está gravado. Desde a #57 o banco pode guardar um
+  // desenho aposentado, e `layoutEfetivo` (no servidor) já o traduz para o
+  // padrão. Mostrar a coluna crua aqui faria esta tela anunciar um desenho que
+  // ninguém está vendo — foi o que a §29.3 separou em `efetivo`.
+  const vigente: string = d.efetivo ?? d.global?.layout ?? "v2";
   const [sel, setSel] = useState<string>(vigente);
   const [confirmando, setConfirmando] = useState(false);
 
   const opcoes: any[] = d.opcoes ?? [];
   const pessoas: any[] = (d.pessoas ?? []).filter((p: any) => p.ativo);
   const emPiloto: any[] = d.pilotos ?? [];
-  const ativaveis = opcoes.filter((o) => o.implementado);
+  /** dá para escolher? precisa ter tela construída E não estar aposentado (#57) */
+  const selecionavel = (o: any) => o.implementado && !o.aposentado;
+  const ativaveis = opcoes.filter(selecionavel);
   const rotuloDe = (id: string) => opcoes.find((o) => o.id === id)?.rotulo ?? id;
 
   const corRisco = (r: string) => (r === "alto" ? M.laranja : r === "baixo" ? M.verde : M.muted);
@@ -4280,10 +4286,10 @@ function RedesenhoAba({ d, estabelecer, piloto }: {
             return (
               <label key={o.id}
                 style={{
-                  display: "block", position: "relative", overflow: "hidden", cursor: o.implementado ? "pointer" : "default",
+                  display: "block", position: "relative", overflow: "hidden", cursor: selecionavel(o) ? "pointer" : "default",
                   background: marcada ? M.roxoSoft : M.surface,
                   border: `1px solid ${marcada ? M.roxo : M.border}`, borderRadius: 12,
-                  padding: "14px 16px 14px 20px", opacity: o.implementado ? 1 : 0.72,
+                  padding: "14px 16px 14px 20px", opacity: selecionavel(o) ? 1 : 0.72,
                 }}>
                 {/* faixa de 4px — a assinatura visual do produto (skill murano-brand) */}
                 <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4,
@@ -4291,11 +4297,18 @@ function RedesenhoAba({ d, estabelecer, piloto }: {
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <input type="radio" name="chat-layout" value={o.id} checked={marcada}
-                    disabled={!o.implementado}
+                    disabled={!selecionavel(o)}
                     onChange={() => { setSel(o.id); setConfirmando(false); }}
                     style={{ accentColor: M.roxo, width: 16, height: 16, cursor: "inherit" }} />
                   <b style={{ fontSize: 14.5, color: M.ink }}>{o.rotulo}</b>
                   {ativa && <Selo ok sim="Em vigor" nao="" />}
+                  {o.aposentado && (
+                    <span title="A tela existe e continua no código como caminho de volta, mas não se escolhe mais"
+                      style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,
+                        color: M.gray, background: M.bg, border: `1px solid ${M.border}` }}>
+                      Aposentado
+                    </span>
+                  )}
                   {!o.implementado && (
                     <span title="Existe como protótipo; a tela ainda não foi construída"
                       style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 20,

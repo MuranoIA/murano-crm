@@ -30,6 +30,16 @@ function recusa(valor: unknown): Response | null {
         `por isso não pode ser ativada. Enquanto isso, avalie pelo arquivo ${l.prototipo}.`,
     }, { status: 409 });
   }
+  // ⚠️ recusa PRÓPRIA, e não a de cima: "não tem tela" e "tem tela, foi
+  // aposentado" levam a ações opostas. A primeira é pedir que alguém construa;
+  // a segunda é uma decisão já tomada, que se desfaz tirando a marca no código.
+  if (l.aposentado) {
+    return Response.json({
+      error:
+        `"${l.rotulo}" foi aposentado: o chat novo (v2) é o desenho padrão desde 02/10/2026. ` +
+        "A tela antiga continua no código como caminho de volta, mas não se escolhe mais por aqui.",
+    }, { status: 409 });
+  }
   return null;
 }
 
