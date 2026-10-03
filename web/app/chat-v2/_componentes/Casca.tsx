@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListaConversas } from "./ListaConversas";
+import { ListaConversas , FILTROS_DIVIDA_VAZIOS, passaNaFaixa, type DetalheDivida, type FiltrosDivida } from "./ListaConversas";
 import { Conversa as TelaConversa } from "./Conversa";
 import { PainelContato } from "./PainelContato";
 import { Ripple } from "./Ripple";
@@ -157,6 +157,8 @@ export function Casca({
   const [idsDivida, setIdsDivida] = useState<Set<string> | null>(null);
   const [resumoDivida, setResumoDivida] = useState<{ clientes: number; vencidas: number; total_vencido: number } | null>(null);
   const [carregandoDivida, setCarregandoDivida] = useState(false);
+  const [detalheDivida, setDetalheDivida] = useState<DetalheDivida[] | null>(null);
+  const [filtrosDivida, setFiltrosDivida] = useState<FiltrosDivida>(FILTROS_DIVIDA_VAZIOS);
 
   const [aberta, setAberta] = useState<string | null>(threadInicial?.cliente_id ?? null);
   const [mensagens, setMensagens] = useState<Mensagem[]>(threadInicial?.mensagens ?? []);
@@ -1407,9 +1409,16 @@ export function Casca({
     if (fila === "carteira") return [];
     const filtradas = lista.filter((c) => {
       if (!passaVend(c) || !passaLinha(c) || !passaEtapa(c)) return false;
-      // enquanto o conjunto não chegou, o chip não esconde ninguém: lista vazia
+      // enquanto o conjunto nao chegou, o chip nao esconde ninguem: lista vazia
       // por meio segundo parece lista sem resultado
       if (soDivida && idsDivida && !idsDivida.has(c.cliente_id)) return false;
+      // ...e os filtros de cobranca, que so existem com o chip ligado
+      if (soDivida && detalheDivida && (filtrosDivida.atraso !== "todos" || filtrosDivida.vendeu)) {
+        const d = detalheDivida.find((x) => x.cliente_id === c.cliente_id);
+        if (!d) return false;
+        if (!passaNaFaixa(d, filtrosDivida.atraso)) return false;
+        if (filtrosDivida.vendeu && (d.vendeu ?? "sem vendedor na nota") !== filtrosDivida.vendeu) return false;
+      }
       const passaFila =
         fila === "todas"
           ? !c.na_fila && c.status !== "resolvida"
@@ -1437,9 +1446,32 @@ export function Casca({
       const por = filtradas.slice().sort((a, b) => String(b.nota_em ?? "").localeCompare(String(a.nota_em ?? "")));
       return antigasPrimeiro ? por.reverse() : por;
     }
-    // a lista chega da mais recente para a mais antiga: inverter é de graça
+    // ORDENACAO POR COBRANCA (#64). So vale com o chip ligado, e e feita
+    // sobre o array que ja esta na memoria: 108 clientes, custo zero.
+    if (soDivida && detalheDivida && filtrosDivida.ordem !== "atividade") {
+      const por = new Map(detalheDivida.map((d) => [d.cliente_id, d]));
+      const copia = filtradas.slice();
+      if (filtrosDivida.ordem === "nome") {
+        copia.sort((a, b) =>
+          String(a.cliente ?? "").localeCompare(String(b.cliente ?? ""), "pt-BR"),
+        );
+      } else {
+        // "maior valor" usa o VENCIDO, e cai no aberto quando nao ha vencido:
+        // quem deve R$ 3 mil a vencer nao pode passar na frente de quem deve
+        // R$ 800 ha seis meses numa fila de cobranca.
+        const porValor = filtrosDivida.ordem === "valor";
+        const peso = (id: string) => {
+          const d = por.get(id);
+          if (!d) return -1;
+          return porValor ? (d.vencido || d.aberto) : d.pior;
+        };
+        copia.sort((a, b) => peso(b.cliente_id) - peso(a.cliente_id));
+      }
+      return copia;
+    }
+    // a lista chega da mais recente para a mais antiga: inverter e de graca
     return antigasPrimeiro ? filtradas.slice().reverse() : filtradas;
-  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro, soDivida, idsDivida]);
+  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro, soDivida, idsDivida, detalheDivida, filtrosDivida]);
 
   // ⚠️ O corte é a ÚLTIMA coisa, depois do filtro e da busca — senão o botão
   // prometeria "mais 270" numa busca que só tem três resultados.
@@ -1764,9 +1796,16 @@ export function Casca({
             soDivida={soDivida}
             resumoDivida={resumoDivida}
             carregandoDivida={carregandoDivida}
+            detalheDivida={detalheDivida}
+            filtrosDivida={filtrosDivida}
+            aoMudarFiltrosDivida={setFiltrosDivida}
             aoAlternarDivida={() => {
               const ligando = !soDivida;
               setSoDivida(ligando);
+              // A ORDEM VOLTA SOZINHA ao desligar: lista fora da ordem
+              // cronologica sem motivo visivel e o tipo de coisa que ninguem
+              // reporta e todo mundo estranha.
+              if (!ligando) setFiltrosDivida(FILTROS_DIVIDA_VAZIOS);
               // filtrar sobre a lista parcial mentiria: o conjunto de devedores
               // é global, e a lista só carrega o primeiro lote
               if (ligando) setPrecisaCompleta(true);
@@ -1777,6 +1816,7 @@ export function Casca({
                   .then((j) => {
                     setIdsDivida(new Set<string>(j.ids ?? []));
                     setResumoDivida(j.resumo ?? null);
+                    setDetalheDivida(j.detalhe ?? []);
                   })
                   .catch(() => setIdsDivida(new Set<string>()))
                   .finally(() => setCarregandoDivida(false));

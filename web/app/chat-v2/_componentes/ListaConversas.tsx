@@ -16,6 +16,51 @@ import { FILAS, type Conversa, type Fila, type ItemCarteira, type Recortes } fro
 //  · a lista é VIRTUALIZADA. Uma aba aberta chegou a acumular 43.788 nós de DOM
 //    e travar o notebook da equipe (nota do lib/virtualizacao.tsx).
 
+// ---------------------------------------------------------------------------
+// FILTROS DE COBRANÇA (#64, pedido do dono em 03/10)
+//
+// As mesmas perguntas do painel de cobrança dele: faixa de atraso, quem
+// vendeu, e por onde ordenar.
+//
+// ⚠️ TUDO ACONTECE NO NAVEGADOR, sobre a lista que a rota já trouxe (108
+// clientes hoje). Nenhum filtro daqui faz ida nova ao servidor — o dono
+// condicionou a feature a não deixar o sistema lento, e ordenar 108 itens
+// não tem como.
+// ---------------------------------------------------------------------------
+export type DetalheDivida = {
+  cliente_id: string;
+  codcli: number;
+  vencido: number;
+  aberto: number;
+  pior: number;
+  titulos: number;
+  vendeu: string | null;
+};
+
+export type OrdemDivida = "atividade" | "valor" | "atraso" | "nome";
+export type FiltrosDivida = { atraso: string; vendeu: string | null; ordem: OrdemDivida };
+
+export const FILTROS_DIVIDA_VAZIOS: FiltrosDivida = { atraso: "todos", vendeu: null, ordem: "atividade" };
+
+/** as faixas do painel de cobrança, na mesma ordem */
+export const FAIXAS_ATRASO: { id: string; rotulo: string; de: number; ate: number }[] = [
+  { id: "todos", rotulo: "Tudo em aberto", de: -99999, ate: 99999 },
+  { id: "a_vencer", rotulo: "Ainda a vencer", de: -99999, ate: 0 },
+  { id: "d30", rotulo: "Até 30 dias", de: 1, ate: 30 },
+  { id: "d90", rotulo: "31 a 90 dias", de: 31, ate: 90 },
+  { id: "d180", rotulo: "91 a 180 dias", de: 91, ate: 180 },
+  { id: "d181", rotulo: "Mais de 180 dias", de: 181, ate: 99999 },
+];
+
+/** o cliente passa na faixa? `pior` é o maior atraso dele; 0 = nada vencido */
+export function passaNaFaixa(d: DetalheDivida, faixa: string): boolean {
+  if (faixa === "todos") return true;
+  if (faixa === "a_vencer") return d.vencido === 0;
+  const f = FAIXAS_ATRASO.find((x) => x.id === faixa);
+  if (!f) return true;
+  return d.pior >= f.de && d.pior <= f.ate;
+}
+
 export function ListaConversas({
   conversas,
   selecionada,
@@ -51,6 +96,9 @@ export function ListaConversas({
   resumoDivida,
   carregandoDivida,
   aoAlternarDivida,
+  detalheDivida,
+  filtrosDivida,
+  aoMudarFiltrosDivida,
 }: {
   conversas: Conversa[];
   selecionada: string | null;
@@ -99,6 +147,10 @@ export function ListaConversas({
   resumoDivida?: { clientes: number; vencidas: number; total_vencido: number } | null;
   carregandoDivida?: boolean;
   aoAlternarDivida?: () => void;
+  /** filtros de cobrança (#64): atraso, quem vendeu e ordenação */
+  detalheDivida?: DetalheDivida[] | null;
+  filtrosDivida?: FiltrosDivida;
+  aoMudarFiltrosDivida?: (f: FiltrosDivida) => void;
   antigasPrimeiro: boolean;
   aoInverterOrdem: () => void;
 }) {
@@ -189,7 +241,7 @@ export function ListaConversas({
         {/* Os quatro de todo dia, com o número à vista. Zero fica esmaecido —
             e enquanto o servidor não contou, o cartão fica SEM número, nunca
             com zero: "0 esperando" e "ainda não sei" são coisas diferentes. */}
-        <div className="mt-2 grid grid-cols-4 gap-1">
+        <div className="mt-1.5 grid grid-cols-4 gap-1">
           {CARTOES.map((c) => (
             <MiniCard
               key={c.id}
@@ -201,7 +253,7 @@ export function ListaConversas({
           ))}
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-2">
         <label className="relative block min-w-0 flex-1">
           <span className="sr-only">Buscar conversa</span>
           <svg
@@ -220,7 +272,7 @@ export function ListaConversas({
             value={busca}
             onChange={(e) => aoBuscar(e.target.value)}
             placeholder={fila === "carteira" ? "Buscar na carteira" : "Buscar por nome ou telefone"}
-            className="h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] shadow-e1 placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
+            className="h-10 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] shadow-e1 placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
             style={{ transition: "border-color 120ms var(--ease-padrao)" }}
           />
         </label>
@@ -231,41 +283,63 @@ export function ListaConversas({
           onClick={aoNovoContato}
           aria-label="Novo contato"
           title="Novo contato — conversar com um número"
-          className="grid size-11 shrink-0 place-items-center rounded-xl bg-v2-superficie text-v2-azul shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
+          className="grid size-10 shrink-0 place-items-center rounded-xl bg-v2-superficie text-v2-azul shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
         >
           <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        </div>
-
-        {/* COM DÍVIDA (#64) — fila de trabalho, não decoração: responde "com
-            quem eu preciso falar por causa de dinheiro". Fica fora do painel de
-            filtros porque é pergunta de todo dia, e some na agenda, que lista
-            clientes do ERP e não conversas. */}
+        {/* COM DÍVIDA (#64) — era uma faixa de largura inteira e virou quadrado
+            (pedido do dono, 03/10): a faixa custava ~48 px de LISTA, e o que ela
+            dizia cabe num ícone com contador. O número fica no `title` e, quando
+            há alguém, num ponto no canto — sem contador o botão vira enfeite. */}
         {fila !== "carteira" && aoAlternarDivida && (
           <button
             data-ripple
             type="button"
             onClick={aoAlternarDivida}
+            aria-pressed={!!soDivida}
+            aria-label="Com dívida"
             title={
-              soDivida
-                ? "Mostrando só quem tem cobrança em aberto"
-                : "Mostrar só quem tem cobrança em aberto (vencida ou a vencer)"
+              (soDivida ? "Mostrando só quem tem boleto em aberto" : "Mostrar só quem tem boleto em aberto") +
+              (resumoDivida ? ` — ${resumoDivida.clientes} cliente${resumoDivida.clientes === 1 ? "" : "s"}` : "")
             }
-            className={`mt-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-[13px] font-medium ${
+            className={[
+              "relative grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
               soDivida
-                ? "border-v2-erro bg-v2-erro/[0.07] text-v2-erro"
-                : "border-v2-linha-forte bg-v2-superficie text-v2-tinta-fraca"
-            }`}
+                ? "bg-v2-erro/[0.1] text-v2-erro ring-2 ring-inset ring-v2-erro"
+                : "bg-v2-superficie text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
+            ].join(" ")}
           >
-            <span className={`size-2 rounded-full ${soDivida ? "bg-v2-erro" : "bg-v2-tinta-fraca/40"}`} />
-            <span>Com dívida</span>
-            <span className="ml-auto tabular-nums text-[12px]">
-              {carregandoDivida ? "…" : resumoDivida ? resumoDivida.clientes : ""}
-            </span>
+            {/* nota de dinheiro: diz "cobrança" sem precisar de rótulo */}
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2.5" y="6" width="19" height="12" rx="2" />
+              <circle cx="12" cy="12" r="2.6" />
+              <path d="M6 9.5v5M18 9.5v5" />
+            </svg>
+            {carregandoDivida ? (
+              <span className="absolute -right-0.5 -top-0.5 size-2 animate-pulse rounded-full bg-v2-tinta-fraca" />
+            ) : resumoDivida && resumoDivida.clientes > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[15px] rounded-full bg-v2-erro px-1 text-[9.5px] font-bold leading-[15px] text-white">
+                {resumoDivida.clientes > 99 ? "99+" : resumoDivida.clientes}
+              </span>
+            ) : null}
           </button>
         )}
+
+        {/* OS FILTROS ABREM NUM SEGUNDO GESTO, nunca no primeiro.
+            O gesto de todo dia e "mostre quem deve", e ele nao pode custar
+            dois cliques por causa de ajustes que quase ninguem mexe. O
+            quadrado liga o filtro; este botao abre o resto, e so existe
+            depois que o filtro esta ligado. */}
+        {fila !== "carteira" && soDivida && aoMudarFiltrosDivida && (
+          <FiltrosCobranca
+            detalhe={detalheDivida ?? null}
+            filtros={filtrosDivida ?? FILTROS_DIVIDA_VAZIOS}
+            aoMudar={aoMudarFiltrosDivida}
+          />
+        )}
+        </div>
 
         {/* A FILA num botão só, que abre as opções — pedido do piloto
             (22/09/2026): sete chips ocupavam três linhas da coluna. O botão
@@ -288,7 +362,7 @@ export function ListaConversas({
           // dono): sete quadradinhos soltos deixavam um vão à direita e pareciam
           // sete botões avulsos. Grade de sete colunas iguais, dentro de um
           // trilho — o segmento aceso é preenchido, como numa régua de etapas.
-          <div className="mt-2 grid grid-cols-7 gap-1">
+          <div className="mt-1.5 grid grid-cols-7 gap-1">
             {COLUNAS.map((c) => {
               const k = c.key as EtapaBoard;
               const ativo = recortes.etapa === k;
@@ -304,7 +378,7 @@ export function ListaConversas({
                     // cada uma com o PRÓPRIO contorno e um degrau de sombra
                     // (28/09, pedido do dono): dentro de um trilho só, liam
                     // como régua e se misturavam ao fundo
-                    "flex h-9 min-w-0 flex-col items-center justify-center rounded-lg leading-none shadow-e1 ring-1 ring-inset transition-colors duration-150",
+                    "flex h-8 min-w-0 flex-col items-center justify-center rounded-lg leading-none shadow-e1 ring-1 ring-inset transition-colors duration-150",
                     ativo
                       ? "bg-v2-vinho-claro ring-v2-vinho"
                       : "bg-v2-superficie ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -382,21 +456,43 @@ export function ListaConversas({
             />
           )}
 
-          {/* ordenação (lacuna 11). Na agenda não vale: ela é alfabética. */}
+
+          {/* ORDENAÇÃO — botão quadrado, nesta faixa (03/10, decisão do dono).
+
+              Passou por três formas no mesmo dia, e vale registrar por que
+              esta ficou. Era um botão com rótulo ("↓ Recentes") que, na visão
+              do CONSULTOR, ficava SOZINHO nesta faixa — o seletor de
+              consultores não existe para quem tem uma carteira só — e cobrava
+              uma linha inteira de lista por si.
+
+              Eu propus movê-lo para a linha da busca; o dono preferiu texto
+              pequeno aqui mesmo, e depois, vendo na tela, preferiu o quadrado.
+              O texto resolvia a altura mas lia como link solto ao lado de um
+              seletor alto; o quadrado alinha com ele e continua sem roubar
+              largura do campo de busca.
+
+              Na agenda não vale: ela é alfabética. */}
           {fila !== "carteira" && (
             <button
               data-ripple
+              type="button"
               onClick={aoInverterOrdem}
               aria-pressed={antigasPrimeiro}
+              aria-label={antigasPrimeiro ? "Antigas primeiro" : "Recentes primeiro"}
               title={antigasPrimeiro ? "Mostrando as mais antigas primeiro" : "Mostrando as mais recentes primeiro"}
               className={[
-                "flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] shadow-e1 transition-colors duration-150",
+                "ml-auto grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
                 antigasPrimeiro
-                  ? "bg-v2-vinho-claro font-semibold text-v2-vinho ring-2 ring-inset ring-v2-vinho"
+                  ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
                   : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
               ].join(" ")}
             >
-              {antigasPrimeiro ? "↑ Antigas" : "↓ Recentes"}
+              {/* a seta diz o sentido; as linhas atrás dizem que é uma LISTA
+                  sendo ordenada, e não uma rolagem */}
+              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {antigasPrimeiro ? <path d="M15 19V5M9 11l6-6 6 6" /> : <path d="M15 5v14M9 13l6 6 6-6" />}
+                <path d="M3 6h5M3 12h4M3 18h3" opacity=".5" />
+              </svg>
             </button>
           )}
         </div>
@@ -701,7 +797,7 @@ function AtalhoFila({
       className={[
         // branco com relevo sobre o fundo tingido, e o traço em púrpura: são
         // atalhos da marca, não ações (28/09)
-        "relative grid size-11 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
+        "relative grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
         ativo
           ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
           : "bg-v2-superficie text-v2-vinho-texto ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -753,7 +849,10 @@ function MiniCard({
         // sobre o vinho claro ficou ilegível — e o número é a única coisa que
         // este cartão existe para mostrar. O destaque vem da BORDA e do fundo
         // tingido, nunca de inverter o texto.
-        "rounded-lg px-1 py-1.5 text-center shadow-e1 transition-colors duration-150",
+        // py 6 -> 4 e o número de 17 para 16 (03/10): quatro pixels por cartão
+        // numa faixa que a lista paga inteira. O rótulo não encolhe — ele já está
+        // em 10,5 px, e abaixo disso deixa de ser legível.
+        "rounded-lg px-1 py-1 text-center shadow-e1 transition-colors duration-150",
         ativo
           ? "bg-v2-vinho-claro ring-2 ring-inset ring-v2-vinho"
           : "bg-v2-superficie ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -761,7 +860,7 @@ function MiniCard({
     >
       <span
         className={[
-          "block text-[17px] font-bold leading-5 tabular-nums",
+          "block text-[16px] font-bold leading-5 tabular-nums",
           vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : ativo ? "text-v2-vinho" : "text-v2-tinta",
         ].join(" ")}
       >
@@ -835,7 +934,7 @@ function MenuFilas({
         // logo abaixo e puxava a atenção para um controle que é de escolha, não
         // de ação. Letra preta sobre superfície discreta; o azul continua sendo
         // do que AGE (enviar, ligar).
-        className="relative flex h-11 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie pl-3 pr-2 text-[14px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
+        className="relative flex h-10 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie pl-3 pr-2 text-[14px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
       >
         <span className="min-w-0 truncate">{atual.rotulo}</span>
         {n != null && n > 0 && (
@@ -911,5 +1010,209 @@ function MenuFilas({
         </>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// O POPOVER DOS FILTROS DE COBRANCA (#64)
+//
+// Ideia do dono: "ao clicar no botao referente a clientes com dividas abrisse
+// algo como um modal ou uma caixinha ou mesmo um dropdown que permitisse
+// realizar esses filtros tambem". As perguntas sao as do painel de cobranca
+// dele: tempo de atraso, quem vendeu, e por onde ordenar.
+//
+// ⚠️ Cada opcao mostra QUANTOS CLIENTES ela tem, contado sobre o que os
+// OUTROS filtros ja escolheram. Sem isso a pessoa escolhe "mais de 180 dias",
+// cai numa lista vazia e nao sabe se filtrou errado ou se nao ha ninguem. E a
+// mesma regua dos chips da sidebar (§23.5).
+// ---------------------------------------------------------------------------
+function FiltrosCobranca({
+  detalhe,
+  filtros,
+  aoMudar,
+}: {
+  detalhe: DetalheDivida[] | null;
+  filtros: FiltrosDivida;
+  aoMudar: (f: FiltrosDivida) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const caixa = useRef<HTMLDivElement>(null);
+
+  // fecha ao clicar fora ou no Esc: popover que so fecha no proprio botao
+  // vira armadilha no celular, onde nao ha "fora" obvio para clicar
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (e: MouseEvent) => {
+      if (caixa.current && !caixa.current.contains(e.target as Node)) setAberto(false);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
+    document.addEventListener("mousedown", fora);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fora);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [aberto]);
+
+  const lista = detalhe ?? [];
+  const mexido = filtros.atraso !== "todos" || !!filtros.vendeu || filtros.ordem !== "atividade";
+  const SEM_VENDEDOR = "sem vendedor na nota";
+
+  // quem vendeu, com o valor em aberto ao lado, como no painel do dono
+  const vendedores = (() => {
+    const m = new Map<string, { n: number; valor: number }>();
+    for (const d of lista) {
+      if (!passaNaFaixa(d, filtros.atraso)) continue;
+      const k = d.vendeu ?? SEM_VENDEDOR;
+      const a = m.get(k) ?? { n: 0, valor: 0 };
+      a.n += 1;
+      a.valor += d.aberto;
+      m.set(k, a);
+    }
+    return [...m.entries()].sort((x, y) => y[1].valor - x[1].valor);
+  })();
+
+  const contaFaixa = (id: string) =>
+    lista.filter(
+      (d) => passaNaFaixa(d, id) && (!filtros.vendeu || (d.vendeu ?? SEM_VENDEDOR) === filtros.vendeu),
+    ).length;
+
+  const curto = (v: number) =>
+    v >= 1000 ? `R$ ${(v / 1000).toFixed(1).replace(".", ",")} mil` : `R$ ${v.toFixed(0)}`;
+
+  return (
+    <div className="relative shrink-0" ref={caixa}>
+      <button
+        data-ripple
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+        aria-label="Filtros de cobrança"
+        title="Atraso, quem vendeu e ordenação"
+        className={[
+          "relative grid size-10 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
+          mexido || aberto
+            ? "bg-v2-erro/[0.1] text-v2-erro ring-2 ring-inset ring-v2-erro"
+            : "bg-v2-superficie text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
+        ].join(" ")}
+      >
+        <svg viewBox="0 0 24 24" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5h18M6 12h12M10 19h4" />
+        </svg>
+      </button>
+
+      {aberto && (
+        <div className="absolute right-0 top-11 z-30 w-[268px] rounded-2xl border border-v2-linha-forte bg-v2-superficie p-3 shadow-e2">
+          {!detalhe ? (
+            <p className="py-3 text-center text-[12.5px] text-v2-tinta-fraca">carregando as cobranças…</p>
+          ) : (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">Tempo de atraso</p>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {FAIXAS_ATRASO.map((f) => {
+                  const n = contaFaixa(f.id);
+                  const ativo = filtros.atraso === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      disabled={n === 0 && !ativo}
+                      onClick={() => aoMudar({ ...filtros, atraso: f.id })}
+                      className={[
+                        "rounded-lg px-2 py-1 text-[12px] ring-1 ring-inset disabled:opacity-40",
+                        ativo
+                          ? "bg-v2-erro/[0.1] font-semibold text-v2-erro ring-v2-erro"
+                          : "bg-v2-superficie-2 text-v2-tinta ring-v2-linha",
+                      ].join(" ")}
+                    >
+                      {f.rotulo} <span className="tabular-nums text-v2-tinta-fraca">{n}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">Quem vendeu</p>
+              <div className="mt-1.5 max-h-[168px] overflow-y-auto">
+                <button
+                  type="button"
+                  onClick={() => aoMudar({ ...filtros, vendeu: null })}
+                  className={[
+                    "flex w-full items-baseline gap-2 rounded-lg px-2 py-1 text-left text-[12.5px]",
+                    !filtros.vendeu ? "bg-v2-superficie-2 font-semibold" : "hover:bg-v2-superficie-2",
+                  ].join(" ")}
+                >
+                  <span className="min-w-0 flex-1 truncate">Todos</span>
+                  <span className="shrink-0 tabular-nums text-[11.5px] text-v2-tinta-fraca">
+                    {vendedores.reduce((t, [, a]) => t + a.n, 0)}
+                  </span>
+                </button>
+                {vendedores.map(([nome, a]) => (
+                  <button
+                    key={nome}
+                    type="button"
+                    onClick={() => aoMudar({ ...filtros, vendeu: filtros.vendeu === nome ? null : nome })}
+                    title={`${nome} - ${a.n} cliente${a.n === 1 ? "" : "s"}, ${curto(a.valor)} em aberto`}
+                    className={[
+                      "flex w-full items-baseline gap-2 rounded-lg px-2 py-1 text-left text-[12.5px]",
+                      filtros.vendeu === nome
+                        ? "bg-v2-erro/[0.08] font-semibold text-v2-erro"
+                        : "hover:bg-v2-superficie-2",
+                    ].join(" ")}
+                  >
+                    <span className="min-w-0 flex-1 truncate capitalize">
+                      {nome.toLowerCase().split(" ").slice(0, 2).join(" ")}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-[11.5px] text-v2-tinta-fraca">{curto(a.valor)}</span>
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">Ordenar por</p>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {([
+                  ["atividade", "Atividade"],
+                  ["valor", "Maior valor"],
+                  ["atraso", "Maior atraso"],
+                  ["nome", "Nome"],
+                ] as const).map(([id, rot]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => aoMudar({ ...filtros, ordem: id })}
+                    className={[
+                      "rounded-lg px-2 py-1 text-[12px] ring-1 ring-inset",
+                      filtros.ordem === id
+                        ? "bg-v2-erro/[0.1] font-semibold text-v2-erro ring-v2-erro"
+                        : "bg-v2-superficie-2 text-v2-tinta ring-v2-linha",
+                    ].join(" ")}
+                  >
+                    {rot}
+                  </button>
+                ))}
+              </div>
+              {/* A ORDEM VOLTA SOZINHA ao desligar o filtro de divida (quem faz
+                  isso e a Casca). Lista fora da ordem cronologica sem motivo
+                  visivel e o tipo de coisa que ninguem reporta e todo mundo
+                  estranha. */}
+              {filtros.ordem !== "atividade" && (
+                <p className="mt-2 text-[11px] leading-4 text-v2-tinta-fraca">
+                  A lista sai da ordem por atividade enquanto este filtro estiver ligado.
+                </p>
+              )}
+
+              {mexido && (
+                <button
+                  type="button"
+                  onClick={() => aoMudar(FILTROS_DIVIDA_VAZIOS)}
+                  className="mt-3 w-full rounded-lg bg-v2-superficie-2 py-1.5 text-[12.5px] font-medium text-v2-tinta-fraca hover:text-v2-tinta"
+                >
+                  Limpar filtros
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
