@@ -24,6 +24,18 @@ type Dados = {
   /** mesmo NOME no WinThor com outro telefone, quando este número não tem vínculo */
   erp_candidatos?: CandidatoErp[];
   erp_mesmo_telefone?: CadastroDoTelefone[];
+  boletos?: Boleto[];
+  boletos_resumo?: {
+    vencidas: number; a_vencer: number;
+    total_vencido: number; total_a_vencer: number; pior_atraso: number;
+  } | null;
+};
+
+export type Boleto = {
+  numero_cobranca: string; numero_nf: string | null; filial: string | null;
+  tipo_cobranca: string | null; status_cobranca: string | null;
+  valor_reais: number; vencimento: string; dias: number; vencido: boolean;
+  url_cobranca: string | null;
 };
 
 export function PainelContato({
@@ -153,6 +165,12 @@ export function PainelContato({
               </p>
             )}
 
+            <Dividas
+              boletos={d.boletos ?? []}
+              resumo={d.boletos_resumo ?? null}
+              aoPedirDados={aoPedirDados}
+            />
+
             {/* ⚠️ FORA do `!temErp` (demanda #50): o caso é justamente o do
                 contato que JÁ tem cadastro — e cadastro errado. Dentro do bloco
                 de "sem cadastro" ele nunca apareceria para quem precisa. */}
@@ -216,5 +234,129 @@ function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
       <dt className="w-24 shrink-0 text-v2-tinta-fraca">{rotulo}</dt>
       <dd className="min-w-0 flex-1 truncate font-medium">{valor}</dd>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DÍVIDAS EM ABERTO (demanda #64)
+//
+// Fica ACIMA do aviso de cadastro e abaixo dos dados, porque é informação que
+// muda a conversa: oferecer compra nova a quem está com boleto vencido é o
+// erro que este bloco existe para impedir. Cliente sem nada em aberto não vê
+// bloco nenhum — um "sem dívidas" permanente vira ruído e some da vista
+// justamente quando passa a ter conteúdo.
+//
+// ⚠️ VENCIDO VEM DO SERVIDOR, pela DATA (0152), não do `status_cobranca`: 125
+// cobranças estão `pending` e já venceram, a mais antiga de 2024. Recalcular
+// aqui no navegador daria uma segunda régua, e as duas divergiriam no primeiro
+// fuso mal resolvido.
+function Dividas({
+  boletos,
+  resumo,
+  aoPedirDados,
+}: {
+  boletos: Boleto[];
+  resumo: { vencidas: number; a_vencer: number; total_vencido: number; total_a_vencer: number; pior_atraso: number } | null;
+  aoPedirDados?: (texto: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  if (!boletos.length || !resumo) return null;
+
+  const temVencida = resumo.vencidas > 0;
+  // as vencidas primeiro, e dentro de cada grupo a mais antiga antes
+  const lista = [...boletos].sort((a, b) =>
+    a.vencido === b.vencido ? a.vencimento.localeCompare(b.vencimento) : a.vencido ? -1 : 1,
+  );
+  const mostrar = aberto ? lista : lista.slice(0, 3);
+
+  const dia = (iso: string) => {
+    const [a, m, d] = iso.slice(0, 10).split("-");
+    return `${d}/${m}/${a.slice(2)}`;
+  };
+
+  return (
+    <section
+      className={`mt-4 rounded-2xl border p-3 ${
+        temVencida ? "border-v2-erro/40 bg-v2-erro/[0.06]" : "border-v2-linha bg-v2-superficie-2"
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">
+          {temVencida ? "Dívidas vencidas" : "A pagar"}
+        </p>
+        <p className="text-[11px] text-v2-tinta-fraca">{boletos.length} em aberto</p>
+      </div>
+
+      {temVencida && (
+        <>
+          <p className="mt-0.5 text-[22px] font-bold leading-7 tabular-nums text-v2-erro">
+            {dinheiro(resumo.total_vencido)}
+          </p>
+          <p className="text-[12px] text-v2-tinta-fraca">
+            {resumo.vencidas} {resumo.vencidas === 1 ? "cobrança vencida" : "cobranças vencidas"}
+            {resumo.pior_atraso > 0 ? ` · a mais antiga há ${resumo.pior_atraso} dias` : ""}
+          </p>
+        </>
+      )}
+
+      {resumo.a_vencer > 0 && (
+        <p className={`${temVencida ? "mt-1.5" : "mt-0.5"} text-[12.5px] text-v2-tinta-fraca`}>
+          {temVencida ? "E mais " : ""}
+          <b className="tabular-nums text-v2-tinta">{dinheiro(resumo.total_a_vencer)}</b> a vencer
+          {resumo.a_vencer > 1 ? ` em ${resumo.a_vencer} cobranças` : ""}
+        </p>
+      )}
+
+      <ul className="mt-2.5 space-y-1.5">
+        {mostrar.map((k) => (
+          <li key={k.numero_cobranca} className="flex items-center gap-2 text-[12.5px]">
+            <span className={`w-[70px] shrink-0 tabular-nums ${k.vencido ? "font-semibold text-v2-erro" : "text-v2-tinta-fraca"}`}>
+              {dia(k.vencimento)}
+            </span>
+            <span className="w-[76px] shrink-0 tabular-nums font-medium text-v2-tinta">
+              {dinheiro(k.valor_reais)}
+            </span>
+            {/* ⚠️ O tipo NAO encolhe, a NF sim. Com os dois no mesmo `truncate` a
+                coluna cortava em "B…" e a linha perdia a única informação que
+                muda a conversa (pix se paga na hora; boleto, não). A NF é
+                referência, e vive no `title` quando não couber. */}
+            <span className="shrink-0 text-v2-tinta-fraca" title={k.numero_nf ? `NF ${k.numero_nf}` : undefined}>
+              {k.tipo_cobranca === "pix" ? "Pix" : k.tipo_cobranca === "boleto" ? "Boleto" : (k.tipo_cobranca ?? "—")}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-right text-[11.5px] text-v2-tinta-fraca">
+              {k.numero_nf ? `NF ${k.numero_nf}` : ""}
+            </span>
+            {/* O link NÃO é enviado por este botão: ele vai para a caixa de
+                mensagem, como o "Pedir os dados" da ficha (§47). Mandar cobrança
+                com um clique é o tipo de gesto que não pode ser acidental. */}
+            {k.url_cobranca && aoPedirDados && (
+              <button
+                data-ripple
+                type="button"
+                title="Põe o link desta cobrança na caixa de mensagem (não envia)"
+                onClick={() =>
+                  aoPedirDados(
+                    `Segue o link da cobrança de ${dinheiro(k.valor_reais)} com vencimento em ${dia(k.vencimento)}: ${k.url_cobranca}`,
+                  )
+                }
+                className="shrink-0 rounded-full border border-v2-linha-forte px-2 py-0.5 text-[11px] font-medium text-v2-tinta-fraca hover:border-v2-azul hover:text-v2-azul"
+              >
+                link
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {lista.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setAberto((v) => !v)}
+          className="mt-1.5 text-[12px] font-medium text-v2-azul"
+        >
+          {aberto ? "ver menos" : `ver as outras ${lista.length - 3}`}
+        </button>
+      )}
+    </section>
   );
 }

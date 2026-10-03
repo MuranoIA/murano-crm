@@ -148,6 +148,15 @@ export function Casca({
   // por quem espera há mais tempo. Só reordena o que já está na tela.
   const [antigasPrimeiro, setAntigasPrimeiro] = useState(false);
   const [busca, setBusca] = useState("");
+  // ---- "com dívida" (demanda #64) -----------------------------------------
+  // ⚠️ CARGA PREGUIÇOSA, e de propósito: quem nunca liga o chip não paga nada.
+  // O conjunto é buscado na PRIMEIRA vez que alguém o liga, e fica na sessão —
+  // dívida não muda de minuto em minuto, e recarregar a cada clique faria o
+  // filtro piscar.
+  const [soDivida, setSoDivida] = useState(false);
+  const [idsDivida, setIdsDivida] = useState<Set<string> | null>(null);
+  const [resumoDivida, setResumoDivida] = useState<{ clientes: number; vencidas: number; total_vencido: number } | null>(null);
+  const [carregandoDivida, setCarregandoDivida] = useState(false);
 
   const [aberta, setAberta] = useState<string | null>(threadInicial?.cliente_id ?? null);
   const [mensagens, setMensagens] = useState<Mensagem[]>(threadInicial?.mensagens ?? []);
@@ -1398,6 +1407,9 @@ export function Casca({
     if (fila === "carteira") return [];
     const filtradas = lista.filter((c) => {
       if (!passaVend(c) || !passaLinha(c) || !passaEtapa(c)) return false;
+      // enquanto o conjunto não chegou, o chip não esconde ninguém: lista vazia
+      // por meio segundo parece lista sem resultado
+      if (soDivida && idsDivida && !idsDivida.has(c.cliente_id)) return false;
       const passaFila =
         fila === "todas"
           ? !c.na_fila && c.status !== "resolvida"
@@ -1427,7 +1439,7 @@ export function Casca({
     }
     // a lista chega da mais recente para a mais antiga: inverter é de graça
     return antigasPrimeiro ? filtradas.slice().reverse() : filtradas;
-  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro]);
+  }, [lista, fila, busca, passaVend, passaLinha, passaEtapa, antigasPrimeiro, soDivida, idsDivida]);
 
   // ⚠️ O corte é a ÚLTIMA coisa, depois do filtro e da busca — senão o botão
   // prometeria "mais 270" numa busca que só tem três resultados.
@@ -1748,6 +1760,27 @@ export function Casca({
             aoBuscar={(t) => {
               setBusca(t);
               if (t.trim().length >= 2) setPrecisaCompleta(true);
+            }}
+            soDivida={soDivida}
+            resumoDivida={resumoDivida}
+            carregandoDivida={carregandoDivida}
+            aoAlternarDivida={() => {
+              const ligando = !soDivida;
+              setSoDivida(ligando);
+              // filtrar sobre a lista parcial mentiria: o conjunto de devedores
+              // é global, e a lista só carrega o primeiro lote
+              if (ligando) setPrecisaCompleta(true);
+              if (ligando && !idsDivida && !carregandoDivida) {
+                setCarregandoDivida(true);
+                fetch("/api/chat-v2/boletos")
+                  .then((r) => (r.ok ? r.json() : Promise.reject(new Error("erro " + r.status))))
+                  .then((j) => {
+                    setIdsDivida(new Set<string>(j.ids ?? []));
+                    setResumoDivida(j.resumo ?? null);
+                  })
+                  .catch(() => setIdsDivida(new Set<string>()))
+                  .finally(() => setCarregandoDivida(false));
+              }
             }}
             aoChegarNoFim={() => setPrecisaCompleta(true)}
             presentes={presentes}

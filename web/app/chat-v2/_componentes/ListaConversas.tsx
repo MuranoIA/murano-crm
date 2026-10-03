@@ -47,6 +47,10 @@ export function ListaConversas({
   aoNovoContato,
   antigasPrimeiro,
   aoInverterOrdem,
+  soDivida,
+  resumoDivida,
+  carregandoDivida,
+  aoAlternarDivida,
 }: {
   conversas: Conversa[];
   selecionada: string | null;
@@ -90,6 +94,11 @@ export function ListaConversas({
   comConversa: Set<string> | null;
   aoAbrirDaCarteira: (k: ItemCarteira) => void;
   aoNovoContato: () => void;
+  /** chip "com dívida" (#64) — o estado mora na Casca, que tem o conjunto */
+  soDivida?: boolean;
+  resumoDivida?: { clientes: number; vencidas: number; total_vencido: number } | null;
+  carregandoDivida?: boolean;
+  aoAlternarDivida?: () => void;
   antigasPrimeiro: boolean;
   aoInverterOrdem: () => void;
 }) {
@@ -229,6 +238,34 @@ export function ListaConversas({
           </svg>
         </button>
         </div>
+
+        {/* COM DÍVIDA (#64) — fila de trabalho, não decoração: responde "com
+            quem eu preciso falar por causa de dinheiro". Fica fora do painel de
+            filtros porque é pergunta de todo dia, e some na agenda, que lista
+            clientes do ERP e não conversas. */}
+        {fila !== "carteira" && aoAlternarDivida && (
+          <button
+            data-ripple
+            type="button"
+            onClick={aoAlternarDivida}
+            title={
+              soDivida
+                ? "Mostrando só quem tem cobrança em aberto"
+                : "Mostrar só quem tem cobrança em aberto (vencida ou a vencer)"
+            }
+            className={`mt-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-[13px] font-medium ${
+              soDivida
+                ? "border-v2-erro bg-v2-erro/[0.07] text-v2-erro"
+                : "border-v2-linha-forte bg-v2-superficie text-v2-tinta-fraca"
+            }`}
+          >
+            <span className={`size-2 rounded-full ${soDivida ? "bg-v2-erro" : "bg-v2-tinta-fraca/40"}`} />
+            <span>Com dívida</span>
+            <span className="ml-auto tabular-nums text-[12px]">
+              {carregandoDivida ? "…" : resumoDivida ? resumoDivida.clientes : ""}
+            </span>
+          </button>
+        )}
 
         {/* A FILA num botão só, que abre as opções — pedido do piloto
             (22/09/2026): sete chips ocupavam três linhas da coluna. O botão
