@@ -189,7 +189,7 @@ export function ListaConversas({
         {/* Os quatro de todo dia, com o número à vista. Zero fica esmaecido —
             e enquanto o servidor não contou, o cartão fica SEM número, nunca
             com zero: "0 esperando" e "ainda não sei" são coisas diferentes. */}
-        <div className="mt-2 grid grid-cols-4 gap-1">
+        <div className="mt-1.5 grid grid-cols-4 gap-1">
           {CARTOES.map((c) => (
             <MiniCard
               key={c.id}
@@ -201,7 +201,7 @@ export function ListaConversas({
           ))}
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-2">
         <label className="relative block min-w-0 flex-1">
           <span className="sr-only">Buscar conversa</span>
           <svg
@@ -220,7 +220,7 @@ export function ListaConversas({
             value={busca}
             onChange={(e) => aoBuscar(e.target.value)}
             placeholder={fila === "carteira" ? "Buscar na carteira" : "Buscar por nome ou telefone"}
-            className="h-11 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] shadow-e1 placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
+            className="h-10 w-full rounded-xl border border-v2-linha-forte bg-v2-superficie pl-10 pr-3 text-[15px] shadow-e1 placeholder:text-v2-tinta-fraca focus:border-v2-azul focus:outline-none"
             style={{ transition: "border-color 120ms var(--ease-padrao)" }}
           />
         </label>
@@ -231,41 +231,50 @@ export function ListaConversas({
           onClick={aoNovoContato}
           aria-label="Novo contato"
           title="Novo contato — conversar com um número"
-          className="grid size-11 shrink-0 place-items-center rounded-xl bg-v2-superficie text-v2-azul shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
+          className="grid size-10 shrink-0 place-items-center rounded-xl bg-v2-superficie text-v2-azul shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-azul-claro"
         >
           <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-        </div>
-
-        {/* COM DÍVIDA (#64) — fila de trabalho, não decoração: responde "com
-            quem eu preciso falar por causa de dinheiro". Fica fora do painel de
-            filtros porque é pergunta de todo dia, e some na agenda, que lista
-            clientes do ERP e não conversas. */}
+        {/* COM DÍVIDA (#64) — era uma faixa de largura inteira e virou quadrado
+            (pedido do dono, 03/10): a faixa custava ~48 px de LISTA, e o que ela
+            dizia cabe num ícone com contador. O número fica no `title` e, quando
+            há alguém, num ponto no canto — sem contador o botão vira enfeite. */}
         {fila !== "carteira" && aoAlternarDivida && (
           <button
             data-ripple
             type="button"
             onClick={aoAlternarDivida}
+            aria-pressed={!!soDivida}
+            aria-label="Com dívida"
             title={
-              soDivida
-                ? "Mostrando só quem tem cobrança em aberto"
-                : "Mostrar só quem tem cobrança em aberto (vencida ou a vencer)"
+              (soDivida ? "Mostrando só quem tem boleto em aberto" : "Mostrar só quem tem boleto em aberto") +
+              (resumoDivida ? ` — ${resumoDivida.clientes} cliente${resumoDivida.clientes === 1 ? "" : "s"}` : "")
             }
-            className={`mt-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-[13px] font-medium ${
+            className={[
+              "relative grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
               soDivida
-                ? "border-v2-erro bg-v2-erro/[0.07] text-v2-erro"
-                : "border-v2-linha-forte bg-v2-superficie text-v2-tinta-fraca"
-            }`}
+                ? "bg-v2-erro/[0.1] text-v2-erro ring-2 ring-inset ring-v2-erro"
+                : "bg-v2-superficie text-v2-tinta-fraca ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-superficie-2",
+            ].join(" ")}
           >
-            <span className={`size-2 rounded-full ${soDivida ? "bg-v2-erro" : "bg-v2-tinta-fraca/40"}`} />
-            <span>Com dívida</span>
-            <span className="ml-auto tabular-nums text-[12px]">
-              {carregandoDivida ? "…" : resumoDivida ? resumoDivida.clientes : ""}
-            </span>
+            {/* nota de dinheiro: diz "cobrança" sem precisar de rótulo */}
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2.5" y="6" width="19" height="12" rx="2" />
+              <circle cx="12" cy="12" r="2.6" />
+              <path d="M6 9.5v5M18 9.5v5" />
+            </svg>
+            {carregandoDivida ? (
+              <span className="absolute -right-0.5 -top-0.5 size-2 animate-pulse rounded-full bg-v2-tinta-fraca" />
+            ) : resumoDivida && resumoDivida.clientes > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[15px] rounded-full bg-v2-erro px-1 text-[9.5px] font-bold leading-[15px] text-white">
+                {resumoDivida.clientes > 99 ? "99+" : resumoDivida.clientes}
+              </span>
+            ) : null}
           </button>
         )}
+        </div>
 
         {/* A FILA num botão só, que abre as opções — pedido do piloto
             (22/09/2026): sete chips ocupavam três linhas da coluna. O botão
@@ -288,7 +297,7 @@ export function ListaConversas({
           // dono): sete quadradinhos soltos deixavam um vão à direita e pareciam
           // sete botões avulsos. Grade de sete colunas iguais, dentro de um
           // trilho — o segmento aceso é preenchido, como numa régua de etapas.
-          <div className="mt-2 grid grid-cols-7 gap-1">
+          <div className="mt-1.5 grid grid-cols-7 gap-1">
             {COLUNAS.map((c) => {
               const k = c.key as EtapaBoard;
               const ativo = recortes.etapa === k;
@@ -304,7 +313,7 @@ export function ListaConversas({
                     // cada uma com o PRÓPRIO contorno e um degrau de sombra
                     // (28/09, pedido do dono): dentro de um trilho só, liam
                     // como régua e se misturavam ao fundo
-                    "flex h-9 min-w-0 flex-col items-center justify-center rounded-lg leading-none shadow-e1 ring-1 ring-inset transition-colors duration-150",
+                    "flex h-8 min-w-0 flex-col items-center justify-center rounded-lg leading-none shadow-e1 ring-1 ring-inset transition-colors duration-150",
                     ativo
                       ? "bg-v2-vinho-claro ring-v2-vinho"
                       : "bg-v2-superficie ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -382,21 +391,27 @@ export function ListaConversas({
             />
           )}
 
-          {/* ordenação (lacuna 11). Na agenda não vale: ela é alfabética. */}
+
+          {/* ORDENAÇÃO — TEXTO, não botão (03/10, decisão do dono).
+              O achado dele: na visão do CONSULTOR o seletor de consultores não
+              existe (ele só tem uma carteira), então esta faixa ficava com um
+              botão só e cobrava uma linha inteira de lista por ele.
+              Virar quadrado na linha da busca resolveria a altura e apertaria o
+              campo de busca; texto pequeno resolve as duas coisas — a faixa
+              encolhe de 40 px para ~20 e o campo não perde nada.
+              Na agenda não vale: ela é alfabética. */}
           {fila !== "carteira" && (
             <button
-              data-ripple
+              type="button"
               onClick={aoInverterOrdem}
               aria-pressed={antigasPrimeiro}
               title={antigasPrimeiro ? "Mostrando as mais antigas primeiro" : "Mostrando as mais recentes primeiro"}
               className={[
-                "flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] shadow-e1 transition-colors duration-150",
-                antigasPrimeiro
-                  ? "bg-v2-vinho-claro font-semibold text-v2-vinho ring-2 ring-inset ring-v2-vinho"
-                  : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
+                "ml-auto shrink-0 whitespace-nowrap rounded px-1 text-[11.5px] leading-5 underline-offset-2 hover:underline",
+                antigasPrimeiro ? "font-semibold text-v2-vinho" : "text-v2-tinta-fraca",
               ].join(" ")}
             >
-              {antigasPrimeiro ? "↑ Antigas" : "↓ Recentes"}
+              {antigasPrimeiro ? "↑ antigas" : "↓ recentes"}
             </button>
           )}
         </div>
@@ -701,7 +716,7 @@ function AtalhoFila({
       className={[
         // branco com relevo sobre o fundo tingido, e o traço em púrpura: são
         // atalhos da marca, não ações (28/09)
-        "relative grid size-11 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
+        "relative grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
         ativo
           ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
           : "bg-v2-superficie text-v2-vinho-texto ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -753,7 +768,10 @@ function MiniCard({
         // sobre o vinho claro ficou ilegível — e o número é a única coisa que
         // este cartão existe para mostrar. O destaque vem da BORDA e do fundo
         // tingido, nunca de inverter o texto.
-        "rounded-lg px-1 py-1.5 text-center shadow-e1 transition-colors duration-150",
+        // py 6 -> 4 e o número de 17 para 16 (03/10): quatro pixels por cartão
+        // numa faixa que a lista paga inteira. O rótulo não encolhe — ele já está
+        // em 10,5 px, e abaixo disso deixa de ser legível.
+        "rounded-lg px-1 py-1 text-center shadow-e1 transition-colors duration-150",
         ativo
           ? "bg-v2-vinho-claro ring-2 ring-inset ring-v2-vinho"
           : "bg-v2-superficie ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
@@ -761,7 +779,7 @@ function MiniCard({
     >
       <span
         className={[
-          "block text-[17px] font-bold leading-5 tabular-nums",
+          "block text-[16px] font-bold leading-5 tabular-nums",
           vazio ? "text-v2-tinta-fraca" : cartao.destaque ? "text-v2-laranja" : ativo ? "text-v2-vinho" : "text-v2-tinta",
         ].join(" ")}
       >
@@ -835,7 +853,7 @@ function MenuFilas({
         // logo abaixo e puxava a atenção para um controle que é de escolha, não
         // de ação. Letra preta sobre superfície discreta; o azul continua sendo
         // do que AGE (enviar, ligar).
-        className="relative flex h-11 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie pl-3 pr-2 text-[14px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
+        className="relative flex h-10 min-w-0 items-center gap-1.5 rounded-xl bg-v2-superficie pl-3 pr-2 text-[14px] font-semibold text-v2-vinho shadow-e1 ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro"
       >
         <span className="min-w-0 truncate">{atual.rotulo}</span>
         {n != null && n > 0 && (
