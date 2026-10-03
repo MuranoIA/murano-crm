@@ -178,6 +178,16 @@ export async function GET(req: Request) {
     }
   }
 
+  // ⚠️ DE QUEM E ESTA LINHA -- UMA RESPOSTA SO, e nao duas.
+  // Isto era `slugPorRca.get(c.rca_num)` escrito em dois pontos do arquivo, a
+  // 190 linhas de distancia. Ao acrescentar o ramo das carteiras sem RCA eu
+  // troquei um e esqueci o outro: para o administrativo, `slugPorRca.get(11)`
+  // da `undefined`, entao TODA linha da agenda dele ganhava o selo "conversa
+  // com administrativo" -- um aviso que existe (#43) para dizer que a conversa
+  // e de OUTRO consultor, gritando que ela e dele mesmo.
+  const donoDaLinha = (c: any): string | null =>
+    slugPorRca.get(c.rca_num) ?? slugPorCodcli.get(Number(c.codcli)) ?? null;
+
   const clientes: any[] = [];
   if (rcas.length) {
     for (let from = 0; ; from += PAGE) {
@@ -339,7 +349,7 @@ export async function GET(req: Request) {
       // o número acima veio de uma troca pelo chat, ainda não aplicada no WinThor
       ...(cliente_id && novoDe.has(cliente_id) ? { telefone_trocado: true } : {}),
       cidade: c.cidade ?? null,
-      vendedor: slugPorRca.get(c.rca_num) ?? slugPorCodcli.get(Number(c.codcli)) ?? null,
+      vendedor: donoDaLinha(c),
       // sem contato ainda, mas o número do cadastro serve: o clique cria o
       // contato e abre a conversa (POST desta mesma aba, com o codcli)
       criar_no_clique: !cliente_id && sit.pode,
@@ -354,7 +364,7 @@ export async function GET(req: Request) {
       ...(pv ? { tem_conversa: true } : {}),
       // …e de quem ela é, quando NÃO é de quem a agenda diz. É o caso do
       // telefone compartilhado por dois cadastros do ERP.
-      ...(pv && pv.dono && pv.dono !== (slugPorRca.get(c.rca_num) ?? null)
+      ...(pv && pv.dono && pv.dono !== donoDaLinha(c)
         ? { conversa_de: pv.dono }
         : {}),
     };

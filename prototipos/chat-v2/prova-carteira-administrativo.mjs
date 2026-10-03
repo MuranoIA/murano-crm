@@ -115,6 +115,16 @@ try {
     "...com o contato do Pulse resolvido, para o clique abrir a conversa",
     `${linhas.filter((c) => c.cliente_id).length} com contato`,
   );
+  // ⚠️ O selo "conversa com X" existe (#43) para avisar que a conversa e de
+  // OUTRO consultor. Na agenda do proprio dono ele nao pode aparecer -- e
+  // aparecia em TODA linha, porque a resposta de "de quem e esta linha" estava
+  // escrita em dois pontos do arquivo e eu troquei so um.
+  const seloErrado = linhas.filter((c) => c.conversa_de === "administrativo");
+  conferir(
+    seloErrado.length === 0,
+    "...e NENHUMA linha diz 'conversa com administrativo' na agenda dele mesmo",
+    `${seloErrado.length} linhas com o selo`,
+  );
 
   // ---- 5. a tela, com os olhos dele --------------------------------------
   const a = await novaAba(chrome);
