@@ -121,6 +121,25 @@ export async function GET(req: Request) {
     }
   }
 
+  // ---- as dividas em aberto (demanda #64) ---------------------------------
+  //
+  // Vem DEPOIS do Promise.all de proposito: a view e chaveada por `codcli`, e o
+  // codcli so existe depois que `compras`/`funil` responderam. Daria para o
+  // front mandar o codcli que ele ja tem na conversa -- e seria um filtro de
+  // dado escolhido pelo navegador, que e exatamente o que nao se faz.
+  //
+  // Contato sem cadastro no ERP nao tem divida para mostrar, e a consulta nem
+  // sai: e a maioria dos casos da fila de espera.
+  const codcli = Number((compras.data as any)?.codcli ?? (funil as any)?.codcli ?? 0);
+  let boletos: any[] = [];
+  if (codcli > 0) {
+    const { data } = await sb.from("vw_cliente_boleto")
+      .select("numero_cobranca,numero_nf,filial,tipo_cobranca,status_cobranca,valor_reais,vencimento,dias,vencido,url_cobranca")
+      .eq("codcli", codcli)
+      .order("vencimento", { ascending: true });
+    boletos = data ?? [];
+  }
+
   return Response.json({
     ciclo_ativo: (await cfgP).ciclo_ativo,
     compras: compras.data ?? null,
@@ -129,6 +148,18 @@ export async function GET(req: Request) {
     ultimas_notas: ultimas.data ?? [],
     erp_candidatos,
     erp_mesmo_telefone,
+    boletos,
+    // somado no SERVIDOR: a tela mostra o total em negrito, e dois lugares
+    // somando o mesmo dinheiro divergem no primeiro arredondamento
+    boletos_resumo: boletos.length
+      ? {
+          vencidas: boletos.filter((k) => k.vencido).length,
+          a_vencer: boletos.filter((k) => !k.vencido).length,
+          total_vencido: boletos.filter((k) => k.vencido).reduce((t, k) => t + Number(k.valor_reais ?? 0), 0),
+          total_a_vencer: boletos.filter((k) => !k.vencido).reduce((t, k) => t + Number(k.valor_reais ?? 0), 0),
+          pior_atraso: boletos.reduce((m, k) => (k.vencido && k.dias > m ? k.dias : m), 0),
+        }
+      : null,
   });
 }
 
