@@ -130,19 +130,80 @@ export async function GET(req: Request) {
   const previasP = querPrevia ? lerPrevias(sb, minha).catch(() => null) : Promise.resolve(null);
 
   const { data: cfg } = await sb.from("carteira_config").select("slug,rca_num").eq("ativo", true);
-  const rcas = (cfg ?? []).filter((c: any) => !minha || c.slug === minha).map((c: any) => c.rca_num);
-  const slugPorRca = new Map((cfg ?? []).map((c: any) => [c.rca_num, c.slug]));
-  if (!rcas.length) return Response.json({ carteira: [] });
+  const alvos = (cfg ?? []).filter((c: any) => !minha || c.slug === minha);
+  const rcas = alvos.map((c: any) => c.rca_num).filter((n: any) => n != null);
+  // Carteira SEM RCA proprio (a do administrativo, 0151): ela nao e um numero
+  // do WinThor, e um conjunto de clientes atribuidos no CRM. Sem este ramo a
+  // agenda dela voltaria vazia -- e vazio parece defeito, nao desenho.
+  const semRca: string[] = alvos.filter((c: any) => c.rca_num == null).map((c: any) => c.slug);
+  const slugPorRca = new Map(
+    (cfg ?? []).filter((c: any) => c.rca_num != null).map((c: any) => [c.rca_num, c.slug]),
+  );
+  if (!rcas.length && !semRca.length) return Response.json({ carteira: [] });
+
+  // ---- os codclis das carteiras sem RCA, e de quem e cada um --------------
+  const slugPorCodcli = new Map<number, string>();
+  if (semRca.length) {
+    const meus: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      // `order` nao e enfeite: sem ordem estavel, duas paginas de `range` podem
+      // repetir e pular linhas, e a agenda ficaria diferente a cada abertura.
+      const { data, error } = await sb.from("clientes").select("id,carteira")
+        .in("carteira", semRca).order("id").range(from, from + PAGE - 1);
+      if (error) return Response.json({ error: error.message }, { status: 500 });
+      meus.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    const slugPorCliente = new Map<string, string>(meus.map((c: any) => [c.id, c.carteira]));
+    const ids = meus.map((c: any) => c.id);
+    // ⚠️ LOTE PEQUENO porque a chave aqui e TEXTO, nao numero. O lote de 800
+    // logo abaixo vale para `codcli` (5 digitos); um `cliente_id` passa de 20
+    // caracteres, e 800 deles estouram o tamanho da URL do PostgREST. Medido ao
+    // vivo: com 800, o primeiro lote voltava ERRO e a agenda do administrativo
+    // mostrava 278 dos 1.079 clientes -- sem erro na tela, porque o `?? []`
+    // engolia a falha. E o filtro invisivel da §61.2, de novo.
+    const LOTE = 200;
+    const partes: string[][] = [];
+    for (let i = 0; i < ids.length; i += LOTE) partes.push(ids.slice(i, i + LOTE));
+    const res = await Promise.all(
+      partes.map((p) => sb.from("wth_vinculo").select("codcli,cliente_id").in("cliente_id", p)),
+    );
+    for (const r of res) {
+      // falhar alto: agenda pela metade e pior que agenda que nao abre
+      if ((r as any).error) return Response.json({ error: (r as any).error.message }, { status: 500 });
+      for (const v of ((r as any).data ?? [])) {
+        const slug = slugPorCliente.get((v as any).cliente_id);
+        if (slug) slugPorCodcli.set(Number((v as any).codcli), slug);
+      }
+    }
+  }
 
   const clientes: any[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await sb.from("wth_carteira")
-      .select("codcli,nome,telefone,tel8,cidade,rca_num")
-      .in("rca_num", rcas).eq("ativo", true)
-      .order("nome").range(from, from + PAGE - 1);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-    clientes.push(...(data ?? []));
-    if (!data || data.length < PAGE) break;
+  if (rcas.length) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb.from("wth_carteira")
+        .select("codcli,nome,telefone,tel8,cidade,rca_num")
+        .in("rca_num", rcas).eq("ativo", true)
+        .order("nome").range(from, from + PAGE - 1);
+      if (error) return Response.json({ error: error.message }, { status: 500 });
+      clientes.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+  }
+  if (slugPorCodcli.size) {
+    const codsSemRca = [...slugPorCodcli.keys()];
+    const LOTE = 800;
+    const partes: number[][] = [];
+    for (let i = 0; i < codsSemRca.length; i += LOTE) partes.push(codsSemRca.slice(i, i + LOTE));
+    const res = await Promise.all(
+      partes.map((p) => sb.from("wth_carteira")
+        .select("codcli,nome,telefone,tel8,cidade,rca_num").in("codcli", p).eq("ativo", true)),
+    );
+    for (const r of res) {
+      if ((r as any).error) return Response.json({ error: (r as any).error.message }, { status: 500 });
+      clientes.push(...(((r as any).data ?? [])));
+    }
+    clientes.sort((x: any, y: any) => String(x.nome ?? "").localeCompare(String(y.nome ?? ""), "pt-BR"));
   }
   if (!clientes.length) return Response.json({ carteira: [] });
 
@@ -278,7 +339,7 @@ export async function GET(req: Request) {
       // o número acima veio de uma troca pelo chat, ainda não aplicada no WinThor
       ...(cliente_id && novoDe.has(cliente_id) ? { telefone_trocado: true } : {}),
       cidade: c.cidade ?? null,
-      vendedor: slugPorRca.get(c.rca_num) ?? null,
+      vendedor: slugPorRca.get(c.rca_num) ?? slugPorCodcli.get(Number(c.codcli)) ?? null,
       // sem contato ainda, mas o número do cadastro serve: o clique cria o
       // contato e abre a conversa (POST desta mesma aba, com o codcli)
       criar_no_clique: !cliente_id && sit.pode,
