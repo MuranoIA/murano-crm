@@ -21,6 +21,25 @@ const conferir = (cond, n, d = "") => passos.push({ n, ok: !!cond, d });
 
 const chrome = await subirChrome({ porta: 9683 });
 try {
+  // ---- 0. PIX NÃO É DÍVIDA (0153) --------------------------------------
+  //
+  // O dono pegou isto comparando com o painel de cobrança dele: eu dizia
+  // R$ 164 mil de inadimplência, o painel dizia R$ 54 mil. A diferença era pix
+  // inteiro — e 71% de todo pix emitido na Neofin é CANCELADO, porque ele é
+  // forma de pagamento oferecida, não título a receber.
+  const { data: tipos } = await sb.from("vw_cliente_boleto").select("tipo_cobranca").limit(2000);
+  const naoBoleto = (tipos ?? []).filter((k) => k.tipo_cobranca !== "boleto");
+  conferir(
+    naoBoleto.length === 0,
+    "a visão do chat traz SÓ BOLETO — pix nunca conta como dívida (#64)",
+    `${(tipos ?? []).length} cobranças, ${naoBoleto.length} fora do tipo boleto`,
+  );
+  // e o pix segue existindo na origem: o corte é nosso, não some dado de ninguém
+  const { count: pixNaOrigem } = await sb.from("ent_neofin_cobranca")
+    .select("numero_cobranca", { count: "exact", head: true })
+    .eq("tipo_cobranca", "pix").in("status_cobranca", ["pending", "overdue"]);
+  conferir(pixNaOrigem > 0, "…e o pix continua na tabela de origem, intocado", `${pixNaOrigem} em aberto`);
+
   // ---- 1. a régua: vencido é por DATA, não por status --------------------
   const { data: tudo } = await sb.from("vw_cliente_boleto").select("status_cobranca,vencido,valor_reais").limit(2000);
   const pendVencida = (tudo ?? []).filter((k) => k.status_cobranca === "pending" && k.vencido);
@@ -95,9 +114,29 @@ try {
   const conj = await pedir("/api/chat-v2/boletos");
   conferir(Array.isArray(conj.ids) && conj.ids.length > 0, "a rota do chip devolve quem tem dívida", `${conj.ids?.length} clientes`);
   conferir(conj.ids.includes(alvo.cliente_id), "…e o cliente de ensaio está nela");
-  // ⚠️ paginação: são mais de 1.000 cobranças e o PostgREST corta em silêncio
-  const { count: totalCob } = await sb.from("vw_cliente_boleto").select("numero_cobranca", { count: "exact", head: true });
-  conferir(totalCob > 1000, "a view passa de 1.000 linhas — é o teto que o PostgREST corta sem avisar", `${totalCob} cobranças`);
+  // ⚠️ TRUNCAGEM: a rota pagina porque o PostgREST corta em 1.000 linhas SEM
+  // AVISAR. A versão antiga desta prova afirmava "a view passa de 1.000" — e
+  // parou de valer quando o pix saiu (560 linhas). Afirmar a PRECONDIÇÃO é
+  // frágil; o que tem de ser verdade sempre é que a rota devolve TODO MUNDO.
+  // Esta comparação pega a truncagem de qualquer um dos dois lados, hoje e
+  // quando a base voltar a crescer.
+  const cods = new Set();
+  for (let de = 0; ; de += 1000) {
+    const { data } = await sb.from("vw_cliente_boleto").select("codcli").order("codcli").range(de, de + 999);
+    for (const k of data ?? []) cods.add(Number(k.codcli));
+    if (!data || data.length < 1000) break;
+  }
+  const noChat = new Set();
+  const lista = [...cods];
+  for (let i = 0; i < lista.length; i += 300) {
+    const { data } = await sb.from("wth_vinculo").select("cliente_id").in("codcli", lista.slice(i, i + 300));
+    for (const v of data ?? []) noChat.add(v.cliente_id);
+  }
+  conferir(
+    conj.ids.length === noChat.size,
+    "a rota devolve TODOS os devedores — nada cortado no caminho",
+    `rota ${conj.ids.length} · banco ${noChat.size}`,
+  );
 
   // ---- 6. a tela ---------------------------------------------------------
   const a = await novaAba(chrome);
