@@ -141,6 +141,10 @@ function Montar({
   const [modo, setModo] = useState<"agora" | "anterior">("agora");
   // o que o disparo desta tela produziu: é ele que define quem entra na campanha
   const [feito, setFeito] = useState<null | { de: string; ate: string; templateEnvioId: string | null; enviados: number }>(null);
+  // ⚠️ ESTADO, não `useRef`: o portal do "Disparar agora" (#65) só acontece
+  // quando o Disparo RE-RENDERIZA sabendo que o alvo existe. Com `useRef` o
+  // elemento aparece sem avisar ninguém, e o botão nunca chega ao rodapé.
+  const [rodape, setRodape] = useState<HTMLDivElement | null>(null);
   const d = modo === "anterior" ? disparos.find((x) => x.chave === chave) : null;
 
   // ⚠️ A ORDEM DO CLIQUE É A ORDEM DO RODÍZIO. Sem isto a fila seria a ordem
@@ -214,7 +218,7 @@ function Montar({
               fila do rodízio e crie a campanha — ela já nasce ligada a este disparo.
             </p>
           ) : (
-            <Disparo aoErro={aoErro} aoEnviado={setFeito} />
+            <Disparo aoErro={aoErro} aoEnviado={setFeito} alvoBotao={rodape} />
           )}
         </>
       )}
@@ -284,7 +288,12 @@ function Montar({
         atende o diálogo.
       </p>
 
-      <div className="mt-4 flex justify-end border-t border-v2-linha pt-4">
+      {/* #65 — pedido do dono: "Criar campanha" no canto inferior ESQUERDO e
+          "Disparar agora" no inferior DIREITO, lado a lado.
+          O de disparar vem de dentro do `Disparo` por portal (`rodape`): ele
+          depende de seis estados internos de lá, e subi-los para cá só para
+          mover um botão seria reescrever um componente para mudar um lugar. */}
+      <div className="mt-4 flex flex-col gap-2 border-t border-v2-linha pt-4 sm:flex-row sm:items-center sm:justify-between">
         <button
           data-ripple
           disabled={!nome || !fila.length || ocupado || (modo === "anterior" ? !d : !feito)}
@@ -301,6 +310,9 @@ function Montar({
                   : "Criar campanha"}
           </span>
         </button>
+        {/* o lugar do "Disparar agora". Fica vazio quando o modo é "usar um
+            disparo anterior" — ali não há o que disparar. */}
+        <div ref={setRodape} className="sm:ml-auto" />
       </div>
     </div>
   );

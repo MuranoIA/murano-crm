@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { enviarEmMassa, type AlvoEnvio, type FalhaEnvio, type Progresso } from "../../lib/envioEmMassa";
 import { telefoneBonito } from "../chat-v2/_componentes/formato";
 import { BOTAO_CONTORNO, CAMPO, CHIP, CHIP_DESLIGADO, CHIP_LIGADO } from "./estilo";
@@ -56,11 +57,23 @@ const ETAPAS = [
 const CUSTO = 0.43;
 
 export function Disparo({
-  aoErro, aoEnviado,
+  aoErro, aoEnviado, alvoBotao,
 }: {
   aoErro: (t: string) => void;
   /** avisa a campanha: o disparo terminou, e estes são os limites dele */
   aoEnviado: (r: { de: string; ate: string; templateEnvioId: string | null; enviados: number }) => void;
+  /**
+   * Onde desenhar o "Disparar agora" (demanda #65). Quando a campanha passa um
+   * elemento, o botão vai para LÁ por portal, ao lado do "Criar campanha".
+   *
+   * ⚠️ PORTAL, e não o botão subindo para a campanha: ele depende de SEIS
+   * estados internos daqui (prévia, planilha, template, progresso, ocupado e a
+   * função `enviar`). Levá-los para cima para mover um botão de lugar seria
+   * trocar a posição de um elemento pela reescrita de um componente.
+   *
+   * Sem o alvo (uso solto do Disparo), ele continua sendo desenhado aqui.
+   */
+  alvoBotao?: HTMLElement | null;
 }) {
   const [cfg, setCfg] = useState<{ templates: Template[]; carteiras: Carteira[] } | null>(null);
   const [tpl, setTpl] = useState<string>("");
@@ -196,8 +209,25 @@ export function Disparo({
       </div>
     );
 
+  // O botão num lugar só: ele é desenhado aqui dentro OU no rodapé da campanha
+  // (#65), nunca redefinido nos dois — duas cópias divergiriam na primeira
+  // regra de `disabled` que alguém mudasse.
+  const botaoDisparar = (
+    <button
+      data-ripple
+      disabled={!previa?.selecionados.length || (!planilha && !template?.envio_id)}
+      onClick={enviar}
+      className="flex h-11 w-full items-center justify-center rounded-lg bg-v2-laranja px-5 text-[14px] font-semibold text-white shadow-e1 disabled:bg-v2-linha-forte disabled:shadow-none sm:w-auto"
+    >
+      Disparar agora
+    </button>
+  );
+
   return (
     <div className="mt-3 rounded-2xl bg-v2-superficie p-4 ring-1 ring-inset ring-v2-linha sm:p-5">
+      {/* #65: quando a campanha oferece um lugar, o botão vai para lá — ao
+          lado do "Criar campanha", no rodapé. */}
+      {alvoBotao && previa && !prog && createPortal(botaoDisparar, alvoBotao)}
       <Passo n={1} titulo="O template" />
       <select
         value={tpl}
@@ -367,16 +397,7 @@ export function Disparo({
               )}
             </div>
 
-            {!prog && (
-              <button
-                data-ripple
-                disabled={!previa.selecionados.length || (!planilha && !template?.envio_id)}
-                onClick={enviar}
-                className="mt-3 flex h-11 w-full items-center justify-center rounded-lg bg-v2-laranja px-5 text-[14px] font-semibold text-white shadow-e1 disabled:bg-v2-linha-forte disabled:shadow-none sm:w-auto"
-              >
-                Disparar agora
-              </button>
-            )}
+            {!prog && !alvoBotao && botaoDisparar}
           </div>
         </div>
       )}
