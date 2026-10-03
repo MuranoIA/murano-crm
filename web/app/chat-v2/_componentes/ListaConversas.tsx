@@ -457,44 +457,69 @@ export function ListaConversas({
           )}
 
 
-          {/* ORDENAÇÃO — botão quadrado, nesta faixa (03/10, decisão do dono).
+          {/* ORDENAÇÃO — DUAS FORMAS, e quem decide é quem mais está na faixa.
 
-              Passou por três formas no mesmo dia, e vale registrar por que
-              esta ficou. Era um botão com rótulo ("↓ Recentes") que, na visão
-              do CONSULTOR, ficava SOZINHO nesta faixa — o seletor de
-              consultores não existe para quem tem uma carteira só — e cobrava
-              uma linha inteira de lista por si.
+              Ela passou por quatro voltas em 03/10/2026, todas com o dono
+              olhando a tela, e a conclusao e que as duas visoes querem coisas
+              diferentes:
 
-              Eu propus movê-lo para a linha da busca; o dono preferiu texto
-              pequeno aqui mesmo, e depois, vendo na tela, preferiu o quadrado.
-              O texto resolvia a altura mas lia como link solto ao lado de um
-              seletor alto; o quadrado alinha com ele e continua sem roubar
-              largura do campo de busca.
+              · ADMIN / HOME — a faixa tem o seletor de consultores (e as
+                vezes o de numeros). O botão quadrado alinha com eles e fica
+                com cara de controle, nao de link solto.
+              · CONSULTOR — ele tem UMA carteira, entao `consultores` vem
+                vazio e a faixa ficaria com o quadrado SOZINHO, cobrando uma
+                linha inteira de lista por um botao so. Ai vale texto
+                pequeno, que ocupa uma fracao da linha.
 
-              Na agenda não vale: ela é alfabética. */}
-          {fila !== "carteira" && (
-            <button
-              data-ripple
-              type="button"
-              onClick={aoInverterOrdem}
-              aria-pressed={antigasPrimeiro}
-              aria-label={antigasPrimeiro ? "Antigas primeiro" : "Recentes primeiro"}
-              title={antigasPrimeiro ? "Mostrando as mais antigas primeiro" : "Mostrando as mais recentes primeiro"}
-              className={[
-                "ml-auto grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
-                antigasPrimeiro
-                  ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
-                  : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
-              ].join(" ")}
-            >
-              {/* a seta diz o sentido; as linhas atrás dizem que é uma LISTA
-                  sendo ordenada, e não uma rolagem */}
-              <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {antigasPrimeiro ? <path d="M15 19V5M9 11l6-6 6 6" /> : <path d="M15 5v14M9 13l6 6 6-6" />}
-                <path d="M3 6h5M3 12h4M3 18h3" opacity=".5" />
-              </svg>
-            </button>
-          )}
+              Na agenda nao vale: ela e alfabetica. */}
+          {fila !== "carteira" && (() => {
+            // a mesma condicao que desenha os seletores acima: se nenhum
+            // deles existe, este botao esta sozinho na faixa
+            const sozinho = consultores.length === 0 && linhas.length <= 1;
+            const comum = {
+              "data-ripple": true,
+              type: "button" as const,
+              onClick: aoInverterOrdem,
+              "aria-pressed": antigasPrimeiro,
+              "aria-label": antigasPrimeiro ? "Antigas primeiro" : "Recentes primeiro",
+              title: antigasPrimeiro
+                ? "Mostrando as mais antigas primeiro"
+                : "Mostrando as mais recentes primeiro",
+            };
+
+            if (sozinho) {
+              return (
+                <button
+                  {...comum}
+                  className={[
+                    "ml-auto shrink-0 whitespace-nowrap rounded px-1 text-[11.5px] leading-5 underline-offset-2 hover:underline",
+                    antigasPrimeiro ? "font-semibold text-v2-vinho" : "text-v2-tinta-fraca",
+                  ].join(" ")}
+                >
+                  {antigasPrimeiro ? "↑ antigas" : "↓ recentes"}
+                </button>
+              );
+            }
+
+            return (
+              <button
+                {...comum}
+                className={[
+                  "ml-auto grid size-10 shrink-0 place-items-center rounded-xl shadow-e1 transition-colors duration-150",
+                  antigasPrimeiro
+                    ? "bg-v2-vinho-claro text-v2-vinho ring-2 ring-inset ring-v2-vinho"
+                    : "bg-v2-superficie text-v2-tinta ring-1 ring-inset ring-v2-linha-forte hover:bg-v2-vinho-claro",
+                ].join(" ")}
+              >
+                {/* a seta diz o sentido; as linhas atras dizem que e uma LISTA
+                    sendo ordenada, e nao uma rolagem */}
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  {antigasPrimeiro ? <path d="M15 19V5M9 11l6-6 6 6" /> : <path d="M15 5v14M9 13l6 6 6-6" />}
+                  <path d="M3 6h5M3 12h4M3 18h3" opacity=".5" />
+                </svg>
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -1131,6 +1156,12 @@ function FiltrosCobranca({
                 })}
               </div>
 
+              {/* ⚠️ A SEÇÃO SOME SOZINHA quando não há vendedor na resposta — e
+                  é assim que ela fica só para o admin (03/10): a rota nem manda o
+                  dado para consultor e home. Sem este `&&`, eles veriam um
+                  título "Quem vendeu" com uma lista vazia embaixo. */}
+              {vendedores.length > 0 && (
+                <>
               <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">Quem vendeu</p>
               <div className="mt-1.5 max-h-[168px] overflow-y-auto">
                 <button
@@ -1166,6 +1197,8 @@ function FiltrosCobranca({
                   </button>
                 ))}
               </div>
+                </>
+              )}
 
               <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-v2-tinta-fraca">Ordenar por</p>
               <div className="mt-1.5 flex flex-wrap gap-1">
