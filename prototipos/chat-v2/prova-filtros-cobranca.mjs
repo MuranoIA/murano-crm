@@ -120,6 +120,16 @@ try {
   );
 
   // ---- 6. ordenar por valor MUDA a lista, e avisa ----------------------
+  // ⚠️ ESPERA POR CONDIÇÃO, não por relógio. Ligar o filtro manda buscar a
+  // LISTA INTEIRA (os devedores podem não estar na primeira página), e com um
+  // `sleep` fixo a prova media a lista ainda vazia: ela acusava "a ordenação
+  // não funciona" comparando duas listas de zero itens. O produto estava certo
+  // nas duas vezes em que isso aconteceu.
+  await a.ate(
+    `[...document.querySelectorAll('button')].filter(b => /\\d{1,5} - [A-Z\u00c0-\u00da]/.test((b.textContent||'').replace(/\\s+/g,' ')) && b.getBoundingClientRect().height > 50).length > 0`,
+    { ms: 30_000 },
+  );
+
   const antesDaOrdem = await a.js(`
     // ⚠️ as linhas sao achadas pelo FORMATO do rotulo (codigo - NOME), nao
     // por um container rolavel: com o filtro ligado a lista encurta, para de

@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import { escopoCarteira } from "../../../../lib/verComo";
+import { podeAdmin } from "../../../../lib/papel";
 
 // ---------------------------------------------------------------------------
 // QUEM TEM DÍVIDA EM ABERTO — o conjunto, não a lista (demanda #64)
@@ -27,6 +28,12 @@ export async function GET() {
   const sessao = cookies().get("crm_sessao")?.value;
   if (!sessao) return Response.json({ error: "não autenticado" }, { status: 401 });
   const minha = escopoCarteira();
+  // ⚠️ "QUEM VENDEU" É SÓ DO ADMIN (decisão do dono, 03/10): consultor e
+  // home não veem essa seção. E a regra é aplicada AQUI, não escondendo na
+  // tela: para quem não é admin a rota nem faz a consulta, então a resposta
+  // dele fica MAIS RÁPIDA e o dado nem sai do servidor. Esconder no
+  // navegador seria mandar o nome de quem vendeu para quem não pode ver.
+  const souAdmin = podeAdmin(sessao);
 
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return Response.json({ error: "Supabase envs ausentes" }, { status: 500 });
@@ -71,9 +78,11 @@ export async function GET() {
   // ⚠️ Esta junção custava 413 ms antes do índice parcial da 0154 (`Seq Scan`
   // descartando 21.551 linhas); agora são 15,8 ms. Se alguém vir esta rota
   // lenta um dia, o índice é o primeiro lugar para olhar.
-  const notas = [...new Set(cobrancas.map((k) => String(k.numero_nf)).filter(Boolean))];
+  const notas = souAdmin
+    ? [...new Set(cobrancas.map((k) => String(k.numero_nf)).filter(Boolean))]
+    : [];
   const vendeuPorNota = new Map<string, string>();
-  {
+  if (souAdmin) {
     const L = 300;
     const partes: string[][] = [];
     for (let i = 0; i < notas.length; i += L) partes.push(notas.slice(i, i + L));
