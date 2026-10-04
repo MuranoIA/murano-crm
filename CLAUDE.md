@@ -6225,3 +6225,130 @@ traduzida por `classificarFalha`, com o texto cru).
 - Deixa um `console.info` `[avisos-entrega] TESTE ...` (sem o segredo) nos logs da Vercel.
 
 Rodar: `node --import ./testes/unit/resolver-ts.mjs --test "testes/unit/*.test.mjs"`.
+
+## 75. As dívidas de boleto no chat, e o dia em que o número estava errado (03/10/2026)
+
+Migrations **0152** (view), **0153** (pix sai) e **0154** (índice). Demandas
+#64, #66, #67, #68.
+
+### 75.1 ⚠️ `ent_neofin_cobranca` é "cobranças EMITIDAS", não "contas a receber"
+
+**O erro central do dia, e ele chegou a ir para produção.** Eu li a tabela como
+contas a receber, somei tudo em aberto e informei **R$ 164.936 de
+inadimplência**. O dono comparou com o painel de cobrança dele, que dizia
+**R$ 54 mil**, e disse a frase que destravou: *"não temos toda essa quantidade
+de inadimplência"*.
+
+A diferença era **pix inteiro**, e o ciclo de vida das cobranças prova sozinho
+que pix ali **não é título**:
+
+| | canceladas | pagas |
+|---|---|---|
+| boleto | 497 (**18%**) | 1.733 (60%) |
+| **pix** | **13.610 (71%)** | 4.721 (25%) |
+
+**71% de todo pix emitido é cancelado** — ele é uma forma de pagamento
+oferecida e descartada; quem paga de outro jeito deixa o pix apodrecendo
+aberto. Reforça: de 322 pix vencidos, **24 têm uma cobrança irmã da mesma nota
+que foi PAGA**.
+
+No chat isso avisava **220 clientes quando são 58**, e R$ 39.716 de vencido
+quando são R$ 13.705. **Pior que não ter a tela:** alarme falso desliga a
+atenção para o verdadeiro.
+
+Decisão do dono, perguntado se pix vencido conta em algum caso: *"nunca. se
+baseie pelo artfact"*. A 0153 cortou na view.
+
+**A lição que vale além desta tabela:** antes de somar uma coluna de dinheiro,
+olhar o **ciclo de vida** das linhas. Se 71% delas terminam canceladas, aquilo
+não é um saldo — é um rascunho.
+
+### 75.2 Vencido é por DATA, nunca pelo `status_cobranca`
+
+Medido: **125 cobranças estão `pending` e já venceram**, a mais antiga de
+20/12/2024. Pelo status seriam 322 vencidas; pela data são 449. Confiar no
+campo faria o consultor dizer "está tudo em dia" a quem deve há mais de um ano.
+
+### 75.3 O que a feature é, e onde ela NÃO encostou
+
+O dono condicionou: *"se essa feature for deixar o chat mais lento, então não
+vale a pena fazer"*. Por isso:
+
+| | custo | quando roda |
+|---|---|---|
+| `/api/chat-v2/lista` | **0** — arquivo não tocado | — |
+| bloco de dívidas no painel | 1 consulta | ao abrir a ficha do cliente |
+| chip "com dívida" + filtros | 1 consulta, carga preguiçosa | ao clicar, 1× por sessão |
+
+Juntar boleto em `vw_chat_conversa` era o caminho óbvio e **errado**: ela é
+lida a cada 60 s por toda aba aberta (§71), e cobraria o preço em toda carga
+por um dado que interessa a 108 clientes.
+
+A **0154** (índice parcial de 563 linhas) levou a consulta de "quem vendeu" de
+**413 ms para 15,8 ms** — e acelerou junto o painel e o chip, que já estavam em
+produção. ⚠️ Esse índice eu criei direto no banco ao medir e só depois gerei o
+arquivo: é a dívida que a §19.2 nomeia, e ela se repete com facilidade.
+
+### 75.4 "Quem vendeu" é só do admin — e a regra mora no SERVIDOR
+
+Pedido do dono. Para consultor e home a rota **nem faz a consulta**: o dado não
+sai do servidor, em vez de ser escondido no navegador (onde bastaria o DevTools
+para ler). Mediu-se o efeito colateral bom: **home responde em 0,24 s contra
+0,95 s do admin**.
+
+### 75.5 O cabeçalho da lista, e uma peça que mudou de forma quatro vezes
+
+O cabeçalho da sidebar tinha crescido para **353 px de uma janela de 804 — 44%
+da tela só de controle**, porque cada demanda nova ganhou uma faixa. Ficou em
+**293 px**, e cabem 6,4 conversas contra 5,6.
+
+A ordenação ("recentes/antigas") passou por **quatro formas no mesmo dia**, e o
+desenho final é condicional:
+
+| visão | forma |
+|---|---|
+| consultor | texto pequeno (fração de linha) |
+| admin / home | botão quadrado |
+
+⚠️ A condição no código é **"nenhum seletor desta faixa existe"**, a mesma
+expressão que os desenha — e não `papel === "vendedor"`. Na visão do consultor
+o seletor de consultores não existe (ele tem uma carteira só), e o botão ficava
+sozinho cobrando uma linha inteira.
+
+### 75.6 Método — o que custou tempo, e o que passou a ser regra
+
+- **⚠️ O LOG DO BUILD NÃO PROVA O QUE ESTÁ SERVINDO.** Um `next build` morreu
+  com `ENOSPC`, eu não vi a falha, subi o servidor e medi o **build anterior** —
+  concluindo que um recorte por papel "não funcionava" quando ele nem tinha sido
+  compilado. O sintoma de ouro: `BUILD_ID` mais **velho** que o `mtime` do
+  fonte. Conferir isso, não a mensagem.
+- **Grep por identificador no bundle não serve:** o Next **minifica** o servidor,
+  e o nome da variável some. O que prova é o comportamento.
+- **Espera por CONDIÇÃO, nunca por relógio.** A mesma asserção acusou "a
+  ordenação não funciona" **duas vezes**, e nas duas o produto estava certo:
+  ligar o filtro manda buscar a lista inteira, e um `sleep` fixo media a lista
+  ainda vazia — comparando duas listas de zero itens.
+- **Teste afirma FORMA e LUGAR, não texto.** Com uma peça mudando de forma
+  quatro vezes num dia, uma asserção presa ao rótulo quebra a cada volta do
+  desenho sem nada estar errado.
+- **O total se conta na unidade certa:** a agenda lista clientes do ERP, e 15
+  codclis têm DOIS contatos no Pulse. Comparar 1.064 com 1.079 acusaria 15
+  faltando para sempre — e teste que acusa o que está certo ensina a ignorar o
+  próprio alarme.
+- **`git stash push` com arquivo novo FALHA**, e o `git stash pop` seguinte pega
+  **o stash de outra sessão**. Aconteceu: deixou conflito em três arquivos do
+  chat antigo. Conferir `git stash list` antes de qualquer `pop` numa árvore
+  compartilhada (§0).
+
+### 75.7 Pendências
+
+1. **A decisão da #59** continua aberta no painel: esconder template vale para
+   toda a equipe (como está) ou só para quem clicou?
+2. **O disco** encheu duas vezes no dia. Há ~5,8 GB, e um build ocupa 270 MB —
+   folga pequena. A varredura não localiza ~20 GB (hibernação, pagefile, pontos
+   de restauração); é Limpeza de Disco, decisão do usuário.
+3. **#63** — o chip do consultor mostra 0 na aba Minha carteira. Diagnóstico
+   pronto no card: o chip conta CONVERSAS da fila, e a agenda não é uma fila.
+4. **#58** — custo da Vercel: o levantamento está feito, as ações não. A #60 já
+   entregou duas delas de carona (o índice da lista e o fim da pressão por
+   refrescar a foto).
